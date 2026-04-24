@@ -6,7 +6,7 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 **Phase:** Phase 1 — Foundation
 **Fase:** A (UI Prototype)
-**Active Milestone:** M3 — Mock Data Layer (next)
+**Active Milestone:** M4 — Auth UI Prototype (next)
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -18,7 +18,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M0** — Housekeeping & Environment Prep _(done 2026-04-24, commit `48a4111`)_
 - [x] **M1** — Environment Credentials Setup _(done 2026-04-24, Neon smoke test passed)_
 - [x] **M2** — Design System Foundation _(done 2026-04-24, money.ts 100% coverage, 60/60 tests)_
-- [ ] **M3** — Mock Data Layer _(next)_
+- [x] **M3** — Mock Data Layer _(done 2026-04-24, 43 menu items + 7 fake services)_
+- [ ] **M4** — Auth UI Prototype _(next)_
 - [ ] **M3** — Mock Data Layer
 - [ ] **M4** — Auth UI Prototype
 - [ ] **M5** — POS UI Prototype
@@ -66,10 +67,31 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - ESLint config updated to ignore `_legacy/`, `coverage/`, `drizzle/`
 - tsconfig excludes `_legacy/`
 
-**Next session (M3):**
-- Mock data layer — TypeScript types mirroring TSD §4 schemas
-- 45 menu items, 11 categories, 4 modifiers, 3 users, 9 expense categories, sample shifts/transactions
-- Fake service layer (`menuService`, `authService`, `transactionService`, etc.) — same interface that Fase B will swap with real backend
+**M3 done (2026-04-24):**
+- `src/mocks/types.ts` — all DB schemas mirrored (outlets/users/categories/menu/modifiers/shifts/transactions/expenses/audit) + `ApiResult` envelope + `Session`
+- `src/mocks/data.ts` — seed data: 1 outlet, 4 users (1 owner, 1 manager, 2 staff), 11 categories, **43 menu items** (doc inconsistency flagged: PRD/README say 45 but `04-MENU-DATA.md` detail lists 43; real count = 43), 4 modifiers, 9 expense categories, 3 shifts (1 active, 2 closed), 5 sample transactions (mix paid/voided/refunded), 3 expenses (1 auto-refund), 1 income
+- `src/mocks/services/` — 7 fake services + `_helpers.ts` + barrel `index.ts`:
+  - `menuService` (list/filter/sold-out toggle, modifiers-by-category)
+  - `authService` (email+pass login, PIN login, approver token, session, listApprovers, `__devImpersonate`)
+  - `transactionService` (list, get, create with **full server-side validation** using `src/lib/money.ts`, void, refund with auto-expense, mark served)
+  - `shiftService` (getActive, open with 1-per-user lock, close with variance calc)
+  - `expenseService` (CRUD expenses + incomes, daily cash summary, `_internalAddRefundExpense` called by transaction refund)
+  - `reportService` (daily sales, range sales, item performance, simple P&L, shift report)
+  - `userService` (list filtered by viewer role, createStaff/createManager, update with last-owner protection, resetPin, deactivate)
+- 200-500ms simulated latency; all services return `ApiResult<T>` envelope
+- Interface matches future Server Action signatures so Fase B swap = swap imports, no consumer changes
+
+**Pending decisions that became clearer:**
+- Menu count discrepancy: PRD/README mention 45, actual 43 — to confirm with Owner; mock data uses 43 faithfully
+- C4 (staff seed strategy) — mocks seeded 2 staff (Rina, Budi); production seed via owner-creates-manually (recommended path) still valid
+
+**Next session (M4 — Auth UI Prototype):**
+- `src/app/(auth)/login/page.tsx` — email+password form for Owner/Manager
+- `src/app/(auth)/pin/page.tsx` — PIN pad flow with staff avatar selector
+- `src/app/(auth)/layout.tsx` — centered Mahakan logo shell
+- Wire to `authService` mocks (no real backend yet)
+- Error state with shake animation on wrong credentials
+- After login: redirect Owner → `/dashboard` (stub), Staff → `/pos` (stub)
 
 **Pending user decisions (Critical):**
 - C1 — Dependency version lock strategy (needed before M8)
