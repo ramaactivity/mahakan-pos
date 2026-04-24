@@ -6,7 +6,7 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 **Phase:** Phase 1 — Foundation
 **Fase:** A (UI Prototype)
-**Active Milestone:** M2 — Design System Foundation
+**Active Milestone:** M3 — Mock Data Layer (next)
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -17,7 +17,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 - [x] **M0** — Housekeeping & Environment Prep _(done 2026-04-24, commit `48a4111`)_
 - [x] **M1** — Environment Credentials Setup _(done 2026-04-24, Neon smoke test passed)_
-- [ ] **M2** — Design System Foundation _(next)_
+- [x] **M2** — Design System Foundation _(done 2026-04-24, money.ts 100% coverage, 60/60 tests)_
+- [ ] **M3** — Mock Data Layer _(next)_
 - [ ] **M3** — Mock Data Layer
 - [ ] **M4** — Auth UI Prototype
 - [ ] **M5** — POS UI Prototype
@@ -54,12 +55,21 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - **M1 complete** — user created `.env.local`; smoke test verified Neon connection (Postgres 17.8, ap-southeast-1 Singapore, pooled)
 - Locked additional decision: **offline-only mode** (no git push, no deploy)
 
-**Next session (M2):**
-- Design system setup — Tailwind v4 Mahakan palette, Inter + JetBrains Mono fonts
-- Base UI components — Button, Input, Card, Modal, Badge, Toast, PinPad, QuantityStepper, Spinner
-- Core utils — `money.ts` (integer arithmetic + banker's rounding, 100% test coverage), `format.ts` (Indonesian Rp + date), `date.ts` (WIB timezone), `utils.ts` (`cn()` helper)
-- Showcase page at `/` for visual verification
-- Target: User screenshots approval of sage green palette + components
+**M2 done (2026-04-24):**
+- Tailwind v4 @theme with Mahakan sage green palette + warm neutrals + semantic colors (`src/app/globals.css`)
+- Fonts — Inter + JetBrains Mono via `next/font/google`
+- `src/lib/money.ts` — integer arithmetic + banker's rounding (100% coverage, 60 tests in `tests/unit/money.test.ts`)
+- `src/lib/format.ts`, `src/lib/date.ts`, `src/lib/utils.ts` (cn helper)
+- 9 base UI components in `src/components/ui/`: Button, Input, Card, Modal, Badge, Toast (sonner), PinPad, QuantityStepper, Spinner
+- Showcase page at `/` demonstrating all components + palette
+- Vitest config + coverage provider (`@vitest/coverage-v8`)
+- ESLint config updated to ignore `_legacy/`, `coverage/`, `drizzle/`
+- tsconfig excludes `_legacy/`
+
+**Next session (M3):**
+- Mock data layer — TypeScript types mirroring TSD §4 schemas
+- 45 menu items, 11 categories, 4 modifiers, 3 users, 9 expense categories, sample shifts/transactions
+- Fake service layer (`menuService`, `authService`, `transactionService`, etc.) — same interface that Fase B will swap with real backend
 
 **Pending user decisions (Critical):**
 - C1 — Dependency version lock strategy (needed before M8)

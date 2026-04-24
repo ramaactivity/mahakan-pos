@@ -56,3 +56,6 @@ next-env.d.ts
 # AI agent artifacts
 .agents/
 .cursor/
+
+# Legacy code reference (not part of active build)
+_legacy/

@@ -1,26 +1,77 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@theme {
+  /* Mahakan sage green palette — derived from logo #539371 */
+  --color-mahakan-green-50: #f2f6f4;
+  --color-mahakan-green-100: #e2ede7;
+  --color-mahakan-green-200: #c4ddd0;
+  --color-mahakan-green-300: #9dc7b1;
+  --color-mahakan-green-400: #6fae8c;
+  --color-mahakan-green-500: #529270;
+  --color-mahakan-green-600: #539371; /* LOGO color — decorative only (3.64:1 on white) */
+  --color-mahakan-green-700: #3d7557; /* ACTION color — primary CTAs (5.41:1 ✓ WCAG AA) */
+  --color-mahakan-green-800: #2e5b43; /* Hover on primary (7.80:1 ✓) */
+  --color-mahakan-green-900: #1f422f; /* Headings (11.18:1 ✓ WCAG AAA) */
+  --color-mahakan-green-950: #142e20;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  /* Warm neutral palette */
+  --color-neutral-50: #fafaf7;
+  --color-neutral-100: #f2f1ec;
+  --color-neutral-200: #e5e3db;
+  --color-neutral-300: #cfcbbf;
+  --color-neutral-400: #a8a396;
+  --color-neutral-500: #8a8578;
+  --color-neutral-600: #6d685c;
+  --color-neutral-700: #514e45;
+  --color-neutral-800: #34322d;
+  --color-neutral-900: #1f1d17;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* Semantic palette */
+  --color-success-100: #dcfce7;
+  --color-success-500: #16a34a;
+  --color-warning-100: #fef3c7;
+  --color-warning-500: #d97706;
+  --color-danger-100: #fee2e2;
+  --color-danger-500: #dc2626;
+  --color-danger-600: #b91c1c;
+  --color-info-100: #dbeafe;
+  --color-info-500: #2563eb;
+
+  /* Fonts — wired to next/font variables set in layout.tsx */
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-neutral-50);
+  color: var(--color-neutral-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Minimum tap target for touch devices (iOS HIG / Material) */
+@media (pointer: coarse) {
+  button,
+  a,
+  [role="button"] {
+    min-height: 44px;
+  }
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Focus outline consistency */
+:focus-visible {
+  outline: 2px solid var(--color-mahakan-green-700);
+  outline-offset: 2px;
 }

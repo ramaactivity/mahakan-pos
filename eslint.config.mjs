@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Mahakan-specific:
+    "_legacy/**",
+    "coverage/**",
+    "drizzle/**",
+    "node_modules/**",
   ]),
 ]);
 
