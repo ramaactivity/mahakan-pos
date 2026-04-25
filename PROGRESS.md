@@ -5,8 +5,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 ## Current Status
 
 **Phase:** Phase 1 — Foundation
-**Fase:** B (Backend) — M8-M12 done, M13 next (Expense/Income backend + rewire)
-**Active Milestone:** M13 — Cash & Expense Backend
+**Fase:** B (Backend) — **M8-M15 done**, runtime fully off mocks. M16 next (printer, hardware-blocked) or M17 (PWA + offline)
+**Active Milestone:** M16 — Thermal Printer (blocked, needs user device pair) / M17 — PWA + Offline
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -31,9 +31,9 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M10** — Menu Management Backend + Rewire UI _(done 2026-04-25, src/features/menu module + Server Actions, admin Menu section + POS rewired to real DB)_
 - [x] **M11** — POS Core Backend + Rewire UI ⚠️ Critical _(done 2026-04-25, transactions feature module with full server-side validation, atomic txn number, idempotency, void/refund + 17 validation tests)_
 - [x] **M12** — Shift Management Backend + Rewire _(done 2026-04-25, shifts module + POS rewired)_
-- [ ] **M13** — Expense/Income Backend + Rewire
-- [ ] **M14** — Reports Backend + Rewire
-- [ ] **M15** — Void/Refund/Discount with PIN Override
+- [x] **M13** — Expense/Income Backend + Rewire _(done 2026-04-26, cash module + admin Cash rewired; C3=C: receipt photo upload skipped Phase 1)_
+- [x] **M14** — Reports Backend + Rewire _(done 2026-04-26, reports module + admin Reports + DashboardHome rewired)_
+- [x] **M15** — Void/Refund/Discount with PIN Override _(done 2026-04-26 — already covered in M9.5+M11; this milestone added users + outlets feature modules and finalized full mock-cutover across runtime consumers)_
 - [ ] **M16** — Thermal Printer Integration
 - [ ] **M17** — PWA + Offline Resilience
 - [ ] **M18** — Testing Pass
@@ -228,3 +228,22 @@ Total tests: 109. Build: 10 routes (no new endpoints — all Server Actions).
 - `userService` (admin Staff section) → M15
 
 **Next: M13 — Expense/Income backend + admin Cash rewire.** Lower risk than M11 — straightforward CRUD + image upload (C3 decision needed: Vercel Blob vs base64 vs skip).
+
+---
+
+### 2026-04-26 (Session 2 cont.)
+
+**M13 done** (`feat(m13): cash backend`) — full src/features/cash/ module: types, helpers (WIB-day boundary), queries (expenses+incomes ranges, daily summary aggregating POS by method+manual income+expenses by category+refunds → netCashFlow), actions (RBAC-gated CRUD). C3 decision = C (skip receipt upload Phase 1; offline-only blocks Vercel Blob). Admin Cash section (ExpensesList, IncomesList, ExpenseFormModal, IncomeFormModal, DailySummary) all hit Neon.
+
+**M14 done** (`feat(m14): reports backend`) — src/features/reports/ module: DailySalesReport (revenue, transactionCount, avgTicket, void/refund counts, payment-method breakdown, hourly bucket WIB, top 10 items, byCategory), ItemPerformanceRow (GROUP BY query for date range, sortable qty/revenue/avg), PnlReport (POS revenue + manual income − expenses by category, gross profit, Owner-only). Admin Reports views + DashboardHome rewired.
+
+**M15 done** (`feat(m15): users + outlets`) — src/features/users/ (RBAC-scoped CRUD with Last-Owner-Active protection, role-aware update perm, hashed password+PIN seperately) + src/features/outlets/ (single getOwnOutlet Server Action). Admin Staff section (StaffSection, UserFormModal, ResetPinModal) + Settings (now reads outlet from DB) + ShiftsSection user lookup + Admin ShiftDetailModal all rewired. POS ApproverOverrideModal moved off authService → fetch /api/v1/auth/{approvers, verify-approver}. Final type-only import sweep: Role from `@/lib/auth`, OrderType/Variant from `@/features/transactions`, Shift/PublicUser/Outlet from their feature modules.
+
+**Status:** runtime fully off mocks. `src/db/seed.ts` keeps importing mocks/data as one-shot transition source-of-truth. Build: 10 routes, 109/109 tests, no warnings.
+
+**Next options:**
+- **M16 — Thermal printer**: HIGH RISK + BLOCKED on user device. Web Bluetooth + ESC/POS RPP02. Needs user to physically pair printer + test.
+- **M17 — PWA + offline (Serwist + Dexie)**: HIGH RISK, untested combo Next 16 + Serwist 9. Implementable without user input.
+- **M18 — Testing pass**: fill coverage gaps, add integration tests against live DB.
+
+Recommendation: pause for user smoke testing of M11-M15 in browser before tackling more. M16 needs hardware. M17 is implementable now but ideally validated against real PWA install on tablet.
