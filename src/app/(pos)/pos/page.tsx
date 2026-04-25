@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -31,7 +31,17 @@ import { formatIndonesianTime } from "@/lib/date";
 export default function PosDashboardPage() {
   const router = useRouter();
   const { session } = useSession();
-  const drafts = useCartStore((s) => s.getDraftsList());
+  // Select raw drafts record (stable ref until mutated) then derive sorted
+  // list locally — calling s.getDraftsList() inside the selector returns a
+  // new array on every render and triggers a useSyncExternalStore loop.
+  const draftsRecord = useCartStore((s) => s.drafts);
+  const drafts = useMemo(
+    () =>
+      Object.values(draftsRecord).sort((a, b) =>
+        a.createdAt < b.createdAt ? -1 : 1,
+      ),
+    [draftsRecord],
+  );
 
   const [shift, setShift] = useState<Shift | null>(null);
   const [shiftLoading, setShiftLoading] = useState(true);

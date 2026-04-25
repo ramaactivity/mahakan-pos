@@ -58,11 +58,14 @@ interface CartStore {
   ) => void;
 
   // Selectors (computed)
+  // NOTE: never call these inside a Zustand selector that returns a
+  // non-primitive (`useCartStore((s) => s.someFn())`) — they may produce
+  // new references on each call and cause useSyncExternalStore loops.
+  // Always select the raw `drafts` record and derive arrays via useMemo.
   getDraft: (draftId: string) => Draft | undefined;
   getSubtotal: (draftId: string) => number;
   getDiscountAmount: (draftId: string) => number;
   getTotal: (draftId: string) => number;
-  getDraftsList: () => Draft[];
 }
 
 export const useCartStore = create<CartStore>((set, get) => ({
@@ -216,12 +219,6 @@ export const useCartStore = create<CartStore>((set, get) => ({
     const subtotal = draft.items.reduce((s, i) => s + i.subtotal, 0);
     const discount = computeDiscountAmount(subtotal, draft.discount);
     return computeTotal(subtotal, discount);
-  },
-
-  getDraftsList: () => {
-    const drafts = Object.values(get().drafts);
-    drafts.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
-    return drafts;
   },
 }));
 
