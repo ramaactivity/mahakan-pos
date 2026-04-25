@@ -2,13 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { Button, Input, Modal, toast } from "@/components/ui";
-import { expenseService, isOk } from "@/mocks/services";
-import type { ExpensePaymentMethod } from "@/mocks/types";
+import {
+  createIncome,
+  isOk,
+  type CashPaymentMethod,
+} from "@/features/cash";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface IncomeFormModalProps {
   open: boolean;
+  /** Kept for callsite compatibility; action derives userId from session. */
   createdBy: string;
   onClose: () => void;
   onSaved: () => void;
@@ -16,7 +20,6 @@ interface IncomeFormModalProps {
 
 export function IncomeFormModal({
   open,
-  createdBy,
   onClose,
   onSaved,
 }: IncomeFormModalProps) {
@@ -24,7 +27,7 @@ export function IncomeFormModal({
   const [date, setDate] = useState(today);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState<ExpensePaymentMethod>("transfer");
+  const [method, setMethod] = useState<CashPaymentMethod>("transfer");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,12 +61,11 @@ export function IncomeFormModal({
     }
     setSubmitting(true);
     setError(null);
-    const res = await expenseService.createIncome({
+    const res = await createIncome({
       incomeDate: date,
       description: description.trim(),
       amount: parsedAmount,
       paymentMethod: method,
-      createdBy,
     });
     if (!isOk(res)) {
       setError(res.error.message);

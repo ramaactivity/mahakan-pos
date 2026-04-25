@@ -12,8 +12,13 @@ import {
   Skeleton,
 } from "@/components/ui";
 import { ExpenseFormModal } from "./ExpenseFormModal";
-import { expenseService, isOk } from "@/mocks/services";
-import type { Expense, ExpenseCategory } from "@/mocks/types";
+import {
+  isOk,
+  listExpenses,
+  listExpenseCategories,
+  type Expense,
+  type ExpenseCategory,
+} from "@/features/cash";
 import { formatRupiah } from "@/lib/format";
 
 interface ExpensesListProps {
@@ -38,13 +43,13 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
     let cancelled = false;
     async function load() {
       const [expRes, catRes] = await Promise.all([
-        expenseService.listExpenses({
+        listExpenses({
           from,
           to,
           categoryId: categoryFilter === "all" ? undefined : categoryFilter,
           limit: 200,
         }),
-        expenseService.listExpenseCategories(),
+        listExpenseCategories(),
       ]);
       if (cancelled) return;
       if (isOk(expRes)) setExpenses(expRes.data.items);

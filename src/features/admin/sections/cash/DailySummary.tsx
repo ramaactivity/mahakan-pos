@@ -10,8 +10,11 @@ import {
   Input,
   Skeleton,
 } from "@/components/ui";
-import { expenseService, isOk } from "@/mocks/services";
-import type { DailyCashSummary as DailyCashSummaryData } from "@/mocks/services/expenseService";
+import {
+  getDailyCashSummary,
+  isOk,
+  type DailyCashSummary as DailyCashSummaryData,
+} from "@/features/cash";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +28,7 @@ export function DailySummary() {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const res = await expenseService.getDailyCashSummary(date);
+      const res = await getDailyCashSummary(date);
       if (cancelled) return;
       if (isOk(res)) setSummary(res.data);
       setLoading(false);

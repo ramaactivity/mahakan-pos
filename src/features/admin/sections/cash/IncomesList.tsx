@@ -11,8 +11,7 @@ import {
   Skeleton,
 } from "@/components/ui";
 import { IncomeFormModal } from "./IncomeFormModal";
-import { expenseService, isOk } from "@/mocks/services";
-import type { Income } from "@/mocks/types";
+import { isOk, listIncomes, type Income } from "@/features/cash";
 import { formatRupiah } from "@/lib/format";
 
 interface IncomesListProps {
@@ -33,7 +32,7 @@ export function IncomesList({ createdBy }: IncomesListProps) {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const res = await expenseService.listIncomes({ from, to, limit: 200 });
+      const res = await listIncomes({ from, to, limit: 200 });
       if (cancelled) return;
       if (isOk(res)) setIncomes(res.data.items);
       setLoading(false);

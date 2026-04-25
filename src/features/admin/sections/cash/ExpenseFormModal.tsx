@@ -2,14 +2,19 @@
 
 import { useEffect, useState } from "react";
 import { Button, Input, Modal, toast } from "@/components/ui";
-import { expenseService, isOk } from "@/mocks/services";
-import type { ExpenseCategory, ExpensePaymentMethod } from "@/mocks/types";
+import {
+  createExpense,
+  isOk,
+  type CashPaymentMethod,
+  type ExpenseCategory,
+} from "@/features/cash";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface ExpenseFormModalProps {
   open: boolean;
   categories: ExpenseCategory[];
+  /** Kept for callsite compatibility; action derives userId from session. */
   createdBy: string;
   onClose: () => void;
   onSaved: () => void;
@@ -18,7 +23,6 @@ interface ExpenseFormModalProps {
 export function ExpenseFormModal({
   open,
   categories,
-  createdBy,
   onClose,
   onSaved,
 }: ExpenseFormModalProps) {
@@ -27,7 +31,7 @@ export function ExpenseFormModal({
   const [categoryId, setCategoryId] = useState("");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState<ExpensePaymentMethod>("cash");
+  const [method, setMethod] = useState<CashPaymentMethod>("cash");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,14 +68,13 @@ export function ExpenseFormModal({
     }
     setSubmitting(true);
     setError(null);
-    const res = await expenseService.createExpense({
+    const res = await createExpense({
       expenseDate: date,
       categoryId,
       description: description.trim(),
       amount: parsedAmount,
       paymentMethod: method,
       receiptImageUrl: null,
-      createdBy,
     });
     if (!isOk(res)) {
       setError(res.error.message);
