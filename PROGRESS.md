@@ -5,8 +5,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 ## Current Status
 
 **Phase:** Phase 1 — Foundation
-**Fase:** B (Backend) — M8/M9/M10 done, M11 next ⚠️ critical (POS core backend)
-**Active Milestone:** M11 — POS Core Backend
+**Fase:** B (Backend) — M8-M12 done, M13 next (Expense/Income backend + rewire)
+**Active Milestone:** M13 — Cash & Expense Backend
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -29,8 +29,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M8** — Database Schema & Seed _(done 2026-04-25, 13 tables on Neon, Owner+11 cats+43 items+4 mods+9 exp cats seeded)_
 - [x] **M9** — Auth Backend (Auth.js v5 + RBAC) _(done 2026-04-25, JWT session, email+password + PIN providers, middleware role-routing, per-role expiry, approver-token flow, 32 unit tests)_
 - [x] **M10** — Menu Management Backend + Rewire UI _(done 2026-04-25, src/features/menu module + Server Actions, admin Menu section + POS rewired to real DB)_
-- [ ] **M11** — POS Core Backend + Rewire UI ⚠️ Critical
-- [ ] **M12** — Shift Management Backend + Rewire
+- [x] **M11** — POS Core Backend + Rewire UI ⚠️ Critical _(done 2026-04-25, transactions feature module with full server-side validation, atomic txn number, idempotency, void/refund + 17 validation tests)_
+- [x] **M12** — Shift Management Backend + Rewire _(done 2026-04-25, shifts module + POS rewired)_
 - [ ] **M13** — Expense/Income Backend + Rewire
 - [ ] **M14** — Reports Backend + Rewire
 - [ ] **M15** — Void/Refund/Discount with PIN Override
@@ -215,3 +215,16 @@ Build green: 10 routes (added /api/auth/[...nextauth], /api/v1/auth/{pin-users, 
 - `expenseService`, `reportService`, `userService` (admin sections) → M13/M14/M15
 
 **Next: M11 — POS Core Backend.** ⚠️ CRITICAL per execution plan §3 — most important milestone for money correctness. Test-first development required for createTransaction with full server-side validation per docs/03-TSD.md §5.3.
+
+**M11+M12 done (2026-04-25, 2 commits):**
+- **m11** `feat(m11): POS core backend — createTransaction + void + refund` — full src/features/transactions/ module: types/schemas/validation/helpers/queries/actions/index. Server-side validation re-derives every line subtotal from authoritative menu_items (catches price tampering, sold-out, open-price out of bounds, subtotal/discount/total/cash mismatch). Atomic transaction-number generation via pg_advisory_xact_lock keyed on outlet+WIB-day. Idempotency via clientRefId UNIQUE. Approver token consumption for Staff-initiated discount/void/refund. Refund auto-inserts expense row under system Refund category in same DB transaction. 17 unit tests cover every validation path.
+- **m11.6+m12** `feat(m11.6+m12): shifts backend + POS rewire` — src/features/shifts/ module: open (with active-shift guard via partial unique index), close (aggregates paid/voided/refunded by method, computes variance). PosShell + HistoryPanel + Open/CloseShiftModal + HistoryDetailModal + ShiftPanel rewired off mocks. End-to-end POS now hits Neon: shift → order → pay → void/refund.
+
+Total tests: 109. Build: 10 routes (no new endpoints — all Server Actions).
+
+**Outstanding mock dependencies for M13/M14/M15:**
+- `expenseService` (admin Cash section) → M13
+- `reportService` (admin Reports section + DashboardHome) → M14
+- `userService` (admin Staff section) → M15
+
+**Next: M13 — Expense/Income backend + admin Cash rewire.** Lower risk than M11 — straightforward CRUD + image upload (C3 decision needed: Vercel Blob vs base64 vs skip).
