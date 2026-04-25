@@ -1,10 +1,9 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import type { PublicUser } from "@/mocks/types";
 
 interface StaffAvatarGridProps {
-  users: PublicUser[];
+  users: ReadonlyArray<{ id: string; name: string; role: string }>;
   selectedId: string | null;
   onSelect: (userId: string) => void;
   className?: string;

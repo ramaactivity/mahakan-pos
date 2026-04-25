@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
 import Link from "next/link";
 import {
   Button,
@@ -16,16 +17,21 @@ import {
 } from "@/components/ui";
 import { StaffAvatarGrid } from "@/features/auth/StaffAvatarGrid";
 import { useSession } from "@/features/auth/SessionProvider";
-import { authService, isOk } from "@/mocks/services";
-import type { PublicUser } from "@/mocks/types";
+import type { Role } from "@/lib/auth";
 
 const MAX_PIN_LENGTH = 6;
+
+interface PinUser {
+  id: string;
+  name: string;
+  role: Role;
+}
 
 export default function PinLoginPage() {
   const router = useRouter();
   const { status, session, refresh } = useSession();
 
-  const [users, setUsers] = useState<PublicUser[]>([]);
+  const [users, setUsers] = useState<PinUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -36,23 +42,23 @@ export default function PinLoginPage() {
 
   useEffect(() => {
     if (status === "authenticated" && session) {
-      router.replace(
-        session.user.role === "staff" ? "/pos" : "/dashboard",
-      );
+      router.replace(session.user.role === "staff" ? "/pos" : "/dashboard");
     }
   }, [status, session, router]);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      // Mocks: surface all PIN-capable users (owner/manager/staff) for login.
-      // Production: only staff visible here; managers use /login.
-      const res = await authService.listPinUsers();
-      if (cancelled) return;
-      if (isOk(res)) {
-        setUsers(res.data);
+      try {
+        const res = await fetch("/api/v1/auth/pin-users");
+        if (!res.ok) throw new Error("load failed");
+        const json = (await res.json()) as { items: PinUser[] };
+        if (!cancelled) setUsers(json.items);
+      } catch {
+        if (!cancelled) setUsers([]);
+      } finally {
+        if (!cancelled) setLoadingUsers(false);
       }
-      setLoadingUsers(false);
     }
     void load();
     return () => {
@@ -70,9 +76,14 @@ export default function PinLoginPage() {
     setSubmitting(true);
     setError(null);
 
-    const res = await authService.loginWithPin(selectedId, pin);
-    if (!isOk(res)) {
-      setError(res.error.message);
+    const res = await signIn("pin", {
+      userId: selectedId,
+      pin,
+      redirect: false,
+    });
+
+    if (!res || res.error) {
+      setError("PIN salah");
       setShake(true);
       setPin("");
       setTimeout(() => setShake(false), 400);
@@ -80,21 +91,20 @@ export default function PinLoginPage() {
       return;
     }
 
-    toast.success(`Selamat bekerja, ${res.data.user.name}`);
-    await refresh();
-    router.replace(
-      res.data.user.role === "staff" ? "/pos" : "/dashboard",
-    );
+    toast.success("Berhasil login");
+    const updated = await refresh();
+    const role =
+      updated && typeof updated === "object" && "user" in updated
+        ? (updated as { user: { role: string } }).user.role
+        : null;
+    router.replace(role === "staff" ? "/pos" : "/dashboard");
   }
 
-  // Auto-submit when PIN reaches max length (convenience for 6-digit PINs).
-  // setState-in-effect is intentional: we react to user input (external event).
   useEffect(() => {
     if (pin.length === MAX_PIN_LENGTH && selectedId && !submitting) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       void onSubmit();
     }
-    // Only trigger when pin changes — onSubmit closure captures latest state
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pin]);
 
@@ -115,6 +125,10 @@ export default function PinLoginPage() {
           <div className="flex h-40 items-center justify-center">
             <Spinner className="size-6 text-mahakan-green-700" />
           </div>
+        ) : users.length === 0 ? (
+          <p className="py-8 text-center text-sm text-neutral-500">
+            Belum ada user dengan PIN. Owner perlu set PIN via admin dulu.
+          </p>
         ) : !selectedId ? (
           <StaffAvatarGrid
             users={users}
@@ -149,7 +163,10 @@ export default function PinLoginPage() {
               disabled={submitting}
             />
             {error ? (
-              <p role="alert" className="text-center text-sm font-medium text-danger-500">
+              <p
+                role="alert"
+                className="text-center text-sm font-medium text-danger-500"
+              >
                 {error}
               </p>
             ) : null}
