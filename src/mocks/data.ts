@@ -349,6 +349,18 @@ export const mockMenuItems: MenuItem[] = [
 // Modifiers — 4 per docs/04-MENU-DATA.md §Modifiers
 // --------------------------------------------------------------------------
 
+// Drinks: Coffee Based, Non-Coffee, Tea Based, Frappe, Mocktail.
+// Manual Brew explicitly has no modifiers (per docs/04-MENU-DATA.md §Manual Brew).
+// Food categories (Ricebowl, Sweets, Bites, Ice Cream) get no modifiers either.
+// Bakmie gets only extra_topping_ayam.
+const DRINK_CATEGORIES_FOR_MODIFIER = [
+  CAT_COFFEE,
+  CAT_NON_COFFEE,
+  CAT_TEA,
+  CAT_FRAPPE,
+  CAT_MOCKTAIL,
+];
+
 export const mockModifiers: Modifier[] = [
   {
     slug: "sugar_level",
@@ -360,7 +372,7 @@ export const mockModifiers: Modifier[] = [
       { value: "none", label: "No Sugar" },
     ],
     price: 0,
-    appliesToCategories: null, // all drinks
+    appliesToCategories: DRINK_CATEGORIES_FOR_MODIFIER,
     isActive: true,
     updatedAt: REF_DATE,
   },
@@ -374,7 +386,8 @@ export const mockModifiers: Modifier[] = [
       { value: "none", label: "No Ice" },
     ],
     price: 0,
-    appliesToCategories: null, // all iced drinks
+    // Iced drinks only — UI further filters by variant === "iced" in modal
+    appliesToCategories: DRINK_CATEGORIES_FOR_MODIFIER,
     isActive: true,
     updatedAt: REF_DATE,
   },

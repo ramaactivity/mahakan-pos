@@ -21,6 +21,7 @@ import {
   CardTitle,
   Spinner,
 } from "@/components/ui";
+import { NewOrderModal } from "@/features/pos/components/NewOrderModal";
 import { useSession } from "@/features/auth/SessionProvider";
 import { useCartStore } from "@/features/pos/cartStore";
 import { isOk, shiftService, transactionService } from "@/mocks/services";
@@ -46,6 +47,7 @@ export default function PosDashboardPage() {
   const [shift, setShift] = useState<Shift | null>(null);
   const [shiftLoading, setShiftLoading] = useState(true);
   const [activeOrders, setActiveOrders] = useState<Transaction[]>([]);
+  const [newOrderOpen, setNewOrderOpen] = useState(false);
 
   useEffect(() => {
     if (!session) return;
@@ -113,7 +115,7 @@ export default function PosDashboardPage() {
             <div className="flex flex-wrap gap-3">
               <Button
                 size="lg"
-                onClick={() => router.push("/pos/order/new")}
+                onClick={() => setNewOrderOpen(true)}
               >
                 <Plus className="size-5" /> Order Baru
               </Button>
@@ -227,6 +229,15 @@ export default function PosDashboardPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      <NewOrderModal
+        open={newOrderOpen}
+        onClose={() => setNewOrderOpen(false)}
+        onCreated={(draftId) => {
+          setNewOrderOpen(false);
+          router.push(`/pos/order/${draftId}`);
+        }}
+      />
     </div>
   );
 }
