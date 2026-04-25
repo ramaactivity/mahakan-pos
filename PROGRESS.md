@@ -5,8 +5,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 ## Current Status
 
 **Phase:** Phase 1 — Foundation
-**Fase:** A (UI Prototype) — ✅ **complete** as of M7
-**Active Milestone:** M8 next (Database Schema & Seed — Fase B start)
+**Fase:** B (Backend) — M8 done, M9 next (Auth backend)
+**Active Milestone:** M9 — Auth.js v5 + RBAC (HIGH RISK, beta volatile)
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -26,7 +26,7 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ### Fase B — Backend + Rebuild (Week 4-12)
 
-- [ ] **M8** — Database Schema & Seed
+- [x] **M8** — Database Schema & Seed _(done 2026-04-25, 13 tables on Neon, Owner+11 cats+43 items+4 mods+9 exp cats seeded)_
 - [ ] **M9** — Auth Backend (Auth.js v5 + RBAC)
 - [ ] **M10** — Menu Management Backend + Rewire UI
 - [ ] **M11** — POS Core Backend + Rewire UI ⚠️ Critical
@@ -174,3 +174,18 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - C1 dependency lock decision (TSD spec vs current installed)
 - Bundle the pre-existing `AGENTS.md` / `docs/00-README.md` / `docs/03-TSD.md` modifications, or discard?
 - Menu count: 43 (mock) vs 45 (PRD spec) — confirm correct figure for seed.
+
+**M8 done (2026-04-25, kickoff Fase B):**
+- Decisions resolved before kickoff: C1=C (TSD now reflects installed versions, locked); pre-existing docs modifs bundled in `c9a396f`; menu count=43; C4=B (Owner-only seed, manual staff creation via UI later).
+- **m8.1-3** `feat(m8.1-3): Drizzle schema + initial migration` — `drizzle.config.ts` + `src/db/index.ts` (Neon serverless pool); 7 schema files / 13 tables (outlets, users, categories, menu_items, modifiers, shifts, transactions, transaction_items, transaction_item_modifiers, expense_categories, expenses, incomes, audit_logs); DB-level hard guarantees: partial unique idxs (`ux_shifts_user_active`, `ux_users_email_active`), CHECK constraints (`ck_users_auth`, `ck_menu_items_price_consistency`, `ck_transactions_total_consistency`, `ck_transactions_cash_fields`, money-nonneg across tables); migration generated as `drizzle/migrations/0000_cute_vector.sql` (291 lines).
+- **m8.5** Migration applied to Neon — 13 CREATE TABLE + 30 FKs + 22 indexes + 12 CHECKs successful (one harmless NOTICE about FK name truncation to Postgres' 63-char limit).
+- **m8.6** `feat(m8.6): seed script` — `src/db/seed.ts` with dotenv + bcrypt(12) + idempotency guard, reuses `src/mocks/data` as source-of-truth during transition.
+- **m8.7** Seed run successful: 1 outlet, 1 Owner, 11 categories, 43 menu items (24 fixed + 17 variant + 2 open), 4 modifiers, 9 expense categories (1 system "Refund").
+- **m8.8** Verification queries on Neon confirmed all counts match expected.
+
+**Pending decisions (Critical, due at M9):**
+- C2 — Session duration per role (recommend A: Staff 12h, Owner/Manager 2h)
+- C4 — Already resolved as B
+- C5 — PIN policy (recommend A: 4-6 digit basic)
+
+**Next: M9 — Auth.js v5 backend.** ⚠️ HIGH RISK per execution plan §3 (beta volatile). Strategy: Context7 MCP lookup before implementing, build incrementally (email+pass first → PIN → approver flow), commit per slice.
