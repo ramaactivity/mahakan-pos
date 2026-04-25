@@ -6,6 +6,7 @@ import {
   AdminLeftNav,
   type AdminSection,
 } from "@/features/admin/components/AdminLeftNav";
+import { CashSection } from "@/features/admin/sections/CashSection";
 import { DashboardHome } from "@/features/admin/sections/DashboardHome";
 import { MenuSection } from "@/features/admin/sections/MenuSection";
 import { SectionStub } from "@/features/admin/sections/SectionStub";
@@ -46,16 +47,7 @@ export function AdminShell() {
         ) : section === "shifts" ? (
           <ShiftsSection />
         ) : section === "cash" ? (
-          <SectionStub
-            title="Kas & Pengeluaran"
-            description="Catat pengeluaran + pemasukan + ringkasan kas harian."
-            notes={[
-              "List pengeluaran (8 kategori + Refund auto)",
-              "Form tambah pengeluaran dengan upload foto bukti",
-              "List pemasukan non-POS (sewa event, dll)",
-              "Ringkasan kas harian: POS revenue + manual + expenses + net",
-            ]}
-          />
+          <CashSection viewerUserId={session.user.id} />
         ) : section === "reports" ? (
           <SectionStub
             title="Laporan"
