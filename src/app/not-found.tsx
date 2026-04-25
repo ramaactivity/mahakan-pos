@@ -5,11 +5,12 @@ export default function NotFound() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-neutral-50 px-4 py-8 text-center">
       <Image
-        src="/assets/logo/Logo_Mahakan_Hijau.png"
+        src="/assets/logo/Logo_Mahakan_Putih.png"
         alt="Mahakan Coffee & Space"
         width={96}
         height={136}
         priority
+        className="mix-blend-difference"
       />
       <h1 className="mt-6 text-2xl font-bold text-mahakan-green-900">
         Halaman tidak ditemukan

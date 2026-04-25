@@ -6,11 +6,12 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen flex-col items-center justify-center bg-neutral-50 px-4 py-8">
       <div className="mb-8 flex flex-col items-center">
         <Image
-          src="/assets/logo/Logo_Mahakan_Hijau.png"
+          src="/assets/logo/Logo_Mahakan_Putih.png"
           alt="Mahakan Coffee & Space"
           width={120}
           height={170}
           priority
+          className="mix-blend-difference"
         />
         <p className="mt-3 text-sm text-neutral-500">
           Mahakan Coffee &amp; Space — POS
