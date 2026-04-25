@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { Lock, Mail } from "lucide-react";
 import {
@@ -15,23 +16,31 @@ import {
   toast,
 } from "@/components/ui";
 import { useSession } from "@/features/auth/SessionProvider";
-import { authService, isOk } from "@/mocks/services";
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginContent />
+    </Suspense>
+  );
+}
+
+function LoginContent() {
   const router = useRouter();
+  const params = useSearchParams();
   const { status, session, refresh } = useSession();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    params.get("expired") === "1" ? "Sesi habis. Silakan login ulang." : null,
+  );
   const [submitting, setSubmitting] = useState(false);
   const [shake, setShake] = useState(false);
 
   useEffect(() => {
     if (status === "authenticated" && session) {
-      router.replace(
-        session.user.role === "staff" ? "/pos" : "/dashboard",
-      );
+      router.replace(session.user.role === "staff" ? "/pos" : "/dashboard");
     }
   }, [status, session, router]);
 
@@ -41,21 +50,27 @@ export default function LoginPage() {
     setSubmitting(true);
     setError(null);
 
-    const res = await authService.loginWithEmailPassword(email, password);
+    const res = await signIn("email-password", {
+      email,
+      password,
+      redirect: false,
+    });
 
-    if (!isOk(res)) {
-      setError(res.error.message);
+    if (!res || res.error) {
+      setError("Email atau password salah");
       setShake(true);
       setTimeout(() => setShake(false), 400);
       setSubmitting(false);
       return;
     }
 
-    toast.success(`Selamat datang, ${res.data.user.name}`);
-    await refresh();
-    router.replace(
-      res.data.user.role === "staff" ? "/pos" : "/dashboard",
-    );
+    toast.success("Berhasil login");
+    const updated = await refresh();
+    const role =
+      updated && typeof updated === "object" && "user" in updated
+        ? (updated as { user: { role: string } }).user.role
+        : null;
+    router.replace(role === "staff" ? "/pos" : "/dashboard");
   }
 
   return (

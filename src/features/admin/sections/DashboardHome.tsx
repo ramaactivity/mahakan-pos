@@ -21,10 +21,9 @@ import {
 import { isOk, reportService } from "@/mocks/services";
 import type { DailySalesReport } from "@/mocks/services/reportService";
 import { formatRupiah } from "@/lib/format";
-import type { PublicUser } from "@/mocks/types";
 
 interface DashboardHomeProps {
-  user: PublicUser;
+  user: { name: string };
 }
 
 export function DashboardHome({ user }: DashboardHomeProps) {

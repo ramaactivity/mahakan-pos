@@ -1,66 +1,62 @@
 "use client";
 
+import { useMemo, type ReactNode } from "react";
 import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
-import { authService } from "@/mocks/services";
-import type { Session } from "@/mocks/types";
+  SessionProvider as NextAuthSessionProvider,
+  useSession as useNextAuthSession,
+  signOut as nextAuthSignOut,
+} from "next-auth/react";
+import type { Role } from "@/lib/auth";
+
+export interface SessionUser {
+  id: string;
+  name: string;
+  email: string | null;
+  role: Role;
+  outletId: string;
+}
+
+export interface SessionData {
+  user: SessionUser;
+  expires: string;
+}
 
 type SessionStatus = "loading" | "authenticated" | "unauthenticated";
 
 interface SessionContextValue {
-  session: Session | null;
+  session: SessionData | null;
   status: SessionStatus;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<unknown>;
   logout: () => Promise<void>;
 }
 
-const SessionContext = createContext<SessionContextValue | null>(null);
-
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [status, setStatus] = useState<SessionStatus>("loading");
-
-  const refresh = useCallback(async () => {
-    const res = await authService.getSession();
-    if (res.success) {
-      setSession(res.data);
-      setStatus(res.data ? "authenticated" : "unauthenticated");
-    } else {
-      setSession(null);
-      setStatus("unauthenticated");
-    }
-  }, []);
-
-  const logout = useCallback(async () => {
-    await authService.logout();
-    setSession(null);
-    setStatus("unauthenticated");
-  }, []);
-
-  useEffect(() => {
-    // Initialize session from mock store on mount. setState inside effect is
-    // intentional here — we're syncing React state with an external async source.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refresh();
-  }, [refresh]);
-
-  return (
-    <SessionContext.Provider value={{ session, status, refresh, logout }}>
-      {children}
-    </SessionContext.Provider>
-  );
+  return <NextAuthSessionProvider>{children}</NextAuthSessionProvider>;
 }
 
 export function useSession(): SessionContextValue {
-  const ctx = useContext(SessionContext);
-  if (!ctx) {
-    throw new Error("useSession must be used inside <SessionProvider>");
-  }
-  return ctx;
+  const { data, status, update } = useNextAuthSession();
+
+  const session = useMemo<SessionData | null>(() => {
+    if (!data) return null;
+    return {
+      user: {
+        id: data.user.id,
+        name: data.user.name,
+        email: data.user.email ?? null,
+        role: data.user.role,
+        outletId: data.user.outletId,
+      },
+      expires: data.expires,
+    };
+  }, [data]);
+
+  return {
+    session,
+    status,
+    refresh: update,
+    logout: async () => {
+      await nextAuthSignOut({ redirect: false });
+    },
+  };
 }
