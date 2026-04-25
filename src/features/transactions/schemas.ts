@@ -1,0 +1,52 @@
+import { z } from "zod";
+
+const moneySchema = z.number().int().nonnegative();
+
+const itemModifierSchema = z.object({
+  modifierSlug: z.string().min(1),
+  selectedValue: z.string().nullable(),
+  priceDelta: moneySchema,
+});
+
+const itemSchema = z.object({
+  menuItemId: z.uuid(),
+  variant: z.enum(["hot", "iced"]).nullable(),
+  quantity: z.number().int().min(1).max(99),
+  unitPrice: moneySchema,
+  modifiersPriceDelta: moneySchema,
+  subtotal: moneySchema,
+  note: z.string().max(200).nullable(),
+  openPriceNote: z.string().max(200).nullable(),
+  modifiers: z.array(itemModifierSchema).max(10),
+});
+
+export const createTransactionSchema = z.object({
+  clientRefId: z.uuid().optional(),
+  shiftId: z.uuid(),
+  cashierId: z.uuid(),
+  pagerNumber: z.number().int().min(1).max(99),
+  orderType: z.enum(["dine_in", "takeaway"]),
+  items: z.array(itemSchema).min(1).max(50),
+  subtotal: moneySchema,
+  discountType: z.enum(["percent", "fixed"]).nullable(),
+  discountValue: moneySchema.nullable(),
+  discountAmount: moneySchema,
+  discountReason: z.string().max(120).nullable(),
+  total: moneySchema,
+  paymentMethod: z.enum(["cash", "qris", "card_bca"]),
+  cashReceived: moneySchema.nullable(),
+  cashChange: moneySchema.nullable(),
+  discountApproverToken: z.string().optional(),
+});
+
+export const voidTransactionSchema = z.object({
+  transactionId: z.uuid(),
+  reason: z.string().trim().min(3).max(200),
+  approverToken: z.string().optional(),
+});
+
+export const refundTransactionSchema = z.object({
+  transactionId: z.uuid(),
+  reason: z.string().trim().min(3).max(200),
+  approverToken: z.string().optional(),
+});
