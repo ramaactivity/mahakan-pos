@@ -1,7 +1,7 @@
 # ⚙️ TSD — Mahakan Coffee & Space POS System
 
 **Technical Specification Document**
-**Version:** 1.0 — Phase 1 MVP
+**Version:** 1.1 — Phase 1 MVP
 **Date:** April 2026
 **Status:** ✅ APPROVED
 **Depends on:** `01-PRD.md`, `02-FSD.md`
@@ -21,7 +21,7 @@
 │  └──────┬───────┘  └──────┬───────┘  └────────┬─────────┘ │
 │         │                  │                    │           │
 │  ┌──────┴──────────────────┴────────────────────┴────────┐ │
-│  │  Next.js 15 App Router (RSC + Client Components)      │ │
+│  │  Next.js 16 App Router (RSC + Client Components)      │ │
 │  │  - Server Components (data fetching)                  │ │
 │  │  - Client Components (interactivity)                  │ │
 │  │  - Server Actions (mutations)                         │ │
@@ -87,7 +87,7 @@
 | **Postgres (Neon) over SQLite** | Concurrent writes across tablet+phone+desktop need serializable transactions. Neon free tier sufficient |
 | **Drizzle over Prisma** | Lighter bundle, SQL-first mental model, better Edge compatibility |
 | **Auth.js v5 over Better Auth** | More battle-tested for financial systems; mature JWT handling |
-| **Serwist over next-pwa** | Actively maintained successor; Next.js 15 compatible |
+| **Serwist over next-pwa** | Actively maintained successor; Next.js 16 compatible |
 | **Web Bluetooth (not native bridge)** | Works in PWA without needing native wrapper; sufficient for RPP02 which is standard ESC/POS |
 | **IndexedDB (not localStorage) for offline queue** | Async API, structured, larger quota, supports complex objects |
 | **SSE over WebSocket for sold-out broadcast** | Simpler, unidirectional fits use case, works through proxies better |
@@ -118,43 +118,44 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "next": "^15.0.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "next-auth": "5.0.0-beta.x",
-    "@auth/drizzle-adapter": "^1.x",
-    "drizzle-orm": "^0.36.x",
-    "postgres": "^3.4.x",
-    "@neondatabase/serverless": "^0.10.x",
-    "bcryptjs": "^2.4.x",
-    "zod": "^3.23.x",
-    "@tanstack/react-query": "^5.x",
-    "@tanstack/react-table": "^8.x",
-    "serwist": "^9.x",
-    "@serwist/next": "^9.x",
-    "dexie": "^4.x",
-    "clsx": "^2.x",
-    "tailwind-merge": "^2.x",
-    "lucide-react": "^0.x",
-    "recharts": "^2.x",
-    "jspdf": "^2.5.x",
-    "date-fns": "^4.x",
-    "date-fns-tz": "^3.x",
-    "nanoid": "^5.x"
+    "next": "16.2.4",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "next-auth": "^5.0.0-beta.31",
+    "@auth/drizzle-adapter": "^1.11.2",
+    "drizzle-orm": "^0.45.2",
+    "postgres": "^3.4.9",
+    "@neondatabase/serverless": "^1.1.0",
+    "bcryptjs": "^3.0.3",
+    "zod": "^4.3.6",
+    "@tanstack/react-query": "^5.100.1",
+    "@tanstack/react-table": "^8.21.3",
+    "serwist": "^9.5.7",
+    "@serwist/next": "^9.5.7",
+    "dexie": "^4.4.2",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.5.0",
+    "lucide-react": "^1.9.0",
+    "recharts": "^3.8.1",
+    "jspdf": "^4.2.1",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "nanoid": "^5.1.9"
   },
   "devDependencies": {
-    "typescript": "^5.x",
-    "@types/node": "^20.x",
-    "@types/react": "^19.x",
-    "@types/bcryptjs": "^2.4.x",
-    "drizzle-kit": "^0.28.x",
-    "tailwindcss": "^4.x",
-    "@tailwindcss/postcss": "^4.x",
-    "eslint": "^9.x",
-    "eslint-config-next": "^15.x",
-    "vitest": "^2.x",
-    "@testing-library/react": "^16.x",
-    "tsx": "^4.x"
+    "typescript": "^5",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/bcryptjs": "^2.4.6",
+    "drizzle-kit": "^0.31.10",
+    "tailwindcss": "^4",
+    "@tailwindcss/postcss": "^4",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.4",
+    "vitest": "^4.1.5",
+    "@testing-library/react": "^16.3.2",
+    "tsx": "^4.21.0"
   }
 }
 ```
@@ -780,8 +781,8 @@ The `src/db/seed.ts` will populate:
 
 1. Default outlet (Mahakan Coffee & Space)
 2. Default Owner user (email + password from env vars)
-3. 10 categories with display order
-4. 45 menu items (see `04-MENU-DATA.md`)
+3. 11 categories with display order
+4. 43 menu items (see `04-MENU-DATA.md`)
 5. 4 modifier config rows
 6. 8 default expense categories
 7. 1 system "Refund" expense category
@@ -1178,6 +1179,8 @@ export const config = {
   matcher: ['/((?!_next|favicon.ico|icons|fonts|logo.png).*)'],
 };
 ```
+
+**Next.js 16 note:** `middleware.ts` is **deprecated** in Next.js 16 in favor of `proxy.ts` (Node.js-only runtime, not Edge). The pattern shown above **still works** in Next 16 and is the correct choice for Phase 1 because Auth.js v5 beta integrates via `middleware.ts`. Migration to `proxy.ts` is scheduled for **Phase 2+** before the Next.js 17 upgrade, where `middleware.ts` support is expected to be removed.
 
 ---
 
@@ -1822,6 +1825,7 @@ SEED_OWNER_NAME=
 - **SSE 60s limit:** Client must reconnect. Fallback polling handles this.
 - **Cold start:** First request after inactivity is slower (~1-3s). Acceptable for POS which keeps connection warm.
 - **Neon auto-suspend:** Free tier Neon suspends after 5 min idle. Cold reconnect ~1-2s. Keep-alive via periodic health check from client.
+- **Turbopack default (Next.js 16):** `next dev` and `next build` use Turbopack automatically — the `--turbopack` flag in `package.json` scripts is now cosmetic (safe to leave or drop). Faster cold builds on Vercel vs Webpack.
 
 ### 11.4 Migration Path Away from Vercel (if needed)
 
@@ -1873,10 +1877,11 @@ Future-proofing: if Vercel becomes constrained:
 | Version | Date | Changes |
 |---|---|---|
 | 1.0 | 2026-04-20 | Initial TSD based on PRD v1.0, FSD v1.0 |
+| 1.1 | 2026-04-24 | Updated Next.js version reference 15 → 16.2.4 setelah Next.js 16 stable release. Breaking changes documented (middleware→proxy deprecated, Turbopack default, revalidateTag API change). Phase 1 tetap pakai middleware.ts pattern karena Auth.js v5 compat. |
 
 ---
 
-# 🛑 END OF TSD v1.0
+# 🛑 END OF TSD v1.1
 
 **Status:** ✅ APPROVED
 **Next Step:** Implementation — Phase 0 (Foundation: setup project, DB schema, auth, design system)

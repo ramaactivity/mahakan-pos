@@ -1,6 +1,6 @@
 # 🍽️ MENU DATA — Mahakan Coffee & Space
 
-**Document:** Seed data for 45 SKU menu
+**Document:** Seed data for 43 SKU menu
 **Version:** 1.0
 **Source:** Menu photo MENU_FIX_MAHAKAN_2026.png
 **Last Updated:** April 2026
@@ -298,7 +298,7 @@ async function seed() {
     categoryData.map(c => ({ ...c, outletId: outlet.id, createdBy: owner.id }))
   ).returning();
 
-  // 4. Seed menu items (45 items)
+  // 4. Seed menu items (43 items)
   // ... see menu_items_seed.ts file for full data
 
   // 5. Seed modifiers (4 rows)

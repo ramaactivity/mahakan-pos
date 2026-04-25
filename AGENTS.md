@@ -37,7 +37,7 @@ This file is automatically read by Antigravity (and compatible tools like Cursor
 
 ## 🛠 Tech Stack (Locked)
 
-- **Framework:** Next.js 15 (App Router, Server Actions)
+- **Framework:** Next.js 16 (App Router, Server Actions)
 - **Styling:** Tailwind CSS v4
 - **Database:** Postgres via Neon (free tier), ORM: Drizzle
 - **Auth:** Auth.js v5 (NextAuth)
@@ -108,7 +108,9 @@ Each feature folder has: `actions.ts`, `queries.ts`, `schemas.ts`, `types.ts`, `
 
 Training data for AI agents may be outdated. **Always verify current library APIs via Context7 MCP** (if available) before writing code. Libraries that frequently change:
 
-- Next.js 15 App Router (Server Actions, `loading.tsx`, `error.tsx` patterns)
+- Next.js 16 App Router (Server Actions, `loading.tsx`, `error.tsx` patterns) — breaking vs 15: `middleware.ts` deprecated (→ `proxy.ts` by Next 17/18), Turbopack is default for `next dev`/`next build`, `revalidateTag` now takes a second `cacheLife` arg. Phase 1 keeps `middleware.ts` (Auth.js v5 compat) and does not use `revalidateTag`.
+- Zod v4 (was v3): `z.string().email()` deprecated → use `z.email()`. Error structure changed. Refer Context7 MCP for zod@4 patterns.
+- Vitest v4 (was v2): mostly backward compat. Syntax contoh di docs should still work.
 - Tailwind CSS v4 (new CSS-first config, different from v3)
 - Drizzle ORM (schema syntax, relations API)
 - Auth.js v5 (beta — major changes from NextAuth v4)

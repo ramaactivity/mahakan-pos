@@ -1,6 +1,7 @@
 # 📚 Mahakan Coffee & Space — Documentation Index
 
 **Project:** POS + Operations System for Mahakan Coffee & Space
+**Version:** 1.2 — Phase 1 MVP
 **Current Phase:** Phase 1 — MVP (Pragmatic Launch)
 **Last Updated:** April 2026
 **Status:** 📦 Documentation complete, ready for implementation
@@ -25,7 +26,7 @@ Urutan baca dokumen (wajib sequential untuk pemahaman penuh):
 
 ### Supporting Documents ✅ All Complete
 
-- **`04-MENU-DATA.md`** — Seed data 45 SKU menu Mahakan + modifiers + default outlet config
+- **`04-MENU-DATA.md`** — Seed data 43 SKU menu Mahakan + modifiers + default outlet config
 - **`05-ROLES-RBAC.md`** — Role-Based Access Control matrix ~80 actions × 3 roles + PIN override flow
 - **`06-DATABASE-SCHEMA.md`** — ASCII ERD + per-table reference + indexes + query patterns + migration strategy
 - **`07-UI-DESIGN-SYSTEM.md`** — Design tokens (Mahakan sage green palette from logo), component patterns, Tailwind v4 config
@@ -52,7 +53,7 @@ Jika lo adalah AI assistant (Claude, Copilot, Windsurf, Antigravity, dll) yang b
 - Alamat: `Puncak Rd No.KM 22, Cisarua, Bogor Regency, West Java 16750`
 - Phone: `0838-1977-5665`
 - Jam: Weekday 14:00-22:00, Weekend 09:00-23:00
-- 45 SKU menu dalam 11 kategori (ricebowl, bakmie, coffee, non-coffee, manual brew, dll)
+- 43 SKU menu dalam 11 kategori (ricebowl, bakmie, coffee, non-coffee, manual brew, dll)
 - Service mode: Dine-in & Takeaway (pakai pager number, tidak pakai sistem meja)
 - Barista merangkap kasir
 
@@ -67,7 +68,7 @@ Jika lo adalah AI assistant (Claude, Copilot, Windsurf, Antigravity, dll) yang b
 - Timezone: Asia/Jakarta (WIB)
 
 **Tech Stack:**
-- Next.js 15 (App Router)
+- Next.js 16 (App Router)
 - Tailwind CSS v4
 - Postgres via Neon (free tier)
 - Drizzle ORM
@@ -94,7 +95,7 @@ Jika lo adalah AI assistant (Claude, Copilot, Windsurf, Antigravity, dll) yang b
 2. Cek scope Phase 1 — jangan implement fitur Phase 2+
 3. Follow folder structure & naming convention dari TSD section 3
 4. Unit test untuk semua logic uang (money.ts, discount.ts, transaction.ts)
-5. Untuk library docs (Next.js 15, Drizzle, Tailwind v4, Auth.js v5), **selalu verify lewat Context7 MCP** kalau tersedia — jangan andalkan training data yang mungkin outdated
+5. Untuk library docs (Next.js 16, Drizzle, Tailwind v4, Auth.js v5), **selalu verify lewat Context7 MCP** kalau tersedia — jangan andalkan training data yang mungkin outdated
 
 **Design System Quick Reference:**
 - Primary action color: `mahakan-green-700` (`#3D7557`) — WCAG AA compliant ✅
@@ -115,7 +116,7 @@ Jika lo adalah AI assistant (Claude, Copilot, Windsurf, Antigravity, dll) yang b
 
 **Phase 1 Implementation Order (Recommended):**
 
-1. **Week 1 — Foundation:** Next.js 15 setup, Drizzle migration, Neon connection, Auth.js v5, seed data, design tokens
+1. **Week 1 — Foundation:** Next.js 16 setup, Drizzle migration, Neon connection, Auth.js v5, seed data, design tokens
 2. **Week 2 — POS Core:** Menu fetch, new order flow, cart, modifiers, payment (cash first), receipt print
 3. **Week 3 — POS Complete:** QRIS/card payment, void, refund, sold-out, multi-draft, offline resilience
 4. **Week 4 — Shift + Cash:** Shift open/close with variance, expense/income logging, daily cash summary
@@ -132,6 +133,8 @@ Jika lo adalah AI assistant (Claude, Copilot, Windsurf, Antigravity, dll) yang b
 |---|---|---|
 | 2026-04-20 | 1.0 | Initial PRD for Phase 1 |
 | 2026-04-20 | 1.1 | All 10 docs complete, owner info finalized (logo, address, phone, hours), palette updated to actual sage green `#539371` from logo with WCAG AA dual-token strategy |
+| 2026-04-24 | 1.2 | Stick with Next.js 16.2.4 after scaffold (was docs'd as 15). Docs updated for consistency. |
+| 2026-04-25 | 1.3 | C1 decided: dependency versions locked to current installed (TSD §2.1 now reflects exact versions, no longer caret-ranged spec). Menu count locked at 43 (was "~45" in PRD §2.1, "10 kategori" → "11 kategori"); `04-MENU-DATA.md` is source of truth. |
 
 ---
 
@@ -164,7 +167,7 @@ Sebelum mulai coding:
 - [ ] Install Claude extension in Antigravity IDE
 - [ ] Configure Claude to read `/docs` as grounding context
 - [ ] Install Context7 MCP for fresh library docs lookup
-- [ ] Start with Week 1 Foundation — Next.js 15 scaffold
+- [ ] Start with Week 1 Foundation — Next.js 16 scaffold
 
 ## ⚠️ Safety Reminders untuk Vibe Coding
 

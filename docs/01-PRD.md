@@ -69,7 +69,7 @@ Semua di atas adalah kandidat untuk **Phase 2+**. Arsitektur Phase 1 harus **sia
 | Tagline | "A homely space for everyone to gather, dine & get caffeinated" |
 | Tipe | Coffee shop + ruang berkumpul |
 | Skala | Single outlet |
-| Total SKU menu | ~45 items dalam 10 kategori |
+| Total SKU menu | 43 items dalam 11 kategori |
 | Mode servis | Dine-in & Takeaway (order via pager number) |
 | Jam operasional | Configurable di settings |
 | Bahasa UI | Bahasa Indonesia |
@@ -91,7 +91,7 @@ Semua di atas adalah kandidat untuk **Phase 2+**. Arsitektur Phase 1 harus **sia
 | Manual Brew | 2 | Tidak | **Open-price**: barista input harga manual + free-text note untuk jenis beans |
 | Ice Cream | 3 | Tidak | Harga fixed |
 
-**Detail lengkap 45 SKU** akan di-dokumentasikan di `04-MENU-DATA.md` selama TSD phase.
+**Detail lengkap 43 SKU** ada di `04-MENU-DATA.md` — itu adalah source of truth untuk seed.
 
 ### 2.3 Modifier Global (Phase 1)
 
