@@ -47,7 +47,7 @@ export default function PinLoginPage() {
     async function load() {
       // Mocks: surface all PIN-capable users (owner/manager/staff) for login.
       // Production: only staff visible here; managers use /login.
-      const res = await authService.listApprovers();
+      const res = await authService.listPinUsers();
       if (cancelled) return;
       if (isOk(res)) {
         setUsers(res.data);

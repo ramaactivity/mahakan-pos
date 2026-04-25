@@ -162,6 +162,27 @@ export async function listApprovers(): Promise<ApiResult<PublicUser[]>> {
   return ok(approvers);
 }
 
+/**
+ * List all PIN-capable users for the PIN login screen.
+ * Includes Staff + any Owner/Manager who has set a PIN.
+ *
+ * In production, this might be restricted to Staff role only — Owner/Manager
+ * use /login (email+password). For Phase 1 prototype we surface everyone
+ * with a PIN so they can use either entry point flexibly.
+ */
+export async function listPinUsers(): Promise<ApiResult<PublicUser[]>> {
+  await delay();
+  const pinUsers = users
+    .filter(
+      (u) =>
+        u.deletedAt === null &&
+        u.status === "active" &&
+        u.pinHash !== null,
+    )
+    .map(toPublicUser);
+  return ok(pinUsers);
+}
+
 export async function getSession(): Promise<ApiResult<Session | null>> {
   await delay(50); // fast path — usually called on every page render
   if (!currentSession) return ok(null);
