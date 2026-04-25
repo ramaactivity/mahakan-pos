@@ -16,6 +16,8 @@ declare module "next-auth" {
       role: Role;
       outletId: string;
     };
+    /** Unix epoch seconds when this session must be re-authenticated per role policy. */
+    roleExp: number;
   }
 }
 
@@ -24,5 +26,7 @@ declare module "next-auth/jwt" {
     userId: string;
     role: Role;
     outletId: string;
+    /** Unix epoch seconds — role-specific hard expiry (C2=A). */
+    roleExp: number;
   }
 }

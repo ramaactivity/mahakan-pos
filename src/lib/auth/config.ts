@@ -7,7 +7,7 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { verifyPassword } from "./password";
 import { verifyPin, isValidPinFormat } from "./pin";
-import type { Role } from "./rbac";
+import { sessionMaxAgeSeconds, type Role } from "./rbac";
 import "./types";
 
 const emailPasswordSchema = z.object({
@@ -122,6 +122,8 @@ export const authConfig: NextAuthConfig = {
         token.userId = user.id as string;
         token.role = user.role;
         token.outletId = user.outletId;
+        token.roleExp =
+          Math.floor(Date.now() / 1000) + sessionMaxAgeSeconds(user.role);
       }
       return token;
     },
@@ -129,6 +131,7 @@ export const authConfig: NextAuthConfig = {
       session.user.id = token.userId;
       session.user.role = token.role;
       session.user.outletId = token.outletId;
+      session.roleExp = token.roleExp;
       return session;
     },
   },
