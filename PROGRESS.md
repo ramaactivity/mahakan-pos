@@ -5,8 +5,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 ## Current Status
 
 **Phase:** Phase 1 — Foundation
-**Fase:** A (UI Prototype)
-**Active Milestone:** M7 — UI Review & Polish (Fase A wrap-up)
+**Fase:** A (UI Prototype) — ✅ **complete** as of M7
+**Active Milestone:** M8 next (Database Schema & Seed — Fase B start)
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -22,12 +22,7 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M4** — Auth UI Prototype _(done 2026-04-24, login + PIN + protected routes wired to mocks)_
 - [x] **M5** — POS UI Prototype _(done 2026-04-24, full order→pay→history flow, single-page 3-col)_
 - [x] **M6** — Admin UI Prototype _(done 2026-04-25, single-page sidebar + 7 sections live)_
-- [ ] **M7** — UI Review & Polish _(next — Fase A wrap-up)_
-- [ ] **M3** — Mock Data Layer
-- [ ] **M4** — Auth UI Prototype
-- [ ] **M5** — POS UI Prototype
-- [ ] **M6** — Admin UI Prototype
-- [ ] **M7** — UI Review & Polish — 🎯 **Fase A complete**
+- [x] **M7** — UI Review & Polish _(done 2026-04-25, error boundaries + skeletons + a11y + cleanup)_ — 🎯 **Fase A complete**
 
 ### Fase B — Backend + Rebuild (Week 4-12)
 
@@ -162,3 +157,20 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 **Pre-existing modifications (not yet decided):**
 - `AGENTS.md`, `docs/00-README.md`, `docs/03-TSD.md` — modified in prior session, likely Next.js 15→16 version sync (per memory `tsd-version-lock-pending`). User to review before committing.
+
+---
+
+### 2026-04-25 (Session 2)
+
+**M7 done (4 atomic commits):**
+- **m7.1** `feat(m7.1): error boundaries + custom 404` — root + per-route-group `error.tsx` (`(auth)`, `(admin)`, `(pos)`), `global-error.tsx` last-resort fallback, custom `not-found.tsx` with Mahakan logo.
+- **m7.2** `feat(m7.2): loading skeletons across list views` — added `Skeleton` primitive (animate-pulse, respects `prefers-reduced-motion`) and replaced `Spinner` in 14 list/detail views (admin Dashboard, Menu items/categories/modifiers, Staff, Shifts + detail modal, Cash expenses/incomes/daily summary, Reports daily/items/P&L, Settings, POS menu grid). Skeleton shapes mimic final layout to reduce hydration shift. `Spinner` retained for transient states (auth gate, button loading, PIN screen, showcase).
+- **m7.3** `feat(m7.3): a11y pass — radiogroups + main landmark + select label` — segmented controls (price-type, order-type, discount-type + reason, payment-method) get `role="radiogroup"` / `role="radio"` / `aria-checked` + `focus-visible` rings; `(auth)` layout wraps content in `<main>`; ItemsList category filter `<select>` gets `aria-label`.
+- **m7.4** `chore(m7.4): cleanup orphan + polish empty cart state` — deleted unused `SectionStub.tsx`; POS empty-cart state gets cart icon + two-line copy.
+
+**Verification:** `npm run typecheck` ✓, `npm run lint` ✓, `npx vitest run` ✓ 60/60, `npm run build` ✓ 6 routes static.
+
+**Fase A complete.** Next: M8 (Database Schema & Seed) — kick off Fase B. Need user confirmation on:
+- C1 dependency lock decision (TSD spec vs current installed)
+- Bundle the pre-existing `AGENTS.md` / `docs/00-README.md` / `docs/03-TSD.md` modifications, or discard?
+- Menu count: 43 (mock) vs 45 (PRD spec) — confirm correct figure for seed.
