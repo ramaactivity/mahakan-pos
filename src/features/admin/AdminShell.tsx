@@ -9,7 +9,8 @@ import {
 import { CashSection } from "@/features/admin/sections/CashSection";
 import { DashboardHome } from "@/features/admin/sections/DashboardHome";
 import { MenuSection } from "@/features/admin/sections/MenuSection";
-import { SectionStub } from "@/features/admin/sections/SectionStub";
+import { ReportsSection } from "@/features/admin/sections/ReportsSection";
+import { SettingsSection } from "@/features/admin/sections/SettingsSection";
 import { ShiftsSection } from "@/features/admin/sections/ShiftsSection";
 import { StaffSection } from "@/features/admin/sections/StaffSection";
 import { useSession } from "@/features/auth/SessionProvider";
@@ -49,29 +50,9 @@ export function AdminShell() {
         ) : section === "cash" ? (
           <CashSection viewerUserId={session.user.id} />
         ) : section === "reports" ? (
-          <SectionStub
-            title="Laporan"
-            description="Daily sales, item performance, P&L (Owner only), shift report."
-            notes={[
-              "Daily sales dengan chart hourly + payment method + top items",
-              "Range sales (week/month) dengan series",
-              "Item performance sortable",
-              "Simple P&L (Owner only) — revenue vs expenses",
-              "Shift report dengan variance flag",
-            ]}
-          />
+          <ReportsSection viewerRole={session.user.role} />
         ) : section === "settings" ? (
-          <SectionStub
-            title="System Settings"
-            description="Business info, printer, jam operasional."
-            notes={[
-              "Business info: nama, alamat, telepon, logo upload (Owner only)",
-              "Printer: pair Bluetooth RPP02 + test print (M16)",
-              "Jam operasional per hari",
-              "Receipt footer + threshold variance",
-              "Feature flags (Phase 2 prep)",
-            ]}
-          />
+          <SettingsSection />
         ) : null}
       </main>
     </div>
