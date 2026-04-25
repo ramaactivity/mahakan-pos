@@ -7,6 +7,7 @@ import {
   type AdminSection,
 } from "@/features/admin/components/AdminLeftNav";
 import { DashboardHome } from "@/features/admin/sections/DashboardHome";
+import { MenuSection } from "@/features/admin/sections/MenuSection";
 import { SectionStub } from "@/features/admin/sections/SectionStub";
 import { useSession } from "@/features/auth/SessionProvider";
 
@@ -34,16 +35,7 @@ export function AdminShell() {
         {section === "dashboard" ? (
           <DashboardHome user={session.user} />
         ) : section === "menu" ? (
-          <SectionStub
-            title="Menu Management"
-            description="CRUD menu items, kategori, modifier."
-            notes={[
-              "List menu 43 item dengan filter kategori + search",
-              "Form create/edit dengan price type (fixed/variant/open)",
-              "Bulk price adjust + sold-out toggle",
-              "Modifier price config (extra_shot, extra_topping_ayam)",
-            ]}
-          />
+          <MenuSection />
         ) : section === "staff" ? (
           <SectionStub
             title="Staff Management"
