@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Badge, Button, Input, Modal, Spinner, toast } from "@/components/ui";
-import { isOk, shiftService, transactionService } from "@/mocks/services";
-import type { Shift } from "@/mocks/types";
+import { isOk, closeShift, type Shift } from "@/features/shifts";
+import { listTransactions } from "@/features/transactions";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -28,7 +28,6 @@ interface CloseShiftModalProps {
 export function CloseShiftModal({
   open,
   shift,
-  userId,
   onClose,
   onClosed,
 }: CloseShiftModalProps) {
@@ -50,7 +49,7 @@ export function CloseShiftModal({
     setSubmitting(false);
 
     async function load() {
-      const res = await transactionService.listTransactions({
+      const res = await listTransactions({
         shiftId: shift.id,
         limit: 1000,
       });
@@ -119,9 +118,8 @@ export function CloseShiftModal({
     setSubmitting(true);
     setError(null);
 
-    const res = await shiftService.closeShift({
+    const res = await closeShift({
       shiftId: shift.id,
-      userId,
       actualCash: parsedCash,
       notes: notes.trim() || null,
     });

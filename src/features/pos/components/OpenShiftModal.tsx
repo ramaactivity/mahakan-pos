@@ -2,11 +2,12 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { Button, Input, Modal, toast } from "@/components/ui";
-import { isOk, shiftService } from "@/mocks/services";
+import { isOk, openShift } from "@/features/shifts";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 
 interface OpenShiftModalProps {
   open: boolean;
+  /** Kept for callsite compatibility; the action derives userId from session. */
   userId: string;
   onClose: () => void;
   onOpened: () => void;
@@ -14,7 +15,6 @@ interface OpenShiftModalProps {
 
 export function OpenShiftModal({
   open,
-  userId,
   onClose,
   onOpened,
 }: OpenShiftModalProps) {
@@ -48,7 +48,7 @@ export function OpenShiftModal({
     setSubmitting(true);
     setError(null);
 
-    const res = await shiftService.openShift(userId, parsed);
+    const res = await openShift({ openingCash: parsed });
     if (!isOk(res)) {
       setError(res.error.message);
       setSubmitting(false);

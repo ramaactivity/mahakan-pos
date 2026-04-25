@@ -2,8 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { Badge, Button, Spinner } from "@/components/ui";
-import { isOk, transactionService } from "@/mocks/services";
-import type { Transaction, TransactionStatus } from "@/mocks/types";
+import {
+  isOk,
+  listTransactions,
+  type Transaction,
+  type TransactionStatus,
+} from "@/features/transactions";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianTime, toJakartaDateOnly } from "@/lib/date";
 import { cn } from "@/lib/utils";
@@ -35,7 +39,7 @@ export function HistoryPanel({
     async function load() {
       setLoading(true);
       const today = toJakartaDateOnly(new Date());
-      const res = await transactionService.listTransactions({
+      const res = await listTransactions({
         from: `${today}T00:00:00.000Z`,
         to: `${today}T23:59:59.999Z`,
         status: statusFilter === "all" ? undefined : statusFilter,
@@ -102,7 +106,6 @@ export function HistoryPanel({
                     </p>
                     <p className="text-xs text-neutral-500">
                       {formatIndonesianTime(trx.createdAt)} ·{" "}
-                      {trx.items.length} item ·{" "}
                       {trx.paymentMethod === "cash"
                         ? "Tunai"
                         : trx.paymentMethod === "qris"

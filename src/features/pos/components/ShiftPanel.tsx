@@ -10,7 +10,7 @@ import {
   CardTitle,
   Spinner,
 } from "@/components/ui";
-import type { Shift } from "@/mocks/types";
+import type { Shift } from "@/features/shifts";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianTime } from "@/lib/date";
 

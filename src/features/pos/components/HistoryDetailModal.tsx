@@ -11,11 +11,17 @@ import {
   toast,
 } from "@/components/ui";
 import { ApproverOverrideModal } from "./ApproverOverrideModal";
-import { isOk, transactionService } from "@/mocks/services";
-import type { Transaction } from "@/mocks/types";
+import {
+  isOk,
+  getTransaction,
+  voidTransaction,
+  refundTransaction,
+  markServed,
+  type TransactionWithItems,
+} from "@/features/transactions";
 import { formatRupiah } from "@/lib/format";
-import { formatIndonesianDateTime } from "@/lib/date";
-import type { Role } from "@/mocks/types";
+import { formatIndonesianDateTime, toJakartaDateOnly } from "@/lib/date";
+import type { Role } from "@/lib/auth";
 
 const VOID_REASONS = [
   "Customer batal",
@@ -47,11 +53,10 @@ export function HistoryDetailModal({
   open,
   trxId,
   viewerRole,
-  viewerUserId,
   onClose,
   onChanged,
 }: HistoryDetailModalProps) {
-  const [trx, setTrx] = useState<Transaction | null>(null);
+  const [trx, setTrx] = useState<TransactionWithItems | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [actionModal, setActionModal] = useState<ActionType | null>(null);
@@ -79,7 +84,7 @@ export function HistoryDetailModal({
     let cancelled = false;
     setLoading(true);
     async function load() {
-      const res = await transactionService.getTransaction(trxId!);
+      const res = await getTransaction(trxId!);
       if (cancelled) return;
       if (isOk(res)) setTrx(res.data);
       setLoading(false);
@@ -93,8 +98,8 @@ export function HistoryDetailModal({
   if (!open) return null;
 
   const isStaff = viewerRole === "staff";
-  const today = new Date().toISOString().slice(0, 10);
-  const isSameDay = trx ? trx.createdAt.slice(0, 10) === today : false;
+  const today = toJakartaDateOnly(new Date());
+  const isSameDay = trx ? toJakartaDateOnly(trx.createdAt) === today : false;
   const canVoid = trx?.status === "paid";
   const canRefund =
     trx?.status === "paid" && trx.paymentMethod === "cash" && isSameDay;
@@ -112,11 +117,9 @@ export function HistoryDetailModal({
     setError(null);
 
     if (actionType === "void") {
-      const res = await transactionService.voidTransaction({
+      const res = await voidTransaction({
         transactionId: trx.id,
         reason: reasonText,
-        voidedBy: viewerUserId,
-        approverId: approver?.approverId,
         approverToken: approver?.token,
       });
       if (!isOk(res)) {
@@ -124,14 +127,13 @@ export function HistoryDetailModal({
         setSubmitting(false);
         return;
       }
-      setTrx(res.data);
+      // void returns plain Transaction; merge to keep items array on display
+      setTrx({ ...trx, ...res.data });
       toast.success("Transaksi di-void");
     } else {
-      const res = await transactionService.refundTransaction({
+      const res = await refundTransaction({
         transactionId: trx.id,
         reason: reasonText,
-        refundedBy: viewerUserId,
-        approverId: approver?.approverId,
         approverToken: approver?.token,
       });
       if (!isOk(res)) {
@@ -139,7 +141,7 @@ export function HistoryDetailModal({
         setSubmitting(false);
         return;
       }
-      setTrx(res.data.transaction);
+      setTrx({ ...trx, ...res.data.transaction });
       toast.success(
         `Refund ${formatRupiah(res.data.transaction.total)} — entry expense ter-create`,
       );
@@ -303,9 +305,9 @@ export function HistoryDetailModal({
                 <Button
                   size="sm"
                   onClick={async () => {
-                    const res = await transactionService.markServed(trx.id);
+                    const res = await markServed(trx.id);
                     if (isOk(res)) {
-                      setTrx(res.data);
+                      setTrx({ ...trx, ...res.data });
                       toast.success("Ditandai selesai");
                       onChanged();
                     }
@@ -436,7 +438,7 @@ export function HistoryDetailModal({
   );
 }
 
-function StatusBadge({ status }: { status: Transaction["status"] }) {
+function StatusBadge({ status }: { status: TransactionWithItems["status"] }) {
   if (status === "paid") return <Badge variant="paid">Lunas</Badge>;
   if (status === "voided") return <Badge variant="voided">Void</Badge>;
   return <Badge variant="refunded">Refund</Badge>;

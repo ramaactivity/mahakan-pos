@@ -43,14 +43,20 @@ import { PosLeftNav, type PosTab } from "@/features/pos/components/PosLeftNav";
 import { ShiftPanel } from "@/features/pos/components/ShiftPanel";
 import { useCartStore } from "@/features/pos/cartStore";
 import { useSession } from "@/features/auth/SessionProvider";
-import { isOk, shiftService, transactionService } from "@/mocks/services";
+import { isOk } from "@/features/menu";
 import {
   listCategories as listCategoriesAction,
   listMenuItems as listMenuItemsAction,
   type Category,
   type MenuItem,
 } from "@/features/menu";
-import type { PaymentMethod, Shift, Transaction } from "@/mocks/types";
+import {
+  createTransaction,
+  markServed,
+  type PaymentMethod,
+  type TransactionWithItems,
+} from "@/features/transactions";
+import { getActiveShift, type Shift } from "@/features/shifts";
 import type { Discount } from "@/lib/money";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
@@ -60,7 +66,7 @@ type RightPanelState =
   | { kind: "idle" }
   | { kind: "cart"; draftId: string }
   | { kind: "paying"; draftId: string }
-  | { kind: "paid"; trx: Transaction };
+  | { kind: "paid"; trx: TransactionWithItems };
 
 const QUICK_AMOUNTS = [50_000, 100_000, 200_000];
 
@@ -144,7 +150,7 @@ export function PosShell() {
     if (!session) return;
     let cancelled = false;
     async function loadShift() {
-      const res = await shiftService.getActiveShift(session!.user.id);
+      const res = await getActiveShift();
       if (cancelled) return;
       if (isOk(res)) setShift(res.data);
       setShiftLoading(false);
@@ -311,8 +317,8 @@ export function PosShell() {
     setPaymentSubmitting(true);
     setPaymentError(null);
 
-    const res = await transactionService.createTransaction({
-      clientRefId: `client-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+    const res = await createTransaction({
+      clientRefId: crypto.randomUUID(),
       shiftId: shift.id,
       cashierId: session!.user.id,
       pagerNumber: activeDraft.pagerNumber,
@@ -341,7 +347,6 @@ export function PosShell() {
       paymentMethod,
       cashReceived: paymentMethod === "cash" ? cashReceived : null,
       cashChange: paymentMethod === "cash" ? cashChange : null,
-      discountApproverId: activeDraft.discountApproverId ?? undefined,
       discountApproverToken: activeDraft.discountApproverToken ?? undefined,
     });
 
@@ -359,7 +364,7 @@ export function PosShell() {
 
   function handleFinishOrder() {
     if (rightPanel.kind === "paid") {
-      void transactionService.markServed(rightPanel.trx.id);
+      void markServed(rightPanel.trx.id);
     }
     setRightPanel({ kind: "idle" });
     setHistoryRefreshKey((k) => k + 1);
@@ -527,7 +532,7 @@ export function PosShell() {
         onClose={() => setOpenShiftOpen(false)}
         onOpened={async () => {
           setOpenShiftOpen(false);
-          const res = await shiftService.getActiveShift(session.user.id);
+          const res = await getActiveShift();
           if (isOk(res)) setShift(res.data);
         }}
       />
@@ -539,7 +544,7 @@ export function PosShell() {
           onClose={() => setCloseShiftOpen(false)}
           onClosed={async () => {
             setCloseShiftOpen(false);
-            const res = await shiftService.getActiveShift(session.user.id);
+            const res = await getActiveShift();
             if (isOk(res)) setShift(res.data);
           }}
         />
@@ -1016,7 +1021,7 @@ function PayingPanel({
 }
 
 interface PaidPanelProps {
-  trx: Transaction;
+  trx: TransactionWithItems;
   onFinish: () => void;
 }
 
