@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Banknote,
   CheckCircle2,
   CreditCard,
   Percent,
+  Plus,
   Printer,
   QrCode,
   Search,
@@ -19,7 +19,6 @@ import {
   Badge,
   Button,
   Card,
-  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
@@ -27,14 +26,21 @@ import {
   Spinner,
   toast,
 } from "@/components/ui";
+import { ApproverOverrideModal } from "@/features/pos/components/ApproverOverrideModal";
 import { CartLineItem } from "@/features/pos/components/CartLineItem";
 import { CategoryTabs } from "@/features/pos/components/CategoryTabs";
+import { CloseShiftModal } from "@/features/pos/components/CloseShiftModal";
 import { DiscountModal } from "@/features/pos/components/DiscountModal";
-import { ApproverOverrideModal } from "@/features/pos/components/ApproverOverrideModal";
+import { HistoryDetailModal } from "@/features/pos/components/HistoryDetailModal";
+import { HistoryPanel } from "@/features/pos/components/HistoryPanel";
 import { ItemModifierModal } from "@/features/pos/components/ItemModifierModal";
 import { ItemNoteModal } from "@/features/pos/components/ItemNoteModal";
 import { MenuTile } from "@/features/pos/components/MenuTile";
+import { NewOrderModal } from "@/features/pos/components/NewOrderModal";
 import { OpenPriceModal } from "@/features/pos/components/OpenPriceModal";
+import { OpenShiftModal } from "@/features/pos/components/OpenShiftModal";
+import { PosLeftNav, type PosTab } from "@/features/pos/components/PosLeftNav";
+import { ShiftPanel } from "@/features/pos/components/ShiftPanel";
 import { useCartStore } from "@/features/pos/cartStore";
 import { useSession } from "@/features/auth/SessionProvider";
 import {
@@ -55,20 +61,48 @@ import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
-type Step = "cart" | "paying" | "paid";
+type RightPanelState =
+  | { kind: "idle" }
+  | { kind: "cart"; draftId: string }
+  | { kind: "paying"; draftId: string }
+  | { kind: "paid"; trx: Transaction };
 
 const QUICK_AMOUNTS = [50_000, 100_000, 200_000];
 
-export default function ActiveOrderPage() {
+export function PosShell() {
   const router = useRouter();
-  const params = useParams<{ id: string }>();
-  const draftId = params.id;
-  const { session } = useSession();
+  const { session, logout } = useSession();
 
-  const draft = useCartStore((s) => s.drafts[draftId]);
-  const subtotal = useCartStore((s) => s.getSubtotal(draftId));
-  const discountAmount = useCartStore((s) => s.getDiscountAmount(draftId));
-  const total = useCartStore((s) => s.getTotal(draftId));
+  // ==================== Top-level state ====================
+
+  const [tab, setTab] = useState<PosTab>("cashier");
+  const [rightPanel, setRightPanel] = useState<RightPanelState>({ kind: "idle" });
+
+  // Cart store
+  const draftsRecord = useCartStore((s) => s.drafts);
+  const drafts = useMemo(
+    () =>
+      Object.values(draftsRecord).sort((a, b) =>
+        a.createdAt < b.createdAt ? -1 : 1,
+      ),
+    [draftsRecord],
+  );
+
+  const activeDraftId =
+    rightPanel.kind === "cart" || rightPanel.kind === "paying"
+      ? rightPanel.draftId
+      : null;
+  const activeDraft = activeDraftId ? draftsRecord[activeDraftId] : null;
+
+  const subtotal = useCartStore((s) =>
+    activeDraftId ? s.getSubtotal(activeDraftId) : 0,
+  );
+  const discountAmount = useCartStore((s) =>
+    activeDraftId ? s.getDiscountAmount(activeDraftId) : 0,
+  );
+  const total = useCartStore((s) =>
+    activeDraftId ? s.getTotal(activeDraftId) : 0,
+  );
   const addItem = useCartStore((s) => s.addItem);
   const updateQuantity = useCartStore((s) => s.updateQuantity);
   const removeItem = useCartStore((s) => s.removeItem);
@@ -76,16 +110,19 @@ export default function ActiveOrderPage() {
   const setDiscount = useCartStore((s) => s.setDiscount);
   const removeDraft = useCartStore((s) => s.removeDraft);
 
-  const [step, setStep] = useState<Step>("cart");
+  // Shift
+  const [shift, setShift] = useState<Shift | null>(null);
+  const [shiftLoading, setShiftLoading] = useState(true);
 
-  // Menu data (cart step only)
+  // Menu
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [menuLoading, setMenuLoading] = useState(true);
   const [activeCategory, setActiveCategory] = useState<string | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Modal state (cart step)
+  // Modals
+  const [newOrderOpen, setNewOrderOpen] = useState(false);
   const [variantItem, setVariantItem] = useState<MenuItem | null>(null);
   const [openPriceItem, setOpenPriceItem] = useState<MenuItem | null>(null);
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
@@ -95,19 +132,34 @@ export default function ActiveOrderPage() {
     discount: Discount;
     reason: string;
   } | null>(null);
+  const [openShiftOpen, setOpenShiftOpen] = useState(false);
+  const [closeShiftOpen, setCloseShiftOpen] = useState(false);
+  const [historyDetailId, setHistoryDetailId] = useState<string | null>(null);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
 
   // Payment state
-  const [shift, setShift] = useState<Shift | null>(null);
-  const [shiftLoading, setShiftLoading] = useState(true);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [cashInput, setCashInput] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
 
-  // Paid state
-  const [completedTrx, setCompletedTrx] = useState<Transaction | null>(null);
+  // ==================== Effects ====================
 
-  // Load menu + categories once
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    async function loadShift() {
+      const res = await shiftService.getActiveShift(session!.user.id);
+      if (cancelled) return;
+      if (isOk(res)) setShift(res.data);
+      setShiftLoading(false);
+    }
+    void loadShift();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -126,21 +178,7 @@ export default function ActiveOrderPage() {
     };
   }, []);
 
-  // Load shift once (needed for payment)
-  useEffect(() => {
-    if (!session) return;
-    let cancelled = false;
-    async function load() {
-      const res = await shiftService.getActiveShift(session!.user.id);
-      if (cancelled) return;
-      if (isOk(res)) setShift(res.data);
-      setShiftLoading(false);
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [session]);
+  // ==================== Derived ====================
 
   const categoryNameById = useMemo(() => {
     const m: Record<string, string> = {};
@@ -169,28 +207,40 @@ export default function ActiveOrderPage() {
     });
   }, [menuItems, activeCategory, searchQuery]);
 
-  if (!draft) {
-    return (
-      <div className="mx-auto max-w-md py-12 text-center">
-        <p className="text-neutral-700">
-          Draft order tidak ditemukan. Mungkin udah selesai atau direstart.
-        </p>
-        <Link
-          href="/pos"
-          className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-mahakan-green-700 hover:underline"
-        >
-          Kembali ke dashboard
-        </Link>
-      </div>
-    );
-  }
+  const editingNoteItem = noteEditingId
+    ? activeDraft?.items.find((i) => i.cartItemId === noteEditingId)
+    : null;
+
+  const cashReceived = parseInt(cashInput || "0", 10) || 0;
+  const cashChange = Math.max(0, cashReceived - total);
+  const cashSufficient = paymentMethod !== "cash" || cashReceived >= total;
 
   if (!session) return null;
 
-  // ========= Cart-step handlers =========
+  // ==================== Handlers ====================
+
+  function openDraft(draftId: string) {
+    setRightPanel({ kind: "cart", draftId });
+    setTab("cashier");
+  }
 
   function handleItemTap(item: MenuItem) {
     if (item.isSoldOut) return;
+    if (!shift) {
+      toast.error("Buka shift dulu sebelum mulai order");
+      setTab("shifts");
+      return;
+    }
+    if (rightPanel.kind === "idle") {
+      // Auto-open new order modal so user can add items immediately
+      setNewOrderOpen(true);
+      // Cache the tapped item to add after draft created? For prototype: just prompt.
+      return;
+    }
+    if (rightPanel.kind !== "cart") {
+      toast.info("Selesaikan pembayaran dulu sebelum tambah item baru");
+      return;
+    }
     if (item.priceType === "open") {
       setOpenPriceItem(item);
       return;
@@ -198,11 +248,17 @@ export default function ActiveOrderPage() {
     setVariantItem(item);
   }
 
+  function handleNewOrderCreated(draftId: string) {
+    setNewOrderOpen(false);
+    setRightPanel({ kind: "cart", draftId });
+    setTab("cashier");
+  }
+
   function handleDiscountSubmit(discount: Discount, reason: string) {
-    if (!session) return;
+    if (!activeDraftId || !session) return;
     const role = session.user.role;
     if (role === "owner" || role === "manager") {
-      setDiscount(draftId, discount, reason, session.user.id);
+      setDiscount(activeDraftId, discount, reason, session.user.id);
       toast.success("Diskon ditambahkan");
       return;
     }
@@ -211,9 +267,9 @@ export default function ActiveOrderPage() {
   }
 
   function handleApproverVerified(result: { approverId: string; token: string }) {
-    if (!pendingDiscount) return;
+    if (!pendingDiscount || !activeDraftId) return;
     setDiscount(
-      draftId,
+      activeDraftId,
       pendingDiscount.discount,
       pendingDiscount.reason,
       result.approverId,
@@ -225,36 +281,48 @@ export default function ActiveOrderPage() {
   }
 
   function handleClearDiscount() {
-    setDiscount(draftId, null, null);
+    if (!activeDraftId) return;
+    setDiscount(activeDraftId, null, null);
     toast.success("Diskon dihapus");
   }
 
-  // ========= Payment-step handlers =========
-
-  const cashReceived = parseInt(cashInput || "0", 10) || 0;
-  const cashChange = Math.max(0, cashReceived - total);
-  const cashSufficient = paymentMethod !== "cash" || cashReceived >= total;
-
-  async function onProcessPayment() {
-    if (submitting) return;
-    if (!shift) {
-      setPaymentError("Tidak ada shift aktif");
+  function handleCancelOrder() {
+    if (!activeDraftId || !activeDraft) return;
+    if (activeDraft.items.length === 0) {
+      removeDraft(activeDraftId);
+      setRightPanel({ kind: "idle" });
       return;
     }
+    if (window.confirm("Batalkan order ini? Item-item akan hilang.")) {
+      removeDraft(activeDraftId);
+      setRightPanel({ kind: "idle" });
+    }
+  }
+
+  function handleProceedToPayment() {
+    if (!activeDraft || activeDraft.items.length === 0) return;
+    setCashInput("");
+    setPaymentMethod("cash");
+    setPaymentError(null);
+    setRightPanel({ kind: "paying", draftId: activeDraft.id });
+  }
+
+  async function handleProcessPayment() {
+    if (paymentSubmitting || !activeDraft || !shift) return;
     if (!cashSufficient) {
       setPaymentError("Uang yang diterima kurang dari total");
       return;
     }
-    setSubmitting(true);
+    setPaymentSubmitting(true);
     setPaymentError(null);
 
     const res = await transactionService.createTransaction({
       clientRefId: `client-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
       shiftId: shift.id,
       cashierId: session!.user.id,
-      pagerNumber: draft!.pagerNumber,
-      orderType: draft!.orderType,
-      items: draft!.items.map((item) => ({
+      pagerNumber: activeDraft.pagerNumber,
+      orderType: activeDraft.orderType,
+      items: activeDraft.items.map((item) => ({
         menuItemId: item.menuItemId,
         variant: item.variant,
         quantity: item.quantity,
@@ -270,58 +338,58 @@ export default function ActiveOrderPage() {
         })),
       })),
       subtotal,
-      discountType: draft!.discount?.type ?? null,
-      discountValue: draft!.discount?.value ?? null,
+      discountType: activeDraft.discount?.type ?? null,
+      discountValue: activeDraft.discount?.value ?? null,
       discountAmount,
-      discountReason: draft!.discountReason,
+      discountReason: activeDraft.discountReason,
       total,
       paymentMethod,
       cashReceived: paymentMethod === "cash" ? cashReceived : null,
       cashChange: paymentMethod === "cash" ? cashChange : null,
-      discountApproverId: draft!.discountApproverId ?? undefined,
-      discountApproverToken: draft!.discountApproverToken ?? undefined,
+      discountApproverId: activeDraft.discountApproverId ?? undefined,
+      discountApproverToken: activeDraft.discountApproverToken ?? undefined,
     });
 
     if (!isOk(res)) {
       setPaymentError(res.error.message);
-      setSubmitting(false);
+      setPaymentSubmitting(false);
       return;
     }
 
-    setCompletedTrx(res.data);
-    removeDraft(draftId);
-    setStep("paid");
-    setSubmitting(false);
+    removeDraft(activeDraft.id);
+    setRightPanel({ kind: "paid", trx: res.data });
+    setPaymentSubmitting(false);
     toast.success(`Transaksi ${res.data.transactionNumber} berhasil`);
   }
 
-  // ========= Paid-step handlers =========
-
-  function onFinishOrder() {
-    if (completedTrx) {
-      void transactionService.markServed(completedTrx.id);
+  function handleFinishOrder() {
+    if (rightPanel.kind === "paid") {
+      void transactionService.markServed(rightPanel.trx.id);
     }
-    router.push("/pos");
+    setRightPanel({ kind: "idle" });
+    setHistoryRefreshKey((k) => k + 1);
   }
 
-  // ========= Render =========
+  async function handleLogout() {
+    await logout();
+    router.replace("/pin");
+  }
 
-  const editingNoteItem = noteEditingId
-    ? draft.items.find((i) => i.cartItemId === noteEditingId)
-    : null;
+  // ==================== Render ====================
 
   return (
-    <div className="-mx-4 sm:-mx-6 -mt-4 sm:-mt-6 grid h-[calc(100vh-4rem)] grid-cols-1 lg:grid-cols-[1fr_400px]">
-      {/* LEFT PANE — Menu (cart step) or Order summary (paying/paid) */}
-      <section
-        className={cn(
-          "flex flex-col overflow-hidden border-b lg:border-b-0 lg:border-r border-neutral-200",
-          step !== "cart" && "lg:col-span-1 lg:row-span-1",
-        )}
-      >
-        {step === "cart" ? (
-          <CartStepLeftPane
-            draft={draft}
+    <div className="flex h-[calc(100vh-4rem)] overflow-hidden bg-neutral-50">
+      <PosLeftNav
+        activeTab={tab}
+        onTabChange={setTab}
+        onLogout={handleLogout}
+        cashierBadge={drafts.length}
+      />
+
+      {/* MIDDLE COLUMN — content per tab */}
+      <main className="flex-1 overflow-hidden">
+        {tab === "cashier" ? (
+          <CashierMiddle
             menuLoading={menuLoading}
             filteredItems={filteredItems}
             categories={categories}
@@ -331,58 +399,53 @@ export default function ActiveOrderPage() {
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
             onItemTap={handleItemTap}
+            session={session.user}
+          />
+        ) : tab === "history" ? (
+          <HistoryPanel
+            refreshKey={historyRefreshKey}
+            onSelectTransaction={(id) => setHistoryDetailId(id)}
           />
         ) : (
-          <OrderSummaryPane
-            draft={draft}
-            subtotal={subtotal}
-            discountAmount={discountAmount}
-            total={total}
-            step={step}
-            onBackToCart={() => {
-              setStep("cart");
-              setPaymentError(null);
-            }}
+          <ShiftPanel
+            shift={shift}
+            loading={shiftLoading}
+            onRequestOpenShift={() => setOpenShiftOpen(true)}
+            onRequestCloseShift={() => setCloseShiftOpen(true)}
           />
         )}
-      </section>
+      </main>
 
-      {/* RIGHT PANE — Cart / Payment / Success */}
-      <aside className="flex flex-col overflow-hidden bg-white">
-        {step === "cart" ? (
-          <CartStepRightPane
-            draft={draft}
+      {/* RIGHT COLUMN — order panel */}
+      <aside className="flex w-[400px] shrink-0 flex-col overflow-hidden border-l border-neutral-200 bg-white">
+        {rightPanel.kind === "idle" ? (
+          <IdlePanel
+            drafts={drafts}
+            shiftActive={shift !== null}
+            onNewOrder={() => setNewOrderOpen(true)}
+            onSelectDraft={openDraft}
+            userName={session.user.name}
+            userRole={session.user.role}
+          />
+        ) : rightPanel.kind === "cart" && activeDraft ? (
+          <CartPanel
+            draft={activeDraft}
             subtotal={subtotal}
             discountAmount={discountAmount}
             total={total}
-            onUpdateQty={(id, qty) => updateQuantity(draftId, id, qty)}
-            onRemoveItem={(id) => removeItem(draftId, id)}
+            onUpdateQty={(id, qty) =>
+              updateQuantity(activeDraft.id, id, qty)
+            }
+            onRemoveItem={(id) => removeItem(activeDraft.id, id)}
             onEditNote={(id) => setNoteEditingId(id)}
             onOpenDiscount={() => setDiscountModalOpen(true)}
-            onProceedToPayment={() => {
-              setCashInput("");
-              setPaymentError(null);
-              setStep("paying");
-            }}
-            onCancel={() => {
-              if (draft.items.length === 0) {
-                removeDraft(draftId);
-                router.push("/pos");
-                return;
-              }
-              const ok = window.confirm(
-                "Batalkan order ini? Item-item akan hilang.",
-              );
-              if (ok) {
-                removeDraft(draftId);
-                router.push("/pos");
-              }
-            }}
+            onProceedToPayment={handleProceedToPayment}
+            onCancel={handleCancelOrder}
+            onSwitchDraft={() => setRightPanel({ kind: "idle" })}
           />
-        ) : step === "paying" ? (
-          <PaymentPane
-            shift={shift}
-            shiftLoading={shiftLoading}
+        ) : rightPanel.kind === "paying" && activeDraft ? (
+          <PayingPanel
+            draft={activeDraft}
             total={total}
             paymentMethod={paymentMethod}
             setPaymentMethod={setPaymentMethod}
@@ -390,20 +453,24 @@ export default function ActiveOrderPage() {
             cashReceived={cashReceived}
             cashChange={cashChange}
             cashSufficient={cashSufficient}
-            submitting={submitting}
+            submitting={paymentSubmitting}
             error={paymentError}
-            onCancel={() => setStep("cart")}
-            onSubmit={onProcessPayment}
+            onCancel={() =>
+              setRightPanel({ kind: "cart", draftId: activeDraft.id })
+            }
+            onSubmit={handleProcessPayment}
           />
-        ) : (
-          <SuccessPane
-            trx={completedTrx}
-            onFinish={onFinishOrder}
-          />
-        )}
+        ) : rightPanel.kind === "paid" ? (
+          <PaidPanel trx={rightPanel.trx} onFinish={handleFinishOrder} />
+        ) : null}
       </aside>
 
-      {/* MODALS — only relevant during cart step but harmless if mounted */}
+      {/* MODALS */}
+      <NewOrderModal
+        open={newOrderOpen}
+        onClose={() => setNewOrderOpen(false)}
+        onCreated={handleNewOrderCreated}
+      />
       <ItemModifierModal
         item={variantItem}
         categoryName={
@@ -411,7 +478,8 @@ export default function ActiveOrderPage() {
         }
         onClose={() => setVariantItem(null)}
         onAdd={(line) => {
-          addItem(draftId, line);
+          if (!activeDraftId) return;
+          addItem(activeDraftId, line);
           toast.success(`${line.name} ditambahkan`);
         }}
       />
@@ -424,23 +492,25 @@ export default function ActiveOrderPage() {
         }
         onClose={() => setOpenPriceItem(null)}
         onAdd={(line) => {
-          addItem(draftId, line);
+          if (!activeDraftId) return;
+          addItem(activeDraftId, line);
           toast.success(`${line.name} ditambahkan`);
         }}
       />
       <ItemNoteModal
-        open={editingNoteItem !== null}
+        open={editingNoteItem !== null && editingNoteItem !== undefined}
         initialValue={editingNoteItem?.note ?? null}
         onClose={() => setNoteEditingId(null)}
         onSave={(note) => {
-          if (noteEditingId) updateNote(draftId, noteEditingId, note);
+          if (noteEditingId && activeDraftId)
+            updateNote(activeDraftId, noteEditingId, note);
         }}
       />
       <DiscountModal
         open={discountModalOpen}
         subtotal={subtotal}
-        initialDiscount={draft.discount}
-        initialReason={draft.discountReason}
+        initialDiscount={activeDraft?.discount ?? null}
+        initialReason={activeDraft?.discountReason ?? null}
         onClose={() => setDiscountModalOpen(false)}
         onApply={handleDiscountSubmit}
         onClear={handleClearDiscount}
@@ -456,16 +526,46 @@ export default function ActiveOrderPage() {
         }}
         onVerified={handleApproverVerified}
       />
+      <OpenShiftModal
+        open={openShiftOpen}
+        userId={session.user.id}
+        onClose={() => setOpenShiftOpen(false)}
+        onOpened={async () => {
+          setOpenShiftOpen(false);
+          const res = await shiftService.getActiveShift(session.user.id);
+          if (isOk(res)) setShift(res.data);
+        }}
+      />
+      {shift ? (
+        <CloseShiftModal
+          open={closeShiftOpen}
+          shift={shift}
+          userId={session.user.id}
+          onClose={() => setCloseShiftOpen(false)}
+          onClosed={async () => {
+            setCloseShiftOpen(false);
+            const res = await shiftService.getActiveShift(session.user.id);
+            if (isOk(res)) setShift(res.data);
+          }}
+        />
+      ) : null}
+      <HistoryDetailModal
+        open={historyDetailId !== null}
+        trxId={historyDetailId}
+        viewerRole={session.user.role}
+        viewerUserId={session.user.id}
+        onClose={() => setHistoryDetailId(null)}
+        onChanged={() => setHistoryRefreshKey((k) => k + 1)}
+      />
     </div>
   );
 }
 
 // ============================================================================
-// Sub-components — kept in same file to avoid prop-drill explosion
+// Sub-panels
 // ============================================================================
 
-interface CartStepLeftPaneProps {
-  draft: NonNullable<ReturnType<typeof useCartStore.getState>["drafts"][string]>;
+interface CashierMiddleProps {
   menuLoading: boolean;
   filteredItems: MenuItem[];
   categories: Category[];
@@ -475,10 +575,10 @@ interface CartStepLeftPaneProps {
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   onItemTap: (item: MenuItem) => void;
+  session: { name: string; role: string };
 }
 
-function CartStepLeftPane({
-  draft,
+function CashierMiddle({
   menuLoading,
   filteredItems,
   categories,
@@ -488,26 +588,10 @@ function CartStepLeftPane({
   searchQuery,
   setSearchQuery,
   onItemTap,
-}: CartStepLeftPaneProps) {
+}: CashierMiddleProps) {
   return (
-    <>
+    <div className="flex h-full flex-col overflow-hidden">
       <header className="flex flex-col gap-3 border-b border-neutral-200 bg-white p-4">
-        <div className="flex items-center justify-between gap-3">
-          <Link
-            href="/pos"
-            className="inline-flex items-center gap-1 text-sm font-medium text-neutral-700 hover:text-neutral-900"
-          >
-            <ArrowLeft className="size-4" aria-hidden /> Dashboard
-          </Link>
-          <div className="flex items-center gap-2">
-            <Badge variant="signature">
-              Pager <span className="font-mono">{draft.pagerNumber}</span>
-            </Badge>
-            <Badge variant="neutral">
-              {draft.orderType === "dine_in" ? "Dine-in" : "Takeaway"}
-            </Badge>
-          </div>
-        </div>
         <Input
           type="text"
           value={searchQuery}
@@ -533,7 +617,6 @@ function CartStepLeftPane({
           itemCounts={itemCounts}
         />
       </header>
-
       <div className="flex-1 overflow-y-auto p-4">
         {menuLoading ? (
           <div className="flex h-32 items-center justify-center">
@@ -544,23 +627,95 @@ function CartStepLeftPane({
             Tidak ada item yang cocok.
           </p>
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
             {filteredItems.map((item) => (
-              <MenuTile
-                key={item.id}
-                item={item}
-                onSelect={onItemTap}
-              />
+              <MenuTile key={item.id} item={item} onSelect={onItemTap} />
             ))}
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 }
 
-interface CartStepRightPaneProps {
-  draft: NonNullable<ReturnType<typeof useCartStore.getState>["drafts"][string]>;
+interface IdlePanelProps {
+  drafts: ReturnType<typeof useCartStore.getState>["drafts"][string][];
+  shiftActive: boolean;
+  onNewOrder: () => void;
+  onSelectDraft: (draftId: string) => void;
+  userName: string;
+  userRole: string;
+}
+
+function IdlePanel({
+  drafts,
+  shiftActive,
+  onNewOrder,
+  onSelectDraft,
+  userName,
+  userRole,
+}: IdlePanelProps) {
+  return (
+    <div className="flex h-full flex-col">
+      <header className="border-b border-neutral-200 p-4">
+        <h2 className="text-base font-semibold text-neutral-900">
+          Selamat bekerja, {userName}
+        </h2>
+        <p className="text-xs text-neutral-500 capitalize">{userRole}</p>
+      </header>
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <Button
+          size="xl"
+          fullWidth
+          onClick={onNewOrder}
+          disabled={!shiftActive}
+        >
+          <Plus className="size-5" aria-hidden /> Order Baru
+        </Button>
+        {!shiftActive ? (
+          <p className="text-center text-xs text-neutral-500">
+            Buka shift di tab &ldquo;Shift&rdquo; sebelum mulai transaksi.
+          </p>
+        ) : null}
+        {drafts.length > 0 ? (
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+              Draft Order ({drafts.length})
+            </h3>
+            {drafts.map((draft) => (
+              <button
+                key={draft.id}
+                type="button"
+                onClick={() => onSelectDraft(draft.id)}
+                className="flex w-full items-center justify-between rounded-lg border border-neutral-200 bg-white p-3 text-left transition-all hover:border-mahakan-green-700 hover:shadow-sm"
+              >
+                <div>
+                  <p className="font-mono text-sm font-bold text-neutral-900">
+                    Pager {draft.pagerNumber}
+                  </p>
+                  <p className="text-xs text-neutral-500">
+                    {draft.orderType === "dine_in" ? "Dine-in" : "Takeaway"} ·{" "}
+                    {draft.items.length} item
+                  </p>
+                </div>
+                <span className="font-mono text-sm font-medium text-mahakan-green-700">
+                  {formatRupiah(
+                    draft.items.reduce((s, i) => s + i.subtotal, 0),
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+interface CartPanelProps {
+  draft: NonNullable<
+    ReturnType<typeof useCartStore.getState>["drafts"][string]
+  >;
   subtotal: number;
   discountAmount: number;
   total: number;
@@ -570,9 +725,10 @@ interface CartStepRightPaneProps {
   onOpenDiscount: () => void;
   onProceedToPayment: () => void;
   onCancel: () => void;
+  onSwitchDraft: () => void;
 }
 
-function CartStepRightPane({
+function CartPanel({
   draft,
   subtotal,
   discountAmount,
@@ -583,26 +739,46 @@ function CartStepRightPane({
   onOpenDiscount,
   onProceedToPayment,
   onCancel,
-}: CartStepRightPaneProps) {
+  onSwitchDraft,
+}: CartPanelProps) {
   return (
     <>
       <header className="flex items-center justify-between border-b border-neutral-200 p-4">
-        <h2 className="flex items-center gap-2 text-base font-semibold text-neutral-900">
-          <ShoppingCart className="size-5" aria-hidden /> Order Aktif
-        </h2>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
-          aria-label="Batalkan order"
-        >
-          <X className="size-5" aria-hidden />
-        </button>
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            type="button"
+            onClick={onSwitchDraft}
+            aria-label="Daftar draft"
+            className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+          >
+            <ArrowLeft className="size-4" aria-hidden />
+          </button>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-neutral-900 min-w-0">
+            <ShoppingCart className="size-5 shrink-0" aria-hidden />
+            <span className="truncate">Order Aktif</span>
+          </h2>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <Badge variant="signature">
+            P<span className="font-mono">{draft.pagerNumber}</span>
+          </Badge>
+          <Badge variant="neutral">
+            {draft.orderType === "dine_in" ? "DI" : "TA"}
+          </Badge>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+            aria-label="Batalkan order"
+          >
+            <X className="size-4" aria-hidden />
+          </button>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto">
         {draft.items.length === 0 ? (
-          <p className="py-12 text-center text-neutral-500">
+          <p className="py-12 text-center text-sm text-neutral-500">
             Belum ada item. Tap menu untuk tambah.
           </p>
         ) : (
@@ -626,7 +802,7 @@ function CartStepRightPane({
               draft.discount.type === "percent"
                 ? `(${draft.discount.value}%)`
                 : ""
-            } — ${draft.discountReason ?? ""}`}
+            }`}
             value={`- ${formatRupiah(discountAmount)}`}
             danger
           />
@@ -657,125 +833,14 @@ function CartStepRightPane({
   );
 }
 
-interface OrderSummaryPaneProps {
-  draft: NonNullable<ReturnType<typeof useCartStore.getState>["drafts"][string]>;
-  subtotal: number;
-  discountAmount: number;
-  total: number;
-  step: Step;
-  onBackToCart: () => void;
-}
-
-function OrderSummaryPane({
-  draft,
-  subtotal,
-  discountAmount,
-  total,
-  step,
-  onBackToCart,
-}: OrderSummaryPaneProps) {
-  return (
-    <>
-      <header className="flex items-center justify-between gap-3 border-b border-neutral-200 bg-white p-4">
-        {step === "paying" ? (
-          <button
-            type="button"
-            onClick={onBackToCart}
-            className="inline-flex items-center gap-1 text-sm font-medium text-neutral-700 hover:text-neutral-900"
-          >
-            <ArrowLeft className="size-4" aria-hidden /> Kembali ke Cart
-          </button>
-        ) : (
-          <Link
-            href="/pos"
-            className="inline-flex items-center gap-1 text-sm font-medium text-neutral-700 hover:text-neutral-900"
-          >
-            <ArrowLeft className="size-4" aria-hidden /> Dashboard
-          </Link>
-        )}
-        <div className="flex items-center gap-2">
-          <Badge variant="signature">
-            Pager <span className="font-mono">{draft.pagerNumber}</span>
-          </Badge>
-          <Badge variant="neutral">
-            {draft.orderType === "dine_in" ? "Dine-in" : "Takeaway"}
-          </Badge>
-        </div>
-      </header>
-
-      <div className="flex-1 overflow-y-auto p-4">
-        <h2 className="mb-3 text-base font-semibold text-neutral-900">
-          Pesanan
-        </h2>
-        <div className="space-y-2">
-          {draft.items.map((item) => (
-            <div
-              key={item.cartItemId}
-              className="flex items-start justify-between gap-3 border-b border-neutral-200 pb-2 last:border-0"
-            >
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-neutral-900">
-                  {item.quantity}× {item.name}
-                  {item.variant ? (
-                    <span className="text-neutral-500">
-                      {" "}({item.variant === "hot" ? "Hot" : "Iced"})
-                    </span>
-                  ) : null}
-                </p>
-                {item.modifiers.length > 0 ? (
-                  <p className="text-xs text-neutral-500">
-                    {item.modifiers
-                      .map((m) => m.selectedLabel ?? m.modifierSlug)
-                      .join(" · ")}
-                  </p>
-                ) : null}
-                {item.note ? (
-                  <p className="text-xs italic text-neutral-600">
-                    &ldquo;{item.note}&rdquo;
-                  </p>
-                ) : null}
-                {item.openPriceNote ? (
-                  <p className="text-xs italic text-neutral-700">
-                    {item.openPriceNote}
-                  </p>
-                ) : null}
-              </div>
-              <span className="font-mono text-sm">
-                {formatRupiah(item.subtotal)}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-6 space-y-1 border-t border-neutral-200 pt-3 text-sm">
-          <Row label="Subtotal" value={formatRupiah(subtotal)} muted />
-          {draft.discount ? (
-            <Row
-              label={`Diskon ${
-                draft.discount.type === "percent"
-                  ? `(${draft.discount.value}%)`
-                  : ""
-              }`}
-              value={`- ${formatRupiah(discountAmount)}`}
-              danger
-            />
-          ) : null}
-          <div className="border-t border-neutral-200 pt-2">
-            <Row label="TOTAL" value={formatRupiah(total)} bold />
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
-interface PaymentPaneProps {
-  shift: Shift | null;
-  shiftLoading: boolean;
+interface PayingPanelProps {
+  draft: NonNullable<
+    ReturnType<typeof useCartStore.getState>["drafts"][string]
+  >;
   total: number;
   paymentMethod: PaymentMethod;
   setPaymentMethod: (m: PaymentMethod) => void;
-  setCashInput: (s: string | ((prev: string) => string)) => void;
+  setCashInput: React.Dispatch<React.SetStateAction<string>>;
   cashReceived: number;
   cashChange: number;
   cashSufficient: boolean;
@@ -785,9 +850,8 @@ interface PaymentPaneProps {
   onSubmit: () => void;
 }
 
-function PaymentPane({
-  shift,
-  shiftLoading,
+function PayingPanel({
+  draft,
   total,
   paymentMethod,
   setPaymentMethod,
@@ -799,44 +863,31 @@ function PaymentPane({
   error,
   onCancel,
   onSubmit,
-}: PaymentPaneProps) {
-  if (shiftLoading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <Spinner className="size-8 text-mahakan-green-700" />
-      </div>
-    );
-  }
-  if (!shift) {
-    return (
-      <div className="p-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Tidak Ada Shift Aktif</CardTitle>
-            <CardDescription>
-              Buka shift dulu sebelum proses pembayaran.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button onClick={onCancel}>Kembali</Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+}: PayingPanelProps) {
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto">
-      <header className="border-b border-neutral-200 bg-white p-4">
-        <h2 className="text-base font-semibold text-neutral-900">
-          Pembayaran
-        </h2>
-        <p className="text-xs text-neutral-500">
-          Total tagihan:{" "}
-          <span className="font-mono font-bold">{formatRupiah(total)}</span>
-        </p>
+    <>
+      <header className="flex items-center justify-between border-b border-neutral-200 p-4">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex items-center gap-1 text-sm font-medium text-neutral-700 hover:text-neutral-900"
+          disabled={submitting}
+        >
+          <ArrowLeft className="size-4" aria-hidden /> Cart
+        </button>
+        <Badge variant="signature">
+          Pager <span className="font-mono">{draft.pagerNumber}</span>
+        </Badge>
       </header>
 
-      <div className="flex-1 space-y-4 p-4">
+      <div className="flex-1 space-y-4 overflow-y-auto p-4">
+        <div className="rounded-md bg-mahakan-green-50 p-3 text-center">
+          <p className="text-xs text-mahakan-green-900">Total Tagihan</p>
+          <p className="font-mono text-2xl font-bold text-mahakan-green-900">
+            {formatRupiah(total)}
+          </p>
+        </div>
+
         <div className="grid grid-cols-3 gap-2">
           <MethodButton
             active={paymentMethod === "cash"}
@@ -853,14 +904,14 @@ function PaymentPane({
           <MethodButton
             active={paymentMethod === "card_bca"}
             onClick={() => setPaymentMethod("card_bca")}
-            label="Kartu BCA"
+            label="Kartu"
             Icon={CreditCard}
           />
         </div>
 
         {paymentMethod === "cash" ? (
           <>
-            <div className="flex h-14 items-center justify-end rounded-md border border-neutral-300 bg-white px-4 font-mono text-2xl font-bold">
+            <div className="flex h-12 items-center justify-end rounded-md border border-neutral-300 bg-white px-3 font-mono text-xl font-bold">
               {cashReceived > 0 ? formatRupiah(cashReceived) : "—"}
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -869,7 +920,7 @@ function PaymentPane({
                   key={amt}
                   type="button"
                   onClick={() => setCashInput(String(amt))}
-                  className="rounded-md border border-neutral-300 bg-white py-2 text-sm font-medium hover:bg-neutral-100"
+                  className="rounded-md border border-neutral-300 bg-white py-1.5 text-xs font-medium hover:bg-neutral-100"
                 >
                   {formatRupiah(amt).replace("Rp ", "")}
                 </button>
@@ -877,7 +928,7 @@ function PaymentPane({
               <button
                 type="button"
                 onClick={() => setCashInput(String(total))}
-                className="rounded-md border border-mahakan-green-700 bg-mahakan-green-50 py-2 text-sm font-medium text-mahakan-green-900 hover:bg-mahakan-green-100"
+                className="rounded-md border border-mahakan-green-700 bg-mahakan-green-50 py-1.5 text-xs font-medium text-mahakan-green-900 hover:bg-mahakan-green-100"
               >
                 Pas
               </button>
@@ -887,25 +938,14 @@ function PaymentPane({
                 <NumKey
                   key={d}
                   label={d}
-                  onPress={() =>
-                    setCashInput((s) => (typeof s === "string" ? s + d : d))
-                  }
+                  onPress={() => setCashInput((s) => s + d)}
                 />
               ))}
               <NumKey label="C" onPress={() => setCashInput("")} />
-              <NumKey
-                label="0"
-                onPress={() =>
-                  setCashInput((s) => (typeof s === "string" ? s + "0" : "0"))
-                }
-              />
+              <NumKey label="0" onPress={() => setCashInput((s) => s + "0")} />
               <NumKey
                 label="⌫"
-                onPress={() =>
-                  setCashInput((s) =>
-                    typeof s === "string" ? s.slice(0, -1) : "",
-                  )
-                }
+                onPress={() => setCashInput((s) => s.slice(0, -1))}
               />
             </div>
             <div className="rounded-md bg-neutral-100 p-3 text-sm">
@@ -924,12 +964,12 @@ function PaymentPane({
         ) : (
           <Card>
             <CardHeader>
-              <CardTitle>
+              <CardTitle className="text-sm">
                 Konfirmasi {paymentMethod === "qris" ? "QRIS" : "Kartu BCA"}
               </CardTitle>
-              <CardDescription>
-                Customer scan QRIS / tap kartu di EDC. Setelah lunas di EDC,
-                tap tombol bawah.
+              <CardDescription className="text-xs">
+                Customer scan QRIS / tap kartu di EDC. Tap tombol di bawah
+                setelah lunas.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -942,7 +982,7 @@ function PaymentPane({
         ) : null}
       </div>
 
-      <footer className="border-t border-neutral-200 bg-neutral-50 p-4 space-y-2">
+      <footer className="border-t border-neutral-200 p-4 space-y-2 bg-white">
         <Button
           size="xl"
           onClick={onSubmit}
@@ -956,58 +996,45 @@ function PaymentPane({
               ? "Sudah Lunas QRIS"
               : "Sudah Lunas Kartu"}
         </Button>
-        <Button variant="ghost" onClick={onCancel} fullWidth disabled={submitting}>
-          Kembali ke Cart
-        </Button>
       </footer>
-    </div>
+    </>
   );
 }
 
-interface SuccessPaneProps {
-  trx: Transaction | null;
+interface PaidPanelProps {
+  trx: Transaction;
   onFinish: () => void;
 }
 
-function SuccessPane({ trx, onFinish }: SuccessPaneProps) {
-  if (!trx) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <Spinner className="size-8 text-mahakan-green-700" />
-      </div>
-    );
-  }
-
+function PaidPanel({ trx, onFinish }: PaidPanelProps) {
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto">
-      <div className="flex flex-col items-center gap-2 border-b border-neutral-200 bg-white p-4">
-        <div className="flex size-12 items-center justify-center rounded-full bg-success-100">
-          <CheckCircle2 className="size-7 text-success-500" aria-hidden />
+    <>
+      <header className="flex flex-col items-center gap-2 border-b border-neutral-200 p-4">
+        <div className="flex size-10 items-center justify-center rounded-full bg-success-100">
+          <CheckCircle2 className="size-6 text-success-500" aria-hidden />
         </div>
-        <p className="text-base font-semibold text-neutral-900">
+        <p className="text-sm font-semibold text-neutral-900">
           Transaksi Berhasil
         </p>
         <p className="font-mono text-xs text-neutral-500">
           {trx.transactionNumber}
         </p>
-      </div>
+      </header>
 
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="rounded-md bg-neutral-50 p-4 font-mono text-xs leading-relaxed text-neutral-900">
+      <div className="flex-1 overflow-y-auto p-3">
+        <div className="rounded-md bg-neutral-50 p-3 font-mono text-[10px] leading-relaxed text-neutral-900">
           <div className="text-center">
             <p className="font-bold">Mahakan Coffee &amp; Space</p>
             <p>Puncak Rd KM 22, Cisarua</p>
             <p>0838-1977-5665</p>
           </div>
           <div className="my-2 border-t border-dashed border-neutral-300" />
-          <div className="space-y-0.5">
-            <Line
-              left={trx.transactionNumber}
-              right={trx.orderType === "dine_in" ? "Dine-in" : "Takeaway"}
-            />
-            <Line left="Pager" right={String(trx.pagerNumber)} />
-            <Line left="Waktu" right={formatIndonesianDateTime(trx.createdAt)} />
-          </div>
+          <Line
+            left={trx.transactionNumber}
+            right={trx.orderType === "dine_in" ? "Dine-in" : "Takeaway"}
+          />
+          <Line left="Pager" right={String(trx.pagerNumber)} />
+          <Line left="Waktu" right={formatIndonesianDateTime(trx.createdAt)} />
           <div className="my-2 border-t border-dashed border-neutral-300" />
           <div className="space-y-1">
             {trx.items.map((item) => (
@@ -1021,19 +1048,19 @@ function SuccessPane({ trx, onFinish }: SuccessPaneProps) {
                   right={formatRupiah(item.subtotal)}
                 />
                 {item.modifiers.length > 0 ? (
-                  <p className="pl-3 text-[10px] text-neutral-600">
+                  <p className="pl-3 text-[9px] text-neutral-600">
                     {item.modifiers
                       .map((m) => m.selectedValue ?? m.modifierSlug)
                       .join(", ")}
                   </p>
                 ) : null}
                 {item.openPriceNote ? (
-                  <p className="pl-3 text-[10px] italic text-neutral-700">
+                  <p className="pl-3 text-[9px] italic text-neutral-700">
                     {item.openPriceNote}
                   </p>
                 ) : null}
                 {item.note ? (
-                  <p className="pl-3 text-[10px] italic text-neutral-600">
+                  <p className="pl-3 text-[9px] italic text-neutral-600">
                     &ldquo;{item.note}&rdquo;
                   </p>
                 ) : null}
@@ -1066,12 +1093,12 @@ function SuccessPane({ trx, onFinish }: SuccessPaneProps) {
             <Line label="Kembali" value={formatRupiah(trx.cashChange ?? 0)} />
           ) : null}
           <div className="mt-3 text-center">
-            <p className="text-[10px]">Terima kasih, sampai jumpa!</p>
+            <p className="text-[9px]">Terima kasih, sampai jumpa!</p>
           </div>
         </div>
       </div>
 
-      <footer className="border-t border-neutral-200 bg-neutral-50 p-4 space-y-2">
+      <footer className="border-t border-neutral-200 p-4 space-y-2">
         <Button
           variant="outline"
           fullWidth
@@ -1085,7 +1112,7 @@ function SuccessPane({ trx, onFinish }: SuccessPaneProps) {
           Selesai (Order Disiapkan)
         </Button>
       </footer>
-    </div>
+    </>
   );
 }
 
@@ -1109,14 +1136,14 @@ function MethodButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex flex-col items-center justify-center gap-1 rounded-lg border py-4 text-sm font-medium transition-all",
+        "flex flex-col items-center justify-center gap-1 rounded-lg border py-3 text-xs font-medium transition-all",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
         active
           ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
           : "border-neutral-300 bg-white hover:bg-neutral-100",
       )}
     >
-      <Icon className="size-5" aria-hidden />
+      <Icon className="size-4" aria-hidden />
       {label}
     </button>
   );
@@ -1127,7 +1154,7 @@ function NumKey({ label, onPress }: { label: string; onPress: () => void }) {
     <button
       type="button"
       onClick={onPress}
-      className="rounded-md border border-neutral-200 bg-white py-3 font-mono text-lg font-medium hover:bg-neutral-100 active:scale-95"
+      className="rounded-md border border-neutral-200 bg-white py-2 font-mono text-base font-medium hover:bg-neutral-100 active:scale-95"
     >
       {label}
     </button>
