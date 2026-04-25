@@ -5,8 +5,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 ## Current Status
 
 **Phase:** Phase 1 — Foundation
-**Fase:** B (Backend) — M8 done, M9 next (Auth backend)
-**Active Milestone:** M9 — Auth.js v5 + RBAC (HIGH RISK, beta volatile)
+**Fase:** B (Backend) — M8+M9 done, M10 next (Menu CRUD backend + rewire)
+**Active Milestone:** M10 — Menu Management Backend
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -27,7 +27,7 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 ### Fase B — Backend + Rebuild (Week 4-12)
 
 - [x] **M8** — Database Schema & Seed _(done 2026-04-25, 13 tables on Neon, Owner+11 cats+43 items+4 mods+9 exp cats seeded)_
-- [ ] **M9** — Auth Backend (Auth.js v5 + RBAC)
+- [x] **M9** — Auth Backend (Auth.js v5 + RBAC) _(done 2026-04-25, JWT session, email+password + PIN providers, middleware role-routing, per-role expiry, approver-token flow, 32 unit tests)_
 - [ ] **M10** — Menu Management Backend + Rewire UI
 - [ ] **M11** — POS Core Backend + Rewire UI ⚠️ Critical
 - [ ] **M12** — Shift Management Backend + Rewire
@@ -189,3 +189,19 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - C5 — PIN policy (recommend A: 4-6 digit basic)
 
 **Next: M9 — Auth.js v5 backend.** ⚠️ HIGH RISK per execution plan §3 (beta volatile). Strategy: Context7 MCP lookup before implementing, build incrementally (email+pass first → PIN → approver flow), commit per slice.
+
+**M9 done (2026-04-25, 6 atomic commits + RBAC docs alignment):**
+- C2 + C5 resolved as A (recommended). All 7 critical decisions now closed (C7 still pending — production domain, irrelevant under offline-only).
+- **m9.1** Auth.js v5 config + RBAC (~80 perms per docs/05) + bcrypt(12) password / bcrypt(10) PIN helpers + module augmentation (Session/JWT extended with role + outletId + roleExp).
+- **m9.2** `src/middleware.ts` — route protection (public allow / authed redirect to home / role-based admin gate / per-role hard expiry: Owner+Manager 2h, Staff 12h via `token.roleExp` check).
+- **m9.3** SessionProvider rewired to wrap `next-auth/react` (same `useSession` shape). Login page uses `signIn("email-password", {...})`. Suspense boundary for `useSearchParams` (Next 16 prerender requirement).
+- **m9.4** PIN page uses `signIn("pin", {...})` against new pin-users endpoint. Dev tool `scripts/set-user-pin.ts` for emergency Owner PIN reset until admin Reset PIN UI lands.
+- **m9.5** Approver flow: `issueApproverToken` (HS256 JWT via jose, 5-min expiry, narrow-scoped: action + entity + jti) and `consumeApproverToken` (single-use in-memory blacklist, mismatch detection). Endpoints `POST /api/v1/auth/verify-approver` + `GET /api/v1/auth/approvers`. Token consumption in Server Actions deferred to M11/M15.
+- **m9.6** 32 unit tests added (60 → 92 passing): password roundtrip, PIN format validator + hash, hasPermission/requirePermission/canActOnRole/sessionMaxAgeSeconds, approver issue/consume/replay/mismatch/tampered.
+
+Build green: 10 routes (added /api/auth/[...nextauth], /api/v1/auth/{pin-users, approvers, verify-approver}). Middleware deprecation warning expected per AGENTS.md (Next 16 wants proxy.ts; Phase 1 keeps middleware.ts for Auth.js v5 compat).
+
+**Known limitation flagged for later:**
+- The mock `authService` is still wired for some POS approver-modal call sites (PosShell.tsx). Those rewire to the new `/api/v1/auth/{approvers, verify-approver}` endpoints alongside transaction backend at M11 + M15.
+
+**Next: M10 — Menu Management Backend + Rewire UI.**
