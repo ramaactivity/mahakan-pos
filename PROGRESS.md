@@ -6,7 +6,7 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 **Phase:** Phase 1 — Foundation
 **Fase:** A (UI Prototype)
-**Active Milestone:** M5 — POS UI Prototype (next)
+**Active Milestone:** M6 — Admin UI Prototype (next)
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -20,7 +20,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M2** — Design System Foundation _(done 2026-04-24, money.ts 100% coverage, 60/60 tests)_
 - [x] **M3** — Mock Data Layer _(done 2026-04-24, 43 menu items + 7 fake services)_
 - [x] **M4** — Auth UI Prototype _(done 2026-04-24, login + PIN + protected routes wired to mocks)_
-- [ ] **M5** — POS UI Prototype _(next)_
+- [x] **M5** — POS UI Prototype _(done 2026-04-24, full order→pay→history flow)_
+- [ ] **M6** — Admin UI Prototype _(next)_
 - [ ] **M3** — Mock Data Layer
 - [ ] **M4** — Auth UI Prototype
 - [ ] **M5** — POS UI Prototype
@@ -108,16 +109,46 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - Staff Rina: PIN `5678` (no email login)
 - Staff Budi: PIN `5679`
 
-**Next session (M5 — POS UI Prototype):**
-- `src/app/(pos)/pos/order/new/page.tsx` — pager + order type selector
-- `src/app/(pos)/pos/order/[id]/page.tsx` — menu grid + cart sidebar with `MenuTile`, `CategoryTabs`, `Cart`, `CartLineItem`, `ItemModifierModal`, `OpenPriceModal`, `ItemNoteModal`
-- `src/app/(pos)/pos/order/[id]/payment/page.tsx` — payment screen with cash numpad
-- `src/app/(pos)/pos/order/[id]/success/page.tsx` — receipt-on-screen
-- `src/app/(pos)/pos/history/page.tsx` — today's transactions
-- `src/app/(pos)/pos/shift/open/page.tsx` + `close/page.tsx`
-- `ApproverOverrideModal`, `DiscountModal`
-- State management: simple React state + service calls (Zustand only if needed)
-- All wired to `transactionService`, `menuService`, `shiftService`, `authService`
+**M5 done (2026-04-24):**
+- `src/features/pos/cartStore.ts` — Zustand store (drafts keyed by id, supports multi-order hold)
+- `src/features/pos/types.ts` — CartLineItem, Draft types
+- 7 components in `src/features/pos/components/`: MenuTile, CategoryTabs, CartLineItem, ItemModifierModal (variant + sugar/ice/extra-shot), OpenPriceModal (Manual Brew), ItemNoteModal, DiscountModal (percent/fixed + reason preset), ApproverOverrideModal (PIN flow for staff actions)
+- 9 routes:
+  - `/pos` — dashboard (shift card, Order Baru, drafts, active orders)
+  - `/pos/shift/open` — opening cash input
+  - `/pos/shift/close` — variance calc with summary preview + threshold flag
+  - `/pos/order/new` — pager + order type
+  - `/pos/order/[id]` — menu grid (4-col responsive) + cart sidebar (70/30 desktop landscape)
+  - `/pos/order/[id]/payment` — order summary + 3 payment methods + cash numpad with quick amounts + change calc
+  - `/pos/order/[id]/success` — on-screen receipt preview + Selesai action
+  - `/pos/history` — today's transactions with status filter
+  - `/pos/history/[id]` — detail with Void/Refund (PIN approval for staff)
+- All wired to `menuService`, `transactionService`, `shiftService`, `authService` mocks
+- Server-side validation paths exercised (price match, sold-out check, idempotent retry, cash sufficient)
+- Discount → ApproverOverrideModal flow for staff role (PIN→token→discount apply)
+
+**Test scenarios manual:**
+1. Login as Rina (PIN 5678) → /pos → Buka Shift Rp 100rb → Order Baru pager 5 takeaway
+2. Tap Americano → variant Iced + sugar Less → Tambah · Rp 16.000
+3. Tap V60 → input price 35.000 + beans "Ethiopia" → Tambah
+4. Apply discount 10% → ApproverOverrideModal opens (Owner PIN 1234) → applied
+5. Bayar → Tunai → input 100.000 → Konfirmasi → success screen with receipt preview → Selesai
+6. /pos/history → see transaction → tap → Void with reason → ApproverOverrideModal → Owner PIN → voided
+
+**Next session (M6 — Admin UI Prototype, ~4-5 days):**
+- `/dashboard` — stat cards + recent trx + charts (recharts mock)
+- `/menu/items` — data table (tanstack/react-table) + create/edit/delete
+- `/menu/categories` — drag reorder
+- `/menu/modifiers` — config cards
+- `/users` — user CRUD + PIN reset
+- `/shifts` + `/shifts/[id]` — history + detail
+- `/expenses` + `/expenses/new` — form with image upload mock
+- `/incomes`
+- `/reports/sales` — daily + range with charts
+- `/reports/items` — item performance sortable
+- `/reports/pnl` — Owner-only Simple P&L
+- `/reports/daily-cash`
+- `/settings/business`, `/settings/printer`, `/settings/operational-hours`
 
 **Pending user decisions (Critical):**
 - C1 — Dependency version lock strategy (needed before M8)
