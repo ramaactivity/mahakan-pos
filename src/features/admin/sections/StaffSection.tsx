@@ -9,7 +9,7 @@ import {
   CardContent,
   CardHeader,
   Modal,
-  Spinner,
+  Skeleton,
   toast,
 } from "@/components/ui";
 import { UserFormModal } from "./staff/UserFormModal";
@@ -91,8 +91,10 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
         <CardHeader />
         <CardContent className="px-0">
           {loading ? (
-            <div className="flex h-32 items-center justify-center">
-              <Spinner className="size-6 text-mahakan-green-700" />
+            <div className="space-y-2 p-4" role="status" aria-label="Memuat user">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
             </div>
           ) : users.length === 0 ? (
             <p className="py-8 text-center text-sm text-neutral-500">

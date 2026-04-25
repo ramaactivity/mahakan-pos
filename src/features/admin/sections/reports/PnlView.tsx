@@ -10,7 +10,7 @@ import {
   CardHeader,
   CardTitle,
   Input,
-  Spinner,
+  Skeleton,
 } from "@/components/ui";
 import { isOk, reportService } from "@/mocks/services";
 import type { PnlReport } from "@/mocks/services/reportService";
@@ -99,8 +99,10 @@ export function PnlView({ viewerRole }: PnlViewProps) {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex h-32 items-center justify-center">
-              <Spinner className="size-6 text-mahakan-green-700" />
+            <div className="space-y-3" role="status" aria-label="Memuat P&L">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-20 w-full" />
             </div>
           ) : !report ? (
             <p className="text-sm text-danger-500">Gagal load laporan</p>

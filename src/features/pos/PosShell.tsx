@@ -23,7 +23,7 @@ import {
   CardHeader,
   CardTitle,
   Input,
-  Spinner,
+  Skeleton,
   toast,
 } from "@/components/ui";
 import { ApproverOverrideModal } from "@/features/pos/components/ApproverOverrideModal";
@@ -619,8 +619,14 @@ function CashierMiddle({
       </header>
       <div className="flex-1 overflow-y-auto p-4">
         {menuLoading ? (
-          <div className="flex h-32 items-center justify-center">
-            <Spinner className="size-6 text-mahakan-green-700" />
+          <div
+            className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
+            role="status"
+            aria-label="Memuat menu"
+          >
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="h-28 w-full" />
+            ))}
           </div>
         ) : filteredItems.length === 0 ? (
           <p className="py-8 text-center text-neutral-500">

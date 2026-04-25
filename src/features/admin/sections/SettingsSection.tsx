@@ -9,7 +9,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  Spinner,
+  Skeleton,
 } from "@/components/ui";
 import { mockOutlet } from "@/mocks/data";
 import type { Outlet } from "@/mocks/types";
@@ -47,8 +47,15 @@ export function SettingsSection() {
 
   if (loading || !outlet) {
     return (
-      <div className="flex h-32 items-center justify-center">
-        <Spinner className="size-6 text-mahakan-green-700" />
+      <div className="space-y-6 p-6" role="status" aria-label="Memuat settings">
+        <div className="space-y-2">
+          <Skeleton className="h-7 w-32" />
+          <Skeleton className="h-4 w-72" />
+        </div>
+        <Skeleton className="h-48 w-full" />
+        <Skeleton className="h-56 w-full" />
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-56 w-full" />
       </div>
     );
   }

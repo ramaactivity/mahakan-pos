@@ -16,7 +16,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  Spinner,
+  Skeleton,
 } from "@/components/ui";
 import { isOk, reportService } from "@/mocks/services";
 import type { DailySalesReport } from "@/mocks/services/reportService";
@@ -47,8 +47,21 @@ export function DashboardHome({ user }: DashboardHomeProps) {
 
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <Spinner className="size-6 text-mahakan-green-700" />
+      <div className="space-y-6 p-6" role="status" aria-label="Memuat dashboard">
+        <div className="space-y-2">
+          <Skeleton className="h-7 w-64" />
+          <Skeleton className="h-4 w-48" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-28 w-full" />
+        </div>
+        <Skeleton className="h-[320px] w-full" />
+        <div className="grid gap-4 md:grid-cols-2">
+          <Skeleton className="h-64 w-full" />
+          <Skeleton className="h-64 w-full" />
+        </div>
       </div>
     );
   }

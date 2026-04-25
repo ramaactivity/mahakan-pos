@@ -12,7 +12,7 @@ import {
   CardTitle,
   Input,
   Modal,
-  Spinner,
+  Skeleton,
   toast,
 } from "@/components/ui";
 import { isOk, menuService } from "@/mocks/services";
@@ -79,8 +79,10 @@ export function ModifiersConfig() {
       </header>
 
       {loading ? (
-        <div className="flex h-32 items-center justify-center">
-          <Spinner className="size-6 text-mahakan-green-700" />
+        <div className="grid gap-3 md:grid-cols-2" role="status" aria-label="Memuat modifier">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-32 w-full" />
+          ))}
         </div>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">

@@ -7,7 +7,7 @@ import {
   CardContent,
   CardHeader,
   Input,
-  Spinner,
+  Skeleton,
 } from "@/components/ui";
 import { isOk, reportService } from "@/mocks/services";
 import type { ItemPerformanceRow } from "@/mocks/services/reportService";
@@ -80,8 +80,10 @@ export function ItemPerformanceView() {
         </CardHeader>
         <CardContent className="px-0">
           {loading ? (
-            <div className="flex h-32 items-center justify-center">
-              <Spinner className="size-6 text-mahakan-green-700" />
+            <div className="space-y-2 p-4" role="status" aria-label="Memuat performa item">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
             </div>
           ) : rows.length === 0 ? (
             <p className="py-8 text-center text-sm text-neutral-500">

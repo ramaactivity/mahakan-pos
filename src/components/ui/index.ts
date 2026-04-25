@@ -23,6 +23,8 @@ export { PinPad } from "./PinPad";
 
 export { QuantityStepper } from "./QuantityStepper";
 
+export { Skeleton } from "./Skeleton";
+
 export { Spinner } from "./Spinner";
 
 export { Toaster, toast } from "./Toast";

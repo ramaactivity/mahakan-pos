@@ -9,7 +9,7 @@ import {
   CardHeader,
   Input,
   Modal,
-  Spinner,
+  Skeleton,
   toast,
 } from "@/components/ui";
 import { isOk, menuService } from "@/mocks/services";
@@ -131,8 +131,10 @@ export function CategoriesList() {
         <CardHeader />
         <CardContent className="px-0">
           {loading ? (
-            <div className="flex h-32 items-center justify-center">
-              <Spinner className="size-6 text-mahakan-green-700" />
+            <div className="space-y-2 p-4" role="status" aria-label="Memuat kategori">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
             </div>
           ) : (
             <div className="divide-y divide-neutral-100">

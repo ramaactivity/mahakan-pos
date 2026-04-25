@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Badge, Modal, Spinner } from "@/components/ui";
+import { Badge, Modal, Skeleton } from "@/components/ui";
 import { isOk, transactionService } from "@/mocks/services";
 import type { Shift, Transaction, PublicUser } from "@/mocks/types";
 import { formatRupiah } from "@/lib/format";
@@ -142,8 +142,10 @@ export function ShiftDetailModal({
             Daftar Transaksi ({transactions.length})
           </h3>
           {loading ? (
-            <div className="flex h-24 items-center justify-center">
-              <Spinner className="size-6 text-mahakan-green-700" />
+            <div className="space-y-2" role="status" aria-label="Memuat transaksi">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
             </div>
           ) : transactions.length === 0 ? (
             <p className="py-4 text-center text-sm text-neutral-500">

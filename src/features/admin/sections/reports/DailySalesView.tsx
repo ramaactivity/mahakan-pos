@@ -17,7 +17,7 @@ import {
   CardHeader,
   CardTitle,
   Input,
-  Spinner,
+  Skeleton,
 } from "@/components/ui";
 import { isOk, reportService } from "@/mocks/services";
 import type { DailySalesReport } from "@/mocks/services/reportService";
@@ -66,8 +66,17 @@ export function DailySalesView() {
       </header>
 
       {loading ? (
-        <div className="flex h-32 items-center justify-center">
-          <Spinner className="size-6 text-mahakan-green-700" />
+        <div className="space-y-4" role="status" aria-label="Memuat laporan">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Skeleton className="h-28 w-full" />
+            <Skeleton className="h-28 w-full" />
+            <Skeleton className="h-28 w-full" />
+          </div>
+          <Skeleton className="h-[320px] w-full" />
+          <div className="grid gap-4 md:grid-cols-2">
+            <Skeleton className="h-48 w-full" />
+            <Skeleton className="h-48 w-full" />
+          </div>
         </div>
       ) : !report ? (
         <p className="text-sm text-danger-500">Gagal load laporan</p>

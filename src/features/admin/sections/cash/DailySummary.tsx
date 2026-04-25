@@ -8,7 +8,7 @@ import {
   CardHeader,
   CardTitle,
   Input,
-  Spinner,
+  Skeleton,
 } from "@/components/ui";
 import { expenseService, isOk } from "@/mocks/services";
 import type { DailyCashSummary as DailyCashSummaryData } from "@/mocks/services/expenseService";
@@ -58,8 +58,12 @@ export function DailySummary() {
       </header>
 
       {loading ? (
-        <div className="flex h-32 items-center justify-center">
-          <Spinner className="size-6 text-mahakan-green-700" />
+        <div className="space-y-4" role="status" aria-label="Memuat ringkasan kas">
+          <Skeleton className="h-28 w-full" />
+          <div className="grid gap-4 md:grid-cols-2">
+            <Skeleton className="h-64 w-full" />
+            <Skeleton className="h-64 w-full" />
+          </div>
         </div>
       ) : !summary ? (
         <p className="text-sm text-danger-500">Gagal load data</p>

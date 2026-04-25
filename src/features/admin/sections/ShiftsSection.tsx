@@ -8,7 +8,7 @@ import {
   Card,
   CardContent,
   CardHeader,
-  Spinner,
+  Skeleton,
 } from "@/components/ui";
 import { ShiftDetailModal } from "./shifts/ShiftDetailModal";
 import { isOk, shiftService, userService } from "@/mocks/services";
@@ -104,8 +104,10 @@ export function ShiftsSection() {
         <CardHeader />
         <CardContent className="px-0">
           {loading ? (
-            <div className="flex h-32 items-center justify-center">
-              <Spinner className="size-6 text-mahakan-green-700" />
+            <div className="space-y-2 p-4" role="status" aria-label="Memuat shift">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
             </div>
           ) : filteredShifts.length === 0 ? (
             <p className="py-8 text-center text-sm text-neutral-500">
