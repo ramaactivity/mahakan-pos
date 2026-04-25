@@ -784,9 +784,18 @@ function CartPanel({
 
       <div className="flex-1 overflow-y-auto">
         {draft.items.length === 0 ? (
-          <p className="py-12 text-center text-sm text-neutral-500">
-            Belum ada item. Tap menu untuk tambah.
-          </p>
+          <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
+            <ShoppingCart
+              className="size-10 text-neutral-300"
+              aria-hidden
+            />
+            <p className="text-sm font-medium text-neutral-700">
+              Belum ada item
+            </p>
+            <p className="text-xs text-neutral-500">
+              Tap item di kolom tengah untuk menambah.
+            </p>
+          </div>
         ) : (
           draft.items.map((item) => (
             <CartLineItem
