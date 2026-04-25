@@ -6,7 +6,7 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 **Phase:** Phase 1 — Foundation
 **Fase:** A (UI Prototype)
-**Active Milestone:** M6 — Admin UI Prototype (next)
+**Active Milestone:** M7 — UI Review & Polish (Fase A wrap-up)
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -20,8 +20,9 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M2** — Design System Foundation _(done 2026-04-24, money.ts 100% coverage, 60/60 tests)_
 - [x] **M3** — Mock Data Layer _(done 2026-04-24, 43 menu items + 7 fake services)_
 - [x] **M4** — Auth UI Prototype _(done 2026-04-24, login + PIN + protected routes wired to mocks)_
-- [x] **M5** — POS UI Prototype _(done 2026-04-24, full order→pay→history flow)_
-- [ ] **M6** — Admin UI Prototype _(next)_
+- [x] **M5** — POS UI Prototype _(done 2026-04-24, full order→pay→history flow, single-page 3-col)_
+- [x] **M6** — Admin UI Prototype _(done 2026-04-25, single-page sidebar + 7 sections live)_
+- [ ] **M7** — UI Review & Polish _(next — Fase A wrap-up)_
 - [ ] **M3** — Mock Data Layer
 - [ ] **M4** — Auth UI Prototype
 - [ ] **M5** — POS UI Prototype
