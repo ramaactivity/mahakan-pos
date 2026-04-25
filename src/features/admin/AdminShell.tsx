@@ -9,6 +9,8 @@ import {
 import { DashboardHome } from "@/features/admin/sections/DashboardHome";
 import { MenuSection } from "@/features/admin/sections/MenuSection";
 import { SectionStub } from "@/features/admin/sections/SectionStub";
+import { ShiftsSection } from "@/features/admin/sections/ShiftsSection";
+import { StaffSection } from "@/features/admin/sections/StaffSection";
 import { useSession } from "@/features/auth/SessionProvider";
 
 export function AdminShell() {
@@ -37,26 +39,12 @@ export function AdminShell() {
         ) : section === "menu" ? (
           <MenuSection />
         ) : section === "staff" ? (
-          <SectionStub
-            title="Staff Management"
-            description="Tambah/edit user staff + reset PIN."
-            notes={[
-              "List user (Manager hanya lihat Staff, Owner lihat semua)",
-              "Form tambah Staff (PIN 4-6 digit) atau Manager (email + password)",
-              "Reset PIN flow + audit log",
-              "Last-Owner protection",
-            ]}
+          <StaffSection
+            viewerRole={session.user.role}
+            viewerUserId={session.user.id}
           />
         ) : section === "shifts" ? (
-          <SectionStub
-            title="Shift History"
-            description="Riwayat shift semua kasir + variance flag."
-            notes={[
-              "List shift dengan filter tanggal + user",
-              "Detail shift: list transaksi + variance breakdown",
-              "Highlight shift dengan variance > Rp 10.000",
-            ]}
-          />
+          <ShiftsSection />
         ) : section === "cash" ? (
           <SectionStub
             title="Kas & Pengeluaran"
