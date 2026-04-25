@@ -74,7 +74,7 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
           <span className="block text-sm font-medium text-neutral-900">
             Tipe Order
           </span>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Tipe order">
             {(
               [
                 { value: "takeaway", label: "Takeaway" },
@@ -84,6 +84,8 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
               <button
                 key={opt.value}
                 type="button"
+                role="radio"
+                aria-checked={orderType === opt.value}
                 onClick={() => setOrderType(opt.value)}
                 className={cn(
                   "rounded-md border py-3 text-sm font-medium transition-all",

@@ -157,10 +157,10 @@ export function MenuItemFormModal({
         />
 
         <div className="space-y-1.5">
-          <label className="block text-sm font-medium text-neutral-900">
+          <span className="block text-sm font-medium text-neutral-900">
             Tipe Harga
-          </label>
-          <div className="grid grid-cols-3 gap-2">
+          </span>
+          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Tipe harga">
             {(
               [
                 { v: "fixed" as const, label: "Fixed" },
@@ -171,9 +171,12 @@ export function MenuItemFormModal({
               <button
                 key={opt.v}
                 type="button"
+                role="radio"
+                aria-checked={priceType === opt.v}
                 onClick={() => setPriceType(opt.v)}
                 className={cn(
                   "rounded-md border py-2 text-sm font-medium transition-all",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700 focus-visible:ring-offset-1",
                   priceType === opt.v
                     ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
                     : "border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-100",

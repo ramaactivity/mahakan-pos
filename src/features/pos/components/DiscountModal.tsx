@@ -119,12 +119,15 @@ export function DiscountModal({
       <div className="space-y-4">
         <div className="space-y-2">
           <p className="text-sm font-medium text-neutral-900">Tipe Diskon</p>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Tipe diskon">
             <button
               type="button"
+              role="radio"
+              aria-checked={type === "percent"}
               onClick={() => setType("percent")}
               className={cn(
                 "rounded-md border py-2.5 text-sm font-medium transition-all",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
                 type === "percent"
                   ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
                   : "border-neutral-300 bg-white hover:bg-neutral-100",
@@ -134,9 +137,12 @@ export function DiscountModal({
             </button>
             <button
               type="button"
+              role="radio"
+              aria-checked={type === "fixed"}
               onClick={() => setType("fixed")}
               className={cn(
                 "rounded-md border py-2.5 text-sm font-medium transition-all",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
                 type === "fixed"
                   ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
                   : "border-neutral-300 bg-white hover:bg-neutral-100",
@@ -166,14 +172,17 @@ export function DiscountModal({
 
         <div className="space-y-2">
           <p className="text-sm font-medium text-neutral-900">Alasan</p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Alasan diskon">
             {PRESET_REASONS.map((r) => (
               <button
                 key={r}
                 type="button"
+                role="radio"
+                aria-checked={reasonPreset === r}
                 onClick={() => setReasonPreset(r)}
                 className={cn(
                   "rounded-md border py-2 text-sm transition-all",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
                   reasonPreset === r
                     ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
                     : "border-neutral-300 bg-white hover:bg-neutral-100",

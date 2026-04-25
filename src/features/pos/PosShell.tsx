@@ -894,7 +894,11 @@ function PayingPanel({
           </p>
         </div>
 
-        <div className="grid grid-cols-3 gap-2">
+        <div
+          className="grid grid-cols-3 gap-2"
+          role="radiogroup"
+          aria-label="Metode pembayaran"
+        >
           <MethodButton
             active={paymentMethod === "cash"}
             onClick={() => setPaymentMethod("cash")}
@@ -1140,6 +1144,8 @@ function MethodButton({
   return (
     <button
       type="button"
+      role="radio"
+      aria-checked={active}
       onClick={onClick}
       className={cn(
         "flex flex-col items-center justify-center gap-1 rounded-lg border py-3 text-xs font-medium transition-all",

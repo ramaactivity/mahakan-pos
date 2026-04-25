@@ -16,7 +16,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
           Mahakan Coffee &amp; Space — POS
         </p>
       </div>
-      <div className="w-full max-w-md">{children}</div>
+      <main className="w-full max-w-md">{children}</main>
     </div>
   );
 }
