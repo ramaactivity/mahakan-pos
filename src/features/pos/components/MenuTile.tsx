@@ -2,7 +2,7 @@
 
 import { Heart } from "lucide-react";
 import { Badge } from "@/components/ui";
-import type { MenuItem } from "@/mocks/types";
+import type { MenuItem } from "@/features/menu";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 

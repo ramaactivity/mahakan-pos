@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { Button, Input, Modal, toast } from "@/components/ui";
-import { isOk, menuService } from "@/mocks/services";
-import type {
-  Category,
-  MenuItem,
-  PriceType,
-} from "@/mocks/types";
+import {
+  isOk,
+  createMenuItem,
+  updateMenuItem,
+  type Category,
+  type MenuItem,
+  type PriceType,
+} from "@/features/menu";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -76,22 +78,29 @@ export function MenuItemFormModal({
     setSubmitting(true);
     setError(null);
 
-    const input = {
+    const common = {
       name,
       description: description.trim() || null,
       categoryId,
-      priceType,
-      priceFixed: priceType === "fixed" ? parsedFixed : null,
-      priceHot: priceType === "variant" ? parsedHot : null,
-      priceIced: priceType === "variant" ? parsedIced : null,
       isSignature,
       displayOrder: mode.kind === "edit" ? mode.item.displayOrder : 999,
     };
+    const input =
+      priceType === "fixed"
+        ? { ...common, priceType: "fixed" as const, priceFixed: parsedFixed }
+        : priceType === "variant"
+          ? {
+              ...common,
+              priceType: "variant" as const,
+              priceHot: parsedHot,
+              priceIced: parsedIced,
+            }
+          : { ...common, priceType: "open" as const };
 
     const res =
       mode.kind === "create"
-        ? await menuService.createMenuItem(input)
-        : await menuService.updateMenuItem(mode.item.id, input);
+        ? await createMenuItem(input)
+        : await updateMenuItem(mode.item.id, input);
 
     if (!isOk(res)) {
       setError(res.error.message);

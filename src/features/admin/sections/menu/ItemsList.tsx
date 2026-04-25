@@ -14,8 +14,15 @@ import {
   toast,
 } from "@/components/ui";
 import { MenuItemFormModal } from "./MenuItemFormModal";
-import { isOk, menuService } from "@/mocks/services";
-import type { Category, MenuItem } from "@/mocks/types";
+import {
+  isOk,
+  listMenuItems,
+  listCategories,
+  toggleSoldOut as toggleSoldOutAction,
+  deleteMenuItem,
+  type Category,
+  type MenuItem,
+} from "@/features/menu";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -35,8 +42,8 @@ export function ItemsList() {
     let cancelled = false;
     async function load() {
       const [itemsRes, catsRes] = await Promise.all([
-        menuService.listMenuItems({ activeOnly: false }),
-        menuService.listCategories(),
+        listMenuItems({ activeOnly: false }),
+        listCategories(),
       ]);
       if (cancelled) return;
       if (isOk(itemsRes)) setItems(itemsRes.data.items);
@@ -66,7 +73,7 @@ export function ItemsList() {
   }, [items, search, categoryFilter]);
 
   async function handleSoldOut(item: MenuItem) {
-    const res = await menuService.toggleSoldOut(item.id, !item.isSoldOut);
+    const res = await toggleSoldOutAction(item.id, !item.isSoldOut);
     if (isOk(res)) {
       setRefreshKey((k) => k + 1);
       toast.success(
@@ -76,7 +83,7 @@ export function ItemsList() {
   }
 
   async function handleDelete(id: string) {
-    const res = await menuService.deleteMenuItem(id);
+    const res = await deleteMenuItem(id);
     if (!isOk(res)) {
       toast.error(res.error.message);
       return;

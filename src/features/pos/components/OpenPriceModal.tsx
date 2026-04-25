@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button, Input, Modal } from "@/components/ui";
-import type { MenuItem } from "@/mocks/types";
+import type { MenuItem } from "@/features/menu";
 import { buildLineItem } from "@/features/pos/cartStore";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 

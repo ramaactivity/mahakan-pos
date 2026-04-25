@@ -15,8 +15,12 @@ import {
   Skeleton,
   toast,
 } from "@/components/ui";
-import { isOk, menuService } from "@/mocks/services";
-import type { Modifier } from "@/mocks/types";
+import {
+  isOk,
+  listModifiers,
+  updateModifierPrice,
+  type Modifier,
+} from "@/features/menu";
 import { formatRupiah } from "@/lib/format";
 
 const EDITABLE_SLUGS = new Set(["extra_shot", "extra_topping_ayam"]);
@@ -33,7 +37,7 @@ export function ModifiersConfig() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const res = await menuService.listModifiers();
+      const res = await listModifiers();
       if (cancelled) return;
       if (isOk(res)) setModifiers(res.data.items);
       setLoading(false);
@@ -53,7 +57,7 @@ export function ModifiersConfig() {
     }
     setSubmitting(true);
     setError(null);
-    const res = await menuService.updateModifierPrice(editing.slug, price);
+    const res = await updateModifierPrice(editing.slug, price);
     if (!isOk(res)) {
       setError(res.error.message);
       setSubmitting(false);
@@ -132,7 +136,7 @@ export function ModifiersConfig() {
                     <div>
                       <p className="mb-1 text-xs text-neutral-500">Pilihan</p>
                       <div className="flex flex-wrap gap-1.5">
-                        {mod.options?.map((opt) => (
+                        {mod.optionsJson?.map((opt) => (
                           <Badge key={opt.value} variant="neutral">
                             {opt.label}
                           </Badge>

@@ -43,19 +43,14 @@ import { PosLeftNav, type PosTab } from "@/features/pos/components/PosLeftNav";
 import { ShiftPanel } from "@/features/pos/components/ShiftPanel";
 import { useCartStore } from "@/features/pos/cartStore";
 import { useSession } from "@/features/auth/SessionProvider";
+import { isOk, shiftService, transactionService } from "@/mocks/services";
 import {
-  isOk,
-  menuService,
-  shiftService,
-  transactionService,
-} from "@/mocks/services";
-import type {
-  Category,
-  MenuItem,
-  PaymentMethod,
-  Shift,
-  Transaction,
-} from "@/mocks/types";
+  listCategories as listCategoriesAction,
+  listMenuItems as listMenuItemsAction,
+  type Category,
+  type MenuItem,
+} from "@/features/menu";
+import type { PaymentMethod, Shift, Transaction } from "@/mocks/types";
 import type { Discount } from "@/lib/money";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
@@ -164,8 +159,8 @@ export function PosShell() {
     let cancelled = false;
     async function load() {
       const [menuRes, catRes] = await Promise.all([
-        menuService.listMenuItems({ activeOnly: true }),
-        menuService.listCategories(),
+        listMenuItemsAction({ activeOnly: true }),
+        listCategoriesAction(),
       ]);
       if (cancelled) return;
       if (isOk(menuRes)) setMenuItems(menuRes.data.items);

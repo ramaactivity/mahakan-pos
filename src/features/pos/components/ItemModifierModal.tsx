@@ -4,8 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, Modal } from "@/components/ui";
 import type { CartLineItemModifier } from "@/features/pos/types";
 import { buildLineItem } from "@/features/pos/cartStore";
-import { isOk, menuService } from "@/mocks/services";
-import type { MenuItem, Modifier, Variant } from "@/mocks/types";
+import {
+  isOk,
+  listModifiersForCategory,
+  type MenuItem,
+  type Modifier,
+} from "@/features/menu";
+import type { Variant } from "@/mocks/types";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -54,14 +59,14 @@ export function ItemModifierModal({
     }
     let cancelled = false;
     async function load() {
-      const res = await menuService.listModifiersForCategory(item!.categoryId);
+      const res = await listModifiersForCategory(item!.categoryId);
       if (cancelled || !isOk(res)) return;
       setModifiers(res.data.items);
       // Set default selections (single_select default = first option)
       const next: Record<string, string | boolean> = {};
       for (const mod of res.data.items) {
-        if (mod.type === "single_select" && mod.options) {
-          next[mod.slug] = mod.options[0].value;
+        if (mod.type === "single_select" && mod.optionsJson) {
+          next[mod.slug] = mod.optionsJson[0].value;
         } else if (mod.type === "toggle") {
           next[mod.slug] = false;
         }
@@ -94,7 +99,7 @@ export function ItemModifierModal({
         if (!value) continue;
         // Skip ice_level if not iced variant
         if (mod.slug === "ice_level" && variant !== "iced") continue;
-        const opt = mod.options?.find((o) => o.value === value);
+        const opt = mod.optionsJson?.find((o) => o.value === value);
         out.push({
           modifierSlug: mod.slug,
           label: mod.label,
@@ -191,12 +196,12 @@ export function ItemModifierModal({
           // Hide ice_level for non-iced variants
           if (mod.slug === "ice_level" && variant !== "iced") return null;
 
-          if (mod.type === "single_select" && mod.options) {
+          if (mod.type === "single_select" && mod.optionsJson) {
             const selected = selections[mod.slug] as string | undefined;
             return (
               <Group key={mod.slug} label={mod.label}>
                 <div className="grid grid-cols-3 gap-2">
-                  {mod.options.map((opt) => (
+                  {mod.optionsJson.map((opt) => (
                     <PickerButton
                       key={opt.value}
                       selected={selected === opt.value}

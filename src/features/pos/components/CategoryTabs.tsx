@@ -1,6 +1,6 @@
 "use client";
 
-import type { Category } from "@/mocks/types";
+import type { Category } from "@/features/menu";
 import { cn } from "@/lib/utils";
 
 interface CategoryTabsProps {

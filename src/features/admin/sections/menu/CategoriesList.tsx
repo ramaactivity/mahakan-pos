@@ -12,8 +12,17 @@ import {
   Skeleton,
   toast,
 } from "@/components/ui";
-import { isOk, menuService } from "@/mocks/services";
-import type { Category, MenuItem } from "@/mocks/types";
+import {
+  isOk,
+  listAllCategories,
+  listMenuItems,
+  reorderCategory,
+  createCategory,
+  updateCategory,
+  deleteCategory,
+  type Category,
+  type MenuItem,
+} from "@/features/menu";
 
 export function CategoriesList() {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -33,8 +42,8 @@ export function CategoriesList() {
     let cancelled = false;
     async function load() {
       const [catRes, itemRes] = await Promise.all([
-        menuService.listCategories(),
-        menuService.listMenuItems({ activeOnly: false }),
+        listAllCategories(),
+        listMenuItems({ activeOnly: false }),
       ]);
       if (cancelled) return;
       if (isOk(catRes)) setCategories(catRes.data.items);
@@ -52,7 +61,7 @@ export function CategoriesList() {
   }
 
   async function handleReorder(cat: Category, dir: "up" | "down") {
-    const res = await menuService.reorderCategory(cat.id, dir);
+    const res = await reorderCategory(cat.id, dir);
     if (!isOk(res)) {
       toast.error(res.error.message);
       return;
@@ -64,7 +73,7 @@ export function CategoriesList() {
     if (submitting) return;
     setSubmitting(true);
     setError(null);
-    const res = await menuService.createCategory(creatingName);
+    const res = await createCategory(creatingName);
     if (!isOk(res)) {
       setError(res.error.message);
       setSubmitting(false);
@@ -81,7 +90,7 @@ export function CategoriesList() {
     if (!editingCat || submitting) return;
     setSubmitting(true);
     setError(null);
-    const res = await menuService.updateCategory(editingCat.id, {
+    const res = await updateCategory(editingCat.id, {
       name: editingName,
     });
     if (!isOk(res)) {
@@ -99,7 +108,7 @@ export function CategoriesList() {
   async function handleDelete() {
     if (!pendingDelete || submitting) return;
     setSubmitting(true);
-    const res = await menuService.deleteCategory(pendingDelete.id);
+    const res = await deleteCategory(pendingDelete.id);
     if (!isOk(res)) {
       toast.error(res.error.message);
       setSubmitting(false);
