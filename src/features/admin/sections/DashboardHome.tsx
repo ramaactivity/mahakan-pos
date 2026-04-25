@@ -18,8 +18,11 @@ import {
   CardTitle,
   Skeleton,
 } from "@/components/ui";
-import { isOk, reportService } from "@/mocks/services";
-import type { DailySalesReport } from "@/mocks/services/reportService";
+import {
+  getDailySalesReport,
+  isOk,
+  type DailySalesReport,
+} from "@/features/reports";
 import { formatRupiah } from "@/lib/format";
 
 interface DashboardHomeProps {
@@ -33,7 +36,7 @@ export function DashboardHome({ user }: DashboardHomeProps) {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const res = await reportService.getDailySalesReport();
+      const res = await getDailySalesReport();
       if (cancelled) return;
       if (isOk(res)) setReport(res.data);
       setLoading(false);

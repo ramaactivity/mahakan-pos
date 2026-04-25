@@ -1,0 +1,72 @@
+"use server";
+
+import { auth } from "@/lib/auth";
+import { hasPermission } from "@/lib/auth";
+import { todayWibIso } from "@/features/cash/helpers";
+import {
+  fetchDailySalesReport,
+  fetchItemPerformance,
+  fetchPnlReport,
+} from "./queries";
+import {
+  fail,
+  ok,
+  type ApiResult,
+  type DailySalesReport,
+  type ItemPerformanceRow,
+  type PnlReport,
+} from "./types";
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function requireSession() {
+  const session = await auth();
+  if (!session) throw new Error("UNAUTHORIZED");
+  return session;
+}
+
+export async function getDailySalesReport(
+  date: string = todayWibIso(),
+): Promise<ApiResult<DailySalesReport>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "report.sales.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat laporan penjualan");
+  }
+  if (!ISO_DATE.test(date)) {
+    return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
+  }
+  return ok(await fetchDailySalesReport(session.user.outletId, date));
+}
+
+export async function getItemPerformance(
+  from: string,
+  to: string,
+  sort: "qty" | "revenue" | "avg" = "qty",
+  limit = 100,
+): Promise<ApiResult<ItemPerformanceRow[]>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "report.items.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat performa item");
+  }
+  if (!ISO_DATE.test(from) || !ISO_DATE.test(to)) {
+    return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
+  }
+  if (limit < 1 || limit > 500) limit = 100;
+  return ok(
+    await fetchItemPerformance(session.user.outletId, from, to, sort, limit),
+  );
+}
+
+export async function getPnlReport(
+  from: string,
+  to: string,
+): Promise<ApiResult<PnlReport>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "report.pnl.view")) {
+    return fail("FORBIDDEN", "P&L hanya untuk Owner");
+  }
+  if (!ISO_DATE.test(from) || !ISO_DATE.test(to)) {
+    return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
+  }
+  return ok(await fetchPnlReport(session.user.outletId, from, to));
+}

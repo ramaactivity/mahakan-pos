@@ -12,8 +12,7 @@ import {
   Input,
   Skeleton,
 } from "@/components/ui";
-import { isOk, reportService } from "@/mocks/services";
-import type { PnlReport } from "@/mocks/services/reportService";
+import { getPnlReport, isOk, type PnlReport } from "@/features/reports";
 import { formatRupiah } from "@/lib/format";
 import type { Role } from "@/mocks/types";
 import { cn } from "@/lib/utils";
@@ -39,7 +38,7 @@ export function PnlView({ viewerRole }: PnlViewProps) {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const res = await reportService.getPnlReport(from, to);
+      const res = await getPnlReport(from, to);
       if (cancelled) return;
       if (isOk(res)) setReport(res.data);
       setLoading(false);

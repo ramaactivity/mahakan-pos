@@ -19,8 +19,11 @@ import {
   Input,
   Skeleton,
 } from "@/components/ui";
-import { isOk, reportService } from "@/mocks/services";
-import type { DailySalesReport } from "@/mocks/services/reportService";
+import {
+  getDailySalesReport,
+  isOk,
+  type DailySalesReport,
+} from "@/features/reports";
 import { formatRupiah } from "@/lib/format";
 
 export function DailySalesView() {
@@ -33,7 +36,7 @@ export function DailySalesView() {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const res = await reportService.getDailySalesReport(date);
+      const res = await getDailySalesReport(date);
       if (cancelled) return;
       if (isOk(res)) setReport(res.data);
       setLoading(false);

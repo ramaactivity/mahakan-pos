@@ -9,8 +9,11 @@ import {
   Input,
   Skeleton,
 } from "@/components/ui";
-import { isOk, reportService } from "@/mocks/services";
-import type { ItemPerformanceRow } from "@/mocks/services/reportService";
+import {
+  getItemPerformance,
+  isOk,
+  type ItemPerformanceRow,
+} from "@/features/reports";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -29,7 +32,7 @@ export function ItemPerformanceView() {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const res = await reportService.getItemPerformance(from, to, sort, 200);
+      const res = await getItemPerformance(from, to, sort, 200);
       if (cancelled) return;
       if (isOk(res)) setRows(res.data);
       setLoading(false);
