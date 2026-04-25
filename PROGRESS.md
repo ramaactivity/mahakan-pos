@@ -6,7 +6,7 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 **Phase:** Phase 1 — Foundation
 **Fase:** A (UI Prototype)
-**Active Milestone:** M4 — Auth UI Prototype (next)
+**Active Milestone:** M5 — POS UI Prototype (next)
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -19,7 +19,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M1** — Environment Credentials Setup _(done 2026-04-24, Neon smoke test passed)_
 - [x] **M2** — Design System Foundation _(done 2026-04-24, money.ts 100% coverage, 60/60 tests)_
 - [x] **M3** — Mock Data Layer _(done 2026-04-24, 43 menu items + 7 fake services)_
-- [ ] **M4** — Auth UI Prototype _(next)_
+- [x] **M4** — Auth UI Prototype _(done 2026-04-24, login + PIN + protected routes wired to mocks)_
+- [ ] **M5** — POS UI Prototype _(next)_
 - [ ] **M3** — Mock Data Layer
 - [ ] **M4** — Auth UI Prototype
 - [ ] **M5** — POS UI Prototype
@@ -85,13 +86,38 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - Menu count discrepancy: PRD/README mention 45, actual 43 — to confirm with Owner; mock data uses 43 faithfully
 - C4 (staff seed strategy) — mocks seeded 2 staff (Rina, Budi); production seed via owner-creates-manually (recommended path) still valid
 
-**Next session (M4 — Auth UI Prototype):**
-- `src/app/(auth)/login/page.tsx` — email+password form for Owner/Manager
-- `src/app/(auth)/pin/page.tsx` — PIN pad flow with staff avatar selector
-- `src/app/(auth)/layout.tsx` — centered Mahakan logo shell
-- Wire to `authService` mocks (no real backend yet)
-- Error state with shake animation on wrong credentials
-- After login: redirect Owner → `/dashboard` (stub), Staff → `/pos` (stub)
+**M4 done (2026-04-24):**
+- `src/features/auth/SessionProvider.tsx` — React Context + `useSession` hook (loading/authenticated/unauthenticated states)
+- `src/features/auth/RequireAuth.tsx` — guard component (role check + redirect)
+- `src/features/auth/StaffAvatarGrid.tsx` — avatar tile selector with initials
+- `src/app/layout.tsx` — `<SessionProvider>` mounted root-level
+- `src/app/(auth)/layout.tsx` — centered Mahakan logo shell (uses `Logo_Mahakan_Hijau.png`)
+- `src/app/(auth)/login/page.tsx` — email+password form, shake-on-error, link to /pin
+- `src/app/(auth)/pin/page.tsx` — 2-step (select user → PIN pad), auto-submit at 6 digits, link to /login
+- `src/app/(admin)/layout.tsx` — guards owner/manager + top bar + logout
+- `src/app/(admin)/dashboard/page.tsx` — stub (3 stat cards + session info)
+- `src/app/(pos)/layout.tsx` — guards any role + top bar + logout, redirect to /pin
+- `src/app/(pos)/pos/page.tsx` — stub (shift card + session info)
+- `src/app/page.tsx` — showcase nav buttons → /login, /pin
+- Shake animation `@keyframes mahakan-shake` in globals.css
+- Sessions: 2h owner/manager, 12h staff (per PRD §3.3)
+
+**Test credentials (mock):**
+- Owner: `rama.activity98@gmail.com` / `Owner1234!` (or PIN `1234`)
+- Manager: `siti@mahakan.id` / `Manager1234!` (or PIN `2345`)
+- Staff Rina: PIN `5678` (no email login)
+- Staff Budi: PIN `5679`
+
+**Next session (M5 — POS UI Prototype):**
+- `src/app/(pos)/pos/order/new/page.tsx` — pager + order type selector
+- `src/app/(pos)/pos/order/[id]/page.tsx` — menu grid + cart sidebar with `MenuTile`, `CategoryTabs`, `Cart`, `CartLineItem`, `ItemModifierModal`, `OpenPriceModal`, `ItemNoteModal`
+- `src/app/(pos)/pos/order/[id]/payment/page.tsx` — payment screen with cash numpad
+- `src/app/(pos)/pos/order/[id]/success/page.tsx` — receipt-on-screen
+- `src/app/(pos)/pos/history/page.tsx` — today's transactions
+- `src/app/(pos)/pos/shift/open/page.tsx` + `close/page.tsx`
+- `ApproverOverrideModal`, `DiscountModal`
+- State management: simple React state + service calls (Zustand only if needed)
+- All wired to `transactionService`, `menuService`, `shiftService`, `authService`
 
 **Pending user decisions (Critical):**
 - C1 — Dependency version lock strategy (needed before M8)

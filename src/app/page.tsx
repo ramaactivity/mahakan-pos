@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Coffee, Heart, Mail, Search } from "lucide-react";
 import {
   Badge,
@@ -29,7 +30,7 @@ export default function DesignSystemShowcase() {
 
   return (
     <main className="mx-auto max-w-6xl space-y-12 p-6 md:p-10">
-      <header className="space-y-2">
+      <header className="space-y-3">
         <Badge variant="signature">
           <Heart className="size-3" /> Design System
         </Badge>
@@ -41,6 +42,20 @@ export default function DesignSystemShowcase() {
           green, tipografi Inter + JetBrains Mono, dan state interaksi semua
           komponen.
         </p>
+        <div className="flex flex-wrap gap-2 pt-2">
+          <Link
+            href="/login"
+            className="inline-flex items-center gap-1 rounded-md bg-mahakan-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-mahakan-green-800"
+          >
+            Coba Login (Owner/Manager)
+          </Link>
+          <Link
+            href="/pin"
+            className="inline-flex items-center gap-1 rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-100"
+          >
+            Coba PIN (Staff)
+          </Link>
+        </div>
       </header>
 
       {/* ============================================================== */}
