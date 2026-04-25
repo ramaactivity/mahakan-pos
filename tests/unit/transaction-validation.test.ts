@@ -61,16 +61,13 @@ function lineItem(
   const subtotal =
     (partial.unitPrice + (partial.modifiersPriceDelta ?? 0)) * partial.quantity;
   return {
-    menuItemId: partial.menuItemId,
     variant: partial.variant ?? null,
-    quantity: partial.quantity,
-    unitPrice: partial.unitPrice,
     modifiersPriceDelta: partial.modifiersPriceDelta ?? 0,
-    subtotal,
     note: null,
     openPriceNote: null,
     modifiers: [],
     ...partial,
+    subtotal,
   };
 }
 
