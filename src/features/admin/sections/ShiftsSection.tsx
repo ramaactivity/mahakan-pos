@@ -11,8 +11,8 @@ import {
   Skeleton,
 } from "@/components/ui";
 import { ShiftDetailModal } from "./shifts/ShiftDetailModal";
-import { isOk, shiftService, userService } from "@/mocks/services";
-import type { PublicUser, Shift } from "@/mocks/types";
+import { isOk, listShifts, type Shift } from "@/features/shifts";
+import { listUsers, type PublicUser } from "@/features/users";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
@@ -30,8 +30,8 @@ export function ShiftsSection() {
     let cancelled = false;
     async function load() {
       const [shiftsRes, usersRes] = await Promise.all([
-        shiftService.listShifts({ limit: 100 }),
-        userService.listUsers({ viewerRole: "owner" }),
+        listShifts({ limit: 100 }),
+        listUsers(),
       ]);
       if (cancelled) return;
       if (isOk(shiftsRes)) setShifts(shiftsRes.data.items);

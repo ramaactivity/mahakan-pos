@@ -12,7 +12,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Role } from "@/mocks/types";
+import type { Role } from "@/lib/auth";
 
 export type AdminSection =
   | "dashboard"

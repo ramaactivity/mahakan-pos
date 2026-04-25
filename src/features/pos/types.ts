@@ -1,15 +1,12 @@
 /**
  * POS feature local types — cart line items + drafts.
  *
- * Distinct from `@/mocks/types` (DB-shape). These are the shapes that
- * live in client state during an in-progress order. Mapped to
- * `CreateTransactionInput` at payment time.
+ * Distinct from DB shapes — these live in client state during an in-progress
+ * order, mapped to `CreateTransactionInput` at payment time.
  */
 
-import type {
-  Discount,
-} from "@/lib/money";
-import type { OrderType, Variant } from "@/mocks/types";
+import type { Discount } from "@/lib/money";
+import type { OrderType, Variant } from "@/features/transactions";
 
 export interface CartLineItemModifier {
   modifierSlug: string;

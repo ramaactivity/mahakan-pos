@@ -8,8 +8,13 @@ import {
   Spinner,
 } from "@/components/ui";
 import { StaffAvatarGrid } from "@/features/auth/StaffAvatarGrid";
-import { authService, isOk } from "@/mocks/services";
-import type { PublicUser } from "@/mocks/types";
+import type { Role } from "@/lib/auth";
+
+interface ApproverUser {
+  id: string;
+  name: string;
+  role: Role;
+}
 
 type ApproverActionType =
   | "pos.transaction.void"
@@ -40,7 +45,7 @@ export function ApproverOverrideModal({
   onClose,
   onVerified,
 }: ApproverOverrideModalProps) {
-  const [users, setUsers] = useState<PublicUser[]>([]);
+  const [users, setUsers] = useState<ApproverUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pin, setPin] = useState("");
@@ -60,10 +65,18 @@ export function ApproverOverrideModal({
     let cancelled = false;
     setLoadingUsers(true);
     async function load() {
-      const res = await authService.listApprovers();
-      if (cancelled) return;
-      if (isOk(res)) setUsers(res.data);
-      setLoadingUsers(false);
+      try {
+        const res = await fetch("/api/v1/auth/approvers");
+        if (cancelled) return;
+        if (res.ok) {
+          const json = (await res.json()) as { items: ApproverUser[] };
+          setUsers(json.items);
+        }
+      } catch {
+        if (!cancelled) setUsers([]);
+      } finally {
+        if (!cancelled) setLoadingUsers(false);
+      }
     }
     void load();
     return () => {
@@ -76,15 +89,24 @@ export function ApproverOverrideModal({
     setSubmitting(true);
     setError(null);
 
-    const res = await authService.verifyApprover({
-      approverId: selectedId,
-      pin,
-      actionType,
-      targetEntityId,
+    const res = await fetch("/api/v1/auth/verify-approver", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approverId: selectedId,
+        pin,
+        actionType,
+        targetEntityId: targetEntityId ?? null,
+      }),
     });
 
-    if (!isOk(res)) {
-      setError(res.error.message);
+    const json = (await res.json().catch(() => null)) as
+      | { success: true; data: { approverToken: string; approverId: string } }
+      | { success: false; error: { message: string } }
+      | null;
+
+    if (!res.ok || !json || !json.success) {
+      setError(json && !json.success ? json.error.message : "Verifikasi gagal");
       setShake(true);
       setPin("");
       setTimeout(() => setShake(false), 400);
@@ -92,7 +114,7 @@ export function ApproverOverrideModal({
       return;
     }
 
-    onVerified({ approverId: selectedId, token: res.data.token });
+    onVerified({ approverId: selectedId, token: json.data.approverToken });
     setSubmitting(false);
   }
 

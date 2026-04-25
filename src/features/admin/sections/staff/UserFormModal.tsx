@@ -2,8 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { Button, Input, Modal, toast } from "@/components/ui";
-import { isOk, userService } from "@/mocks/services";
-import type { Role } from "@/mocks/types";
+import {
+  createManager,
+  createStaff,
+  isOk,
+  updateUser,
+} from "@/features/users";
+import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 type Mode = { kind: "create" } | { kind: "edit"; userId: string; name: string };
@@ -13,6 +18,7 @@ interface UserFormModalProps {
   mode: Mode | null;
   /** Active session role — limits what can be created. */
   viewerRole: Role;
+  /** Kept for callsite compat; action derives from session. */
   viewerUserId: string;
   onClose: () => void;
   onSaved: () => void;
@@ -22,7 +28,6 @@ export function UserFormModal({
   open,
   mode,
   viewerRole,
-  viewerUserId,
   onClose,
   onSaved,
 }: UserFormModalProps) {
@@ -52,10 +57,9 @@ export function UserFormModal({
     setError(null);
 
     if (mode.kind === "edit") {
-      const res = await userService.updateUser({
+      const res = await updateUser({
         id: mode.userId,
         name: name.trim(),
-        updatedBy: viewerUserId,
       });
       if (!isOk(res)) {
         setError(res.error.message);
@@ -69,10 +73,9 @@ export function UserFormModal({
 
     // Create
     if (createRole === "staff") {
-      const res = await userService.createStaff({
+      const res = await createStaff({
         name: name.trim(),
         pin,
-        createdBy: viewerUserId,
       });
       if (!isOk(res)) {
         setError(res.error.message);
@@ -85,12 +88,11 @@ export function UserFormModal({
     }
 
     // Create manager
-    const res = await userService.createManager({
+    const res = await createManager({
       name: name.trim(),
       email: email.trim(),
       password,
       pin: pin.trim() || undefined,
-      createdBy: viewerUserId,
     });
     if (!isOk(res)) {
       setError(res.error.message);

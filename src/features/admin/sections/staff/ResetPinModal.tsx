@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { Button, Input, Modal, toast } from "@/components/ui";
-import { isOk, userService } from "@/mocks/services";
+import { isOk, resetPin } from "@/features/users";
 
 interface ResetPinModalProps {
   open: boolean;
   userId: string | null;
   userName: string;
+  /** Kept for callsite compat; action derives userId from session. */
   updatedBy: string;
   onClose: () => void;
   onReset: () => void;
@@ -17,7 +18,6 @@ export function ResetPinModal({
   open,
   userId,
   userName,
-  updatedBy,
   onClose,
   onReset,
 }: ResetPinModalProps) {
@@ -43,11 +43,7 @@ export function ResetPinModal({
     }
     setSubmitting(true);
     setError(null);
-    const res = await userService.resetPin({
-      userId,
-      newPin: pin,
-      updatedBy,
-    });
+    const res = await resetPin({ userId, newPin: pin });
     if (!isOk(res)) {
       setError(res.error.message);
       setSubmitting(false);

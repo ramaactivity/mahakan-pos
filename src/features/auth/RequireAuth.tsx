@@ -4,7 +4,7 @@ import { useEffect, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Spinner } from "@/components/ui";
 import { useSession } from "./SessionProvider";
-import type { Role } from "@/mocks/types";
+import type { Role } from "@/lib/auth";
 
 interface RequireAuthProps {
   children: ReactNode;

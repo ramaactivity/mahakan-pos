@@ -11,12 +11,12 @@ import {
   CardTitle,
   Skeleton,
 } from "@/components/ui";
-import { mockOutlet } from "@/mocks/data";
-import type { Outlet } from "@/mocks/types";
-import { delay } from "@/mocks/services/_helpers";
+import { getOwnOutlet, isOk, type Outlet } from "@/features/outlets";
 import { formatRupiah } from "@/lib/format";
 
-const DAY_LABELS: Record<keyof Outlet["operationalHours"], string> = {
+type OperationalHours = NonNullable<Outlet["operationalHours"]>;
+
+const DAY_LABELS: Record<keyof OperationalHours, string> = {
   mon: "Senin",
   tue: "Selasa",
   wed: "Rabu",
@@ -33,10 +33,9 @@ export function SettingsSection() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      // Mock: just pull from constant. Real: settingsService.getOutlet
-      await delay(150);
+      const res = await getOwnOutlet();
       if (cancelled) return;
-      setOutlet(mockOutlet);
+      if (isOk(res)) setOutlet(res.data);
       setLoading(false);
     }
     void load();
@@ -110,10 +109,11 @@ export function SettingsSection() {
         </CardHeader>
         <CardContent>
           <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
-            {(Object.keys(outlet.operationalHours) as Array<
-              keyof Outlet["operationalHours"]
-            >).map((day) => {
-              const h = outlet.operationalHours[day];
+            {outlet.operationalHours
+              ? (Object.keys(outlet.operationalHours) as Array<
+                  keyof OperationalHours
+                >).map((day) => {
+              const h = outlet.operationalHours![day];
               return (
                 <div
                   key={day}
@@ -127,7 +127,8 @@ export function SettingsSection() {
                   </span>
                 </div>
               );
-            })}
+            })
+              : null}
           </div>
         </CardContent>
       </Card>
@@ -163,32 +164,32 @@ export function SettingsSection() {
           <dl className="grid gap-4 md:grid-cols-2">
             <Field
               label="Footer Struk"
-              value={`"${outlet.settings.receipt.footerText}"`}
+              value={`"${outlet.settings?.receipt?.footerText ?? "—"}"`}
               colSpan={2}
             />
             <Field
               label="QR Rating di Struk"
-              value={outlet.settings.receipt.showQrRating ? "Aktif" : "Mati"}
+              value={outlet.settings?.receipt?.showQrRating ? "Aktif" : "Mati"}
             />
             <Field
               label="Threshold Variance Shift"
-              value={`> ${formatRupiah(outlet.settings.thresholds.shiftVarianceAlert)} = warning`}
+              value={`> ${formatRupiah(outlet.settings?.thresholds?.shiftVarianceAlert ?? 10_000)} = warning`}
             />
             <Field
               label="HPP Visible ke Staff"
-              value={outlet.settings.features.showHppToStaff ? "Ya" : "Tidak"}
+              value={outlet.settings?.features?.showHppToStaff ? "Ya" : "Tidak"}
             />
             <Field
               label="Loyalty (Phase 2)"
-              value={outlet.settings.features.loyaltyEnabled ? "Aktif" : "Off"}
+              value={outlet.settings?.features?.loyaltyEnabled ? "Aktif" : "Off"}
             />
             <Field
               label="Recipe / BOM (Phase 2)"
-              value={outlet.settings.features.recipeEnabled ? "Aktif" : "Off"}
+              value={outlet.settings?.features?.recipeEnabled ? "Aktif" : "Off"}
             />
             <Field
               label="Multi-outlet (Phase 4)"
-              value={outlet.settings.features.multiOutletEnabled ? "Aktif" : "Off"}
+              value={outlet.settings?.features?.multiOutletEnabled ? "Aktif" : "Off"}
             />
           </dl>
         </CardContent>

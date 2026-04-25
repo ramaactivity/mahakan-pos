@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button, Input, Modal } from "@/components/ui";
 import { useCartStore } from "@/features/pos/cartStore";
-import type { OrderType } from "@/mocks/types";
+import type { OrderType } from "@/features/transactions";
 import { cn } from "@/lib/utils";
 
 interface NewOrderModalProps {

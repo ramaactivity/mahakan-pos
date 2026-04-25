@@ -7,7 +7,7 @@ import {
   computeTotal,
   type Discount,
 } from "@/lib/money";
-import type { OrderType } from "@/mocks/types";
+import type { OrderType } from "@/features/transactions";
 import type { CartLineItem, CartLineItemModifier, Draft } from "./types";
 
 function genCartItemId(): string {

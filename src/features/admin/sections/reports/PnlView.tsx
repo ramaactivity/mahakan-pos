@@ -14,7 +14,7 @@ import {
 } from "@/components/ui";
 import { getPnlReport, isOk, type PnlReport } from "@/features/reports";
 import { formatRupiah } from "@/lib/format";
-import type { Role } from "@/mocks/types";
+import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 interface PnlViewProps {

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { DailySalesView } from "./reports/DailySalesView";
 import { ItemPerformanceView } from "./reports/ItemPerformanceView";
 import { PnlView } from "./reports/PnlView";
-import type { Role } from "@/mocks/types";
+import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 type ReportTab = "sales" | "items" | "pnl";

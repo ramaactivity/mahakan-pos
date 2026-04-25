@@ -14,8 +14,13 @@ import {
 } from "@/components/ui";
 import { UserFormModal } from "./staff/UserFormModal";
 import { ResetPinModal } from "./staff/ResetPinModal";
-import { isOk, userService } from "@/mocks/services";
-import type { PublicUser, Role } from "@/mocks/types";
+import {
+  deactivateUser,
+  isOk,
+  listUsers,
+  type PublicUser,
+} from "@/features/users";
+import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 interface StaffSectionProps {
@@ -40,7 +45,7 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const res = await userService.listUsers({ viewerRole });
+      const res = await listUsers();
       if (cancelled) return;
       if (isOk(res)) setUsers(res.data.items);
       setLoading(false);
@@ -54,10 +59,7 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
   async function handleDeactivate() {
     if (!pendingDeactivate || submitting) return;
     setSubmitting(true);
-    const res = await userService.deactivateUser(
-      pendingDeactivate.id,
-      viewerUserId,
-    );
+    const res = await deactivateUser(pendingDeactivate.id);
     if (!isOk(res)) {
       toast.error(res.error.message);
       setSubmitting(false);

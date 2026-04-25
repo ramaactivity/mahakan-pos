@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Badge, Modal, Skeleton } from "@/components/ui";
-import { isOk, transactionService } from "@/mocks/services";
-import type { Shift, Transaction, PublicUser } from "@/mocks/types";
+import { isOk, listTransactions, type Transaction } from "@/features/transactions";
+import type { Shift } from "@/features/shifts";
+import type { PublicUser } from "@/features/users";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime, formatIndonesianTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
@@ -29,7 +30,7 @@ export function ShiftDetailModal({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     async function load() {
-      const res = await transactionService.listTransactions({
+      const res = await listTransactions({
         shiftId: shift!.id,
         limit: 1000,
       });

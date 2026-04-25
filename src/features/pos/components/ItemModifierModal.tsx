@@ -10,7 +10,7 @@ import {
   type MenuItem,
   type Modifier,
 } from "@/features/menu";
-import type { Variant } from "@/mocks/types";
+import type { Variant } from "@/features/transactions";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
