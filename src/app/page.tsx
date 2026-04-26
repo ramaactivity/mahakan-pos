@@ -1,375 +1,214 @@
-"use client";
-
-import { useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
-import { Coffee, Heart, Mail, Search } from "lucide-react";
 import {
-  Badge,
-  Button,
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  CardFooter,
-  Input,
-  Modal,
-  PinPad,
-  QuantityStepper,
-  Spinner,
-  toast,
-} from "@/components/ui";
-import { formatRupiah, formatPercent } from "@/lib/format";
+  ArrowRight,
+  Coffee,
+  KeyRound,
+  ShieldCheck,
+  Smartphone,
+  WifiOff,
+} from "lucide-react";
 
-export default function DesignSystemShowcase() {
-  const [modalOpen, setModalOpen] = useState(false);
-  const [pin, setPin] = useState("");
-  const [qty, setQty] = useState(1);
-  const [email, setEmail] = useState("");
-  const [emailError, setEmailError] = useState("");
-
+export default function LandingPage() {
   return (
-    <main className="mx-auto max-w-6xl space-y-12 p-6 md:p-10">
-      <header className="space-y-3">
-        <Badge variant="signature">
-          <Heart className="size-3" /> Design System
-        </Badge>
-        <h1 className="text-3xl font-bold text-mahakan-green-900">
-          Mahakan POS — UI Showcase
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-mahakan-green-50 via-neutral-50 to-white">
+      <DecorativeBackdrop />
+
+      {/* Top bar */}
+      <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6 md:px-10">
+        <div className="flex items-center gap-2.5 animate-fade-up">
+          <Image
+            src="/assets/logo/Logo_Mahakan_Hijau.png"
+            alt="Mahakan Coffee &amp; Space"
+            width={36}
+            height={36}
+            className="size-9 mix-blend-multiply"
+            priority
+          />
+          <span className="font-semibold tracking-tight text-mahakan-green-900">
+            Mahakan
+          </span>
+        </div>
+        <Link
+          href="/showcase"
+          className="hidden text-xs font-medium text-neutral-500 underline-offset-4 transition hover:text-mahakan-green-700 hover:underline sm:inline"
+        >
+          Design system
+        </Link>
+      </header>
+
+      {/* Hero */}
+      <section className="relative z-10 mx-auto flex max-w-6xl flex-col items-center px-6 pb-16 pt-12 text-center md:pb-24 md:pt-20 md:px-10">
+        <span
+          className="inline-flex items-center gap-2 rounded-full border border-mahakan-green-200 bg-white/70 px-3 py-1 text-xs font-medium text-mahakan-green-800 backdrop-blur animate-fade-up [animation-delay:80ms]"
+        >
+          <Coffee className="size-3.5" aria-hidden />
+          Mahakan Coffee &amp; Space — POS Phase 1
+        </span>
+
+        <Image
+          src="/assets/logo/Logo_Mahakan_Hijau.png"
+          alt=""
+          width={140}
+          height={140}
+          className="mt-10 size-28 mix-blend-multiply md:size-36 animate-fade-up [animation-delay:160ms]"
+          priority
+          aria-hidden
+        />
+
+        <h1 className="mt-6 max-w-3xl text-balance text-4xl font-semibold tracking-tight text-mahakan-green-900 md:text-6xl lg:text-7xl animate-fade-up [animation-delay:240ms]">
+          Homely space,
+          <br className="hidden sm:inline" />
+          <span className="bg-gradient-to-r from-mahakan-green-700 via-mahakan-green-600 to-mahakan-green-800 bg-clip-text text-transparent">
+            {" "}quietly powerful POS.
+          </span>
         </h1>
-        <p className="max-w-2xl text-neutral-700">
-          Visual reference untuk base components Phase 1. Verifikasi warna sage
-          green, tipografi Inter + JetBrains Mono, dan state interaksi semua
-          komponen.
+
+        <p className="mt-6 max-w-xl text-pretty text-base text-neutral-600 md:text-lg animate-fade-up [animation-delay:320ms]">
+          Sistem kasir &amp; back-office untuk Mahakan Coffee &amp; Space —
+          ringan, offline-aware, dan dirancang khusus untuk ritme kafe sehari-hari.
         </p>
-        <div className="flex flex-wrap gap-2 pt-2">
+
+        <div className="mt-10 flex w-full flex-col items-stretch justify-center gap-3 sm:w-auto sm:flex-row sm:items-center animate-fade-up [animation-delay:400ms]">
           <Link
             href="/login"
-            className="inline-flex items-center gap-1 rounded-md bg-mahakan-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-mahakan-green-800"
+            className="group inline-flex items-center justify-center gap-2 rounded-xl bg-mahakan-green-700 px-6 py-3.5 text-base font-medium text-white shadow-lg shadow-mahakan-green-900/15 transition hover:-translate-y-0.5 hover:bg-mahakan-green-800 hover:shadow-xl hover:shadow-mahakan-green-900/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-mahakan-green-700"
           >
-            Coba Login (Owner/Manager)
+            Masuk Owner / Manager
+            <ArrowRight className="size-4 transition group-hover:translate-x-0.5" aria-hidden />
           </Link>
           <Link
             href="/pin"
-            className="inline-flex items-center gap-1 rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-100"
+            className="group inline-flex items-center justify-center gap-2 rounded-xl border border-mahakan-green-200 bg-white/80 px-6 py-3.5 text-base font-medium text-mahakan-green-900 backdrop-blur transition hover:-translate-y-0.5 hover:border-mahakan-green-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-mahakan-green-700"
           >
-            Coba PIN (Staff)
+            <KeyRound className="size-4" aria-hidden />
+            Login Staff dengan PIN
           </Link>
         </div>
-      </header>
 
-      {/* ============================================================== */}
-      <Section title="1. Palette" subtitle="Mahakan sage green (derived from logo #539371)">
-        <div className="grid grid-cols-6 gap-2 md:grid-cols-11">
-          {PALETTE_SWATCHES.map(({ shade, className }) => (
-            <div key={shade} className="space-y-1">
-              <div
-                className={`h-14 rounded-md border border-neutral-200 ${className}`}
-              />
-              <p className="text-center font-mono text-xs text-neutral-700">
-                {shade}
-              </p>
-            </div>
-          ))}
-        </div>
-        <p className="mt-3 text-sm text-neutral-500">
-          <span className="font-semibold text-neutral-900">600</span> = logo
-          color (decorative). <span className="font-semibold text-neutral-900">700</span> =
-          action color (WCAG AA). <span className="font-semibold text-neutral-900">900</span> =
-          headings (WCAG AAA).
+        <p className="mt-5 text-xs text-neutral-500 animate-fade-up [animation-delay:480ms]">
+          Owner pakai email + password · Staff cukup pilih avatar &amp; ketik PIN
         </p>
-      </Section>
 
-      {/* ============================================================== */}
-      <Section title="2. Typography" subtitle="Inter (UI) + JetBrains Mono (amounts, codes)">
-        <div className="space-y-2">
-          <h1 className="text-4xl font-bold text-neutral-900">
-            Display 4xl / Bold
-          </h1>
-          <h2 className="text-3xl font-bold text-neutral-900">
-            Heading 3xl / Bold
-          </h2>
-          <h3 className="text-2xl font-semibold text-neutral-900">
-            Heading 2xl / Semibold
-          </h3>
-          <h4 className="text-xl font-semibold text-neutral-900">
-            Heading xl / Semibold
-          </h4>
-          <p className="text-base text-neutral-900">
-            Body base — Selamat datang di Mahakan Coffee &amp; Space, homely
-            space untuk semua.
-          </p>
-          <p className="text-sm text-neutral-700">
-            Body sm secondary — catatan, helper text, metadata tambahan.
-          </p>
-          <p className="text-xs text-neutral-500">
-            Caption xs — timestamp, atribusi, tag kecil.
-          </p>
-          <p className="font-mono text-lg font-semibold text-neutral-900">
-            Monospace — Rp 1.250.000 · TRX-20260424-0042
-          </p>
-        </div>
-      </Section>
-
-      {/* ============================================================== */}
-      <Section title="3. Buttons" subtitle="5 variants × 4 sizes">
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="primary">Primary</Button>
-            <Button variant="secondary">Secondary</Button>
-            <Button variant="outline">Outline</Button>
-            <Button variant="ghost">Ghost</Button>
-            <Button variant="destructive">Destructive</Button>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm">Small</Button>
-            <Button size="md">Medium</Button>
-            <Button size="lg">Large</Button>
-            <Button size="xl" variant="primary">
-              <Coffee className="size-5" />
-              XL (POS Primary Action)
-            </Button>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button loading>Loading…</Button>
-            <Button disabled>Disabled</Button>
-            <Button
-              onClick={() => toast.success("Klik berhasil!", {
-                description: "Toast muncul dari pojok kanan atas.",
-              })}
-            >
-              Trigger Toast Success
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => toast.error("Terjadi kesalahan", {
-                description: "Contoh error toast dengan aksi.",
-                action: { label: "Coba Lagi", onClick: () => {} },
-              })}
-            >
-              Trigger Toast Error
-            </Button>
-          </div>
-        </div>
-      </Section>
-
-      {/* ============================================================== */}
-      <Section title="4. Inputs">
-        <div className="grid max-w-2xl gap-4 md:grid-cols-2">
-          <Input
-            label="Email"
-            type="email"
-            placeholder="owner@mahakan.id"
-            required
-            value={email}
-            onChange={(e) => {
-              setEmail(e.target.value);
-              setEmailError("");
-            }}
-            onBlur={() => {
-              if (email && !/^[^@]+@[^@]+\.[^@]+$/.test(email)) {
-                setEmailError("Format email tidak valid");
-              }
-            }}
-            error={emailError}
-            hint="Masukkan email yang terdaftar"
-            leadingIcon={<Mail className="size-4" aria-hidden />}
-          />
-          <Input
-            label="Pencarian menu"
-            placeholder="Cari Americano…"
-            leadingIcon={<Search className="size-4" aria-hidden />}
-          />
-          <Input label="Nominal kas awal" placeholder="100.000" inputMode="numeric" />
-          <Input label="Nama barista" disabled placeholder="Disabled" />
-        </div>
-      </Section>
-
-      {/* ============================================================== */}
-      <Section title="5. Cards">
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card variant="default">
-            <CardHeader>
-              <CardTitle>Default</CardTitle>
-              <CardDescription>Standard surface, most use cases.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-neutral-700">
-                Card content. Gunakan buat group related info.
-              </p>
-            </CardContent>
-          </Card>
-          <Card variant="interactive">
-            <CardHeader>
-              <CardTitle>Interactive</CardTitle>
-              <CardDescription>Hover-enabled, tappable.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-neutral-700">Click-ish variant untuk list item.</p>
-            </CardContent>
-          </Card>
-          <Card variant="flat">
-            <CardHeader>
-              <CardTitle>Flat</CardTitle>
-              <CardDescription>No shadow, nested contexts.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-neutral-700">Dipakai inside modal/card lain.</p>
-            </CardContent>
-          </Card>
-          <Card variant="emphasis">
-            <CardHeader>
-              <CardTitle>Emphasis</CardTitle>
-              <CardDescription>Brand-tinted, featured content.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-mahakan-green-900">
-                Buat featured info / announcement.
-              </p>
-            </CardContent>
-            <CardFooter>
-              <Button size="sm" variant="ghost">
-                Tutup
-              </Button>
-              <Button size="sm">Lihat</Button>
-            </CardFooter>
-          </Card>
-        </div>
-      </Section>
-
-      {/* ============================================================== */}
-      <Section title="6. Badges">
-        <div className="flex flex-wrap gap-2">
-          <Badge variant="paid">Lunas</Badge>
-          <Badge variant="voided">Dibatalkan</Badge>
-          <Badge variant="refunded">Refund</Badge>
-          <Badge variant="sold-out">Habis</Badge>
-          <Badge variant="signature">
-            <Heart className="size-3" /> Signature
-          </Badge>
-          <Badge variant="open-price">Harga Manual</Badge>
-          <Badge variant="success">Success</Badge>
-          <Badge variant="warning">Warning</Badge>
-          <Badge variant="danger">Danger</Badge>
-          <Badge variant="info">Info</Badge>
-          <Badge variant="neutral">Neutral</Badge>
-        </div>
-      </Section>
-
-      {/* ============================================================== */}
-      <Section title="7. Modal">
-        <Button onClick={() => setModalOpen(true)}>Buka Modal Demo</Button>
-        <Modal
-          open={modalOpen}
-          onClose={() => setModalOpen(false)}
-          title="Void Transaksi?"
-          description="Transaksi akan ditandai dibatalkan dan tidak masuk laporan penjualan."
-          footer={
-            <>
-              <Button variant="ghost" onClick={() => setModalOpen(false)}>
-                Batal
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => {
-                  setModalOpen(false);
-                  toast.success("Transaksi dibatalkan");
-                }}
-              >
-                Ya, Void
-              </Button>
-            </>
-          }
+        <a
+          href="#capabilities"
+          aria-label="Lihat fitur"
+          className="mt-16 hidden flex-col items-center gap-1 text-neutral-400 hover:text-mahakan-green-700 md:flex animate-fade-up [animation-delay:600ms]"
         >
-          <div className="space-y-3 text-sm text-neutral-700">
-            <p>TRX-20260424-0042 · Pager 5 · Takeaway</p>
-            <p className="font-mono text-base">
-              Total: {formatRupiah(77400)}
+          <span className="text-[10px] uppercase tracking-[0.2em]">Scroll</span>
+          <span className="animate-nudge">↓</span>
+        </a>
+      </section>
+
+      {/* Capabilities */}
+      <section
+        id="capabilities"
+        className="relative z-10 mx-auto max-w-6xl px-6 pb-20 md:px-10 md:pb-28"
+      >
+        <div className="grid gap-4 md:grid-cols-3">
+          <Capability
+            icon={<Coffee className="size-5" aria-hidden />}
+            title="Kasir cepat 3-kolom"
+            description="Tap menu, atur modifier, bayar — semua di satu layar tablet, tanpa pindah halaman."
+          />
+          <Capability
+            icon={<WifiOff className="size-5" aria-hidden />}
+            title="Tetap jalan saat offline"
+            description="Wi-Fi mati? Transaksi tersimpan lokal, otomatis sync begitu jaringan kembali."
+          />
+          <Capability
+            icon={<Smartphone className="size-5" aria-hidden />}
+            title="Install seperti app"
+            description="PWA di Chrome / Edge — icon di home screen, tanpa Play Store."
+          />
+        </div>
+
+        <div className="mt-14 grid items-start gap-10 rounded-2xl border border-mahakan-green-100 bg-white/60 p-8 shadow-sm backdrop-blur md:grid-cols-2 md:p-12">
+          <div>
+            <span className="text-xs font-medium uppercase tracking-[0.18em] text-mahakan-green-700">
+              Untuk Owner Rama
+            </span>
+            <h2 className="mt-3 text-2xl font-semibold tracking-tight text-mahakan-green-900 md:text-3xl">
+              Satu sistem dari pesanan sampai laporan harian.
+            </h2>
+            <p className="mt-4 text-neutral-600">
+              Buka shift pagi, terima pesanan sepanjang hari, void / refund dengan
+              persetujuan PIN, tutup shift dengan ringkasan variance kas — semuanya
+              tercatat ke Postgres dan bisa direview kapan saja dari Dashboard.
             </p>
-            <p>Aksi ini tidak bisa di-undo.</p>
           </div>
-        </Modal>
-      </Section>
+          <ul className="grid gap-3 text-sm text-neutral-700">
+            {HIGHLIGHTS.map((item) => (
+              <li key={item} className="flex items-start gap-3">
+                <ShieldCheck className="mt-0.5 size-4 shrink-0 text-mahakan-green-700" aria-hidden />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
 
-      {/* ============================================================== */}
-      <Section title="8. PinPad" subtitle="Untuk login staff (tablet POS)">
-        <Card variant="flat" className="max-w-xs">
-          <CardHeader>
-            <CardTitle>Masukkan PIN</CardTitle>
-            <CardDescription>
-              Input: <span className="font-mono text-base">{"•".repeat(pin.length) || "—"}</span>
-            </CardDescription>
-          </CardHeader>
-          <PinPad value={pin} onChange={setPin} maxLength={6} />
-        </Card>
-      </Section>
-
-      {/* ============================================================== */}
-      <Section title="9. QuantityStepper" subtitle="Untuk cart line item">
-        <div className="flex items-center gap-4">
-          <QuantityStepper value={qty} onChange={setQty} min={0} max={20} />
-          <span className="text-sm text-neutral-700">
-            Subtotal:{" "}
-            <span className="font-mono font-semibold text-neutral-900">
-              {formatRupiah(qty * 23000)}
-            </span>
-            <span className="text-neutral-500">
-              {" "}({formatPercent(10)} discount preview ≈ {formatRupiah(Math.round(qty * 23000 * 0.1))})
-            </span>
+      {/* Footer */}
+      <footer className="relative z-10 border-t border-mahakan-green-100/60 bg-white/40 backdrop-blur">
+        <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-3 px-6 py-6 text-xs text-neutral-500 md:flex-row md:items-center md:px-10">
+          <span>
+            © {new Date().getFullYear()} Mahakan Coffee &amp; Space · Internal POS
           </span>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/showcase"
+              className="underline-offset-4 transition hover:text-mahakan-green-700 hover:underline"
+            >
+              Design system
+            </Link>
+            <span aria-hidden className="text-neutral-300">·</span>
+            <span>Phase 1 build</span>
+          </div>
         </div>
-      </Section>
-
-      {/* ============================================================== */}
-      <Section title="10. Spinner">
-        <div className="flex items-center gap-6">
-          <Spinner className="size-4 text-mahakan-green-700" />
-          <Spinner className="size-6 text-mahakan-green-700" />
-          <Spinner className="size-8 text-mahakan-green-700" />
-          <Spinner className="size-10 text-mahakan-green-700" />
-        </div>
-      </Section>
-
-      <footer className="border-t border-neutral-200 pt-6 text-sm text-neutral-500">
-        M2 — Design System Foundation · Phase 1 Fase A · Mahakan Coffee &amp; Space
       </footer>
-    </main>
+    </div>
   );
 }
 
-function Section({
+function Capability({
+  icon,
   title,
-  subtitle,
-  children,
+  description,
 }: {
+  icon: React.ReactNode;
   title: string;
-  subtitle?: string;
-  children: React.ReactNode;
+  description: string;
 }) {
   return (
-    <section className="space-y-4">
-      <div>
-        <h2 className="text-xl font-semibold text-neutral-900">{title}</h2>
-        {subtitle ? (
-          <p className="text-sm text-neutral-500">{subtitle}</p>
-        ) : null}
+    <div className="group relative overflow-hidden rounded-2xl border border-mahakan-green-100 bg-white/70 p-6 shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:border-mahakan-green-200 hover:shadow-md">
+      <div className="absolute -right-12 -top-12 size-32 rounded-full bg-mahakan-green-100/60 blur-2xl transition group-hover:bg-mahakan-green-200/70" aria-hidden />
+      <div className="relative flex size-10 items-center justify-center rounded-xl bg-mahakan-green-100 text-mahakan-green-800">
+        {icon}
       </div>
-      {children}
-    </section>
+      <h3 className="relative mt-4 text-lg font-semibold tracking-tight text-mahakan-green-900">
+        {title}
+      </h3>
+      <p className="relative mt-2 text-sm text-neutral-600">
+        {description}
+      </p>
+    </div>
   );
 }
 
-// Static palette mapping — Tailwind JIT requires literal class names.
-const PALETTE_SWATCHES = [
-  { shade: 50, className: "bg-mahakan-green-50" },
-  { shade: 100, className: "bg-mahakan-green-100" },
-  { shade: 200, className: "bg-mahakan-green-200" },
-  { shade: 300, className: "bg-mahakan-green-300" },
-  { shade: 400, className: "bg-mahakan-green-400" },
-  { shade: 500, className: "bg-mahakan-green-500" },
-  { shade: 600, className: "bg-mahakan-green-600" },
-  { shade: 700, className: "bg-mahakan-green-700" },
-  { shade: 800, className: "bg-mahakan-green-800" },
-  { shade: 900, className: "bg-mahakan-green-900" },
-  { shade: 950, className: "bg-mahakan-green-950" },
+function DecorativeBackdrop() {
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div className="absolute -left-32 -top-32 size-[28rem] rounded-full bg-mahakan-green-200/40 blur-3xl animate-drift" />
+      <div className="absolute -right-40 top-32 size-[32rem] rounded-full bg-mahakan-green-100/60 blur-3xl animate-drift [animation-delay:-7s]" />
+      <div className="absolute bottom-0 left-1/2 size-[36rem] -translate-x-1/2 translate-y-1/3 rounded-full bg-neutral-100/80 blur-3xl" />
+    </div>
+  );
+}
+
+const HIGHLIGHTS = [
+  "Manajemen menu 43 item + modifier (Hot / Iced, ukuran, susu)",
+  "Riwayat transaksi dengan void & refund (perlu PIN approver untuk Staff)",
+  "Catat pengeluaran & pemasukan tunai di luar transaksi",
+  "Laporan harian, performa item, dan P&L (khusus Owner)",
+  "PWA installable + auto-sync setelah offline",
 ] as const;

@@ -86,3 +86,33 @@ body {
 .animate-shake {
   animation: mahakan-shake 0.4s ease-in-out;
 }
+
+/* Landing hero entrance — staggered fade-up via animation-delay utility */
+@keyframes mahakan-fade-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-up {
+  animation: mahakan-fade-up 0.7s cubic-bezier(0.21, 0.61, 0.35, 1) backwards;
+}
+
+/* Slow drift for decorative blobs */
+@keyframes mahakan-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(30px, -20px) scale(1.05); }
+}
+
+.animate-drift {
+  animation: mahakan-drift 14s ease-in-out infinite;
+}
+
+/* Scroll indicator nudge */
+@keyframes mahakan-nudge {
+  0%, 100% { transform: translateY(0); opacity: 0.6; }
+  50% { transform: translateY(6px); opacity: 1; }
+}
+
+.animate-nudge {
+  animation: mahakan-nudge 1.8s ease-in-out infinite;
+}
