@@ -51,6 +51,6 @@ export const config = {
   matcher: [
     // Exclude all API routes (each handler enforces its own auth via auth())
     // and Next/static assets/manifest/sw bundles.
-    "/((?!api|_next/static|_next/image|favicon.ico|assets|manifest.webmanifest|sw\\.js|swe-worker-).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|assets|manifest.webmanifest|sw\\.js|swe-worker-|icon-|apple-touch-icon).*)",
   ],
 };
