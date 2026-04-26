@@ -57,6 +57,8 @@ import {
   type TransactionWithItems,
 } from "@/features/transactions";
 import { getActiveShift, type Shift } from "@/features/shifts";
+import { queuePendingTransaction } from "@/lib/offline/queue";
+import { usePendingSync } from "@/lib/offline/usePendingSync";
 import type { Discount } from "@/lib/money";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
@@ -73,6 +75,8 @@ const QUICK_AMOUNTS = [50_000, 100_000, 200_000];
 export function PosShell() {
   const router = useRouter();
   const { session, logout } = useSession();
+  // Watch online status + pending offline queue; auto-sync when reconnected.
+  usePendingSync();
 
   // ==================== Top-level state ====================
 
@@ -317,7 +321,7 @@ export function PosShell() {
     setPaymentSubmitting(true);
     setPaymentError(null);
 
-    const res = await createTransaction({
+    const payload = {
       clientRefId: crypto.randomUUID(),
       shiftId: shift.id,
       cashierId: session!.user.id,
@@ -348,18 +352,51 @@ export function PosShell() {
       cashReceived: paymentMethod === "cash" ? cashReceived : null,
       cashChange: paymentMethod === "cash" ? cashChange : null,
       discountApproverToken: activeDraft.discountApproverToken ?? undefined,
-    });
+    };
 
-    if (!isOk(res)) {
-      setPaymentError(res.error.message);
-      setPaymentSubmitting(false);
-      return;
+    // Offline path: queue locally, drop the draft, show offline-paid screen.
+    // Server will process it via clientRefId idempotency once back online.
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      try {
+        await queuePendingTransaction(payload);
+        removeDraft(activeDraft.id);
+        toast.info("Offline — transaksi tersimpan lokal, ter-sync nanti");
+        setRightPanel({ kind: "idle" });
+        setPaymentSubmitting(false);
+        return;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Gagal queue offline";
+        setPaymentError(message);
+        setPaymentSubmitting(false);
+        return;
+      }
     }
 
-    removeDraft(activeDraft.id);
-    setRightPanel({ kind: "paid", trx: res.data });
-    setPaymentSubmitting(false);
-    toast.success(`Transaksi ${res.data.transactionNumber} berhasil`);
+    try {
+      const res = await createTransaction(payload);
+      if (!isOk(res)) {
+        setPaymentError(res.error.message);
+        setPaymentSubmitting(false);
+        return;
+      }
+      removeDraft(activeDraft.id);
+      setRightPanel({ kind: "paid", trx: res.data });
+      setPaymentSubmitting(false);
+      toast.success(`Transaksi ${res.data.transactionNumber} berhasil`);
+    } catch (e) {
+      // Network error mid-flight: queue and surface as offline-paid.
+      try {
+        await queuePendingTransaction(payload);
+        removeDraft(activeDraft.id);
+        toast.info("Koneksi terputus — transaksi tersimpan, ter-sync nanti");
+        setRightPanel({ kind: "idle" });
+      } catch {
+        setPaymentError(
+          e instanceof Error ? e.message : "Gagal proses transaksi",
+        );
+      }
+      setPaymentSubmitting(false);
+    }
   }
 
   function handleFinishOrder() {
