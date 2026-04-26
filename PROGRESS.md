@@ -5,8 +5,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 ## Current Status
 
 **Phase:** Phase 1 — Foundation
-**Fase:** B (Backend) — **M8-M15 + M17 + M18 done**. Only M16 (printer, hardware-blocked) and M19/M20 (deploy/launch) remain — both gated on user.
-**Active Milestone:** M16 (printer pair) or **DONE — ready for soft launch staging when user OKs deploy**
+**Fase:** B (Backend) — **M8-M18 code-complete**. Only M19/M20 (deploy/launch) remain, gated on user OK to leave offline-only mode.
+**Active Milestone:** Phase 1 implementation **DONE**. Awaiting hardware verify (M16 printer test print) + deploy approval (M19).
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -34,7 +34,7 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M13** — Expense/Income Backend + Rewire _(done 2026-04-26, cash module + admin Cash rewired; C3=C: receipt photo upload skipped Phase 1)_
 - [x] **M14** — Reports Backend + Rewire _(done 2026-04-26, reports module + admin Reports + DashboardHome rewired)_
 - [x] **M15** — Void/Refund/Discount with PIN Override _(done 2026-04-26 — already covered in M9.5+M11; this milestone added users + outlets feature modules and finalized full mock-cutover across runtime consumers)_
-- [ ] **M16** — Thermal Printer Integration _(BLOCKED on hardware — user must pair RPP02 to tablet)_
+- [x] **M16** — Thermal Printer Integration _(code-complete 2026-04-26 — ESC/POS encoder + receipt builder + Web Bluetooth wrapper + Settings pairing UI + PosShell auto-print on payment success. 24 unit tests. Hardware verify pending: user pair RPP02 on Chrome/Edge Android, tap Test Print, verify auto-print after live transaction.)_
 - [x] **M17** — PWA + Offline Resilience _(done 2026-04-26 — Serwist service worker + manifest, online/offline banner, Dexie offline queue, PosShell auto-sync on reconnect)_
 - [x] **M18** — Testing Pass _(unit-level done 2026-04-26 — 109 → 151 tests covering money, auth helpers, validation, schemas, helpers, utils. Integration tests against live DB deferred for post-launch given Phase 1 scope + offline-only mode.)_
 - [ ] **M19** — Deploy to Vercel
@@ -282,3 +282,21 @@ Tests: 109 → 151 passing. typecheck + lint clean.
 - **M20** Soft Launch — follows M19
 
 Total commits in Phase 1 work: 56 ahead of origin (offline-only). Ready for user smoke-test pass + push-to-Vercel decision.
+
+---
+
+### 2026-04-26 (Session 2 cont. — final hygiene + M16)
+
+Pos-test cleanups + M16 implementation in one push:
+- **fix(middleware)** `/api/*` no longer redirected to /login — restored /pin user list rendering after Staff create.
+- **chore: delete src/mocks** — runtime fully off mocks since M15; seed.ts now imports from `src/db/seed-data.ts` (typed sibling). Net -3268 LOC of dead code.
+- **fix(next): allowedDevOrigins** — Next 15+ blocks cross-origin dev resources from LAN (192.168.x.x); whitelisted for tablet smoke testing.
+- **docs: 99-DEPLOY-CHECKLIST.md** — pre-deploy walkthrough captured.
+- **feat(m16)** Thermal printer end-to-end:
+  * ESC/POS encoder (init/feed/align/bold/size/cut/dualLine/centerLine/divider) — pure logic, 12 unit tests
+  * Receipt builder (Transaction → Uint8Array) — 12 scenario tests covering header/items/discount/cash/qris/card/voided/refunded
+  * Web Bluetooth wrapper (singleton PrinterClient with subscribe pub-sub, pair via user gesture, GATT auto-reconnect, 256-byte chunked writes for BLE MTU safety)
+  * `<PrinterControls>` in Settings → Pair + Test Print + status badge
+  * PosShell `printReceiptForTransaction()` runs best-effort after createTransaction success — silent failure (on-screen receipt + history reprint as fallbacks)
+
+Tests: 151 → 175. Hardware verify pending — user pairs RPP02 on Chrome/Edge Android, taps Test Print in Settings, then runs live transaction.
