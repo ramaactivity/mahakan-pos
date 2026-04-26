@@ -59,6 +59,8 @@ import {
 import { getActiveShift, type Shift } from "@/features/shifts";
 import { queuePendingTransaction } from "@/lib/offline/queue";
 import { usePendingSync } from "@/lib/offline/usePendingSync";
+import { getPrinterClient } from "@/lib/printer/bluetooth";
+import { buildReceipt } from "@/lib/printer/receipt-builder";
 import type { Discount } from "@/lib/money";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
@@ -383,6 +385,10 @@ export function PosShell() {
       setRightPanel({ kind: "paid", trx: res.data });
       setPaymentSubmitting(false);
       toast.success(`Transaksi ${res.data.transactionNumber} berhasil`);
+
+      // Best-effort thermal print. Silent on failure — user has on-screen
+      // receipt + can re-print from history later.
+      void printReceiptForTransaction(res.data, session!.user.name);
     } catch (e) {
       // Network error mid-flight: queue and surface as offline-paid.
       try {
@@ -1274,4 +1280,52 @@ function Line({
       <span className="shrink-0">{r}</span>
     </div>
   );
+}
+
+async function printReceiptForTransaction(
+  trx: TransactionWithItems,
+  cashierName: string,
+): Promise<void> {
+  const printer = getPrinterClient();
+  if (!printer.isPaired()) return;
+  try {
+    const bytes = buildReceipt({
+      outletName: "Mahakan Coffee & Space",
+      outletAddress:
+        "Puncak Rd KM 22, Cisarua, Bogor Regency, West Java 16750",
+      outletPhone: "0838-1977-5665",
+      transactionNumber: trx.transactionNumber,
+      pagerNumber: trx.pagerNumber,
+      orderType: trx.orderType,
+      createdAt: trx.createdAt,
+      cashierName,
+      items: trx.items.map((item) => ({
+        name: item.itemName,
+        variant: item.variant,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        modifiersPriceDelta: item.modifiersPriceDelta,
+        subtotal: item.subtotal,
+        note: item.note,
+        openPriceNote: item.openPriceNote,
+        modifiers: item.modifiers.map((m) => ({
+          modifierSlug: m.modifierSlug,
+          selectedValue: m.selectedValue,
+          priceDelta: m.priceDelta,
+        })),
+      })),
+      subtotal: trx.subtotal,
+      discountAmount: trx.discountAmount,
+      discountReason: trx.discountReason,
+      total: trx.total,
+      paymentMethod: trx.paymentMethod,
+      cashReceived: trx.cashReceived,
+      cashChange: trx.cashChange,
+      status: trx.status,
+      footerText: "Terima kasih, sampai jumpa!",
+    });
+    await printer.send(bytes);
+  } catch (e) {
+    console.warn("[print]", e instanceof Error ? e.message : e);
+  }
 }

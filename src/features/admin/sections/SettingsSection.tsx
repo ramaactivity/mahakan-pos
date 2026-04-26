@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { Bluetooth, Building2, Clock, ScrollText } from "lucide-react";
 import {
-  Badge,
   Card,
   CardContent,
   CardDescription,
@@ -12,6 +11,7 @@ import {
   Skeleton,
 } from "@/components/ui";
 import { getOwnOutlet, isOk, type Outlet } from "@/features/outlets";
+import { PrinterControls } from "@/features/printer/PrinterControls";
 import { formatRupiah } from "@/lib/format";
 
 type OperationalHours = NonNullable<Outlet["operationalHours"]>;
@@ -140,16 +140,12 @@ export function SettingsSection() {
             <Bluetooth className="size-5" aria-hidden /> Thermal Printer
           </CardTitle>
           <CardDescription>
-            Pair Bluetooth RPP02 + test print. Implementasi di M16.
+            Pair Bluetooth RPP02 untuk auto-print struk saat bayar. Chrome/Edge
+            Android required.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-3">
-            <Badge variant="warning">Belum di-pair</Badge>
-            <p className="text-sm text-neutral-500">
-              Web Bluetooth perlu Chrome/Edge Android — fitur landing di M16.
-            </p>
-          </div>
+          <PrinterControls />
         </CardContent>
       </Card>
 
