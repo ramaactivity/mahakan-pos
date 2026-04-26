@@ -5,8 +5,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 ## Current Status
 
 **Phase:** Phase 1 — Foundation
-**Fase:** B (Backend) — **M8-M15 done**, runtime fully off mocks. M16 next (printer, hardware-blocked) or M17 (PWA + offline)
-**Active Milestone:** M16 — Thermal Printer (blocked, needs user device pair) / M17 — PWA + Offline
+**Fase:** B (Backend) — **M8-M15 + M17 done**. Only M16 (printer) and M18 (testing pass) remain.
+**Active Milestone:** M16 — Thermal Printer (blocked, needs user device pair) / M18 — Testing Pass
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -34,8 +34,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M13** — Expense/Income Backend + Rewire _(done 2026-04-26, cash module + admin Cash rewired; C3=C: receipt photo upload skipped Phase 1)_
 - [x] **M14** — Reports Backend + Rewire _(done 2026-04-26, reports module + admin Reports + DashboardHome rewired)_
 - [x] **M15** — Void/Refund/Discount with PIN Override _(done 2026-04-26 — already covered in M9.5+M11; this milestone added users + outlets feature modules and finalized full mock-cutover across runtime consumers)_
-- [ ] **M16** — Thermal Printer Integration
-- [ ] **M17** — PWA + Offline Resilience
+- [ ] **M16** — Thermal Printer Integration _(BLOCKED on hardware — user must pair RPP02 to tablet)_
+- [x] **M17** — PWA + Offline Resilience _(done 2026-04-26 — Serwist service worker + manifest, online/offline banner, Dexie offline queue, PosShell auto-sync on reconnect)_
 - [ ] **M18** — Testing Pass
 - [ ] **M19** — Deploy to Vercel
 - [ ] **M20** — Soft Launch Support
@@ -247,3 +247,18 @@ Total tests: 109. Build: 10 routes (no new endpoints — all Server Actions).
 - **M18 — Testing pass**: fill coverage gaps, add integration tests against live DB.
 
 Recommendation: pause for user smoke testing of M11-M15 in browser before tackling more. M16 needs hardware. M17 is implementable now but ideally validated against real PWA install on tablet.
+
+---
+
+### 2026-04-26 (Session 2 cont. — M17 PWA)
+
+**M17 done (4 atomic commits):**
+- **m17.1** `feat(m17.1): PWA shell` — `next.config.ts` wraps with `@serwist/next withSerwistInit`; service worker disabled in dev (Turbopack HMR-safe), built in production. `next build` script gets `--webpack` flag because Serwist's webpack-plugin can't run under Turbopack. `src/app/sw.ts` Serwist worker (defaultCache + skipWaiting + clientsClaim + navigationPreload). `public/manifest.webmanifest` (start_url=/pos, display=standalone, theme=#3D7557, bg=#fafaf7). `layout.tsx` adds metadata.manifest + appleWebApp + viewport.themeColor. `.gitignore` excludes generated `public/sw*.js` and `public/swe-worker-*.js`.
+- **m17.2** `feat(m17.2): online/offline indicator banner` — `useOnlineStatus` hook (SSR-safe default true) + `<OfflineBanner>` mounted in admin + POS layouts. eslint.config.mjs globalIgnores the Serwist bundle.
+- **m17.3+4** `feat(m17.3+4): Dexie offline queue + PosShell auto-sync` — Dexie `mahakan-pos-offline` DB with `pendingTransactions` table (`++id, &clientRefId UNIQUE, [state+createdAt]` index). `syncPendingTransactions()` single-flight reentrancy guard, replays via `createTransaction` (server idempotency by clientRefId UNIQUE), drops permanent errors (validation/forbidden/business-rule) to prevent infinite retry, marks transient ones for next online cycle. `usePendingSync()` hook ties it together — auto-syncs on online transition, toasts summary. PosShell mounts the hook + `handleProcessPayment` fork: offline-at-submit → queue + idle, network-error-mid-flight → queue + fallback to idle.
+
+Verification: typecheck ✓, lint ✓, 109/109 tests ✓, build ✓ 10 routes.
+
+Mahakan POS now installable as PWA (tablet "Add to Home Screen"), runs offline with shell + asset cache, and queues offline transactions to local IndexedDB that drain to Neon on reconnect — the full Phase 1 offline POS path.
+
+**Phase 1 status:** every milestone except M16 (hardware-blocked printer) and M18 (testing pass) is done. Deploy (M19) is offline-only-blocked until user explicitly OKs.
