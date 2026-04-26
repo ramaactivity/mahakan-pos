@@ -8,8 +8,8 @@ export type Modifier = InferSelectModel<typeof modifiers>;
 export type PriceType = "fixed" | "variant" | "open";
 
 /**
- * Mirror of the mock-services ApiResult envelope so consumers can swap
- * `from "@/mocks/services"` → `from "@/features/menu"` with no shape change.
+ * ApiResult envelope shared across feature modules — keeps client error
+ * handling uniform regardless of which Server Action was called.
  */
 export type ApiResult<T> =
   | { success: true; data: T }

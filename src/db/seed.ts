@@ -29,12 +29,12 @@ import {
 } from "./schema";
 
 import {
-  mockOutlet,
-  mockCategories,
-  mockMenuItems,
-  mockModifiers,
-  mockExpenseCategories,
-} from "../mocks/data";
+  seedOutlet,
+  seedCategories,
+  seedMenuItems,
+  seedModifiers,
+  seedExpenseCategories,
+} from "./seed-data";
 
 const REQUIRED_ENV = [
   "DATABASE_URL",
@@ -70,16 +70,16 @@ async function main() {
   const [outlet] = await db
     .insert(outlets)
     .values({
-      name: mockOutlet.name,
-      address: mockOutlet.address,
-      phone: mockOutlet.phone,
-      logoUrl: mockOutlet.logoUrl,
-      operationalHours: mockOutlet.operationalHours,
-      settings: mockOutlet.settings,
+      name: seedOutlet.name,
+      address: seedOutlet.address,
+      phone: seedOutlet.phone,
+      logoUrl: seedOutlet.logoUrl,
+      operationalHours: seedOutlet.operationalHours,
+      settings: seedOutlet.settings,
       isActive: true,
     })
     .returning({ id: outlets.id });
-  console.log(`  ✓ Outlet: ${mockOutlet.name}`);
+  console.log(`  ✓ Outlet: ${seedOutlet.name}`);
 
   const passwordHash = await bcrypt.hash(process.env.SEED_OWNER_PASSWORD!, 12);
   const [owner] = await db
@@ -96,7 +96,7 @@ async function main() {
   console.log(`  ✓ Owner: ${process.env.SEED_OWNER_NAME} <${process.env.SEED_OWNER_EMAIL}>`);
 
   const catSlugToId = new Map<string, string>();
-  for (const c of mockCategories) {
+  for (const c of seedCategories) {
     const [row] = await db
       .insert(categories)
       .values({
@@ -107,12 +107,12 @@ async function main() {
         createdBy: owner.id,
       })
       .returning({ id: categories.id });
-    catSlugToId.set(c.id, row.id);
+    catSlugToId.set(c.slug, row.id);
   }
-  console.log(`  ✓ Categories: ${mockCategories.length}`);
+  console.log(`  ✓ Categories: ${seedCategories.length}`);
 
-  for (const m of mockMenuItems) {
-    const dbCategoryId = catSlugToId.get(m.categoryId);
+  for (const m of seedMenuItems) {
+    const dbCategoryId = catSlugToId.get(m.categorySlug);
     if (!dbCategoryId) {
       throw new Error(`Missing category mapping for menu item: ${m.name}`);
     }
@@ -120,7 +120,7 @@ async function main() {
       outletId: outlet.id,
       categoryId: dbCategoryId,
       name: m.name,
-      description: m.description,
+      description: null,
       priceType: m.priceType,
       priceFixed: m.priceFixed,
       priceHot: m.priceHot,
@@ -130,26 +130,26 @@ async function main() {
       createdBy: owner.id,
     });
   }
-  console.log(`  ✓ Menu items: ${mockMenuItems.length}`);
+  console.log(`  ✓ Menu items: ${seedMenuItems.length}`);
 
-  for (const mod of mockModifiers) {
-    const appliesUuids = mod.appliesToCategories
+  for (const mod of seedModifiers) {
+    const appliesUuids = mod.appliesToCategorySlugs
       ?.map((slug) => catSlugToId.get(slug))
       .filter((x): x is string => Boolean(x));
     await db.insert(modifiers).values({
       slug: mod.slug,
       label: mod.label,
       type: mod.type,
-      optionsJson: mod.options ?? null,
+      optionsJson: mod.options,
       price: mod.price,
       appliesToCategories: appliesUuids,
       isActive: true,
       updatedBy: owner.id,
     });
   }
-  console.log(`  ✓ Modifiers: ${mockModifiers.length}`);
+  console.log(`  ✓ Modifiers: ${seedModifiers.length}`);
 
-  for (const ec of mockExpenseCategories) {
+  for (const ec of seedExpenseCategories) {
     await db.insert(expenseCategories).values({
       outletId: outlet.id,
       name: ec.name,
@@ -157,7 +157,7 @@ async function main() {
       displayOrder: ec.displayOrder,
     });
   }
-  console.log(`  ✓ Expense categories: ${mockExpenseCategories.length}`);
+  console.log(`  ✓ Expense categories: ${seedExpenseCategories.length}`);
 
   console.log("\n✅ Seed complete.");
   console.log(`   Login: ${process.env.SEED_OWNER_EMAIL}`);
