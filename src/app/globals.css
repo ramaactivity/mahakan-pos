@@ -106,13 +106,3 @@ body {
 .animate-drift {
   animation: mahakan-drift 14s ease-in-out infinite;
 }
-
-/* Scroll indicator nudge */
-@keyframes mahakan-nudge {
-  0%, 100% { transform: translateY(0); opacity: 0.6; }
-  50% { transform: translateY(6px); opacity: 1; }
-}
-
-.animate-nudge {
-  animation: mahakan-nudge 1.8s ease-in-out infinite;
-}
