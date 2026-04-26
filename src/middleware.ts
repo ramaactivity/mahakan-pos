@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 
-const PUBLIC_PATHS = ["/", "/login", "/pin"];
+const PUBLIC_PATHS = ["/", "/login", "/pin", "/showcase"];
 const ADMIN_PATHS = ["/dashboard"];
 
 function matches(pathname: string, prefixes: string[]): boolean {
