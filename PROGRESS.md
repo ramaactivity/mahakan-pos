@@ -5,8 +5,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 ## Current Status
 
 **Phase:** Phase 1 — Foundation
-**Fase:** B (Backend) — **M8-M15 + M17 done**. Only M16 (printer) and M18 (testing pass) remain.
-**Active Milestone:** M16 — Thermal Printer (blocked, needs user device pair) / M18 — Testing Pass
+**Fase:** B (Backend) — **M8-M15 + M17 + M18 done**. Only M16 (printer, hardware-blocked) and M19/M20 (deploy/launch) remain — both gated on user.
+**Active Milestone:** M16 (printer pair) or **DONE — ready for soft launch staging when user OKs deploy**
 **Mode:** Offline-only (no git push, no Vercel deploy)
 
 ---
@@ -36,7 +36,7 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M15** — Void/Refund/Discount with PIN Override _(done 2026-04-26 — already covered in M9.5+M11; this milestone added users + outlets feature modules and finalized full mock-cutover across runtime consumers)_
 - [ ] **M16** — Thermal Printer Integration _(BLOCKED on hardware — user must pair RPP02 to tablet)_
 - [x] **M17** — PWA + Offline Resilience _(done 2026-04-26 — Serwist service worker + manifest, online/offline banner, Dexie offline queue, PosShell auto-sync on reconnect)_
-- [ ] **M18** — Testing Pass
+- [x] **M18** — Testing Pass _(unit-level done 2026-04-26 — 109 → 151 tests covering money, auth helpers, validation, schemas, helpers, utils. Integration tests against live DB deferred for post-launch given Phase 1 scope + offline-only mode.)_
 - [ ] **M19** — Deploy to Vercel
 - [ ] **M20** — Soft Launch Support
 
@@ -262,3 +262,23 @@ Verification: typecheck ✓, lint ✓, 109/109 tests ✓, build ✓ 10 routes.
 Mahakan POS now installable as PWA (tablet "Add to Home Screen"), runs offline with shell + asset cache, and queues offline transactions to local IndexedDB that drain to Neon on reconnect — the full Phase 1 offline POS path.
 
 **Phase 1 status:** every milestone except M16 (hardware-blocked printer) and M18 (testing pass) is done. Deploy (M19) is offline-only-blocked until user explicitly OKs.
+
+---
+
+### 2026-04-26 (Session 2 cont. — M18 unit-test pass)
+
+**M18 unit-level done** (`test(m18): expand unit coverage`):
+- helpers.test.ts (19 cases): formatPercent + truncate, WIB-aware formatters, transactions/helpers (todayWibYmd, formatTransactionNumber zero-pad, day-boundary math), cash/helpers (todayWibIso, startOfWibDateUtc/endOfWibDateUtc 24h delta).
+- schemas.test.ts (18 cases): createMenuItemSchema discriminated union (fixed/variant/open) + variant-must-have-one-price + price upper bound + negative reject + empty name; categoryNameSchema trim + min/max; createTransactionSchema minimal valid + pager 1-99 + non-empty items + qty>=1 + non-negative money + clientRefId optional UUID; voidTransactionSchema reason length + UUID format.
+- utils.test.ts (4 cases): cn() merger across truthy/falsy/object/tailwind-conflict cases.
+
+Tests: 109 → 151 passing. typecheck + lint clean.
+
+**Coverage snapshot (lines):** ~16% overall — Server Actions and queries (DB-bound) are uncovered. Critical pure logic (money.ts, validation, RBAC, approver tokens, password/PIN bcrypt, helpers) is well-covered. Integration tests against live DB deferred — captured as M18.x extension for post-launch when staging DB available.
+
+**Phase 1 effective complete.** Remaining items are user-gated:
+- **M16** Thermal Printer — needs user to pair RPP02 to Android tablet via Web Bluetooth + run live test prints
+- **M19** Deploy to Vercel — blocked under offline-only-mode; needs user explicit OK
+- **M20** Soft Launch — follows M19
+
+Total commits in Phase 1 work: 56 ahead of origin (offline-only). Ready for user smoke-test pass + push-to-Vercel decision.
