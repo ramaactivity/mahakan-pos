@@ -49,6 +49,8 @@ export default auth((req) => {
 
 export const config = {
   matcher: [
-    "/((?!api/auth|_next/static|_next/image|favicon.ico|assets).*)",
+    // Exclude all API routes (each handler enforces its own auth via auth())
+    // and Next/static assets/manifest/sw bundles.
+    "/((?!api|_next/static|_next/image|favicon.ico|assets|manifest.webmanifest|sw\\.js|swe-worker-).*)",
   ],
 };
