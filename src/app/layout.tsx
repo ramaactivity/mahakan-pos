@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/Toast";
 import { SessionProvider } from "@/features/auth/SessionProvider";
@@ -20,6 +20,17 @@ export const metadata: Metadata = {
   title: "Mahakan Coffee & Space — POS",
   description:
     "Sistem POS + Operasional untuk Mahakan Coffee & Space, Cisarua Bogor.",
+  manifest: "/manifest.webmanifest",
+  applicationName: "Mahakan POS",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Mahakan POS",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#3D7557",
 };
 
 export default function RootLayout({
