@@ -5,9 +5,11 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 ## Current Status
 
 **Phase:** Phase 1 — Foundation
-**Fase:** B (Backend) — **M8-M18 code-complete**. Only M19/M20 (deploy/launch) remain, gated on user OK to leave offline-only mode.
-**Active Milestone:** Phase 1 implementation **DONE**. Awaiting hardware verify (M16 printer test print) + deploy approval (M19).
-**Mode:** Offline-only (no git push, no Vercel deploy)
+**Fase:** B (Backend) — **M8-M19 done**. Only M20 (soft launch) remains.
+**Active Milestone:** M19 deployed 2026-04-26. Awaiting M16 hardware verify (printer) + M20 soft launch.
+**Mode:** Online (production live at https://mahakan-pos.vercel.app)
+**Production URL:** https://mahakan-pos.vercel.app
+**Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
 
 ---
 
@@ -37,7 +39,7 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M16** — Thermal Printer Integration _(code-complete 2026-04-26 — ESC/POS encoder + receipt builder + Web Bluetooth wrapper + Settings pairing UI + PosShell auto-print on payment success. 24 unit tests. Hardware verify pending: user pair RPP02 on Chrome/Edge Android, tap Test Print, verify auto-print after live transaction.)_
 - [x] **M17** — PWA + Offline Resilience _(done 2026-04-26 — Serwist service worker + manifest, online/offline banner, Dexie offline queue, PosShell auto-sync on reconnect)_
 - [x] **M18** — Testing Pass _(unit-level done 2026-04-26 — 109 → 151 tests covering money, auth helpers, validation, schemas, helpers, utils. Integration tests against live DB deferred for post-launch given Phase 1 scope + offline-only mode.)_
-- [ ] **M19** — Deploy to Vercel
+- [x] **M19** — Deploy to Vercel _(done 2026-04-26 — branch `release/phase-1` pushed, Vercel project linked + GitHub connected, env vars set Production, deploy ready in 1m, alias https://mahakan-pos.vercel.app live, sw.js + landing + login HTTP 200)_
 - [ ] **M20** — Soft Launch Support
 
 ---
