@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { OfflineBanner } from "@/components/ui/OfflineBanner";
 import { RequireAuth } from "@/features/auth/RequireAuth";
 import { useSession } from "@/features/auth/SessionProvider";
 
@@ -18,6 +19,7 @@ function PosOuterShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-screen flex-col bg-neutral-50">
+      <OfflineBanner />
       <header className="flex h-16 items-center justify-between border-b border-neutral-200 bg-white px-6 shadow-sm">
         <span className="text-lg font-bold text-mahakan-green-900">
           Mahakan POS

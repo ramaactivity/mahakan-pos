@@ -16,6 +16,11 @@ const eslintConfig = defineConfig([
     "coverage/**",
     "drizzle/**",
     "node_modules/**",
+    // Serwist-generated service worker bundle (committed by build, gitignored)
+    "public/sw.js",
+    "public/sw.js.map",
+    "public/swe-worker-*.js",
+    "public/swe-worker-*.js.map",
   ]),
 ]);
 
