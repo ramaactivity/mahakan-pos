@@ -1,8 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bluetooth, Building2, Clock, ScrollText } from "lucide-react";
 import {
+  Bluetooth,
+  Building2,
+  Clock,
+  Pencil,
+  ScrollText,
+} from "lucide-react";
+import {
+  Button,
   Card,
   CardContent,
   CardDescription,
@@ -13,6 +20,10 @@ import {
 import { getOwnOutlet, isOk, type Outlet } from "@/features/outlets";
 import { PrinterControls } from "@/features/printer/PrinterControls";
 import { formatRupiah } from "@/lib/format";
+import { useSession } from "@/features/auth/SessionProvider";
+import { BusinessInfoModal } from "./settings/BusinessInfoModal";
+import { OperationalHoursModal } from "./settings/OperationalHoursModal";
+import { SettingsTunablesModal } from "./settings/SettingsTunablesModal";
 
 type OperationalHours = NonNullable<Outlet["operationalHours"]>;
 
@@ -26,9 +37,15 @@ const DAY_LABELS: Record<keyof OperationalHours, string> = {
   sun: "Minggu",
 };
 
+type EditTarget = "business" | "hours" | "tunables" | null;
+
 export function SettingsSection() {
+  const { session } = useSession();
   const [outlet, setOutlet] = useState<Outlet | null>(null);
   const [loading, setLoading] = useState(true);
+  const [edit, setEdit] = useState<EditTarget>(null);
+
+  const isOwner = session?.user.role === "owner";
 
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +76,11 @@ export function SettingsSection() {
     );
   }
 
+  function onSaved(next: Outlet) {
+    setOutlet(next);
+    setEdit(null);
+  }
+
   return (
     <div className="space-y-6 p-6">
       <header>
@@ -71,13 +93,26 @@ export function SettingsSection() {
       {/* Business Info */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Building2 className="size-5" aria-hidden /> Business Info
-          </CardTitle>
-          <CardDescription>
-            Tampil di header struk + email. Edit form Owner-only akan ada di
-            milestone berikut.
-          </CardDescription>
+          <div className="flex items-start justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="size-5" aria-hidden /> Business Info
+              </CardTitle>
+              <CardDescription>
+                Tampil di header struk + dokumen ekspor.
+              </CardDescription>
+            </div>
+            {isOwner && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setEdit("business")}
+                aria-label="Edit info bisnis"
+              >
+                <Pencil className="size-4" /> Edit
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <dl className="grid gap-4 md:grid-cols-2">
@@ -100,12 +135,26 @@ export function SettingsSection() {
       {/* Operational Hours */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="size-5" aria-hidden /> Jam Operasional
-          </CardTitle>
-          <CardDescription>
-            Info display only — tidak enforce restriction di Phase 1.
-          </CardDescription>
+          <div className="flex items-start justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="size-5" aria-hidden /> Jam Operasional
+              </CardTitle>
+              <CardDescription>
+                Info display only — tidak enforce restriction di Phase 1.
+              </CardDescription>
+            </div>
+            {isOwner && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setEdit("hours")}
+                aria-label="Edit jam operasional"
+              >
+                <Pencil className="size-4" /> Edit
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
@@ -113,21 +162,21 @@ export function SettingsSection() {
               ? (Object.keys(outlet.operationalHours) as Array<
                   keyof OperationalHours
                 >).map((day) => {
-              const h = outlet.operationalHours![day];
-              return (
-                <div
-                  key={day}
-                  className="flex items-center justify-between rounded-md border border-neutral-200 bg-white px-3 py-2"
-                >
-                  <span className="text-sm font-medium text-neutral-900">
-                    {DAY_LABELS[day]}
-                  </span>
-                  <span className="font-mono text-sm text-neutral-700">
-                    {h.isOpen ? `${h.openTime} – ${h.closeTime}` : "Tutup"}
-                  </span>
-                </div>
-              );
-            })
+                  const h = outlet.operationalHours![day];
+                  return (
+                    <div
+                      key={day}
+                      className="flex items-center justify-between rounded-md border border-neutral-200 bg-white px-3 py-2"
+                    >
+                      <span className="text-sm font-medium text-neutral-900">
+                        {DAY_LABELS[day]}
+                      </span>
+                      <span className="font-mono text-sm text-neutral-700">
+                        {h.isOpen ? `${h.openTime} – ${h.closeTime}` : "Tutup"}
+                      </span>
+                    </div>
+                  );
+                })
               : null}
           </div>
         </CardContent>
@@ -152,9 +201,22 @@ export function SettingsSection() {
       {/* Receipt + thresholds + features */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ScrollText className="size-5" aria-hidden /> Receipt &amp; Thresholds
-          </CardTitle>
+          <div className="flex items-start justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <ScrollText className="size-5" aria-hidden /> Receipt, Threshold &amp;
+              Features
+            </CardTitle>
+            {isOwner && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setEdit("tunables")}
+                aria-label="Edit setting"
+              >
+                <Pencil className="size-4" /> Edit
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <dl className="grid gap-4 md:grid-cols-2">
@@ -190,6 +252,25 @@ export function SettingsSection() {
           </dl>
         </CardContent>
       </Card>
+
+      <BusinessInfoModal
+        open={edit === "business"}
+        outlet={outlet}
+        onClose={() => setEdit(null)}
+        onSaved={onSaved}
+      />
+      <OperationalHoursModal
+        open={edit === "hours"}
+        outlet={outlet}
+        onClose={() => setEdit(null)}
+        onSaved={onSaved}
+      />
+      <SettingsTunablesModal
+        open={edit === "tunables"}
+        outlet={outlet}
+        onClose={() => setEdit(null)}
+        onSaved={onSaved}
+      />
     </div>
   );
 }
