@@ -16,6 +16,12 @@ import { hasPermission } from "@/lib/auth";
 import { consumeApproverToken } from "@/lib/auth/approver";
 import { logAudit } from "@/lib/audit/logger";
 import {
+  applyStockDeductions,
+  computeStockFlowForOrder,
+  reevaluateSoldOutForIngredients,
+  restoreStockForTransaction,
+} from "@/features/inventory/transaction-flow";
+import {
   fetchTransactionByClientRefId,
   fetchTransactionById,
   fetchTransactions,
@@ -199,6 +205,8 @@ export async function createTransaction(
 
       const transactionNumber = formatTransactionNumber(ymd, count + 1);
 
+      // Insert transaction first to get its id (needed by movement.referenceId).
+      // We'll patch cogs after computing flow.
       const [insertedTrx] = await tx
         .insert(transactions)
         .values({
@@ -246,6 +254,46 @@ export async function createTransaction(
         )
         .returning();
 
+      // ---- Phase 2 inventory flow: COGS + auto-deduct ----
+      const flow = await computeStockFlowForOrder(
+        tx,
+        v.items.map((it, idx) => ({
+          transactionItemId: itemsInserted[idx].id,
+          menuItemId: it.menuItemId,
+          variant: it.variant,
+          quantity: it.quantity,
+        })),
+      );
+
+      // Patch transaction.cogs (only if any item resolved a recipe)
+      const hasAnyCogs = flow.itemsWithoutRecipe.length < v.items.length;
+      if (hasAnyCogs) {
+        await tx
+          .update(transactions)
+          .set({ cogs: flow.totalCogs })
+          .where(eq(transactions.id, insertedTrx.id));
+      }
+
+      // Patch each transaction_item.cogs that has a resolved recipe
+      for (const ti of itemsInserted) {
+        const cogsForItem = flow.itemCogsByTrxItemId.get(ti.id);
+        if (cogsForItem !== undefined && cogsForItem > 0) {
+          await tx
+            .update(transactionItems)
+            .set({ cogs: cogsForItem })
+            .where(eq(transactionItems.id, ti.id));
+        }
+      }
+
+      // Apply ingredient deductions + insert sale_deduct movements
+      await applyStockDeductions(
+        tx,
+        session.user.outletId,
+        session.user.id,
+        insertedTrx.id,
+        flow,
+      );
+
       const modRows: Array<typeof transactionItemModifiers.$inferInsert> = [];
       v.items.forEach((it, idx) => {
         const itemId = itemsInserted[idx].id;
@@ -266,11 +314,22 @@ export async function createTransaction(
         : [];
 
       return {
-        trx: insertedTrx,
-        items: itemsInserted,
+        trx: { ...insertedTrx, cogs: hasAnyCogs ? flow.totalCogs : null },
+        items: itemsInserted.map((it) => ({
+          ...it,
+          cogs: flow.itemCogsByTrxItemId.get(it.id) ?? null,
+        })),
         mods: modsInserted,
+        deductedIngredientIds: Array.from(flow.deductionsByIngredient.keys()),
       };
     });
+
+    // Best-effort sold-out re-eval after main tx commits.
+    if (result.deductedIngredientIds.length > 0) {
+      reevaluateSoldOutForIngredients(result.deductedIngredientIds).catch(
+        (e) => console.error("[sold-out re-eval]", e),
+      );
+    }
 
     if (validation.recomputedDiscountAmount > 0) {
       await logAudit({
@@ -380,18 +439,36 @@ export async function voidTransaction(
     );
   }
 
-  const [updated] = await db
-    .update(transactions)
-    .set({
-      status: "voided",
-      voidedAt: new Date(),
-      voidedBy: session.user.id,
-      voidedApprover: approverId,
-      voidReason: v.reason,
-      updatedAt: new Date(),
-    })
-    .where(eq(transactions.id, v.transactionId))
-    .returning();
+  const { updated, restoredIngredientIds } = await db.transaction(async (tx) => {
+    const [updatedRow] = await tx
+      .update(transactions)
+      .set({
+        status: "voided",
+        voidedAt: new Date(),
+        voidedBy: session.user.id,
+        voidedApprover: approverId,
+        voidReason: v.reason,
+        updatedAt: new Date(),
+      })
+      .where(eq(transactions.id, v.transactionId))
+      .returning();
+
+    const restored = await restoreStockForTransaction(
+      tx,
+      session.user.outletId,
+      session.user.id,
+      v.transactionId,
+      "void_restore",
+    );
+
+    return { updated: updatedRow, restoredIngredientIds: restored };
+  });
+
+  if (restoredIngredientIds.length > 0) {
+    reevaluateSoldOutForIngredients(restoredIngredientIds).catch((e) =>
+      console.error("[sold-out re-eval void]", e),
+    );
+  }
 
   await logAudit({
     eventType: "transaction.void",
@@ -507,33 +584,49 @@ export async function refundTransaction(
 
   const todayDate = todayWibYmd().replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
 
-  const result = await db.transaction(async (tx) => {
-    const [updated] = await tx
-      .update(transactions)
-      .set({
-        status: "refunded",
-        refundedAt: new Date(),
-        refundedBy: session.user.id,
-        refundedApprover: approverId,
-        refundReason: v.reason,
-        updatedAt: new Date(),
-      })
-      .where(eq(transactions.id, v.transactionId))
-      .returning();
+  const { result, restoredIngredientIds } = await db.transaction(
+    async (tx) => {
+      const [updated] = await tx
+        .update(transactions)
+        .set({
+          status: "refunded",
+          refundedAt: new Date(),
+          refundedBy: session.user.id,
+          refundedApprover: approverId,
+          refundReason: v.reason,
+          updatedAt: new Date(),
+        })
+        .where(eq(transactions.id, v.transactionId))
+        .returning();
 
-    await tx.insert(expenses).values({
-      outletId: current.outletId,
-      expenseDate: todayDate,
-      categoryId: refundCat.id,
-      description: `Refund TRX ${current.transactionNumber}: ${v.reason}`,
-      amount: current.total,
-      paymentMethod: "cash",
-      refundedTransactionId: current.id,
-      createdBy: session.user.id,
-    });
+      await tx.insert(expenses).values({
+        outletId: current.outletId,
+        expenseDate: todayDate,
+        categoryId: refundCat.id,
+        description: `Refund TRX ${current.transactionNumber}: ${v.reason}`,
+        amount: current.total,
+        paymentMethod: "cash",
+        refundedTransactionId: current.id,
+        createdBy: session.user.id,
+      });
 
-    return updated;
-  });
+      const restored = await restoreStockForTransaction(
+        tx,
+        session.user.outletId,
+        session.user.id,
+        v.transactionId,
+        "refund_restore",
+      );
+
+      return { result: updated, restoredIngredientIds: restored };
+    },
+  );
+
+  if (restoredIngredientIds.length > 0) {
+    reevaluateSoldOutForIngredients(restoredIngredientIds).catch((e) =>
+      console.error("[sold-out re-eval refund]", e),
+    );
+  }
 
   await logAudit({
     eventType: "transaction.refund",
