@@ -4,13 +4,14 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 Tier 1.1 — **CODE-COMPLETE** (2026-04-27, sesi 6).
-**Active Milestone:** Field-validate Tier 1.1 di kafe (seed resep 43 menu, smoke-test auto-deduct + sold-out + COGS reports).
+**Phase:** Phase 2 Tier 1.2 — **IN PROGRESS** (sesi 7 selesai 2026-04-27 dengan M23.1 schema landed).
+**Active Milestone:** M23.2 cost cascade engine (recursive CTE + cycle detect + split movements).
 **Mode:** Online (production stable at https://mahakan-pos.vercel.app)
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `b18e3a7`)
+**Branch:** `release/phase-1` (HEAD `094dca3`)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md`
+**Phase 2 Tier 1.2 plan:** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (M23.1–M23.5 with 10 locked decisions)
 
 ---
 
@@ -62,7 +63,23 @@ Tier 1 candidates (in priority order):
 - [x] **M22.4c** — Admin Inventory UI: Resep tab + RecipeEditorModal dengan variant + ingredient lines + COGS preview _(done 2026-04-27, commit `89a9235`)_
 - [x] **M22.5** — createTransaction COGS snapshot + atomic auto-deduct + post-commit sold-out re-eval; voidTransaction + refundTransaction restore stock _(done 2026-04-27, commit `43ab0f4`)_
 - [x] **M22.6** — P&L proper (Revenue − HPP = Laba Kotor − Pengeluaran = Laba Bersih) + Item Performance margin column + PDF export update _(done 2026-04-27, commit `b18e3a7`)_
-- [ ] **M22.7** — **FIELD VALIDATE**: seed recipes untuk 43 menu, smoke-test transaksi end-to-end di tablet kafe, verify P&L numbers actual.
+- [ ] **M22.7** — **FIELD VALIDATE**: seed recipes untuk 43 menu, smoke-test transaksi end-to-end di tablet kafe, verify P&L numbers actual. **SUPERSEDED by M23** — Owner uploaded real spreadsheets, M23 builds proper import flow + cost engine.
+
+#### M23 — Cost Engine: Real-data integration + sub-recipes + waste + COGS calculator (Phase 2 Tier 1.2)
+
+Triggered when Owner uploaded 5 real Mahakan spreadsheets (Marketlist 168 ingredients + PREP FOOD/BEVERAGE 12+ sub-recipes + UPDATE HPP FOOD/BEVERAGE 50 menu recipes + Q Factor + Markup) and asked to be critically improved beyond spreadsheet limits. See `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` for full design + 10 locked decisions.
+
+System upgrades over spreadsheet:
+1. Cost denormalization fix (1 update → cascade)
+2. Sub-recipe nested arbitrary depth (Plan agent: prep-of-prep is real)
+3. Stock count drift fix (deduct includes waste, split into sale_deduct + waste movement)
+4. COGS sandbox calculator standalone
+
+- [x] **M23.1** — Schema extension: ingredients `{is_preparation, preparation_yield, cost_last_changed_at}` + recipes `{ingredient_id, waste_factor_pct}` + nullable `menu_item_id` + XOR check + 3 partial unique indexes + 6 audit event types _(done 2026-04-27 sesi 7, commit `094dca3`, migration `0003_absent_metal_master.sql` applied; backup run `24999330539`)_
+- [ ] **M23.2** — Cost cascade engine: `preparation-flow.ts` (computePrepCost recursive CTE + cascadeCostUpdate with advisory lock + detectCycle + expandRecipeToLeaves) + transaction-flow update (split sale_deduct/waste movements, COGS × waste factor, void/refund restore both kinds)
+- [ ] **M23.3** — UI: Preparations tab + COGS Calculator widget + Recipe editor enhancements (waste factor field, channel pricing GRABGOSO ×1.30 display, grouped select atomic vs preps, banded margin badge)
+- [ ] **M23.4** — TSV Importer (CLI `scripts/import-mahakan-data.ts`): mini parser handling Indonesian number format → 168 ingredients + 12 preps + 50 menu recipes; dry-run + reconciliation + --apply
+- [ ] **M23.5** — Verify + import dry-run + Owner reconcile non-matching menu names + apply + handover
 
 ---
 
