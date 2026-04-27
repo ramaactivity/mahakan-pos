@@ -13,6 +13,10 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { diffShallow, logAudit } from "@/lib/audit/logger";
 import {
+  cascadeCostUpdate,
+  detectCycleForRecipeUpsert,
+} from "./preparation-flow";
+import {
   fetchAllRecipes,
   fetchIngredientById,
   fetchIngredients,
@@ -136,6 +140,8 @@ export async function createIngredient(
           currentStock: v.initialStock,
           reorderThreshold: v.reorderThreshold ?? null,
           notes: v.notes ?? null,
+          isPreparation: v.isPreparation ?? false,
+          preparationYield: v.preparationYield ?? null,
           createdBy: session.user.id,
           updatedBy: session.user.id,
         })
@@ -157,12 +163,16 @@ export async function createIngredient(
     });
 
     await logAudit({
-      eventType: "inventory.ingredient.create",
+      eventType: created.isPreparation
+        ? "inventory.preparation.create"
+        : "inventory.ingredient.create",
       userId: session.user.id,
       entityType: "ingredient",
       entityId: created.id,
       payload: {
-        summary: `Tambah bahan ${created.name} (${v.initialStock} ${v.unit})`,
+        summary: created.isPreparation
+          ? `Tambah preparation ${created.name} (yield ${created.preparationYield} ${created.unit})`
+          : `Tambah bahan ${created.name} (${v.initialStock} ${v.unit})`,
         after: created,
       },
       metadata: {
@@ -207,28 +217,63 @@ export async function updateIngredient(
   }
 
   try {
-    const [updated] = await db
-      .update(ingredients)
-      .set({
-        ...v,
-        updatedAt: new Date(),
-        updatedBy: session.user.id,
-      })
-      .where(eq(ingredients.id, id))
-      .returning();
+    // costPerUnit (or preparationYield, which folds into derived cost) change
+    // triggers cascade — wrap UPDATE + cascade in one tx so audit + cost stamps
+    // commit atomically. Advisory lock inside cascadeCostUpdate serializes
+    // concurrent edits per outlet.
+    const result = await db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(ingredients)
+        .set({
+          ...v,
+          updatedAt: new Date(),
+          updatedBy: session.user.id,
+        })
+        .where(eq(ingredients.id, id))
+        .returning();
+
+      const costChanged = v.costPerUnit !== undefined
+        && v.costPerUnit !== existing.costPerUnit;
+      const yieldChanged = v.preparationYield !== undefined
+        && v.preparationYield !== existing.preparationYield;
+
+      if (costChanged && existing.isPreparation === false) {
+        // Atomic ingredient cost change ripples to dependent preps.
+        await cascadeCostUpdate(
+          tx,
+          session.user.outletId,
+          id,
+          session.user.id,
+        );
+      } else if (yieldChanged && existing.isPreparation === true) {
+        // Yield change re-derives this prep's own cost; cascade from there.
+        await cascadeCostUpdate(
+          tx,
+          session.user.outletId,
+          id,
+          session.user.id,
+        );
+      }
+
+      return updated;
+    });
 
     await logAudit({
-      eventType: "inventory.ingredient.update",
+      eventType: existing.isPreparation
+        ? "inventory.preparation.update"
+        : "inventory.ingredient.update",
       userId: session.user.id,
       entityType: "ingredient",
       entityId: id,
       payload: {
-        summary: `Edit bahan ${updated.name}`,
+        summary: existing.isPreparation
+          ? `Edit preparation ${result.name}`
+          : `Edit bahan ${result.name}`,
         before: existing,
-        after: updated,
+        after: result,
         diff: diffShallow(
           existing as unknown as Record<string, unknown>,
-          updated as unknown as Record<string, unknown>,
+          result as unknown as Record<string, unknown>,
         ),
       },
       metadata: {
@@ -237,7 +282,7 @@ export async function updateIngredient(
       },
     });
 
-    return ok(updated);
+    return ok(result);
   } catch (e) {
     if (e instanceof Error && /unique|duplicate/i.test(e.message)) {
       return fail("DUPLICATE_NAME", "Nama bahan sudah dipakai");
@@ -260,6 +305,20 @@ export async function deleteIngredient(
   const existing = await fetchIngredientById(id);
   if (!existing || existing.outletId !== session.user.outletId) {
     return fail("NOT_FOUND", "Bahan tidak ditemukan");
+  }
+
+  // Refuse delete if any recipe references this ingredient (atomic OR prep).
+  // Owner must clear dependents first.
+  const [refRow] = await db
+    .select({ recipeId: recipeIngredients.recipeId })
+    .from(recipeIngredients)
+    .where(eq(recipeIngredients.ingredientId, id))
+    .limit(1);
+  if (refRow) {
+    return fail(
+      "INGREDIENT_HAS_DEPENDENTS",
+      "Bahan masih dipakai di resep aktif — hapus dulu resep yang merefer",
+    );
   }
 
   await db
@@ -408,6 +467,21 @@ export async function receiveStock(
           createdBy: session.user.id,
         })
         .returning();
+
+      // Cost change at receive time ripples to dependent preps. Atomic-only —
+      // preps don't get "received" via this path (their cost is derived).
+      if (
+        v.updateCost
+        && v.unitCost !== ingRow.costPerUnit
+        && ingRow.isPreparation === false
+      ) {
+        await cascadeCostUpdate(
+          tx,
+          session.user.outletId,
+          v.ingredientId,
+          session.user.id,
+        );
+      }
 
       return { ingredient: updatedIng, movement };
     });
@@ -738,30 +812,118 @@ export async function createRecipe(
     );
   }
   const v = parsed.data;
+  const isPrepTarget = !!v.ingredientId;
 
-  const menu = await loadMenuItemForRecipe(v.menuItemId);
-  if (!menu || menu.outletId !== session.user.outletId) {
-    return fail("MENU_ITEM_NOT_FOUND", "Menu item tidak ditemukan");
-  }
-
-  const variantCheck = validateVariantAgainstMenuItem(menu, v.variant);
-  if (variantCheck) return variantCheck;
-
+  // Verify ingredients belong to outlet (shared across both branches).
   const ingredientCheck = await verifyIngredientsBelongToOutlet(
     session.user.outletId,
     v.ingredients,
   );
   if (ingredientCheck) return ingredientCheck;
 
+  // ----- Branch A: menu target -----
+  if (!isPrepTarget) {
+    const menuItemId = v.menuItemId!;
+    const menu = await loadMenuItemForRecipe(menuItemId);
+    if (!menu || menu.outletId !== session.user.outletId) {
+      return fail("MENU_ITEM_NOT_FOUND", "Menu item tidak ditemukan");
+    }
+    const variantCheck = validateVariantAgainstMenuItem(menu, v.variant);
+    if (variantCheck) return variantCheck;
+
+    try {
+      const created = await db.transaction(async (tx) => {
+        const [recipe] = await tx
+          .insert(recipes)
+          .values({
+            outletId: session.user.outletId,
+            menuItemId,
+            variant: v.variant ?? null,
+            notes: v.notes ?? null,
+            wasteFactorPct: v.wasteFactorPct ?? 30,
+            createdBy: session.user.id,
+            updatedBy: session.user.id,
+          })
+          .returning();
+
+        await tx.insert(recipeIngredients).values(
+          v.ingredients.map((line) => ({
+            recipeId: recipe.id,
+            ingredientId: line.ingredientId,
+            qty: line.qty,
+          })),
+        );
+
+        return recipe;
+      });
+
+      const full = await fetchRecipeById(created.id);
+      if (!full) return fail("DB_ERROR", "Gagal load resep setelah create");
+
+      await logAudit({
+        eventType: "inventory.recipe.create",
+        userId: session.user.id,
+        entityType: "recipe",
+        entityId: created.id,
+        payload: {
+          summary: `Tambah resep ${menu.name}${v.variant ? ` (${v.variant})` : ""} — ${v.ingredients.length} bahan`,
+          after: full,
+        },
+        metadata: {
+          outletId: session.user.outletId,
+          actorRole: session.user.role,
+        },
+      });
+
+      return ok(full);
+    } catch (e) {
+      if (e instanceof Error && /unique|duplicate/i.test(e.message)) {
+        return fail(
+          "DUPLICATE_RECIPE",
+          "Resep untuk menu+variant ini sudah ada",
+        );
+      }
+      return fail(
+        "DB_ERROR",
+        e instanceof Error ? e.message : "Database error",
+      );
+    }
+  }
+
+  // ----- Branch B: prep target -----
+  const targetIngredientId = v.ingredientId!;
+  const target = await fetchIngredientById(targetIngredientId);
+  if (!target || target.outletId !== session.user.outletId) {
+    return fail("INGREDIENT_NOT_FOUND", "Ingredient target tidak ditemukan");
+  }
+  if (!target.isPreparation) {
+    return fail(
+      "TARGET_NOT_PREPARATION",
+      "Ingredient target bukan preparation",
+    );
+  }
+
   try {
     const created = await db.transaction(async (tx) => {
+      // Cycle detection BEFORE write.
+      const proposedIds = v.ingredients.map((l) => l.ingredientId);
+      const hasCycle = await detectCycleForRecipeUpsert(
+        tx,
+        session.user.outletId,
+        targetIngredientId,
+        proposedIds,
+        null,
+      );
+      if (hasCycle) throw new Error("RECIPE_CYCLE");
+
       const [recipe] = await tx
         .insert(recipes)
         .values({
           outletId: session.user.outletId,
-          menuItemId: v.menuItemId,
-          variant: v.variant ?? null,
+          ingredientId: targetIngredientId,
+          variant: null, // D5: no variant on prep recipes
           notes: v.notes ?? null,
+          wasteFactorPct: v.wasteFactorPct ?? 10,
           createdBy: session.user.id,
           updatedBy: session.user.id,
         })
@@ -775,6 +937,15 @@ export async function createRecipe(
         })),
       );
 
+      // New prep recipe → recompute prep cost + cascade to anything depending
+      // on this prep (none yet at create-time, but defensive).
+      await cascadeCostUpdate(
+        tx,
+        session.user.outletId,
+        targetIngredientId,
+        session.user.id,
+      );
+
       return recipe;
     });
 
@@ -782,12 +953,12 @@ export async function createRecipe(
     if (!full) return fail("DB_ERROR", "Gagal load resep setelah create");
 
     await logAudit({
-      eventType: "inventory.recipe.create",
+      eventType: "inventory.preparation.create",
       userId: session.user.id,
       entityType: "recipe",
       entityId: created.id,
       payload: {
-        summary: `Tambah resep ${menu.name}${v.variant ? ` (${v.variant})` : ""} — ${v.ingredients.length} bahan`,
+        summary: `Tambah resep preparation ${target.name} — ${v.ingredients.length} bahan`,
         after: full,
       },
       metadata: {
@@ -798,16 +969,17 @@ export async function createRecipe(
 
     return ok(full);
   } catch (e) {
-    if (e instanceof Error && /unique|duplicate/i.test(e.message)) {
+    const msg = e instanceof Error ? e.message : "Database error";
+    if (msg === "RECIPE_CYCLE") {
+      return fail("RECIPE_CYCLE", "Resep akan membentuk siklus dependensi");
+    }
+    if (/unique|duplicate/i.test(msg)) {
       return fail(
         "DUPLICATE_RECIPE",
-        "Resep untuk menu+variant ini sudah ada",
+        "Preparation ini sudah punya resep",
       );
     }
-    return fail(
-      "DB_ERROR",
-      e instanceof Error ? e.message : "Database error",
-    );
+    return fail("DB_ERROR", msg);
   }
 }
 
@@ -856,14 +1028,39 @@ export async function updateRecipe(
     if (ingredientCheck) return ingredientCheck;
   }
 
+  const isPrepRecipe = existing.ingredientId !== null;
+  // D5: prep recipes can't have variants. Prevent setting one.
+  if (isPrepRecipe && v.variant !== undefined && v.variant !== null) {
+    return fail(
+      "VALIDATION_ERROR",
+      "Preparation tidak boleh punya variant (D5)",
+    );
+  }
+
   try {
     await db.transaction(async (tx) => {
+      // Cycle detection if ingredients changed on a prep recipe.
+      if (isPrepRecipe && v.ingredients && existing.ingredientId) {
+        const proposedIds = v.ingredients.map((l) => l.ingredientId);
+        const hasCycle = await detectCycleForRecipeUpsert(
+          tx,
+          session.user.outletId,
+          existing.ingredientId,
+          proposedIds,
+          id,
+        );
+        if (hasCycle) throw new Error("RECIPE_CYCLE");
+      }
+
       const setRecipe: Record<string, unknown> = {
         updatedAt: new Date(),
         updatedBy: session.user.id,
       };
       if (v.variant !== undefined) setRecipe.variant = v.variant ?? null;
       if (v.notes !== undefined) setRecipe.notes = v.notes ?? null;
+      if (v.wasteFactorPct !== undefined) {
+        setRecipe.wasteFactorPct = v.wasteFactorPct;
+      }
 
       await tx.update(recipes).set(setRecipe).where(eq(recipes.id, id));
 
@@ -879,13 +1076,29 @@ export async function updateRecipe(
           })),
         );
       }
+
+      // Recompute prep cost if any cost-relevant field changed.
+      if (isPrepRecipe && existing.ingredientId) {
+        const wasteChanged = v.wasteFactorPct !== undefined
+          && v.wasteFactorPct !== existing.wasteFactorPct;
+        if (v.ingredients || wasteChanged) {
+          await cascadeCostUpdate(
+            tx,
+            session.user.outletId,
+            existing.ingredientId,
+            session.user.id,
+          );
+        }
+      }
     });
 
     const updated = await fetchRecipeById(id);
     if (!updated) return fail("DB_ERROR", "Gagal load resep setelah update");
 
     await logAudit({
-      eventType: "inventory.recipe.update",
+      eventType: isPrepRecipe
+        ? "inventory.preparation.update"
+        : "inventory.recipe.update",
       userId: session.user.id,
       entityType: "recipe",
       entityId: id,
@@ -906,16 +1119,17 @@ export async function updateRecipe(
 
     return ok(updated);
   } catch (e) {
-    if (e instanceof Error && /unique|duplicate/i.test(e.message)) {
+    const msg = e instanceof Error ? e.message : "Database error";
+    if (msg === "RECIPE_CYCLE") {
+      return fail("RECIPE_CYCLE", "Resep akan membentuk siklus dependensi");
+    }
+    if (/unique|duplicate/i.test(msg)) {
       return fail(
         "DUPLICATE_RECIPE",
         "Resep untuk menu+variant ini sudah ada",
       );
     }
-    return fail(
-      "DB_ERROR",
-      e instanceof Error ? e.message : "Database error",
-    );
+    return fail("DB_ERROR", msg);
   }
 }
 
@@ -932,11 +1146,29 @@ export async function deleteRecipe(
     return fail("NOT_FOUND", "Resep tidak ditemukan");
   }
 
+  // For preparation recipes, refuse delete if other recipes reference the
+  // prep ingredient. Owner must clear dependents first.
+  if (existing.ingredientId !== null) {
+    const [depRow] = await db
+      .select({ recipeId: recipeIngredients.recipeId })
+      .from(recipeIngredients)
+      .where(eq(recipeIngredients.ingredientId, existing.ingredientId))
+      .limit(1);
+    if (depRow) {
+      return fail(
+        "PREP_HAS_DEPENDENTS",
+        "Preparation masih dipakai di resep lain — hapus dulu yang merefer",
+      );
+    }
+  }
+
   // Hard delete; recipe_ingredients cascade.
   await db.delete(recipes).where(eq(recipes.id, id));
 
   await logAudit({
-    eventType: "inventory.recipe.delete",
+    eventType: existing.ingredientId !== null
+      ? "inventory.preparation.delete"
+      : "inventory.recipe.delete",
     userId: session.user.id,
     entityType: "recipe",
     entityId: id,
