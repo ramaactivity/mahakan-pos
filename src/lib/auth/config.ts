@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { db } from "@/db";
 import { users } from "@/db/schema";
+import { logAudit } from "@/lib/audit";
 import { verifyPassword } from "./password";
 import { verifyPin, isValidPinFormat } from "./pin";
 import { sessionMaxAgeSeconds, type Role } from "./rbac";
@@ -29,6 +30,29 @@ const pinSchema = z.object({
  */
 const COOKIE_MAX_AGE_SECONDS = 12 * 60 * 60;
 
+/** After this many consecutive failed attempts, lock the account briefly. */
+const MAX_FAILED_ATTEMPTS = 5;
+/** Lock duration applied when failedAttempts hits the cap. */
+const LOCK_DURATION_MS = 15 * 60 * 1000;
+
+async function recordFailedAttempt(userId: string, currentAttempts: number) {
+  const next = currentAttempts + 1;
+  const lockedUntil =
+    next >= MAX_FAILED_ATTEMPTS ? new Date(Date.now() + LOCK_DURATION_MS) : null;
+  await db
+    .update(users)
+    .set({ failedAttempts: next, lockedUntil })
+    .where(eq(users.id, userId));
+  return { attempts: next, locked: !!lockedUntil };
+}
+
+async function clearFailedAttempts(userId: string) {
+  await db
+    .update(users)
+    .set({ failedAttempts: 0, lockedUntil: null })
+    .where(eq(users.id, userId));
+}
+
 export const authConfig: NextAuthConfig = {
   session: {
     strategy: "jwt",
@@ -47,7 +71,14 @@ export const authConfig: NextAuthConfig = {
       },
       async authorize(raw) {
         const parsed = emailPasswordSchema.safeParse(raw);
-        if (!parsed.success) return null;
+        if (!parsed.success) {
+          await logAudit({
+            eventType: "auth.login.failed",
+            entityType: "session",
+            payload: { context: { method: "email-password", reason: "invalid-input" } },
+          });
+          return null;
+        }
         const { email, password } = parsed.data;
 
         const [row] = await db
@@ -62,11 +93,72 @@ export const authConfig: NextAuthConfig = {
           )
           .limit(1);
 
-        if (!row || !row.passwordHash) return null;
-        if (row.role === "staff") return null;
+        if (!row || !row.passwordHash || row.role === "staff") {
+          await logAudit({
+            eventType: "auth.login.failed",
+            userId: row?.id ?? null,
+            entityType: "session",
+            payload: {
+              context: {
+                method: "email-password",
+                email: email.toLowerCase(),
+                reason: !row ? "no-user" : "no-credential",
+              },
+            },
+          });
+          return null;
+        }
+
+        if (row.lockedUntil && row.lockedUntil > new Date()) {
+          await logAudit({
+            eventType: "auth.login.failed",
+            userId: row.id,
+            entityType: "session",
+            payload: {
+              context: {
+                method: "email-password",
+                reason: "locked",
+                lockedUntil: row.lockedUntil.toISOString(),
+              },
+            },
+            metadata: { outletId: row.outletId, actorRole: row.role },
+          });
+          return null;
+        }
 
         const ok = await verifyPassword(password, row.passwordHash);
-        if (!ok) return null;
+        if (!ok) {
+          const r = await recordFailedAttempt(row.id, row.failedAttempts);
+          await logAudit({
+            eventType: "auth.login.failed",
+            userId: row.id,
+            entityType: "session",
+            payload: {
+              context: {
+                method: "email-password",
+                reason: "wrong-password",
+                attempt: r.attempts,
+                locked: r.locked,
+              },
+            },
+            metadata: { outletId: row.outletId, actorRole: row.role },
+          });
+          return null;
+        }
+
+        if (row.failedAttempts > 0 || row.lockedUntil) {
+          await clearFailedAttempts(row.id);
+        }
+        await logAudit({
+          eventType: "auth.login.success",
+          userId: row.id,
+          entityType: "session",
+          payload: {
+            summary: `Login ${row.role} (email): ${row.name}`,
+            context: { method: "email-password" },
+          },
+          metadata: { outletId: row.outletId, actorRole: row.role },
+        });
 
         return {
           id: row.id,
@@ -86,7 +178,14 @@ export const authConfig: NextAuthConfig = {
       },
       async authorize(raw) {
         const parsed = pinSchema.safeParse(raw);
-        if (!parsed.success) return null;
+        if (!parsed.success) {
+          await logAudit({
+            eventType: "auth.login.failed",
+            entityType: "session",
+            payload: { context: { method: "pin", reason: "invalid-input" } },
+          });
+          return null;
+        }
         const { userId, pin } = parsed.data;
 
         const [row] = await db
@@ -101,10 +200,72 @@ export const authConfig: NextAuthConfig = {
           )
           .limit(1);
 
-        if (!row || !row.pinHash) return null;
+        if (!row || !row.pinHash) {
+          await logAudit({
+            eventType: "auth.login.failed",
+            userId: row?.id ?? null,
+            entityType: "session",
+            payload: {
+              context: {
+                method: "pin",
+                userId,
+                reason: !row ? "no-user" : "no-credential",
+              },
+            },
+          });
+          return null;
+        }
+
+        if (row.lockedUntil && row.lockedUntil > new Date()) {
+          await logAudit({
+            eventType: "auth.login.failed",
+            userId: row.id,
+            entityType: "session",
+            payload: {
+              context: {
+                method: "pin",
+                reason: "locked",
+                lockedUntil: row.lockedUntil.toISOString(),
+              },
+            },
+            metadata: { outletId: row.outletId, actorRole: row.role },
+          });
+          return null;
+        }
 
         const ok = await verifyPin(pin, row.pinHash);
-        if (!ok) return null;
+        if (!ok) {
+          const r = await recordFailedAttempt(row.id, row.failedAttempts);
+          await logAudit({
+            eventType: "auth.login.failed",
+            userId: row.id,
+            entityType: "session",
+            payload: {
+              context: {
+                method: "pin",
+                reason: "wrong-pin",
+                attempt: r.attempts,
+                locked: r.locked,
+              },
+            },
+            metadata: { outletId: row.outletId, actorRole: row.role },
+          });
+          return null;
+        }
+
+        if (row.failedAttempts > 0 || row.lockedUntil) {
+          await clearFailedAttempts(row.id);
+        }
+        await logAudit({
+          eventType: "auth.login.success",
+          userId: row.id,
+          entityType: "session",
+          payload: {
+            summary: `Login ${row.role} (PIN): ${row.name}`,
+            context: { method: "pin" },
+          },
+          metadata: { outletId: row.outletId, actorRole: row.role },
+        });
 
         return {
           id: row.id,
@@ -116,6 +277,21 @@ export const authConfig: NextAuthConfig = {
       },
     }),
   ],
+  events: {
+    async signOut(message) {
+      const userId =
+        "token" in message && message.token
+          ? (message.token.userId as string | undefined)
+          : undefined;
+      if (!userId) return;
+      await logAudit({
+        eventType: "auth.logout",
+        userId,
+        entityType: "session",
+        payload: { summary: "Logout" },
+      });
+    },
+  },
   callbacks: {
     async jwt({ token, user }) {
       if (user) {

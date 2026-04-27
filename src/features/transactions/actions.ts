@@ -14,6 +14,7 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { consumeApproverToken } from "@/lib/auth/approver";
+import { logAudit } from "@/lib/audit";
 import {
   fetchTransactionByClientRefId,
   fetchTransactionById,
@@ -271,6 +272,32 @@ export async function createTransaction(
       };
     });
 
+    if (validation.recomputedDiscountAmount > 0) {
+      await logAudit({
+        eventType: "transaction.discount.applied",
+        userId: session.user.id,
+        approverId: discountApproverId,
+        entityType: "transaction",
+        entityId: result.trx.id,
+        payload: {
+          summary: `Diskon ${v.discountType === "percent" ? `${v.discountValue}%` : `Rp${validation.recomputedDiscountAmount.toLocaleString("id-ID")}`} pada ${result.trx.transactionNumber} (${v.discountReason ?? "tanpa alasan"})`,
+          context: {
+            transactionNumber: result.trx.transactionNumber,
+            discountType: v.discountType,
+            discountValue: v.discountValue,
+            discountAmount: validation.recomputedDiscountAmount,
+            reason: v.discountReason,
+            subtotalBefore: validation.recomputedSubtotal,
+            totalAfter: validation.recomputedTotal,
+          },
+        },
+        metadata: {
+          outletId: session.user.outletId,
+          actorRole: session.user.role,
+        },
+      });
+    }
+
     return ok({
       ...result.trx,
       items: result.items.map((it) => ({
@@ -365,6 +392,27 @@ export async function voidTransaction(
     })
     .where(eq(transactions.id, v.transactionId))
     .returning();
+
+  await logAudit({
+    eventType: "transaction.void",
+    userId: session.user.id,
+    approverId,
+    entityType: "transaction",
+    entityId: updated.id,
+    payload: {
+      summary: `Void TRX ${updated.transactionNumber} (${v.reason})`,
+      context: {
+        transactionNumber: updated.transactionNumber,
+        total: updated.total,
+        paymentMethod: updated.paymentMethod,
+        reason: v.reason,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  });
 
   return ok(updated);
 }
@@ -485,6 +533,27 @@ export async function refundTransaction(
     });
 
     return updated;
+  });
+
+  await logAudit({
+    eventType: "transaction.refund",
+    userId: session.user.id,
+    approverId,
+    entityType: "transaction",
+    entityId: result.id,
+    payload: {
+      summary: `Refund TRX ${result.transactionNumber} Rp${result.total.toLocaleString("id-ID")} (${v.reason})`,
+      context: {
+        transactionNumber: result.transactionNumber,
+        total: result.total,
+        paymentMethod: result.paymentMethod,
+        reason: v.reason,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
   });
 
   return ok({ transaction: result });

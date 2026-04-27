@@ -5,6 +5,7 @@ import {
   Coffee,
   LayoutDashboard,
   LogOut,
+  ScrollText,
   Settings,
   Users,
   Wallet,
@@ -21,6 +22,7 @@ export type AdminSection =
   | "shifts"
   | "cash"
   | "reports"
+  | "audit"
   | "settings";
 
 interface AdminLeftNavProps {
@@ -46,6 +48,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "shifts", label: "Shifts", Icon: Receipt },
   { key: "cash", label: "Kas", Icon: Wallet },
   { key: "reports", label: "Laporan", Icon: BarChart3 },
+  { key: "audit", label: "Audit Log", Icon: ScrollText, ownerOnly: true },
   { key: "settings", label: "Settings", Icon: Settings },
 ];
 

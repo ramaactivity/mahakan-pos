@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { categories, menuItems, modifiers } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
+import { diffShallow, logAudit } from "@/lib/audit";
 import {
   fetchAllCategories,
   fetchCategories,
@@ -111,6 +112,24 @@ export async function createMenuItem(
     })
     .returning();
 
+  await logAudit({
+    eventType: "menu.item.create",
+    userId: session.user.id,
+    entityType: "menu_item",
+    entityId: row.id,
+    payload: {
+      summary: `Tambah menu ${row.name}`,
+      after: {
+        name: row.name,
+        priceType: row.priceType,
+        priceFixed: row.priceFixed,
+        priceHot: row.priceHot,
+        priceIced: row.priceIced,
+      },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
   return ok(row);
 }
 
@@ -125,6 +144,9 @@ export async function updateMenuItem(
     return fail("VALIDATION", parsed.error.issues[0]?.message ?? "Input tidak valid");
   }
   const v = parsed.data;
+
+  const before = await fetchMenuItemById(id);
+  if (!before) return fail("NOT_FOUND", "Menu item tidak ditemukan");
 
   const [row] = await db
     .update(menuItems)
@@ -145,6 +167,38 @@ export async function updateMenuItem(
     .returning();
 
   if (!row) return fail("NOT_FOUND", "Menu item tidak ditemukan");
+
+  const beforeSnap = {
+    name: before.name,
+    priceFixed: before.priceFixed,
+    priceHot: before.priceHot,
+    priceIced: before.priceIced,
+    priceType: before.priceType,
+  };
+  const afterSnap = {
+    name: row.name,
+    priceFixed: row.priceFixed,
+    priceHot: row.priceHot,
+    priceIced: row.priceIced,
+    priceType: row.priceType,
+  };
+  const diff = diffShallow(beforeSnap, afterSnap);
+  if (diff) {
+    await logAudit({
+      eventType: "menu.item.update",
+      userId: session.user.id,
+      entityType: "menu_item",
+      entityId: row.id,
+      payload: {
+        summary: `Update menu ${row.name}${diff.priceFixed || diff.priceHot || diff.priceIced ? " (harga berubah)" : ""}`,
+        before: beforeSnap,
+        after: afterSnap,
+        diff,
+      },
+      metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+    });
+  }
+
   return ok(row);
 }
 
@@ -152,6 +206,8 @@ export async function deleteMenuItem(
   id: string,
 ): Promise<ApiResult<{ id: string }>> {
   const session = await requireOwnerOrManager("menu.item.delete");
+
+  const before = await fetchMenuItemById(id);
 
   const [row] = await db
     .update(menuItems)
@@ -163,6 +219,19 @@ export async function deleteMenuItem(
     .returning({ id: menuItems.id });
 
   if (!row) return fail("NOT_FOUND", "Menu item tidak ditemukan");
+
+  await logAudit({
+    eventType: "menu.item.delete",
+    userId: session.user.id,
+    entityType: "menu_item",
+    entityId: row.id,
+    payload: {
+      summary: `Hapus menu ${before?.name ?? id}`,
+      before: before ? { name: before.name } : undefined,
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
   return ok({ id: row.id });
 }
 
@@ -183,6 +252,19 @@ export async function toggleSoldOut(
     .returning();
 
   if (!row) return fail("NOT_FOUND", "Menu item tidak ditemukan");
+
+  await logAudit({
+    eventType: "menu.item.sold_out_toggle",
+    userId: session.user.id,
+    entityType: "menu_item",
+    entityId: row.id,
+    payload: {
+      summary: `${isSoldOut ? "Habis" : "Tersedia"}: ${row.name}`,
+      context: { isSoldOut },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
   return ok(row);
 }
 
@@ -213,6 +295,15 @@ export async function createCategory(
     })
     .returning();
 
+  await logAudit({
+    eventType: "menu.category.create",
+    userId: session.user.id,
+    entityType: "category",
+    entityId: row.id,
+    payload: { summary: `Tambah kategori "${row.name}"`, after: { name: row.name } },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
   return ok(row);
 }
 
@@ -221,6 +312,13 @@ export async function updateCategory(
   patch: { name?: string },
 ): Promise<ApiResult<Category>> {
   const session = await requireOwnerOrManager("menu.category.crud");
+
+  const [before] = await db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.id, id), isNull(categories.deletedAt)))
+    .limit(1);
+  if (!before) return fail("NOT_FOUND", "Kategori tidak ditemukan");
 
   const updates: Partial<typeof categories.$inferInsert> = {
     updatedAt: new Date(),
@@ -241,6 +339,22 @@ export async function updateCategory(
     .returning();
 
   if (!row) return fail("NOT_FOUND", "Kategori tidak ditemukan");
+
+  if (before.name !== row.name) {
+    await logAudit({
+      eventType: "menu.category.update",
+      userId: session.user.id,
+      entityType: "category",
+      entityId: row.id,
+      payload: {
+        summary: `Rename kategori "${before.name}" → "${row.name}"`,
+        before: { name: before.name },
+        after: { name: row.name },
+      },
+      metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+    });
+  }
+
   return ok(row);
 }
 
@@ -266,6 +380,12 @@ export async function deleteCategory(
     );
   }
 
+  const [before] = await db
+    .select({ name: categories.name })
+    .from(categories)
+    .where(and(eq(categories.id, id), isNull(categories.deletedAt)))
+    .limit(1);
+
   const [row] = await db
     .update(categories)
     .set({ deletedAt: new Date(), updatedBy: session.user.id })
@@ -273,6 +393,16 @@ export async function deleteCategory(
     .returning({ id: categories.id });
 
   if (!row) return fail("NOT_FOUND", "Kategori tidak ditemukan");
+
+  await logAudit({
+    eventType: "menu.category.delete",
+    userId: session.user.id,
+    entityType: "category",
+    entityId: row.id,
+    payload: { summary: `Hapus kategori "${before?.name ?? id}"` },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
   return ok({ id: row.id });
 }
 
@@ -355,6 +485,12 @@ export async function updateModifierPrice(
     return fail("VALIDATION", "Harga harus 0 - 999.999.999");
   }
 
+  const [before] = await db
+    .select({ price: modifiers.price, label: modifiers.label })
+    .from(modifiers)
+    .where(eq(modifiers.slug, slug))
+    .limit(1);
+
   const [row] = await db
     .update(modifiers)
     .set({ price, updatedAt: new Date(), updatedBy: session.user.id })
@@ -362,5 +498,21 @@ export async function updateModifierPrice(
     .returning();
 
   if (!row) return fail("NOT_FOUND", "Modifier tidak ditemukan");
+
+  if (before && before.price !== row.price) {
+    await logAudit({
+      eventType: "menu.modifier.update",
+      userId: session.user.id,
+      entityType: "modifier",
+      payload: {
+        summary: `Update harga modifier "${row.label}": Rp${before.price.toLocaleString("id-ID")} → Rp${row.price.toLocaleString("id-ID")}`,
+        before: { price: before.price },
+        after: { price: row.price },
+        context: { slug: row.slug },
+      },
+      metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+    });
+  }
+
   return ok(row);
 }

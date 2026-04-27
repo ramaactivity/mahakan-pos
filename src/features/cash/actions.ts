@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { expenses, incomes } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
+import { logAudit } from "@/lib/audit";
 import {
   fetchDailyCashSummary,
   fetchExpenses,
@@ -128,6 +129,23 @@ export async function createExpense(
     })
     .returning();
 
+  await logAudit({
+    eventType: "expense.create",
+    userId: session.user.id,
+    entityType: "expense",
+    entityId: row.id,
+    payload: {
+      summary: `Pengeluaran Rp${row.amount.toLocaleString("id-ID")} — ${row.description}`,
+      after: {
+        date: row.expenseDate,
+        amount: row.amount,
+        description: row.description,
+        method: row.paymentMethod,
+      },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
   return ok(row);
 }
 
@@ -159,6 +177,23 @@ export async function createIncome(
       createdBy: session.user.id,
     })
     .returning();
+
+  await logAudit({
+    eventType: "income.create",
+    userId: session.user.id,
+    entityType: "income",
+    entityId: row.id,
+    payload: {
+      summary: `Pemasukan Rp${row.amount.toLocaleString("id-ID")} — ${row.description}`,
+      after: {
+        date: row.incomeDate,
+        amount: row.amount,
+        description: row.description,
+        method: row.paymentMethod,
+      },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
 
   return ok(row);
 }

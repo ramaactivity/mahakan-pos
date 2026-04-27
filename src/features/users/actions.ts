@@ -8,6 +8,7 @@ import { auth } from "@/lib/auth";
 import { hasPermission, type Permission } from "@/lib/auth";
 import { hashPassword } from "@/lib/auth/password";
 import { hashPin, isValidPinFormat } from "@/lib/auth/pin";
+import { diffShallow, logAudit } from "@/lib/audit";
 import {
   countActiveOwners,
   emailTaken,
@@ -120,6 +121,17 @@ export async function createStaff(
       createdBy: session.user.id,
     })
     .returning();
+  await logAudit({
+    eventType: "user.create",
+    userId: session.user.id,
+    entityType: "user",
+    entityId: row.id,
+    payload: {
+      summary: `Tambah staff ${row.name}`,
+      after: { name: row.name, role: row.role, status: row.status },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
   return ok(toPublicUser(row));
 }
 
@@ -158,6 +170,17 @@ export async function createManager(
       createdBy: session.user.id,
     })
     .returning();
+  await logAudit({
+    eventType: "user.create",
+    userId: session.user.id,
+    entityType: "user",
+    entityId: row.id,
+    payload: {
+      summary: `Tambah manager ${row.name} (${row.email})`,
+      after: { name: row.name, email: row.email, role: row.role, status: row.status },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
   return ok(toPublicUser(row));
 }
 
@@ -215,6 +238,27 @@ export async function updateUser(
     .set(updates)
     .where(eq(users.id, v.id))
     .returning();
+
+  const isDeactivation = v.status === "inactive" && target.status !== "inactive";
+  await logAudit({
+    eventType: isDeactivation ? "user.deactivate" : "user.update",
+    userId: session.user.id,
+    entityType: "user",
+    entityId: row.id,
+    payload: {
+      summary: isDeactivation
+        ? `Nonaktifkan ${target.role} ${target.name}`
+        : `Update ${target.role} ${target.name}`,
+      before: { name: target.name, status: target.status },
+      after: { name: row.name, status: row.status },
+      diff: diffShallow(
+        { name: target.name, status: target.status },
+        { name: row.name, status: row.status },
+      ),
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
   return ok(toPublicUser(row));
 }
 
@@ -252,5 +296,17 @@ export async function resetPin(
     .set({ pinHash, updatedAt: new Date(), updatedBy: session.user.id })
     .where(eq(users.id, parsed.data.userId))
     .returning();
+
+  await logAudit({
+    eventType: "user.reset_pin",
+    userId: session.user.id,
+    entityType: "user",
+    entityId: row.id,
+    payload: {
+      summary: `Reset PIN ${target.role} ${target.name}`,
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
   return ok(toPublicUser(row));
 }

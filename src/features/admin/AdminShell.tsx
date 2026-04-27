@@ -5,6 +5,7 @@ import {
   AdminLeftNav,
   type AdminSection,
 } from "@/features/admin/components/AdminLeftNav";
+import { AuditLogSection } from "@/features/admin/sections/AuditLogSection";
 import { CashSection } from "@/features/admin/sections/CashSection";
 import { DashboardHome } from "@/features/admin/sections/DashboardHome";
 import { MenuSection } from "@/features/admin/sections/MenuSection";
@@ -48,6 +49,8 @@ export function AdminShell() {
           <CashSection viewerUserId={session.user.id} />
         ) : section === "reports" ? (
           <ReportsSection viewerRole={session.user.role} />
+        ) : section === "audit" ? (
+          <AuditLogSection />
         ) : section === "settings" ? (
           <SettingsSection />
         ) : null}
