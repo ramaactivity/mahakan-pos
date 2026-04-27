@@ -6,6 +6,7 @@ import {
   timestamp,
   bigint,
   boolean,
+  integer,
   index,
   uniqueIndex,
   unique,
@@ -35,6 +36,16 @@ export const ingredients = pgTable(
     notes: text("notes"),
     isActive: boolean("is_active").notNull().default(true),
 
+    // Phase 2 Tier 1.2 (M23) — preparation flag + yield.
+    // is_preparation = true means cost_per_unit is auto-computed from a
+    // recipe targeting this ingredient (recipes.ingredient_id = this.id).
+    // preparation_yield is the units produced per batch (in `unit`); used
+    // to derive cost_per_unit = total_recipe_cost × (1 + waste/100) / yield.
+    isPreparation: boolean("is_preparation").notNull().default(false),
+    preparationYield: bigint("preparation_yield", { mode: "number" }),
+    /** Stamped whenever cost_per_unit changes — observability for cascades. */
+    costLastChangedAt: timestamp("cost_last_changed_at", { withTimezone: true }),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -55,6 +66,14 @@ export const ingredients = pgTable(
       "ck_ingredients_threshold_nonneg",
       sql`${t.reorderThreshold} IS NULL OR ${t.reorderThreshold} >= 0`,
     ),
+    check(
+      "ck_ingredients_prep_yield_required",
+      sql`${t.isPreparation} = false OR ${t.preparationYield} IS NOT NULL`,
+    ),
+    check(
+      "ck_ingredients_prep_yield_pos",
+      sql`${t.preparationYield} IS NULL OR ${t.preparationYield} > 0`,
+    ),
   ],
 );
 
@@ -65,12 +84,21 @@ export const recipes = pgTable(
     outletId: uuid("outlet_id")
       .notNull()
       .references(() => outlets.id),
-    menuItemId: uuid("menu_item_id")
-      .notNull()
-      .references(() => menuItems.id),
+    /** Set when recipe targets a menu item. Mutually exclusive with ingredientId. */
+    menuItemId: uuid("menu_item_id").references(() => menuItems.id),
+    /** Set when recipe targets a preparation (ingredient with is_preparation=true). */
+    ingredientId: uuid("ingredient_id").references(() => ingredients.id),
     variant: text("variant", { enum: ["hot", "iced"] }),
     notes: text("notes"),
     isActive: boolean("is_active").notNull().default(true),
+
+    /**
+     * Q Factor — wastage / spillage buffer applied to total recipe cost.
+     * Default 30 for menu recipes, 10 for preparations (per Owner spreadsheet
+     * convention). COGS = sum(qty × cost) × (1 + waste/100). Stock deduction
+     * also splits into lean qty (sale_deduct) + waste portion (waste movement).
+     */
+    wasteFactorPct: integer("waste_factor_pct").notNull().default(30),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -82,13 +110,32 @@ export const recipes = pgTable(
     updatedBy: uuid("updated_by").references(() => users.id),
   },
   (t) => [
-    // NULLS NOT DISTINCT (PG15+) — one recipe per (menu_item, variant), where
-    // variant IS NULL counts as a single value (so a fixed-price item gets at
-    // most one recipe). Hard delete only — historical COGS lives on transactions.cogs.
-    unique("ux_recipes_menu_variant")
+    // XOR — recipe targets exactly one of menu_item OR preparation ingredient.
+    check(
+      "ck_recipes_target_xor",
+      sql`(${t.menuItemId} IS NOT NULL AND ${t.ingredientId} IS NULL)
+        OR (${t.menuItemId} IS NULL AND ${t.ingredientId} IS NOT NULL)`,
+    ),
+    check(
+      "ck_recipes_waste_range",
+      sql`${t.wasteFactorPct} >= 0 AND ${t.wasteFactorPct} <= 200`,
+    ),
+    // Menu side — Drizzle's uniqueIndex doesn't support NULLS NOT DISTINCT
+    // alongside partial WHERE, so we split into two disjoint partial indexes:
+    //   (a) variant items: one recipe per (menu_item, variant) for variant != NULL
+    //   (b) fixed items:   one recipe per menu_item where variant IS NULL
+    uniqueIndex("ux_recipes_menu_variant_set")
       .on(t.menuItemId, t.variant)
-      .nullsNotDistinct(),
+      .where(sql`${t.menuItemId} IS NOT NULL AND ${t.variant} IS NOT NULL`),
+    uniqueIndex("ux_recipes_menu_no_variant")
+      .on(t.menuItemId)
+      .where(sql`${t.menuItemId} IS NOT NULL AND ${t.variant} IS NULL`),
+    // Preparation side — one recipe per preparation ingredient. No variant.
+    uniqueIndex("ux_recipes_preparation")
+      .on(t.ingredientId)
+      .where(sql`${t.ingredientId} IS NOT NULL`),
     index("idx_recipes_menu_item").on(t.menuItemId),
+    index("idx_recipes_ingredient").on(t.ingredientId),
   ],
 );
 

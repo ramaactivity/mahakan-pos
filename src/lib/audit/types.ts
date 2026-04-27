@@ -48,6 +48,13 @@ export const AUDIT_EVENT_TYPES = [
   "inventory.receive",
   "inventory.adjust",
   "inventory.waste",
+  // Inventory — Phase 2 Tier 1.2 (M23)
+  "inventory.preparation.create",
+  "inventory.preparation.update",
+  "inventory.preparation.delete",
+  "inventory.preparation.recompute",
+  "inventory.cost.cascade",
+  "inventory.import.run",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -65,7 +72,9 @@ export type AuditEntityType =
   | "session"
   | "ingredient"
   | "recipe"
-  | "inventory_movement";
+  | "inventory_movement"
+  | "preparation"
+  | "import_run";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

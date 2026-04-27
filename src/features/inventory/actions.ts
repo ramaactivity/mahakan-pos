@@ -835,7 +835,13 @@ export async function updateRecipe(
   }
 
   // If variant changing, re-validate against menu item.
-  if (v.variant !== undefined && v.variant !== existing.variant) {
+  // Preparation recipes (existing.menuItemId IS NULL) don't have variants
+  // (per Decision D5), so skip variant checks for them.
+  if (
+    v.variant !== undefined &&
+    v.variant !== existing.variant &&
+    existing.menuItemId !== null
+  ) {
     const menu = await loadMenuItemForRecipe(existing.menuItemId);
     if (!menu) return fail("MENU_ITEM_NOT_FOUND", "Menu item tidak ditemukan");
     const variantCheck = validateVariantAgainstMenuItem(menu, v.variant);

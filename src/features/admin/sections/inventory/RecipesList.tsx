@@ -68,6 +68,9 @@ export function RecipesList() {
   const recipeByMenuItem = useMemo(() => {
     const m = new Map<string, RecipeStatus>();
     for (const r of recipes) {
+      // Preparation recipes (menuItemId IS NULL) are managed in the
+      // Preparations tab — skip them in the menu Resep view.
+      if (r.menuItemId === null) continue;
       const existing = m.get(r.menuItemId) ?? {};
       if (r.variant === "hot") existing.hot = { id: r.id };
       else if (r.variant === "iced") existing.iced = { id: r.id };

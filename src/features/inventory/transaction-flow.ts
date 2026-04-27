@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   ingredients,
@@ -260,6 +260,8 @@ export async function reevaluateSoldOutForIngredients(
   if (affectedIngredientIds.length === 0) return;
 
   // 1. Find all menu_items whose recipes reference any affected ingredient.
+  // Excludes preparation recipes (recipes with menu_item_id IS NULL) — sold-out
+  // flag is a menu-level concept, preps don't surface in POS sold-out logic.
   const menuRows = await db
     .selectDistinct({ menuItemId: recipes.menuItemId })
     .from(recipes)
@@ -267,9 +269,16 @@ export async function reevaluateSoldOutForIngredients(
       recipeIngredients,
       eq(recipeIngredients.recipeId, recipes.id),
     )
-    .where(inArray(recipeIngredients.ingredientId, affectedIngredientIds));
+    .where(
+      and(
+        inArray(recipeIngredients.ingredientId, affectedIngredientIds),
+        isNotNull(recipes.menuItemId),
+      ),
+    );
 
-  const menuItemIds = menuRows.map((r) => r.menuItemId);
+  const menuItemIds = menuRows
+    .map((r) => r.menuItemId)
+    .filter((id): id is string => id !== null);
   if (menuItemIds.length === 0) return;
 
   // 2. For each menu_item, evaluate all of its recipes.
