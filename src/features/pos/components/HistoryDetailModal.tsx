@@ -19,6 +19,8 @@ import {
   markServed,
   type TransactionWithItems,
 } from "@/features/transactions";
+import { useSession } from "@/features/auth/SessionProvider";
+import { printTransactionReceipt } from "@/lib/printer/print-transaction";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime, toJakartaDateOnly } from "@/lib/date";
 import type { Role } from "@/lib/auth";
@@ -56,8 +58,25 @@ export function HistoryDetailModal({
   onClose,
   onChanged,
 }: HistoryDetailModalProps) {
+  const { session } = useSession();
   const [trx, setTrx] = useState<TransactionWithItems | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reprinting, setReprinting] = useState(false);
+
+  async function handleReprint() {
+    if (!trx || reprinting) return;
+    setReprinting(true);
+    const outcome = await printTransactionReceipt(
+      trx,
+      session?.user.name ?? "Kasir",
+    );
+    setReprinting(false);
+    if (outcome.ok) {
+      toast.success("Struk dicetak ulang");
+    } else {
+      toast.error(outcome.message);
+    }
+  }
 
   const [actionModal, setActionModal] = useState<ActionType | null>(null);
   const [reason, setReason] = useState("");
@@ -295,9 +314,8 @@ export function HistoryDetailModal({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() =>
-                  toast.info("Cetak ulang tersedia di M16 (printer)")
-                }
+                loading={reprinting}
+                onClick={handleReprint}
               >
                 <Printer className="size-4" aria-hidden /> Cetak Ulang
               </Button>

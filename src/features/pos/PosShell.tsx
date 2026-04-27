@@ -58,8 +58,7 @@ import {
 import { getActiveShift, type Shift } from "@/features/shifts";
 import { queuePendingTransaction } from "@/lib/offline/queue";
 import { usePendingSync } from "@/lib/offline/usePendingSync";
-import { getPrinterClient } from "@/lib/printer/bluetooth";
-import { buildReceipt } from "@/lib/printer/receipt-builder";
+import { printTransactionReceipt } from "@/lib/printer/print-transaction";
 import type { Discount } from "@/lib/money";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
@@ -501,7 +500,11 @@ export function PosShell() {
             onSubmit={handleProcessPayment}
           />
         ) : rightPanel.kind === "paid" ? (
-          <PaidPanel trx={rightPanel.trx} onFinish={handleFinishOrder} />
+          <PaidPanel
+            trx={rightPanel.trx}
+            cashierName={session!.user.name ?? "Kasir"}
+            onFinish={handleFinishOrder}
+          />
         ) : null}
       </aside>
 
@@ -1062,10 +1065,23 @@ function PayingPanel({
 
 interface PaidPanelProps {
   trx: TransactionWithItems;
+  cashierName: string;
   onFinish: () => void;
 }
 
-function PaidPanel({ trx, onFinish }: PaidPanelProps) {
+function PaidPanel({ trx, cashierName, onFinish }: PaidPanelProps) {
+  const [reprinting, setReprinting] = useState(false);
+  async function handleReprint() {
+    if (reprinting) return;
+    setReprinting(true);
+    const outcome = await printTransactionReceipt(trx, cashierName);
+    setReprinting(false);
+    if (outcome.ok) {
+      toast.success("Struk dicetak ulang");
+    } else {
+      toast.error(outcome.message);
+    }
+  }
   return (
     <>
       <header className="flex flex-col items-center gap-2 border-b border-neutral-200 p-4">
@@ -1161,9 +1177,8 @@ function PaidPanel({ trx, onFinish }: PaidPanelProps) {
         <Button
           variant="outline"
           fullWidth
-          onClick={() =>
-            toast.info("Cetak ulang akan tersedia setelah M16 (printer)")
-          }
+          loading={reprinting}
+          onClick={handleReprint}
         >
           <Printer className="size-4" aria-hidden /> Cetak Ulang
         </Button>
@@ -1283,46 +1298,10 @@ async function printReceiptForTransaction(
   trx: TransactionWithItems,
   cashierName: string,
 ): Promise<void> {
-  const printer = getPrinterClient();
-  if (!printer.isPaired()) return;
-  try {
-    const bytes = buildReceipt({
-      outletName: "Mahakan Coffee & Space",
-      outletAddress:
-        "Puncak Rd KM 22, Cisarua, Bogor Regency, West Java 16750",
-      outletPhone: "0838-1977-5665",
-      transactionNumber: trx.transactionNumber,
-      pagerNumber: trx.pagerNumber,
-      orderType: trx.orderType,
-      createdAt: trx.createdAt,
-      cashierName,
-      items: trx.items.map((item) => ({
-        name: item.itemName,
-        variant: item.variant,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        modifiersPriceDelta: item.modifiersPriceDelta,
-        subtotal: item.subtotal,
-        note: item.note,
-        openPriceNote: item.openPriceNote,
-        modifiers: item.modifiers.map((m) => ({
-          modifierSlug: m.modifierSlug,
-          selectedValue: m.selectedValue,
-          priceDelta: m.priceDelta,
-        })),
-      })),
-      subtotal: trx.subtotal,
-      discountAmount: trx.discountAmount,
-      discountReason: trx.discountReason,
-      total: trx.total,
-      paymentMethod: trx.paymentMethod,
-      cashReceived: trx.cashReceived,
-      cashChange: trx.cashChange,
-      status: trx.status,
-      footerText: "Terima kasih, sampai jumpa!",
-    });
-    await printer.send(bytes);
-  } catch (e) {
-    console.warn("[print]", e instanceof Error ? e.message : e);
+  // Best-effort auto-print after payment success — silent on failure since
+  // the on-screen receipt + history reprint are the user-facing fallbacks.
+  const outcome = await printTransactionReceipt(trx, cashierName);
+  if (!outcome.ok) {
+    console.warn("[print]", outcome.reason, outcome.message);
   }
 }
