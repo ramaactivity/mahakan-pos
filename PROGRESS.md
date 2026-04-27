@@ -41,6 +41,7 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M18** — Testing Pass _(unit-level done 2026-04-26 — 109 → 151 tests covering money, auth helpers, validation, schemas, helpers, utils. Integration tests against live DB deferred for post-launch given Phase 1 scope + offline-only mode.)_
 - [x] **M19** — Deploy to Vercel _(done 2026-04-26 — branch `release/phase-1` pushed, Vercel project linked + GitHub connected, env vars set Production, deploy ready in 1m, alias https://mahakan-pos.vercel.app live, sw.js + landing + login HTTP 200)_
 - [ ] **M20** — Soft Launch Support
+- [x] **M21** — Phase-1 PRD Gap Closure _(done 2026-04-27, sesi 5; full audit log + login rate-limit, owner Settings edit forms, weekly/monthly sales report + PDF export + Best/Slow Mover badges, menu bulk actions + CSV export, expense CRUD + category CRUD, approver-blacklist DB-persistent, weekly DB backup workflow)_
 
 ---
 

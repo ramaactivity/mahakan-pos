@@ -8,7 +8,7 @@ import { auth } from "@/lib/auth";
 import { hasPermission, type Permission } from "@/lib/auth";
 import { hashPassword } from "@/lib/auth/password";
 import { hashPin, isValidPinFormat } from "@/lib/auth/pin";
-import { diffShallow, logAudit } from "@/lib/audit";
+import { diffShallow, logAudit } from "@/lib/audit/logger";
 import {
   countActiveOwners,
   emailTaken,

@@ -7,7 +7,7 @@ import { outlets } from "@/db/schema";
 import type { OperationalHours, OutletSettings } from "@/db/schema/outlets";
 import { auth } from "@/lib/auth";
 import { hasPermission, type Permission } from "@/lib/auth";
-import { diffShallow, logAudit } from "@/lib/audit";
+import { diffShallow, logAudit } from "@/lib/audit/logger";
 import type { ApiResult, Outlet } from "./types";
 
 function err(code: string, message: string): ApiResult<never> {

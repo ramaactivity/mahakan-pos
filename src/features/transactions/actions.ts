@@ -14,7 +14,7 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { consumeApproverToken } from "@/lib/auth/approver";
-import { logAudit } from "@/lib/audit";
+import { logAudit } from "@/lib/audit/logger";
 import {
   fetchTransactionByClientRefId,
   fetchTransactionById,

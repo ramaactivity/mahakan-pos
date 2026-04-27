@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { categories, menuItems, modifiers } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
-import { diffShallow, logAudit } from "@/lib/audit";
+import { diffShallow, logAudit } from "@/lib/audit/logger";
 import {
   fetchAllCategories,
   fetchCategories,

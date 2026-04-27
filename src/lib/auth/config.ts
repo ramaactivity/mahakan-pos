@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import { logAudit } from "@/lib/audit";
+import { logAudit } from "@/lib/audit/logger";
 import { verifyPassword } from "./password";
 import { verifyPin, isValidPinFormat } from "./pin";
 import { sessionMaxAgeSeconds, type Role } from "./rbac";

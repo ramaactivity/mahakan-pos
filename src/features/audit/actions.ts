@@ -5,7 +5,7 @@ import {
   fetchAuditLogs,
   type AuditLogRow,
   type ListAuditLogsOptions,
-} from "@/lib/audit";
+} from "@/lib/audit/queries";
 
 type ApiResult<T> =
   | { ok: true; data: T }
