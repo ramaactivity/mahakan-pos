@@ -30,6 +30,22 @@ describe("hasPermission", () => {
     expect(hasPermission("staff", "shift.open_own")).toBe(true);
     expect(hasPermission("staff", "pos.menu.mark_sold_out")).toBe(true);
   });
+
+  it("Inventory: Owner + Manager view + receive; Owner-only adjust + delete + cost", () => {
+    expect(hasPermission("owner", "inventory.ingredient.view")).toBe(true);
+    expect(hasPermission("manager", "inventory.ingredient.view")).toBe(true);
+    expect(hasPermission("staff", "inventory.ingredient.view")).toBe(false);
+
+    expect(hasPermission("manager", "inventory.receive")).toBe(true);
+    expect(hasPermission("manager", "inventory.waste")).toBe(true);
+
+    expect(hasPermission("manager", "inventory.adjust")).toBe(false);
+    expect(hasPermission("owner", "inventory.adjust")).toBe(true);
+
+    expect(hasPermission("manager", "inventory.ingredient.delete")).toBe(false);
+    expect(hasPermission("manager", "inventory.cost.view")).toBe(false);
+    expect(hasPermission("owner", "inventory.cost.view")).toBe(true);
+  });
 });
 
 describe("requirePermission", () => {

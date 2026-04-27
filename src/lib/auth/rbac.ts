@@ -88,6 +88,21 @@ export const permissions = {
   "settings.receipt.update": ["owner"],
   "settings.thresholds.update": ["owner"],
   "settings.features.update": ["owner"],
+
+  // Inventory (Phase 2 Tier 1.1)
+  "inventory.ingredient.view": ["owner", "manager"],
+  "inventory.ingredient.create": ["owner", "manager"],
+  "inventory.ingredient.update": ["owner", "manager"],
+  "inventory.ingredient.delete": ["owner"],
+  "inventory.recipe.view": ["owner", "manager"],
+  "inventory.recipe.create": ["owner", "manager"],
+  "inventory.recipe.update": ["owner", "manager"],
+  "inventory.recipe.delete": ["owner"],
+  "inventory.receive": ["owner", "manager"],
+  "inventory.adjust": ["owner"],
+  "inventory.waste": ["owner", "manager"],
+  "inventory.movement.view": ["owner", "manager"],
+  "inventory.cost.view": ["owner"],
 } as const satisfies Record<string, ReadonlyArray<Role>>;
 
 export type Permission = keyof typeof permissions;
