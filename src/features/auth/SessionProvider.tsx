@@ -27,7 +27,7 @@ interface SessionContextValue {
   session: SessionData | null;
   status: SessionStatus;
   refresh: () => Promise<unknown>;
-  logout: () => Promise<void>;
+  logout: (callbackUrl?: string) => Promise<void>;
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -55,8 +55,15 @@ export function useSession(): SessionContextValue {
     session,
     status,
     refresh: update,
-    logout: async () => {
+    logout: async (callbackUrl: string = "/login") => {
+      // Clear the server-side session cookie, then hard-navigate to ensure
+      // all client-side React state (including stale useSession context) is
+      // discarded. Without window.location.assign, the next page would mount
+      // with the still-cached session and auto-redirect back to the
+      // dashboard — making "logout then login as different user"
+      // effectively impossible from the same tab.
       await nextAuthSignOut({ redirect: false });
+      window.location.assign(callbackUrl);
     },
   };
 }

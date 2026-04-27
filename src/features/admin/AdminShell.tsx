@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   AdminLeftNav,
   type AdminSection,
@@ -16,15 +15,13 @@ import { StaffSection } from "@/features/admin/sections/StaffSection";
 import { useSession } from "@/features/auth/SessionProvider";
 
 export function AdminShell() {
-  const router = useRouter();
   const { session, logout } = useSession();
   const [section, setSection] = useState<AdminSection>("dashboard");
 
   if (!session) return null;
 
   async function onLogout() {
-    await logout();
-    router.replace("/login");
+    await logout("/login");
   }
 
   return (

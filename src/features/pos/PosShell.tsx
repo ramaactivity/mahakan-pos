@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Banknote,
@@ -75,7 +74,6 @@ type RightPanelState =
 const QUICK_AMOUNTS = [50_000, 100_000, 200_000];
 
 export function PosShell() {
-  const router = useRouter();
   const { session, logout } = useSession();
   // Watch online status + pending offline queue; auto-sync when reconnected.
   usePendingSync();
@@ -414,8 +412,7 @@ export function PosShell() {
   }
 
   async function handleLogout() {
-    await logout();
-    router.replace("/pin");
+    await logout("/pin");
   }
 
   // ==================== Render ====================

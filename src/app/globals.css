@@ -70,10 +70,37 @@ body {
   }
 }
 
-/* Focus outline consistency */
+/* Focus outline consistency — only fires on keyboard navigation, not mouse click */
 :focus-visible {
   outline: 2px solid var(--color-mahakan-green-700);
   outline-offset: 2px;
+}
+
+/* Inputs/textareas opt out of the global keyboard outline — they have their
+   own focus indication via cursor and surrounding component styling.
+   Prevents the chunky "box around typing area" effect on tab navigation. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+}
+
+/* Kill Chrome / Edge autofill background tint that paints inputs blue or
+   yellow after the browser fills saved credentials. The 100s box-shadow
+   transition is the canonical hack — autofill applies its color via
+   background-color, which we shadow over with a white inset. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px white inset !important;
+  -webkit-text-fill-color: var(--color-neutral-900) !important;
+  caret-color: var(--color-neutral-900);
+  transition: background-color 600000s 0s, color 600000s 0s;
 }
 
 /* Shake animation for auth error feedback */

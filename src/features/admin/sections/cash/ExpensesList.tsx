@@ -109,7 +109,7 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
               <select
                 value={categoryFilter}
                 onChange={(e) => setCategoryFilter(e.target.value)}
-                className="h-10 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900 focus:border-mahakan-green-700 focus:outline-none"
+                className="h-10 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
               >
                 <option value="all">Semua kategori</option>
                 {categories.map((c) => (

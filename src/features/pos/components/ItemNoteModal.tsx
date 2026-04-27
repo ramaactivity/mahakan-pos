@@ -51,7 +51,7 @@ export function ItemNoteModal({
         maxLength={200}
         rows={4}
         placeholder="Catatan barista (max 200 karakter)…"
-        className="w-full rounded-md border border-neutral-300 bg-white p-3 text-base text-neutral-900 placeholder:text-neutral-500 focus:border-mahakan-green-700 focus:outline-none"
+        className="w-full rounded-md border border-neutral-300 bg-white p-3 text-base text-neutral-900 placeholder:text-neutral-500"
       />
       <p className="mt-1 text-right text-xs text-neutral-500">
         {note.length} / 200
