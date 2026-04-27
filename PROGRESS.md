@@ -4,12 +4,13 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 1 — Foundation
-**Fase:** B (Backend) — **M8-M19 done**. Only M20 (soft launch) remains.
-**Active Milestone:** M19 deployed 2026-04-26. Awaiting M16 hardware verify (printer) + M20 soft launch.
-**Mode:** Online (production live at https://mahakan-pos.vercel.app)
+**Phase:** Phase 1 — **PRD-COMPLETE** (2026-04-27).
+**Active Milestone:** M16 field-validate (auto-print + reprint di transaksi real) + M20 soft launch.
+**Mode:** Online (production stable at https://mahakan-pos.vercel.app)
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
+**Branch:** `release/phase-1` (HEAD `b0a56a5`)
+**Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md`
 
 ---
 
@@ -42,6 +43,13 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 - [x] **M19** — Deploy to Vercel _(done 2026-04-26 — branch `release/phase-1` pushed, Vercel project linked + GitHub connected, env vars set Production, deploy ready in 1m, alias https://mahakan-pos.vercel.app live, sw.js + landing + login HTTP 200)_
 - [ ] **M20** — Soft Launch Support
 - [x] **M21** — Phase-1 PRD Gap Closure _(done 2026-04-27, sesi 5; full audit log + login rate-limit, owner Settings edit forms, weekly/monthly sales report + PDF export + Best/Slow Mover badges, menu bulk actions + CSV export, expense CRUD + category CRUD, approver-blacklist DB-persistent, weekly DB backup workflow)_
+
+### Phase 2 — see `docs/99-PHASE-2-ROADMAP.md`
+
+Tier 1 candidates (in priority order):
+- Recipe / BOM + Inventory tracking (~3 weeks)
+- Loyalty + Customer DB (~2 weeks)
+- Promo engine (~1.5 weeks)
 
 ---
 
@@ -334,3 +342,41 @@ Tests: 151 → 175. Hardware verify pending — user pairs RPP02 on Chrome/Edge 
 - `offline-only-dev-mode` memory marked SUPERSEDED — production is live, push/deploy normal cadence allowed (main + force-push still need explicit confirm)
 
 Handover for sesi 4: `docs/99-HANDOVER-SESSION-4.md`.
+
+---
+
+### 2026-04-27 (Session 5 — PRD gap closure + bug-fix wave)
+
+**Wave 1 — PRD §4-6 gap closure (8 commits):**
+- **`33faa2d`** `feat(audit): full audit log + login rate-limiting` — typed event registry, fire-and-forget logger, joined viewer. Wired to auth (login.success/failed with reason + locked, logout), transactions (void/refund/discount.applied), users (CRUD + reset_pin), menu (item CRUD/sold-out/category CRUD/modifier price), cash (expense.create + income.create). Login rate-limit: 5 fail → 15 min lock via `users.failed_attempts` + `users.locked_until` columns. Owner-only Audit Log section in admin sidebar with event-group + date-range filters.
+- **`e8970ec`** `feat(settings): owner-editable forms` — 5 outlet update server actions (business info, operational hours per-day, receipt footer + QR rating, threshold variance, HPP toggle) + 3 modals. Per-card "Edit" Owner-gated buttons.
+- **`66acb20`** `feat(reports): weekly/monthly + PDF + best/slow mover badges` — `SalesRangeView` with 7d/30d/MTD/custom presets, line chart, prior-period % comparison. PDF export via jsPDF for Daily Sales + P&L + Range with branded outlet header. Excel-style quartile badges on Item Performance.
+- **`ac8c612`** `feat(menu): bulk actions + CSV export` — `bulkUpdateMenuItems` with mark_sold_out / mark_available / adjust_price_pct (skips open-price). Owner-only `exportMenuCsv`. UI checkbox column + indeterminate select-all + BulkActionsBar.
+- **`89a6c51`** `feat(cash): expense edit/delete + category CRUD` — Owner anytime / Manager ≤24h edit; Owner-only delete; full category CRUD (system rows protected, blocks delete with active expenses).
+- **`fecacbe`** `fix(auth): persist approver-token blacklist to DB` — `consumed_approver_tokens` table with INSERT...ON CONFLICT atomic single-use (closes §6.12 race). Migration `0001_cute_iron_fist.sql` applied.
+- **`0a853e5`** `feat(ops): weekly Postgres backup via GitHub Actions + manual script` — Sunday 09:00 WIB cron via `pg_dump --format=custom`, 90-day artifact. `scripts/backup-db.sh` for ad-hoc local.
+- **`7fc0234`** `fix(audit): split barrel so client components can't pull server-only` — public `@/lib/audit` types/consts only; server callers use `/logger` or `/queries` direct paths.
+
+**Wave 2 — post-deploy bug-fix (7 commits):**
+- **`e050870`** `fix(ci): force pg_dump-17 path in backup workflow` — server v17.8 vs PATH-default pg_dump v16.13 mismatch.
+- **`27bd12c`** + **`8ce7597`** (on `main`) — cherry-picks of workflow + CI fix; required for GitHub schedule + dispatch to register on default branch.
+- **`219f5c9`** + **`cd98828`** (on `release/phase-1` and `main`) `fix(deploy): disable Vercel auto-deploy from main branch` — `vercel.json git.deploymentEnabled.main = false`. Push to `main` had silently triggered Production rebuild from main's pre-sesi-3 app code, regressing landing + creating cookie/auth mismatch loop.
+- **`e7a4d70`** `fix(middleware): break redirect loop on expired session` — two bugs: `cookies.delete(name)` defaulted path to request path (didn't override `/`-scoped session cookie), and `/login` route bounced expired-but-signature-valid JWT to `/dashboard` without checking roleExp. Fix: explicit `path: "/"` + `secure: true` on cookie set; treat expired as unauthenticated globally.
+- **`b0a56a5`** `fix(pos): wire reprint button — was still M16-stub after M16 shipped` — extracted `printTransactionReceipt` to `src/lib/printer/print-transaction.ts` with `PrintOutcome` result. Both PaidPanel (post-payment) and HistoryDetailModal reprint buttons now real-print with toast feedback.
+
+**Lesson learned:** Vercel reads `vercel.json` from the deploying commit's tree, so `git.deploymentEnabled` rule must exist on every branch you want to skip — not just the default. GitHub Actions schedule + workflow_dispatch only register from default branch, forcing workflow files to live on `main` even when app code lives on `release/phase-1`.
+
+**Auth & ops upgrades closed:**
+- **§6.11** rate-limit: SOLVED (5 attempts, 15 min lock)
+- **§6.12** approver token race: SOLVED (DB single-use)
+- **§6.10** backup automation: SOLVED (weekly cron, 90-day retention)
+
+**State at end of sesi 5:**
+- Branch `release/phase-1` synced (HEAD `b0a56a5`); main HEAD `cd98828`
+- Tests: 175/175; typecheck clean; lint clean; build 11 routes
+- Production stable at `https://mahakan-pos.vercel.app`
+- PRD §4-6 gap closed (M21). Phase 1 PRD-COMPLETE.
+- M16 partial-verified (Settings test print confirmed 2026-04-27 15:16 WIB by user; auto-print + reprint shipped, awaiting field test)
+- M20 soft launch still pending
+
+Handover for sesi 6: `docs/99-HANDOVER-SESSION-5.md`. Phase 2 roadmap: `docs/99-PHASE-2-ROADMAP.md`.
