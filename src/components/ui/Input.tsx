@@ -54,10 +54,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       <div
         className={cn(
           "flex h-10 items-center rounded-md border bg-white transition-colors",
-          "focus-within:ring-2 focus-within:ring-mahakan-green-700 focus-within:ring-offset-0",
           error
-            ? "border-danger-500 focus-within:ring-danger-500"
-            : "border-neutral-300 focus-within:border-mahakan-green-500",
+            ? "border-danger-500 focus-within:border-danger-600"
+            : "border-neutral-300 focus-within:border-mahakan-green-700",
           disabled && "cursor-not-allowed bg-neutral-100 opacity-60",
         )}
       >
