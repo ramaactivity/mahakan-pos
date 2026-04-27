@@ -10,37 +10,86 @@ function matches(pathname: string, prefixes: string[]): boolean {
   );
 }
 
+/**
+ * Set Set-Cookie headers that override Auth.js' session cookie.
+ *
+ * `cookies.delete(name)` defaults the cookie path to the *request path* — so
+ * deleting from `/dashboard` writes a cookie scoped to `/dashboard` which the
+ * browser keeps separate from the original `/`-scoped cookie. The original
+ * stays alive → user remains "authed" → endless redirect loop. We must set
+ * an empty value with explicit `path: "/"` to actually evict it.
+ *
+ * Also: the `__Secure-` prefix is browser-enforced; the cookie must have the
+ * `Secure` attribute on Set-Cookie or the browser ignores the response.
+ */
+function clearSessionCookies(res: NextResponse) {
+  // Dev (HTTP) cookie name
+  res.cookies.set("authjs.session-token", "", {
+    maxAge: 0,
+    path: "/",
+    sameSite: "lax",
+    httpOnly: true,
+  });
+  // Prod (HTTPS) cookie name
+  res.cookies.set("__Secure-authjs.session-token", "", {
+    maxAge: 0,
+    path: "/",
+    sameSite: "lax",
+    httpOnly: true,
+    secure: true,
+  });
+}
+
 export default auth((req) => {
   const { nextUrl } = req;
   const pathname = nextUrl.pathname;
-  const isAuthed = Boolean(req.auth);
 
+  // A token that's signature-valid but past its `roleExp` should behave as
+  // unauthenticated, regardless of where the user is. Without this branch the
+  // middleware bounces /login → /dashboard → expired → /login → ...
+  let isAuthed = Boolean(req.auth);
+  let isExpired = false;
+  if (isAuthed) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (req.auth!.roleExp && nowSec > req.auth!.roleExp) {
+      isExpired = true;
+      isAuthed = false;
+    }
+  }
+
+  // ---------- Public paths (/, /login, /pin, /showcase) ----------
   if (matches(pathname, PUBLIC_PATHS)) {
+    // Already-authed user landing on /login or /pin → bounce to their home.
     if (isAuthed && (pathname === "/login" || pathname === "/pin")) {
       const target = req.auth!.user.role === "staff" ? "/pos" : "/dashboard";
       return NextResponse.redirect(new URL(target, nextUrl));
     }
+    // Expired-token user on a public path: clear the stale cookie so the next
+    // request is genuinely unauth — but DO NOT redirect (they're already on a
+    // public page; the login form needs to render, not loop).
+    if (isExpired) {
+      const res = NextResponse.next();
+      clearSessionCookies(res);
+      return res;
+    }
     return NextResponse.next();
   }
 
+  // ---------- Protected paths ----------
   if (!isAuthed) {
     const loginUrl = new URL("/login", nextUrl);
-    loginUrl.searchParams.set("callbackUrl", pathname);
-    return NextResponse.redirect(loginUrl);
-  }
-
-  const session = req.auth!;
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  if (session.roleExp && nowSeconds > session.roleExp) {
-    const loginUrl = new URL("/login", nextUrl);
-    loginUrl.searchParams.set("expired", "1");
+    if (isExpired) {
+      loginUrl.searchParams.set("expired", "1");
+    } else {
+      loginUrl.searchParams.set("callbackUrl", pathname);
+    }
     const res = NextResponse.redirect(loginUrl);
-    res.cookies.delete("authjs.session-token");
-    res.cookies.delete("__Secure-authjs.session-token");
+    if (isExpired) clearSessionCookies(res);
     return res;
   }
 
-  if (matches(pathname, ADMIN_PATHS) && session.user.role === "staff") {
+  // Staff cannot access admin pages — kick to /pos.
+  if (matches(pathname, ADMIN_PATHS) && req.auth!.user.role === "staff") {
     return NextResponse.redirect(new URL("/pos", nextUrl));
   }
 
