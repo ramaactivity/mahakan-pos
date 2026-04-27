@@ -46,6 +46,75 @@ export async function fetchIngredients(
   return { items: rows, total: rows.length };
 }
 
+export async function fetchAtomicIngredients(
+  outletId: string,
+  opts: ListIngredientsOptions = {},
+): Promise<Paginated<Ingredient>> {
+  const { activeOnly = true, search } = opts;
+  const conds = [
+    eq(ingredients.outletId, outletId),
+    isNull(ingredients.deletedAt),
+    eq(ingredients.isPreparation, false),
+  ];
+  if (activeOnly) conds.push(eq(ingredients.isActive, true));
+  if (search) {
+    const like = `%${search.toLowerCase().trim()}%`;
+    conds.push(sql`lower(${ingredients.name}) like ${like}`);
+  }
+
+  const rows = await db
+    .select()
+    .from(ingredients)
+    .where(and(...conds))
+    .orderBy(ingredients.name);
+
+  return { items: rows, total: rows.length };
+}
+
+export async function fetchPreparations(
+  outletId: string,
+  opts: ListIngredientsOptions = {},
+): Promise<Paginated<Ingredient>> {
+  const { activeOnly = true, search } = opts;
+  const conds = [
+    eq(ingredients.outletId, outletId),
+    isNull(ingredients.deletedAt),
+    eq(ingredients.isPreparation, true),
+  ];
+  if (activeOnly) conds.push(eq(ingredients.isActive, true));
+  if (search) {
+    const like = `%${search.toLowerCase().trim()}%`;
+    conds.push(sql`lower(${ingredients.name}) like ${like}`);
+  }
+
+  const rows = await db
+    .select()
+    .from(ingredients)
+    .where(and(...conds))
+    .orderBy(ingredients.name);
+
+  return { items: rows, total: rows.length };
+}
+
+export async function fetchRecipeForPreparation(
+  ingredientId: string,
+): Promise<RecipeWithIngredients | null> {
+  const [recipe] = await db
+    .select()
+    .from(recipes)
+    .where(
+      and(
+        eq(recipes.ingredientId, ingredientId),
+        eq(recipes.isActive, true),
+      ),
+    )
+    .limit(1);
+  if (!recipe) return null;
+
+  const lines = await fetchRecipeIngredientLines(recipe.id);
+  return { ...recipe, ingredients: lines };
+}
+
 export async function fetchIngredientById(
   id: string,
 ): Promise<Ingredient | null> {

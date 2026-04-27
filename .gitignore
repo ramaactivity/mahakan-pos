@@ -66,3 +66,6 @@ next-env.d.ts
 # DB backups (created by scripts/backup-db.sh)
 /backups/
 *.dump
+
+# Owner source spreadsheets (read-only inputs for M23.4 importer)
+/data/source-spreadsheets/

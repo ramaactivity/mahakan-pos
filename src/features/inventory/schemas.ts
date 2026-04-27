@@ -34,14 +34,24 @@ const costNonNeg = z
   .nonnegative("Harga harus >= 0")
   .max(999_999_999, "Harga terlalu besar");
 
-export const createIngredientSchema = z.object({
-  name: z.string().trim().min(NAME_MIN).max(NAME_MAX),
-  unit: z.string().trim().min(1).max(UNIT_MAX),
-  costPerUnit: costNonNeg,
-  initialStock: qtyNonNeg,
-  reorderThreshold: qtyNonNeg.nullable().optional(),
-  notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
-});
+export const createIngredientSchema = z
+  .object({
+    name: z.string().trim().min(NAME_MIN).max(NAME_MAX),
+    unit: z.string().trim().min(1).max(UNIT_MAX),
+    costPerUnit: costNonNeg,
+    initialStock: qtyNonNeg,
+    reorderThreshold: qtyNonNeg.nullable().optional(),
+    notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
+    isPreparation: z.boolean().optional().default(false),
+    preparationYield: qtyPositive.nullable().optional(),
+  })
+  .refine(
+    (v) => !v.isPreparation || (v.preparationYield != null),
+    {
+      message: "preparation_yield wajib jika isPreparation=true",
+      path: ["preparationYield"],
+    },
+  );
 
 export type CreateIngredientInput = z.infer<typeof createIngredientSchema>;
 
@@ -53,6 +63,7 @@ export const updateIngredientSchema = z
     reorderThreshold: qtyNonNeg.nullable().optional(),
     notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
     isActive: z.boolean().optional(),
+    preparationYield: qtyPositive.nullable().optional(),
   })
   .refine(
     (v) => Object.keys(v).length > 0,
@@ -106,12 +117,32 @@ const ingredientsListSchema = z
 
 const recipeVariantSchema = z.enum(["hot", "iced"]).nullable().optional();
 
-export const createRecipeSchema = z.object({
-  menuItemId: z.uuid(),
-  variant: recipeVariantSchema,
-  notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
-  ingredients: ingredientsListSchema,
-});
+const wasteFactorPct = z
+  .number()
+  .int()
+  .min(0, "Q Factor tidak boleh negatif")
+  .max(200, "Q Factor maksimal 200%");
+
+export const createRecipeSchema = z
+  .object({
+    menuItemId: z.uuid().nullable().optional(),
+    ingredientId: z.uuid().nullable().optional(),
+    variant: recipeVariantSchema,
+    notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
+    wasteFactorPct: wasteFactorPct.optional(),
+    ingredients: ingredientsListSchema,
+  })
+  .refine(
+    (v) => {
+      const isMenu = !!v.menuItemId && !v.ingredientId;
+      const isPrep = !v.menuItemId && !!v.ingredientId;
+      // XOR + D5 (no variant on prep recipes) in a single check.
+      if (!isMenu && !isPrep) return false;
+      if (isPrep && v.variant != null) return false;
+      return true;
+    },
+    "Resep harus target satu dari menu_item ATAU ingredient (XOR), dan preparation tidak boleh punya variant",
+  );
 
 export type CreateRecipeInput = z.infer<typeof createRecipeSchema>;
 
@@ -119,6 +150,7 @@ export const updateRecipeSchema = z
   .object({
     variant: recipeVariantSchema,
     notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
+    wasteFactorPct: wasteFactorPct.optional(),
     ingredients: ingredientsListSchema.optional(),
   })
   .refine(

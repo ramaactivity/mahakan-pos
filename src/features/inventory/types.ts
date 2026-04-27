@@ -69,6 +69,8 @@ export interface CreateIngredientInput {
   initialStock: number;
   reorderThreshold?: number | null;
   notes?: string | null;
+  isPreparation?: boolean;
+  preparationYield?: number | null;
 }
 
 export interface UpdateIngredientInput {
@@ -78,7 +80,41 @@ export interface UpdateIngredientInput {
   reorderThreshold?: number | null;
   notes?: string | null;
   isActive?: boolean;
+  preparationYield?: number | null;
 }
+
+/** Narrowed view of an ingredient that is acting as a preparation. */
+export type Preparation = Ingredient & {
+  isPreparation: true;
+  preparationYield: number;
+};
+
+/** Recipe target — exactly one of menu vs prep is set (XOR enforced by DB). */
+export type RecipeTarget =
+  | { kind: "menu"; menuItemId: string; variant: RecipeVariant }
+  | { kind: "prep"; ingredientId: string };
+
+/**
+ * Resolved snapshot of one recipe used by the cascade + transaction-flow
+ * engines. Lines carry the `isPreparation` flag so callers can decide
+ * whether to recurse.
+ */
+export interface RecipeNode {
+  recipeId: string;
+  outletId: string;
+  target: RecipeTarget;
+  wasteFactorPct: number;
+  preparationYield: number | null;
+  lines: Array<{
+    ingredientId: string;
+    qty: number;
+    isPreparation: boolean;
+    costPerUnit: number;
+  }>;
+}
+
+/** Ingredient → atomic qty, post-rounding (Math.round per leaf). */
+export type LeafExpansion = Map<string, number>;
 
 export interface ReceiveStockInput {
   ingredientId: string;
@@ -115,14 +151,20 @@ export interface RecipeIngredientInput {
 }
 
 export interface CreateRecipeInput {
-  menuItemId: string;
+  /** Set when targeting a menu item. Mutually exclusive with ingredientId. */
+  menuItemId?: string | null;
+  /** Set when targeting a preparation ingredient. */
+  ingredientId?: string | null;
   variant?: RecipeVariant;
   notes?: string | null;
+  /** Defaults: 30 for menu recipes, 10 for prep recipes. */
+  wasteFactorPct?: number;
   ingredients: RecipeIngredientInput[];
 }
 
 export interface UpdateRecipeInput {
   variant?: RecipeVariant;
   notes?: string | null;
+  wasteFactorPct?: number;
   ingredients?: RecipeIngredientInput[];
 }

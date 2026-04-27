@@ -103,6 +103,12 @@ export const permissions = {
   "inventory.waste": ["owner", "manager"],
   "inventory.movement.view": ["owner", "manager"],
   "inventory.cost.view": ["owner"],
+
+  // Phase 2 Tier 1.2 (M23) — Preparations.
+  "inventory.preparation.view": ["owner", "manager"],
+  "inventory.preparation.create": ["owner", "manager"],
+  "inventory.preparation.update": ["owner", "manager"],
+  "inventory.preparation.delete": ["owner"],
 } as const satisfies Record<string, ReadonlyArray<Role>>;
 
 export type Permission = keyof typeof permissions;

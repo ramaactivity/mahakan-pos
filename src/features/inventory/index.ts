@@ -19,9 +19,24 @@ export type {
   RecipeWithIngredients,
   CreateRecipeInput,
   UpdateRecipeInput,
+  Preparation,
+  RecipeNode,
+  RecipeTarget,
+  LeafExpansion,
 } from "./types";
 
 export { isOk } from "./types";
+
+export {
+  computePrepCostFromLines,
+  splitLineForMovement,
+  aggregateExpansion,
+  validateNoCycle,
+} from "./preparation-flow-pure";
+export type {
+  RecipeLineInput,
+  MovementSplit,
+} from "./preparation-flow-pure";
 
 export {
   createIngredientSchema,
