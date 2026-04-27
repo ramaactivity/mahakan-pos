@@ -4,12 +4,12 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 1 — **PRD-COMPLETE** (2026-04-27).
-**Active Milestone:** M16 field-validate (auto-print + reprint di transaksi real) + M20 soft launch.
+**Phase:** Phase 2 Tier 1.1 — **CODE-COMPLETE** (2026-04-27, sesi 6).
+**Active Milestone:** Field-validate Tier 1.1 di kafe (seed resep 43 menu, smoke-test auto-deduct + sold-out + COGS reports).
 **Mode:** Online (production stable at https://mahakan-pos.vercel.app)
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `b0a56a5`)
+**Branch:** `release/phase-1` (HEAD `b18e3a7`)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md`
 
 ---
@@ -47,9 +47,22 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 ### Phase 2 — see `docs/99-PHASE-2-ROADMAP.md`
 
 Tier 1 candidates (in priority order):
-- Recipe / BOM + Inventory tracking (~3 weeks)
-- Loyalty + Customer DB (~2 weeks)
-- Promo engine (~1.5 weeks)
+- [x] **M22 Recipe/BOM + Inventory tracking** — code-complete 2026-04-27 sesi 6 (see §M22 sub-chunks below)
+- [ ] M23 Loyalty + Customer DB (~2 weeks) — next after Tier 1.1 field validate
+- [ ] M24 Promo engine (~1.5 weeks) — depends on loyalty
+
+#### M22 — Recipe/BOM + Inventory Tracking (Phase 2 Tier 1.1)
+
+- [x] **M22.1** — Schema (4 tables) + cogs cols + drop placeholder cols _(done 2026-04-27, commit `6aa280e`, migration `0002_glossy_prodigy.sql` applied to Neon)_
+- [x] **M22.2** — Ingredient module (CRUD + receive/adjust/waste + 13 RBAC perms + tests) _(done 2026-04-27, commit `6ce1253`)_
+- [x] **POS-S Side-quest** — In-POS Pengaturan tab (printer pair untuk staff, sync card, about card) _(done 2026-04-27, commit `797abff`)_
+- [x] **M22.3** — Recipe module (CRUD + variant/ingredient validation + 12 schema tests) _(done 2026-04-27, commit `4e32e05`)_
+- [x] **M22.4a** — Admin Inventory UI: Bahan tab + 4 modals (form/receive/adjust/waste) _(done 2026-04-27, commit `c008ff6`)_
+- [x] **M22.4b** — Admin Inventory UI: Pergerakan tab dengan filters + paginated movement log _(done 2026-04-27, commit `3c9e29e`)_
+- [x] **M22.4c** — Admin Inventory UI: Resep tab + RecipeEditorModal dengan variant + ingredient lines + COGS preview _(done 2026-04-27, commit `89a9235`)_
+- [x] **M22.5** — createTransaction COGS snapshot + atomic auto-deduct + post-commit sold-out re-eval; voidTransaction + refundTransaction restore stock _(done 2026-04-27, commit `43ab0f4`)_
+- [x] **M22.6** — P&L proper (Revenue − HPP = Laba Kotor − Pengeluaran = Laba Bersih) + Item Performance margin column + PDF export update _(done 2026-04-27, commit `b18e3a7`)_
+- [ ] **M22.7** — **FIELD VALIDATE**: seed recipes untuk 43 menu, smoke-test transaksi end-to-end di tablet kafe, verify P&L numbers actual.
 
 ---
 
