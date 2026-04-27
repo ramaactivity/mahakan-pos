@@ -7,6 +7,7 @@ import {
   fetchDailySalesReport,
   fetchItemPerformance,
   fetchPnlReport,
+  fetchSalesRangeReport,
 } from "./queries";
 import {
   fail,
@@ -15,6 +16,7 @@ import {
   type DailySalesReport,
   type ItemPerformanceRow,
   type PnlReport,
+  type SalesRangeReport,
 } from "./types";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -55,6 +57,29 @@ export async function getItemPerformance(
   return ok(
     await fetchItemPerformance(session.user.outletId, from, to, sort, limit),
   );
+}
+
+export async function getSalesRangeReport(
+  from: string,
+  to: string,
+): Promise<ApiResult<SalesRangeReport>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "report.sales.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat laporan penjualan");
+  }
+  if (!ISO_DATE.test(from) || !ISO_DATE.test(to)) {
+    return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
+  }
+  if (from > to) {
+    return fail("VALIDATION_ERROR", "Tanggal mulai > tanggal selesai");
+  }
+  // Cap range: 1 year max
+  const fromMs = new Date(`${from}T00:00:00+07:00`).getTime();
+  const toMs = new Date(`${to}T00:00:00+07:00`).getTime();
+  if (toMs - fromMs > 366 * 24 * 60 * 60 * 1000) {
+    return fail("VALIDATION_ERROR", "Range maksimal 1 tahun");
+  }
+  return ok(await fetchSalesRangeReport(session.user.outletId, from, to));
 }
 
 export async function getPnlReport(

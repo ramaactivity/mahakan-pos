@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import {
+  Badge,
   Card,
   CardContent,
   CardHeader,
@@ -51,6 +52,32 @@ export function ItemPerformanceView() {
     () => rows.reduce((s, r) => s + r.quantity, 0),
     [rows],
   );
+
+  /**
+   * Quartile thresholds for Best/Slow badges. Computed off the *current sort
+   * result* — quartile is over qty, regardless of which column the user sorted
+   * by. We need ≥4 distinct items with non-zero qty for this to be meaningful;
+   * otherwise no badges are emitted (avoids labelling 2-item lists).
+   */
+  const quartiles = useMemo(() => {
+    const qtys = rows
+      .map((r) => r.quantity)
+      .filter((q) => q > 0)
+      .sort((a, b) => a - b);
+    if (qtys.length < 4) return null;
+    // Linear-interpolation quartile (Excel-style)
+    const q = (p: number) => {
+      const pos = (qtys.length - 1) * p;
+      const lo = Math.floor(pos);
+      const hi = Math.ceil(pos);
+      if (lo === hi) return qtys[lo];
+      return qtys[lo] + (qtys[hi] - qtys[lo]) * (pos - lo);
+    };
+    const q1 = q(0.25);
+    const q3 = q(0.75);
+    if (q3 - q1 < 1) return null; // no meaningful spread
+    return { q1, q3 };
+  }, [rows]);
 
   return (
     <div className="space-y-4">
@@ -120,32 +147,47 @@ export function ItemPerformanceView() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
-                  {rows.map((row, idx) => (
-                    <tr key={row.menuItemId} className="hover:bg-neutral-50">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="w-6 shrink-0 font-mono text-xs text-neutral-500">
-                            {idx + 1}.
-                          </span>
-                          <span className="truncate font-medium text-neutral-900">
-                            {row.name}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-neutral-700">
-                        {row.categoryName}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono">
-                        {row.quantity}×
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono">
-                        {formatRupiah(row.revenue)}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono text-neutral-500">
-                        {formatRupiah(row.averageOrderValue)}
-                      </td>
-                    </tr>
-                  ))}
+                  {rows.map((row, idx) => {
+                    const badge = quartiles
+                      ? row.quantity >= quartiles.q3
+                        ? "best"
+                        : row.quantity > 0 && row.quantity <= quartiles.q1
+                          ? "slow"
+                          : null
+                      : null;
+                    return (
+                      <tr key={row.menuItemId} className="hover:bg-neutral-50">
+                        <td className="px-4 py-3">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="w-6 shrink-0 font-mono text-xs text-neutral-500">
+                              {idx + 1}.
+                            </span>
+                            <span className="truncate font-medium text-neutral-900">
+                              {row.name}
+                            </span>
+                            {badge === "best" && (
+                              <Badge variant="success">Best Seller</Badge>
+                            )}
+                            {badge === "slow" && (
+                              <Badge variant="warning">Slow Mover</Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-neutral-700">
+                          {row.categoryName}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono">
+                          {row.quantity}×
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono">
+                          {formatRupiah(row.revenue)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-neutral-500">
+                          {formatRupiah(row.averageOrderValue)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

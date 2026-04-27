@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Lock } from "lucide-react";
+import { Download, Lock } from "lucide-react";
 import {
   Badge,
+  Button,
   Card,
   CardContent,
   CardDescription,
@@ -13,6 +14,12 @@ import {
   Skeleton,
 } from "@/components/ui";
 import { getPnlReport, isOk, type PnlReport } from "@/features/reports";
+import {
+  getOwnOutlet,
+  isOk as isOutletOk,
+  type Outlet,
+} from "@/features/outlets";
+import { exportPnlPdf } from "@/lib/pdf-export";
 import { formatRupiah } from "@/lib/format";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -27,6 +34,7 @@ export function PnlView({ viewerRole }: PnlViewProps) {
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(today);
   const [report, setReport] = useState<PnlReport | null>(null);
+  const [outlet, setOutlet] = useState<Outlet | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -38,9 +46,13 @@ export function PnlView({ viewerRole }: PnlViewProps) {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const res = await getPnlReport(from, to);
+      const [reportRes, outletRes] = await Promise.all([
+        getPnlReport(from, to),
+        getOwnOutlet(),
+      ]);
       if (cancelled) return;
-      if (isOk(res)) setReport(res.data);
+      if (isOk(reportRes)) setReport(reportRes.data);
+      if (isOutletOk(outletRes)) setOutlet(outletRes.data);
       setLoading(false);
     }
     void load();
@@ -48,6 +60,11 @@ export function PnlView({ viewerRole }: PnlViewProps) {
       cancelled = true;
     };
   }, [from, to, viewerRole]);
+
+  function onExport() {
+    if (!report || !outlet) return;
+    exportPnlPdf(report, outlet);
+  }
 
   if (viewerRole !== "owner") {
     return (
@@ -67,16 +84,26 @@ export function PnlView({ viewerRole }: PnlViewProps) {
 
   return (
     <div className="space-y-4">
-      <header>
-        <h2 className="text-lg font-semibold text-neutral-900">
-          Simple P&amp;L
-          <Badge variant="signature" className="ml-2">
-            Owner Only
-          </Badge>
-        </h2>
-        <p className="text-xs text-neutral-500">
-          Revenue vs expenses sederhana — bukan akuntansi resmi.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-neutral-900">
+            Simple P&amp;L
+            <Badge variant="signature" className="ml-2">
+              Owner Only
+            </Badge>
+          </h2>
+          <p className="text-xs text-neutral-500">
+            Revenue vs expenses sederhana — bukan akuntansi resmi.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={onExport}
+          disabled={!report || !outlet || loading}
+          aria-label="Export PDF"
+        >
+          <Download className="size-4" /> Export PDF
+        </Button>
       </header>
 
       <Card>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Download } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -11,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import {
+  Button,
   Card,
   CardContent,
   CardDescription,
@@ -24,21 +26,32 @@ import {
   isOk,
   type DailySalesReport,
 } from "@/features/reports";
+import {
+  getOwnOutlet,
+  isOk as isOutletOk,
+  type Outlet,
+} from "@/features/outlets";
+import { exportDailySalesPdf } from "@/lib/pdf-export";
 import { formatRupiah } from "@/lib/format";
 
 export function DailySalesView() {
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [report, setReport] = useState<DailySalesReport | null>(null);
+  const [outlet, setOutlet] = useState<Outlet | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const res = await getDailySalesReport(date);
+      const [reportRes, outletRes] = await Promise.all([
+        getDailySalesReport(date),
+        getOwnOutlet(),
+      ]);
       if (cancelled) return;
-      if (isOk(res)) setReport(res.data);
+      if (isOk(reportRes)) setReport(reportRes.data);
+      if (isOutletOk(outletRes)) setOutlet(outletRes.data);
       setLoading(false);
     }
     void load();
@@ -46,6 +59,11 @@ export function DailySalesView() {
       cancelled = true;
     };
   }, [date]);
+
+  function onExport() {
+    if (!report || !outlet) return;
+    exportDailySalesPdf(report, outlet);
+  }
 
   return (
     <div className="space-y-4">
@@ -58,13 +76,23 @@ export function DailySalesView() {
             Pilih tanggal — default hari ini.
           </p>
         </div>
-        <div className="w-44">
-          <Input
-            label="Tanggal"
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-          />
+        <div className="flex items-end gap-2">
+          <div className="w-44">
+            <Input
+              label="Tanggal"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
+          <Button
+            variant="outline"
+            onClick={onExport}
+            disabled={!report || !outlet || loading}
+            aria-label="Export PDF"
+          >
+            <Download className="size-4" /> Export PDF
+          </Button>
         </div>
       </header>
 

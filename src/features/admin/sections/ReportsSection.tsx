@@ -4,10 +4,11 @@ import { useState } from "react";
 import { DailySalesView } from "./reports/DailySalesView";
 import { ItemPerformanceView } from "./reports/ItemPerformanceView";
 import { PnlView } from "./reports/PnlView";
+import { SalesRangeView } from "./reports/SalesRangeView";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
-type ReportTab = "sales" | "items" | "pnl";
+type ReportTab = "sales" | "range" | "items" | "pnl";
 
 interface ReportsSectionProps {
   viewerRole: Role;
@@ -18,6 +19,7 @@ export function ReportsSection({ viewerRole }: ReportsSectionProps) {
 
   const TABS: Array<{ key: ReportTab; label: string; ownerOnly?: boolean }> = [
     { key: "sales", label: "Penjualan Harian" },
+    { key: "range", label: "Mingguan / Bulanan" },
     { key: "items", label: "Performa Item" },
     { key: "pnl", label: "P&L (Owner)" },
   ];
@@ -59,6 +61,8 @@ export function ReportsSection({ viewerRole }: ReportsSectionProps) {
       <div>
         {tab === "sales" ? (
           <DailySalesView />
+        ) : tab === "range" ? (
+          <SalesRangeView />
         ) : tab === "items" ? (
           <ItemPerformanceView />
         ) : (
