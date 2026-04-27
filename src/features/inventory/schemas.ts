@@ -86,3 +86,44 @@ export const recordWasteSchema = z.object({
 });
 
 export type RecordWasteInput = z.infer<typeof recordWasteSchema>;
+
+const recipeIngredientLineSchema = z.object({
+  ingredientId: z.uuid(),
+  qty: qtyPositive,
+});
+
+const ingredientsListSchema = z
+  .array(recipeIngredientLineSchema)
+  .min(1, "Minimal 1 bahan")
+  .max(40, "Terlalu banyak bahan dalam satu resep")
+  .refine(
+    (lines) => {
+      const ids = lines.map((l) => l.ingredientId);
+      return new Set(ids).size === ids.length;
+    },
+    "Bahan tidak boleh duplikat",
+  );
+
+const recipeVariantSchema = z.enum(["hot", "iced"]).nullable().optional();
+
+export const createRecipeSchema = z.object({
+  menuItemId: z.uuid(),
+  variant: recipeVariantSchema,
+  notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
+  ingredients: ingredientsListSchema,
+});
+
+export type CreateRecipeInput = z.infer<typeof createRecipeSchema>;
+
+export const updateRecipeSchema = z
+  .object({
+    variant: recipeVariantSchema,
+    notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
+    ingredients: ingredientsListSchema.optional(),
+  })
+  .refine(
+    (v) => Object.keys(v).length > 0,
+    "Minimal satu field harus diisi",
+  );
+
+export type UpdateRecipeInput = z.infer<typeof updateRecipeSchema>;

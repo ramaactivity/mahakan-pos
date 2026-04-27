@@ -11,6 +11,14 @@ export type {
   AdjustStockInput,
   RecordWasteInput,
   ListMovementsOptions,
+  Recipe,
+  RecipeIngredient,
+  RecipeIngredientLine,
+  RecipeIngredientInput,
+  RecipeVariant,
+  RecipeWithIngredients,
+  CreateRecipeInput,
+  UpdateRecipeInput,
 } from "./types";
 
 export { isOk } from "./types";
@@ -21,6 +29,8 @@ export {
   receiveStockSchema,
   adjustStockSchema,
   recordWasteSchema,
+  createRecipeSchema,
+  updateRecipeSchema,
 } from "./schemas";
 
 export {
@@ -34,4 +44,10 @@ export {
   receiveStock,
   adjustStock,
   recordWaste,
+  listRecipesForMenuItem,
+  getRecipe,
+  listAllRecipes,
+  createRecipe,
+  updateRecipe,
+  deleteRecipe,
 } from "./actions";

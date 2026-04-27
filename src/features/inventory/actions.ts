@@ -1,39 +1,56 @@
 "use server";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { ingredients, inventoryMovements } from "@/db/schema";
+import {
+  ingredients,
+  inventoryMovements,
+  menuItems,
+  recipeIngredients,
+  recipes,
+} from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { diffShallow, logAudit } from "@/lib/audit/logger";
 import {
+  fetchAllRecipes,
   fetchIngredientById,
   fetchIngredients,
   fetchLowStockIngredients,
   fetchMovements,
+  fetchRecipeById,
+  fetchRecipesForMenuItem,
   type ListIngredientsOptions,
 } from "./queries";
 import {
   adjustStockSchema,
   createIngredientSchema,
+  createRecipeSchema,
   receiveStockSchema,
   recordWasteSchema,
   updateIngredientSchema,
+  updateRecipeSchema,
 } from "./schemas";
 import {
   fail,
   ok,
+  type ApiFailure,
   type ApiResult,
   type AdjustStockInput,
   type CreateIngredientInput,
+  type CreateRecipeInput,
   type Ingredient,
   type InventoryMovement,
   type ListMovementsOptions,
   type MovementWithIngredient,
   type Paginated,
   type ReceiveStockInput,
+  type Recipe,
+  type RecipeIngredientInput,
+  type RecipeWithIngredients,
   type RecordWasteInput,
   type UpdateIngredientInput,
+  type UpdateRecipeInput,
 } from "./types";
 
 async function requireSession() {
@@ -590,3 +607,342 @@ export async function recordWaste(
   }
 }
 
+// ---------- Recipes ----------
+
+interface MenuItemRecipeContext {
+  outletId: string;
+  priceType: "fixed" | "variant" | "open";
+  priceHot: number | null;
+  priceIced: number | null;
+  name: string;
+}
+
+async function loadMenuItemForRecipe(
+  menuItemId: string,
+): Promise<MenuItemRecipeContext | null> {
+  const [row] = await db
+    .select({
+      outletId: menuItems.outletId,
+      priceType: menuItems.priceType,
+      priceHot: menuItems.priceHot,
+      priceIced: menuItems.priceIced,
+      name: menuItems.name,
+    })
+    .from(menuItems)
+    .where(and(eq(menuItems.id, menuItemId), isNull(menuItems.deletedAt)))
+    .limit(1);
+  return row ?? null;
+}
+
+function validateVariantAgainstMenuItem(
+  ctx: MenuItemRecipeContext,
+  variant: "hot" | "iced" | null | undefined,
+): ApiFailure | null {
+  const v = variant ?? null;
+  if (ctx.priceType === "open") {
+    return fail(
+      "RECIPE_NOT_ALLOWED_FOR_OPEN_PRICE",
+      "Item open-price tidak punya resep tetap",
+    );
+  }
+  if (ctx.priceType === "fixed" && v !== null) {
+    return fail(
+      "VARIANT_NOT_ALLOWED",
+      "Item harga tetap tidak boleh punya variant",
+    );
+  }
+  if (ctx.priceType === "variant") {
+    if (v === null) {
+      return fail("VARIANT_REQUIRED", "Item variant wajib pilih hot atau iced");
+    }
+    if (v === "hot" && ctx.priceHot === null) {
+      return fail(
+        "VARIANT_NOT_ON_MENU_ITEM",
+        "Menu ini tidak punya harga Hot",
+      );
+    }
+    if (v === "iced" && ctx.priceIced === null) {
+      return fail(
+        "VARIANT_NOT_ON_MENU_ITEM",
+        "Menu ini tidak punya harga Iced",
+      );
+    }
+  }
+  return null;
+}
+
+async function verifyIngredientsBelongToOutlet(
+  outletId: string,
+  lines: RecipeIngredientInput[],
+): Promise<ApiFailure | null> {
+  const ids = Array.from(new Set(lines.map((l) => l.ingredientId)));
+  const rows = await db
+    .select({ id: ingredients.id, outletId: ingredients.outletId })
+    .from(ingredients)
+    .where(and(inArray(ingredients.id, ids), isNull(ingredients.deletedAt)));
+  if (rows.length !== ids.length) {
+    return fail("INGREDIENT_NOT_FOUND", "Beberapa bahan tidak ditemukan");
+  }
+  const wrongOutlet = rows.find((r) => r.outletId !== outletId);
+  if (wrongOutlet) {
+    return fail("INGREDIENT_NOT_FOUND", "Bahan tidak valid untuk outlet ini");
+  }
+  return null;
+}
+
+export async function listRecipesForMenuItem(
+  menuItemId: string,
+): Promise<ApiResult<RecipeWithIngredients[]>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.recipe.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat resep");
+  }
+  return ok(await fetchRecipesForMenuItem(menuItemId));
+}
+
+export async function getRecipe(
+  id: string,
+): Promise<ApiResult<RecipeWithIngredients>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.recipe.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat resep");
+  }
+  const row = await fetchRecipeById(id);
+  if (!row || row.outletId !== session.user.outletId) {
+    return fail("NOT_FOUND", "Resep tidak ditemukan");
+  }
+  return ok(row);
+}
+
+export async function listAllRecipes(): Promise<ApiResult<Recipe[]>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.recipe.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat resep");
+  }
+  return ok(await fetchAllRecipes(session.user.outletId));
+}
+
+export async function createRecipe(
+  input: CreateRecipeInput,
+): Promise<ApiResult<RecipeWithIngredients>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.recipe.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak buat resep");
+  }
+
+  const parsed = createRecipeSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  const menu = await loadMenuItemForRecipe(v.menuItemId);
+  if (!menu || menu.outletId !== session.user.outletId) {
+    return fail("MENU_ITEM_NOT_FOUND", "Menu item tidak ditemukan");
+  }
+
+  const variantCheck = validateVariantAgainstMenuItem(menu, v.variant);
+  if (variantCheck) return variantCheck;
+
+  const ingredientCheck = await verifyIngredientsBelongToOutlet(
+    session.user.outletId,
+    v.ingredients,
+  );
+  if (ingredientCheck) return ingredientCheck;
+
+  try {
+    const created = await db.transaction(async (tx) => {
+      const [recipe] = await tx
+        .insert(recipes)
+        .values({
+          outletId: session.user.outletId,
+          menuItemId: v.menuItemId,
+          variant: v.variant ?? null,
+          notes: v.notes ?? null,
+          createdBy: session.user.id,
+          updatedBy: session.user.id,
+        })
+        .returning();
+
+      await tx.insert(recipeIngredients).values(
+        v.ingredients.map((line) => ({
+          recipeId: recipe.id,
+          ingredientId: line.ingredientId,
+          qty: line.qty,
+        })),
+      );
+
+      return recipe;
+    });
+
+    const full = await fetchRecipeById(created.id);
+    if (!full) return fail("DB_ERROR", "Gagal load resep setelah create");
+
+    await logAudit({
+      eventType: "inventory.recipe.create",
+      userId: session.user.id,
+      entityType: "recipe",
+      entityId: created.id,
+      payload: {
+        summary: `Tambah resep ${menu.name}${v.variant ? ` (${v.variant})` : ""} — ${v.ingredients.length} bahan`,
+        after: full,
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    });
+
+    return ok(full);
+  } catch (e) {
+    if (e instanceof Error && /unique|duplicate/i.test(e.message)) {
+      return fail(
+        "DUPLICATE_RECIPE",
+        "Resep untuk menu+variant ini sudah ada",
+      );
+    }
+    return fail(
+      "DB_ERROR",
+      e instanceof Error ? e.message : "Database error",
+    );
+  }
+}
+
+export async function updateRecipe(
+  id: string,
+  input: UpdateRecipeInput,
+): Promise<ApiResult<RecipeWithIngredients>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.recipe.update")) {
+    return fail("FORBIDDEN", "Tidak punya hak edit resep");
+  }
+
+  const parsed = updateRecipeSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  const existing = await fetchRecipeById(id);
+  if (!existing || existing.outletId !== session.user.outletId) {
+    return fail("NOT_FOUND", "Resep tidak ditemukan");
+  }
+
+  // If variant changing, re-validate against menu item.
+  if (v.variant !== undefined && v.variant !== existing.variant) {
+    const menu = await loadMenuItemForRecipe(existing.menuItemId);
+    if (!menu) return fail("MENU_ITEM_NOT_FOUND", "Menu item tidak ditemukan");
+    const variantCheck = validateVariantAgainstMenuItem(menu, v.variant);
+    if (variantCheck) return variantCheck;
+  }
+
+  if (v.ingredients) {
+    const ingredientCheck = await verifyIngredientsBelongToOutlet(
+      session.user.outletId,
+      v.ingredients,
+    );
+    if (ingredientCheck) return ingredientCheck;
+  }
+
+  try {
+    await db.transaction(async (tx) => {
+      const setRecipe: Record<string, unknown> = {
+        updatedAt: new Date(),
+        updatedBy: session.user.id,
+      };
+      if (v.variant !== undefined) setRecipe.variant = v.variant ?? null;
+      if (v.notes !== undefined) setRecipe.notes = v.notes ?? null;
+
+      await tx.update(recipes).set(setRecipe).where(eq(recipes.id, id));
+
+      if (v.ingredients) {
+        await tx
+          .delete(recipeIngredients)
+          .where(eq(recipeIngredients.recipeId, id));
+        await tx.insert(recipeIngredients).values(
+          v.ingredients.map((line) => ({
+            recipeId: id,
+            ingredientId: line.ingredientId,
+            qty: line.qty,
+          })),
+        );
+      }
+    });
+
+    const updated = await fetchRecipeById(id);
+    if (!updated) return fail("DB_ERROR", "Gagal load resep setelah update");
+
+    await logAudit({
+      eventType: "inventory.recipe.update",
+      userId: session.user.id,
+      entityType: "recipe",
+      entityId: id,
+      payload: {
+        summary: `Edit resep ${id.slice(0, 8)}…`,
+        before: existing,
+        after: updated,
+        diff: diffShallow(
+          existing as unknown as Record<string, unknown>,
+          updated as unknown as Record<string, unknown>,
+        ),
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    });
+
+    return ok(updated);
+  } catch (e) {
+    if (e instanceof Error && /unique|duplicate/i.test(e.message)) {
+      return fail(
+        "DUPLICATE_RECIPE",
+        "Resep untuk menu+variant ini sudah ada",
+      );
+    }
+    return fail(
+      "DB_ERROR",
+      e instanceof Error ? e.message : "Database error",
+    );
+  }
+}
+
+export async function deleteRecipe(
+  id: string,
+): Promise<ApiResult<{ id: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.recipe.delete")) {
+    return fail("FORBIDDEN", "Tidak punya hak hapus resep");
+  }
+
+  const existing = await fetchRecipeById(id);
+  if (!existing || existing.outletId !== session.user.outletId) {
+    return fail("NOT_FOUND", "Resep tidak ditemukan");
+  }
+
+  // Hard delete; recipe_ingredients cascade.
+  await db.delete(recipes).where(eq(recipes.id, id));
+
+  await logAudit({
+    eventType: "inventory.recipe.delete",
+    userId: session.user.id,
+    entityType: "recipe",
+    entityId: id,
+    payload: {
+      summary: `Hapus resep ${id.slice(0, 8)}…`,
+      before: existing,
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  });
+
+  return ok({ id });
+}

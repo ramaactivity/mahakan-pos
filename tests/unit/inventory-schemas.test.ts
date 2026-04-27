@@ -2,12 +2,16 @@ import { describe, it, expect } from "vitest";
 import {
   adjustStockSchema,
   createIngredientSchema,
+  createRecipeSchema,
   receiveStockSchema,
   recordWasteSchema,
   updateIngredientSchema,
+  updateRecipeSchema,
 } from "@/features/inventory/schemas";
 
 const VALID_UUID = "11111111-1111-4111-8111-111111111111";
+const UUID_2 = "22222222-2222-4222-8222-222222222222";
+const UUID_3 = "33333333-3333-4333-8333-333333333333";
 
 describe("createIngredientSchema", () => {
   it("accepts a minimal valid input", () => {
@@ -198,6 +202,107 @@ describe("recordWasteSchema", () => {
       qty: -10,
       reason: "Tumpah",
     });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe("createRecipeSchema", () => {
+  it("accepts a fixed-price recipe (variant null)", () => {
+    const r = createRecipeSchema.safeParse({
+      menuItemId: VALID_UUID,
+      variant: null,
+      ingredients: [
+        { ingredientId: UUID_2, qty: 18 },
+        { ingredientId: UUID_3, qty: 200 },
+      ],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts a variant recipe (hot)", () => {
+    const r = createRecipeSchema.safeParse({
+      menuItemId: VALID_UUID,
+      variant: "hot",
+      ingredients: [{ ingredientId: UUID_2, qty: 18 }],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects empty ingredients array", () => {
+    const r = createRecipeSchema.safeParse({
+      menuItemId: VALID_UUID,
+      ingredients: [],
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects duplicate ingredient ids", () => {
+    const r = createRecipeSchema.safeParse({
+      menuItemId: VALID_UUID,
+      variant: "iced",
+      ingredients: [
+        { ingredientId: UUID_2, qty: 18 },
+        { ingredientId: UUID_2, qty: 5 },
+      ],
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects qty <= 0", () => {
+    const r = createRecipeSchema.safeParse({
+      menuItemId: VALID_UUID,
+      ingredients: [{ ingredientId: UUID_2, qty: 0 }],
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects invalid variant value", () => {
+    const r = createRecipeSchema.safeParse({
+      menuItemId: VALID_UUID,
+      variant: "warm" as unknown as "hot",
+      ingredients: [{ ingredientId: UUID_2, qty: 1 }],
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects too many ingredient lines (>40)", () => {
+    const lines = Array.from({ length: 41 }, (_, i) => ({
+      ingredientId: `${i.toString().padStart(8, "0")}-1111-4111-8111-111111111111`,
+      qty: 1,
+    }));
+    const r = createRecipeSchema.safeParse({
+      menuItemId: VALID_UUID,
+      ingredients: lines,
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe("updateRecipeSchema", () => {
+  it("accepts notes-only update", () => {
+    const r = updateRecipeSchema.safeParse({ notes: "Pakai susu segar saja" });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts variant change to null (e.g. fixed reclassify)", () => {
+    const r = updateRecipeSchema.safeParse({ variant: null });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts ingredient list replacement", () => {
+    const r = updateRecipeSchema.safeParse({
+      ingredients: [{ ingredientId: UUID_2, qty: 25 }],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects empty ingredients array on update", () => {
+    const r = updateRecipeSchema.safeParse({ ingredients: [] });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects empty object (no fields)", () => {
+    const r = updateRecipeSchema.safeParse({});
     expect(r.success).toBe(false);
   });
 });

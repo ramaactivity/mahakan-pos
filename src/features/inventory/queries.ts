@@ -1,12 +1,20 @@
 import "server-only";
-import { and, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { ingredients, inventoryMovements } from "@/db/schema";
+import {
+  ingredients,
+  inventoryMovements,
+  recipeIngredients,
+  recipes,
+} from "@/db/schema";
 import type {
   Ingredient,
   ListMovementsOptions,
   MovementWithIngredient,
   Paginated,
+  Recipe,
+  RecipeIngredientLine,
+  RecipeWithIngredients,
 } from "./types";
 
 export interface ListIngredientsOptions {
@@ -111,3 +119,88 @@ export async function fetchMovements(
   return { items, total: items.length, hasMore };
 }
 
+// ---------- Recipes ----------
+
+export async function fetchRecipeById(
+  id: string,
+): Promise<RecipeWithIngredients | null> {
+  const [recipe] = await db
+    .select()
+    .from(recipes)
+    .where(eq(recipes.id, id))
+    .limit(1);
+  if (!recipe) return null;
+
+  const lines = await fetchRecipeIngredientLines(id);
+  return { ...recipe, ingredients: lines };
+}
+
+export async function fetchRecipesForMenuItem(
+  menuItemId: string,
+): Promise<RecipeWithIngredients[]> {
+  const recipeRows = await db
+    .select()
+    .from(recipes)
+    .where(eq(recipes.menuItemId, menuItemId))
+    .orderBy(asc(recipes.variant));
+
+  if (recipeRows.length === 0) return [];
+
+  const allLines = await db
+    .select({
+      ri: recipeIngredients,
+      ingredient: {
+        id: ingredients.id,
+        name: ingredients.name,
+        unit: ingredients.unit,
+        costPerUnit: ingredients.costPerUnit,
+      },
+    })
+    .from(recipeIngredients)
+    .innerJoin(ingredients, eq(ingredients.id, recipeIngredients.ingredientId))
+    .where(
+      sql`${recipeIngredients.recipeId} IN ${recipeRows.map((r) => r.id)}`,
+    );
+
+  const linesByRecipe = new Map<string, RecipeIngredientLine[]>();
+  for (const row of allLines) {
+    const list = linesByRecipe.get(row.ri.recipeId) ?? [];
+    list.push({ ...row.ri, ingredient: row.ingredient });
+    linesByRecipe.set(row.ri.recipeId, list);
+  }
+
+  return recipeRows.map((r) => ({
+    ...r,
+    ingredients: linesByRecipe.get(r.id) ?? [],
+  }));
+}
+
+export async function fetchAllRecipes(
+  outletId: string,
+): Promise<Recipe[]> {
+  return db
+    .select()
+    .from(recipes)
+    .where(eq(recipes.outletId, outletId))
+    .orderBy(desc(recipes.createdAt));
+}
+
+async function fetchRecipeIngredientLines(
+  recipeId: string,
+): Promise<RecipeIngredientLine[]> {
+  const rows = await db
+    .select({
+      ri: recipeIngredients,
+      ingredient: {
+        id: ingredients.id,
+        name: ingredients.name,
+        unit: ingredients.unit,
+        costPerUnit: ingredients.costPerUnit,
+      },
+    })
+    .from(recipeIngredients)
+    .innerJoin(ingredients, eq(ingredients.id, recipeIngredients.ingredientId))
+    .where(eq(recipeIngredients.recipeId, recipeId));
+
+  return rows.map((r) => ({ ...r.ri, ingredient: r.ingredient }));
+}
