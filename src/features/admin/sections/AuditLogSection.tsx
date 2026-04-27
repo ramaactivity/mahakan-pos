@@ -42,6 +42,10 @@ const EVENT_GROUPS: Array<{ label: string; types: string[] }> = [
     label: "Settings",
     types: AUDIT_EVENT_TYPES.filter((t) => t.startsWith("settings.")) as string[],
   },
+  {
+    label: "Inventory",
+    types: AUDIT_EVENT_TYPES.filter((t) => t.startsWith("inventory.")) as string[],
+  },
 ];
 
 const EVENT_TONE: Record<

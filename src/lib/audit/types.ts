@@ -38,6 +38,16 @@ export const AUDIT_EVENT_TYPES = [
   "income.delete",
   // Settings
   "settings.update",
+  // Inventory
+  "inventory.ingredient.create",
+  "inventory.ingredient.update",
+  "inventory.ingredient.delete",
+  "inventory.recipe.create",
+  "inventory.recipe.update",
+  "inventory.recipe.delete",
+  "inventory.receive",
+  "inventory.adjust",
+  "inventory.waste",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -52,7 +62,10 @@ export type AuditEntityType =
   | "expense_category"
   | "income"
   | "outlet"
-  | "session";
+  | "session"
+  | "ingredient"
+  | "recipe"
+  | "inventory_movement";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

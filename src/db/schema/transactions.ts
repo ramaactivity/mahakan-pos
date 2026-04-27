@@ -49,6 +49,8 @@ export const transactions = pgTable(
     cashReceived: bigint("cash_received", { mode: "number" }),
     cashChange: bigint("cash_change", { mode: "number" }),
 
+    cogs: bigint("cogs", { mode: "number" }),
+
     status: text("status", { enum: ["paid", "voided", "refunded"] })
       .notNull()
       .default("paid"),
@@ -99,6 +101,10 @@ export const transactions = pgTable(
       sql`(${t.paymentMethod} = 'cash' AND ${t.cashReceived} IS NOT NULL)
         OR (${t.paymentMethod} <> 'cash' AND ${t.cashReceived} IS NULL AND ${t.cashChange} IS NULL)`,
     ),
+    check(
+      "ck_transactions_cogs_nonneg",
+      sql`${t.cogs} IS NULL OR ${t.cogs} >= 0`,
+    ),
   ],
 );
 
@@ -124,6 +130,8 @@ export const transactionItems = pgTable(
       .default(0),
     subtotal: bigint("subtotal", { mode: "number" }).notNull(),
 
+    cogs: bigint("cogs", { mode: "number" }),
+
     note: text("note"),
     openPriceNote: text("open_price_note"),
 
@@ -141,6 +149,10 @@ export const transactionItems = pgTable(
     check(
       "ck_transaction_items_money_nonneg",
       sql`${t.unitPrice} >= 0 AND ${t.modifiersPriceDelta} >= 0 AND ${t.subtotal} >= 0`,
+    ),
+    check(
+      "ck_transaction_items_cogs_nonneg",
+      sql`${t.cogs} IS NULL OR ${t.cogs} >= 0`,
     ),
   ],
 );

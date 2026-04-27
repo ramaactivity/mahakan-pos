@@ -6,3 +6,4 @@ export * from "./transactions";
 export * from "./expenses";
 export * from "./audit";
 export * from "./approver-tokens";
+export * from "./inventory";

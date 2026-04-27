@@ -28,8 +28,6 @@ function fixedItem(
     isSoldOut,
     isActive: true,
     displayOrder: 1,
-    costPrice: null,
-    recipeId: null,
     createdAt: REF_DATE,
     updatedAt: REF_DATE,
     deletedAt: null,

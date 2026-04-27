@@ -84,9 +84,6 @@ export const menuItems = pgTable(
 
     displayOrder: integer("display_order").notNull().default(0),
 
-    costPrice: bigint("cost_price", { mode: "number" }),
-    recipeId: uuid("recipe_id"),
-
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -111,8 +108,7 @@ export const menuItems = pgTable(
       "ck_menu_items_price_nonneg",
       sql`(${t.priceFixed} IS NULL OR ${t.priceFixed} >= 0)
         AND (${t.priceHot} IS NULL OR ${t.priceHot} >= 0)
-        AND (${t.priceIced} IS NULL OR ${t.priceIced} >= 0)
-        AND (${t.costPrice} IS NULL OR ${t.costPrice} >= 0)`,
+        AND (${t.priceIced} IS NULL OR ${t.priceIced} >= 0)`,
     ),
   ],
 );
