@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Heart, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import {
+  Download,
+  Heart,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import {
   Badge,
   Button,
@@ -14,7 +22,10 @@ import {
   toast,
 } from "@/components/ui";
 import { MenuItemFormModal } from "./MenuItemFormModal";
+import { BulkActionsBar } from "./BulkActionsBar";
 import {
+  bulkUpdateMenuItems,
+  exportMenuCsv,
   isOk,
   listMenuItems,
   listCategories,
@@ -23,12 +34,16 @@ import {
   type Category,
   type MenuItem,
 } from "@/features/menu";
+import { useSession } from "@/features/auth/SessionProvider";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Mode = { kind: "create" } | { kind: "edit"; item: MenuItem };
 
 export function ItemsList() {
+  const { session } = useSession();
+  const isOwner = session?.user.role === "owner";
+
   const [items, setItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +52,7 @@ export function ItemsList() {
   const [mode, setMode] = useState<Mode | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -93,6 +109,80 @@ export function ItemsList() {
     setRefreshKey((k) => k + 1);
   }
 
+  function toggleRow(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelectedIds((prev) => {
+      if (prev.size === filtered.length && filtered.length > 0) return new Set();
+      return new Set(filtered.map((i) => i.id));
+    });
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  async function handleBulkSoldOut() {
+    const ids = Array.from(selectedIds);
+    const res = await bulkUpdateMenuItems(ids, { kind: "mark_sold_out" });
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(`${res.data.affected} item ditandai sold-out`);
+    clearSelection();
+    setRefreshKey((k) => k + 1);
+  }
+
+  async function handleBulkAvailable() {
+    const ids = Array.from(selectedIds);
+    const res = await bulkUpdateMenuItems(ids, { kind: "mark_available" });
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(`${res.data.affected} item ditandai tersedia`);
+    clearSelection();
+    setRefreshKey((k) => k + 1);
+  }
+
+  async function handleBulkAdjust(pct: number) {
+    const ids = Array.from(selectedIds);
+    const res = await bulkUpdateMenuItems(ids, { kind: "adjust_price_pct", pct });
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(
+      `Harga ${res.data.affected} item disesuaikan ${pct > 0 ? "+" : ""}${pct}%`,
+    );
+    clearSelection();
+    setRefreshKey((k) => k + 1);
+  }
+
+  async function handleExportCsv() {
+    const res = await exportMenuCsv();
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    const blob = new Blob([res.data], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `mahakan-menu-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Menu di-export ke CSV");
+  }
+
   return (
     <div className="space-y-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
@@ -104,10 +194,25 @@ export function ItemsList() {
             Kelola item menu, harga, dan status sold-out.
           </p>
         </div>
-        <Button onClick={() => setMode({ kind: "create" })}>
-          <Plus className="size-4" aria-hidden /> Tambah Item
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {isOwner && (
+            <Button variant="outline" onClick={handleExportCsv}>
+              <Download className="size-4" aria-hidden /> Export CSV
+            </Button>
+          )}
+          <Button onClick={() => setMode({ kind: "create" })}>
+            <Plus className="size-4" aria-hidden /> Tambah Item
+          </Button>
+        </div>
       </header>
+
+      <BulkActionsBar
+        selectedCount={selectedIds.size}
+        onClear={clearSelection}
+        onMarkSoldOut={handleBulkSoldOut}
+        onMarkAvailable={handleBulkAvailable}
+        onAdjustPrice={handleBulkAdjust}
+      />
 
       <Card>
         <CardHeader>
@@ -163,6 +268,24 @@ export function ItemsList() {
               <table className="w-full text-sm">
                 <thead className="border-b border-neutral-200 bg-neutral-50 text-xs uppercase tracking-wider text-neutral-500">
                   <tr>
+                    <th className="w-10 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label="Pilih semua"
+                        checked={
+                          filtered.length > 0 &&
+                          selectedIds.size === filtered.length
+                        }
+                        ref={(el) => {
+                          if (el)
+                            el.indeterminate =
+                              selectedIds.size > 0 &&
+                              selectedIds.size < filtered.length;
+                        }}
+                        onChange={toggleAll}
+                        className="size-4 rounded border-neutral-300"
+                      />
+                    </th>
                     <th className="px-4 py-2 text-left font-medium">Nama</th>
                     <th className="px-4 py-2 text-left font-medium">Kategori</th>
                     <th className="px-4 py-2 text-left font-medium">Tipe</th>
@@ -192,8 +315,18 @@ export function ItemsList() {
                         className={cn(
                           "hover:bg-neutral-50",
                           item.isSoldOut && "opacity-60",
+                          selectedIds.has(item.id) && "bg-mahakan-green-50",
                         )}
                       >
+                        <td className="px-3 py-3">
+                          <input
+                            type="checkbox"
+                            aria-label={`Pilih ${item.name}`}
+                            checked={selectedIds.has(item.id)}
+                            onChange={() => toggleRow(item.id)}
+                            className="size-4 rounded border-neutral-300"
+                          />
+                        </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
                             {item.isSignature ? (

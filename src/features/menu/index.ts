@@ -9,10 +9,12 @@ export type {
 export { isOk } from "./types";
 
 export {
+  bulkUpdateMenuItems,
   createCategory,
   createMenuItem,
   deleteCategory,
   deleteMenuItem,
+  exportMenuCsv,
   getMenuItem,
   listAllCategories,
   listCategories,
@@ -24,4 +26,5 @@ export {
   updateCategory,
   updateMenuItem,
   updateModifierPrice,
+  type BulkAction,
 } from "./actions";

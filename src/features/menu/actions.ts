@@ -516,3 +516,211 @@ export async function updateModifierPrice(
 
   return ok(row);
 }
+
+// ---------- Bulk operations ----------
+
+/**
+ * Bulk operations on menu items. Action determines which fields are touched:
+ * - mark_sold_out / mark_available: toggles `isSoldOut`
+ * - adjust_price_pct: scales priceFixed/priceHot/priceIced by (1 + pct/100),
+ *   rounded to integer rupiah; skips items with priceType="open"
+ *
+ * Single audit event per bulk operation (with affected ids in payload) — keeps
+ * the audit log readable when Owner does a 30-item adjustment.
+ */
+export type BulkAction =
+  | { kind: "mark_sold_out" }
+  | { kind: "mark_available" }
+  | { kind: "adjust_price_pct"; pct: number };
+
+export async function bulkUpdateMenuItems(
+  ids: string[],
+  action: BulkAction,
+): Promise<ApiResult<{ affected: number }>> {
+  const session = await requireOwnerOrManager("menu.item.bulk_update");
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return fail("VALIDATION", "Pilih minimal 1 item");
+  }
+  if (ids.length > 200) {
+    return fail("VALIDATION", "Maks 200 item per operasi bulk");
+  }
+  for (const id of ids) {
+    if (typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id)) {
+      return fail("VALIDATION", "ID tidak valid");
+    }
+  }
+
+  if (action.kind === "mark_sold_out" || action.kind === "mark_available") {
+    const isSoldOut = action.kind === "mark_sold_out";
+    const perm = isSoldOut ? "pos.menu.mark_sold_out" : "pos.menu.mark_available";
+    if (!hasPermission(session.user.role, perm)) {
+      return fail("FORBIDDEN", `Tidak punya hak ${action.kind}`);
+    }
+
+    await db
+      .update(menuItems)
+      .set({ isSoldOut, updatedAt: new Date(), updatedBy: session.user.id })
+      .where(
+        and(
+          sql`${menuItems.id} in ${ids}`,
+          isNull(menuItems.deletedAt),
+        ),
+      );
+
+    await logAudit({
+      eventType: "menu.item.sold_out_toggle",
+      userId: session.user.id,
+      entityType: "menu_item",
+      payload: {
+        summary: `Bulk ${isSoldOut ? "sold-out" : "tersedia"}: ${ids.length} item`,
+        context: { isSoldOut, ids, count: ids.length, bulk: true },
+      },
+      metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+    });
+
+    return ok({ affected: ids.length });
+  }
+
+  // adjust_price_pct
+  const pct = action.pct;
+  if (!Number.isFinite(pct) || pct <= -100 || pct > 1000) {
+    return fail("VALIDATION", "Persen harus > -100 dan ≤ 1000");
+  }
+
+  // Fetch current prices for affected items (skip open-price)
+  const rows = await db
+    .select({
+      id: menuItems.id,
+      name: menuItems.name,
+      priceType: menuItems.priceType,
+      priceFixed: menuItems.priceFixed,
+      priceHot: menuItems.priceHot,
+      priceIced: menuItems.priceIced,
+    })
+    .from(menuItems)
+    .where(
+      and(
+        sql`${menuItems.id} in ${ids}`,
+        isNull(menuItems.deletedAt),
+      ),
+    );
+
+  const factor = 1 + pct / 100;
+  const apply = (n: number | null) =>
+    n == null ? null : Math.max(0, Math.round(n * factor));
+
+  let affected = 0;
+  await db.transaction(async (tx) => {
+    for (const r of rows) {
+      if (r.priceType === "open") continue;
+      const next = {
+        priceFixed: apply(r.priceFixed),
+        priceHot: apply(r.priceHot),
+        priceIced: apply(r.priceIced),
+      };
+      await tx
+        .update(menuItems)
+        .set({
+          ...next,
+          updatedAt: new Date(),
+          updatedBy: session.user.id,
+        })
+        .where(eq(menuItems.id, r.id));
+      affected += 1;
+    }
+  });
+
+  await logAudit({
+    eventType: "menu.item.update",
+    userId: session.user.id,
+    entityType: "menu_item",
+    payload: {
+      summary: `Bulk price ${pct > 0 ? "+" : ""}${pct}%: ${affected} item`,
+      context: {
+        bulk: true,
+        pct,
+        affectedIds: rows
+          .filter((r) => r.priceType !== "open")
+          .map((r) => r.id),
+        skippedOpenPrice: rows.filter((r) => r.priceType === "open").length,
+      },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  return ok({ affected });
+}
+
+/**
+ * Owner-only menu CSV export. Returns a CSV string (caller triggers download).
+ */
+export async function exportMenuCsv(): Promise<ApiResult<string>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "menu.export_csv")) {
+    return fail("FORBIDDEN", "Export CSV hanya untuk Owner");
+  }
+
+  const rows = await db
+    .select({
+      id: menuItems.id,
+      name: menuItems.name,
+      categoryName: categories.name,
+      priceType: menuItems.priceType,
+      priceFixed: menuItems.priceFixed,
+      priceHot: menuItems.priceHot,
+      priceIced: menuItems.priceIced,
+      isSignature: menuItems.isSignature,
+      isSoldOut: menuItems.isSoldOut,
+      isActive: menuItems.isActive,
+      displayOrder: menuItems.displayOrder,
+      description: menuItems.description,
+    })
+    .from(menuItems)
+    .leftJoin(categories, eq(categories.id, menuItems.categoryId))
+    .where(isNull(menuItems.deletedAt))
+    .orderBy(asc(categories.displayOrder), asc(menuItems.displayOrder));
+
+  const escape = (v: unknown) => {
+    if (v == null) return "";
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  const headers = [
+    "id",
+    "name",
+    "category",
+    "priceType",
+    "priceFixed",
+    "priceHot",
+    "priceIced",
+    "isSignature",
+    "isSoldOut",
+    "isActive",
+    "displayOrder",
+    "description",
+  ];
+  const lines = [headers.join(",")];
+  for (const r of rows) {
+    lines.push(
+      [
+        r.id,
+        r.name,
+        r.categoryName,
+        r.priceType,
+        r.priceFixed,
+        r.priceHot,
+        r.priceIced,
+        r.isSignature,
+        r.isSoldOut,
+        r.isActive,
+        r.displayOrder,
+        r.description,
+      ]
+        .map(escape)
+        .join(","),
+    );
+  }
+
+  return ok(lines.join("\n"));
+}
