@@ -109,6 +109,10 @@ export interface ItemPerformanceRow {
   quantity: number;
   revenue: number;
   averageOrderValue: number;
+  /** Sum of transaction_items.cogs across the date range; null if no item had a recipe. */
+  cogs: number | null;
+  /** Per-row margin (revenue - cogs) / revenue × 100; null if cogs unknown or revenue 0. */
+  marginPct: number | null;
 }
 
 export interface PnlReport {
@@ -118,10 +122,15 @@ export interface PnlReport {
     manualIncome: number;
     total: number;
   };
+  /** Sum of transactions.cogs for paid transactions in range. */
+  cogs: number;
+  /** total income − cogs (per accounting). */
+  grossMargin: number;
   expenses: {
     byCategory: Array<{ name: string; amount: number }>;
     total: number;
   };
-  grossProfit: number;
+  /** total income − cogs − expenses (renamed: previously this field was income − expenses). */
+  netProfit: number;
   disclaimer: string;
 }

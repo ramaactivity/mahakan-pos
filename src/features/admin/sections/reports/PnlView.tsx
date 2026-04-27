@@ -158,10 +158,50 @@ export function PnlView({ viewerRole }: PnlViewProps) {
                 </div>
               </div>
 
+              {/* COGS / HPP */}
+              <div>
+                <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-neutral-500">
+                  HPP (Cost of Goods Sold)
+                </h3>
+                <div className="space-y-1.5 rounded-md border border-neutral-200 bg-white p-3">
+                  <Row
+                    label={
+                      report.cogs > 0
+                        ? "Total HPP (snapshot saat transaksi)"
+                        : "Belum ada COGS data — set up resep dulu"
+                    }
+                    value={formatRupiah(report.cogs)}
+                  />
+                </div>
+              </div>
+
+              {/* Gross Margin */}
+              <div className="rounded-md border border-mahakan-green-100 bg-mahakan-green-50/40 p-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold uppercase tracking-wider text-mahakan-green-900">
+                    Laba Kotor (Gross Margin)
+                  </p>
+                  <p
+                    className={cn(
+                      "font-mono text-xl font-bold",
+                      report.grossMargin >= 0
+                        ? "text-mahakan-green-900"
+                        : "text-danger-500",
+                    )}
+                  >
+                    {report.grossMargin >= 0 ? "+" : ""}
+                    {formatRupiah(report.grossMargin)}
+                  </p>
+                </div>
+                <p className="mt-1 text-xs text-mahakan-green-900/70">
+                  Pendapatan − HPP. Mengukur margin sebelum biaya operasional.
+                </p>
+              </div>
+
               {/* Expenses */}
               <div>
                 <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-neutral-500">
-                  Pengeluaran
+                  Pengeluaran Operasional
                 </h3>
                 <div className="space-y-1.5 rounded-md border border-neutral-200 bg-white p-3">
                   {report.expenses.byCategory.length === 0 ? (
@@ -187,12 +227,12 @@ export function PnlView({ viewerRole }: PnlViewProps) {
                 </div>
               </div>
 
-              {/* Profit */}
-              <div className="rounded-md bg-mahakan-green-50 p-4">
+              {/* Net Profit */}
+              <div className="rounded-md bg-mahakan-green-100 p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-semibold uppercase tracking-wider text-mahakan-green-900">
-                      Laba Kotor
+                      Laba Bersih
                     </p>
                     <p className="text-xs text-mahakan-green-900/70">
                       {report.period.from} — {report.period.to}
@@ -201,13 +241,13 @@ export function PnlView({ viewerRole }: PnlViewProps) {
                   <p
                     className={cn(
                       "font-mono text-3xl font-bold",
-                      report.grossProfit >= 0
+                      report.netProfit >= 0
                         ? "text-mahakan-green-900"
                         : "text-danger-500",
                     )}
                   >
-                    {report.grossProfit >= 0 ? "+" : ""}
-                    {formatRupiah(report.grossProfit)}
+                    {report.netProfit >= 0 ? "+" : ""}
+                    {formatRupiah(report.netProfit)}
                   </p>
                 </div>
               </div>

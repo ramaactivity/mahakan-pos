@@ -163,6 +163,8 @@ export async function fetchItemPerformance(
       categoryName: transactionItems.itemCategoryName,
       quantity: sql<number>`sum(${transactionItems.quantity})::int`,
       revenue: sql<number>`sum(${transactionItems.subtotal})::bigint`,
+      cogs: sql<number>`coalesce(sum(${transactionItems.cogs}), 0)::bigint`,
+      cogsCount: sql<number>`count(${transactionItems.cogs})::int`,
     })
     .from(transactionItems)
     .innerJoin(transactions, eq(transactions.id, transactionItems.transactionId))
@@ -180,17 +182,27 @@ export async function fetchItemPerformance(
       transactionItems.itemCategoryName,
     );
 
-  const enriched: ItemPerformanceRow[] = rows.map((r) => ({
-    menuItemId: r.menuItemId,
-    name: r.itemName,
-    categoryName: r.categoryName,
-    quantity: Number(r.quantity),
-    revenue: Number(r.revenue),
-    averageOrderValue:
-      Number(r.quantity) > 0
-        ? Math.round(Number(r.revenue) / Number(r.quantity))
-        : 0,
-  }));
+  const enriched: ItemPerformanceRow[] = rows.map((r) => {
+    const revenue = Number(r.revenue);
+    const cogs = Number(r.cogs);
+    const cogsCount = Number(r.cogsCount);
+    const hasCogs = cogsCount > 0 && cogs > 0;
+    const marginPct =
+      hasCogs && revenue > 0
+        ? Math.round(((revenue - cogs) / revenue) * 100)
+        : null;
+    return {
+      menuItemId: r.menuItemId,
+      name: r.itemName,
+      categoryName: r.categoryName,
+      quantity: Number(r.quantity),
+      revenue,
+      averageOrderValue:
+        Number(r.quantity) > 0 ? Math.round(revenue / Number(r.quantity)) : 0,
+      cogs: hasCogs ? cogs : null,
+      marginPct,
+    };
+  });
 
   enriched.sort((a, b) => {
     if (sortKey === "revenue") return b.revenue - a.revenue;
@@ -212,6 +224,7 @@ export async function fetchPnlReport(
   const [revRow] = await db
     .select({
       revenue: sql<number>`coalesce(sum(${transactions.total}), 0)::bigint`,
+      cogs: sql<number>`coalesce(sum(${transactions.cogs}), 0)::bigint`,
     })
     .from(transactions)
     .where(
@@ -223,6 +236,7 @@ export async function fetchPnlReport(
       ),
     );
   const posRevenue = Number(revRow?.revenue ?? 0);
+  const cogs = Number(revRow?.cogs ?? 0);
 
   const [incRow] = await db
     .select({
@@ -266,15 +280,18 @@ export async function fetchPnlReport(
   const expensesTotal = byCategory.reduce((s, e) => s + e.amount, 0);
 
   const totalIncome = posRevenue + manualIncome;
-  const grossProfit = totalIncome - expensesTotal;
+  const grossMargin = totalIncome - cogs;
+  const netProfit = grossMargin - expensesTotal;
 
   return {
     period: { from, to },
     income: { posRevenue, manualIncome, total: totalIncome },
+    cogs,
+    grossMargin,
     expenses: { byCategory, total: expensesTotal },
-    grossProfit,
+    netProfit,
     disclaimer:
-      "Ini bukan laporan akuntansi resmi. Hanya summary arus kas sederhana.",
+      "Ini bukan laporan akuntansi resmi. Hanya summary arus kas sederhana. COGS = HPP yang ter-snapshot saat transaksi paid.",
   };
 }
 

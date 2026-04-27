@@ -216,7 +216,21 @@ export function exportPnlPdf(report: PnlReport, outlet: Outlet): void {
   y = row(doc, "Total Pendapatan", formatRupiah(report.income.total), y, true);
   y = divider(doc, y);
 
-  y = sectionTitle(doc, "Pengeluaran", y);
+  y = sectionTitle(doc, "HPP (Cost of Goods Sold)", y);
+  y = row(doc, "Total HPP (snapshot)", formatRupiah(report.cogs), y, true);
+  y = divider(doc, y);
+
+  y = sectionTitle(doc, "Laba Kotor (Gross Margin)", y);
+  y = row(
+    doc,
+    "Pendapatan − HPP",
+    formatRupiah(report.grossMargin),
+    y,
+    true,
+  );
+  y = divider(doc, y);
+
+  y = sectionTitle(doc, "Pengeluaran Operasional", y);
   if (report.expenses.byCategory.length === 0) {
     y = row(doc, "Tidak ada pengeluaran", "—", y);
   } else {
@@ -229,8 +243,14 @@ export function exportPnlPdf(report: PnlReport, outlet: Outlet): void {
   y = divider(doc, y);
 
   y = ensurePage(doc, y);
-  y = sectionTitle(doc, "Laba Kotor", y);
-  y = row(doc, "Pendapatan − Pengeluaran", formatRupiah(report.grossProfit), y, true);
+  y = sectionTitle(doc, "Laba Bersih", y);
+  y = row(
+    doc,
+    "Gross Margin − Pengeluaran",
+    formatRupiah(report.netProfit),
+    y,
+    true,
+  );
 
   y += 4;
   doc.setFont("helvetica", "italic");

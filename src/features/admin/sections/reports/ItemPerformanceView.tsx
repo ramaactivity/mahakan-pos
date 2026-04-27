@@ -144,6 +144,7 @@ export function ItemPerformanceView() {
                       activeKey={sort}
                       onClick={() => setSort("avg")}
                     />
+                    <th className="px-4 py-2 text-right font-medium">Margin</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
@@ -184,6 +185,25 @@ export function ItemPerformanceView() {
                         </td>
                         <td className="px-4 py-3 text-right font-mono text-neutral-500">
                           {formatRupiah(row.averageOrderValue)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-xs">
+                          {row.marginPct === null ? (
+                            <span className="text-neutral-400">—</span>
+                          ) : (
+                            <span
+                              className={cn(
+                                row.marginPct >= 50
+                                  ? "text-success-500"
+                                  : row.marginPct >= 30
+                                    ? "text-mahakan-green-900"
+                                    : row.marginPct >= 0
+                                      ? "text-warning-500"
+                                      : "text-danger-500",
+                              )}
+                            >
+                              {row.marginPct}%
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
