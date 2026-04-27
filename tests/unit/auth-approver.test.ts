@@ -1,13 +1,36 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import {
-  issueApproverToken,
-  consumeApproverToken,
-} from "@/lib/auth/approver";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+
+// Mock the DB module so the approver tests stay unit-level. The mock simulates
+// the single-use semantics that the production code relies on (PRIMARY KEY
+// collision → empty returning() result on second insert).
+const consumed = new Set<string>();
+vi.mock("@/db", () => ({
+  db: {
+    insert: () => ({
+      values: ({ jti }: { jti: string }) => ({
+        onConflictDoNothing: () => ({
+          returning: async () => {
+            if (consumed.has(jti)) return [];
+            consumed.add(jti);
+            return [{ jti }];
+          },
+        }),
+      }),
+    }),
+    delete: () => ({ where: async () => undefined }),
+  },
+}));
+
+const { issueApproverToken, consumeApproverToken } = await import(
+  "@/lib/auth/approver"
+);
 
 beforeAll(() => {
-  // jose needs a secret available at module-eval time only when called,
-  // so set before any token op.
   process.env.AUTH_SECRET = "test-secret-base64-32-bytes-long-string=";
+});
+
+beforeEach(() => {
+  consumed.clear();
 });
 
 describe("approver token", () => {
@@ -18,14 +41,14 @@ describe("approver token", () => {
       actionType: "pos.transaction.void",
       targetEntityId: "22222222-2222-2222-2222-222222222222",
     });
-    const consumed = await consumeApproverToken(
+    const result = await consumeApproverToken(
       token,
       "pos.transaction.void",
       "22222222-2222-2222-2222-222222222222",
     );
-    expect(consumed.approverId).toBe("11111111-1111-1111-1111-111111111111");
-    expect(consumed.approverRole).toBe("owner");
-    expect(consumed.actionType).toBe("pos.transaction.void");
+    expect(result.approverId).toBe("11111111-1111-1111-1111-111111111111");
+    expect(result.approverRole).toBe("owner");
+    expect(result.actionType).toBe("pos.transaction.void");
   });
 
   it("rejects replay (single-use)", async () => {

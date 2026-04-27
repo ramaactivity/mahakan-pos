@@ -1,4 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
+import { lt } from "drizzle-orm";
+import { db } from "@/db";
+import { consumedApproverTokens } from "@/db/schema";
 import type { Permission } from "./rbac";
 
 const APPROVER_TTL_SECONDS = 5 * 60;
@@ -12,15 +15,18 @@ function getSecret(): Uint8Array {
 }
 
 /**
- * In-memory single-use blacklist. Single-instance OK for Phase 1; if we
- * ever multi-instance, swap to Redis or DB-backed (`audit_logs.jti` index).
+ * Probabilistic GC of expired token rows. Runs ~1% of consumes; bounded
+ * delete keeps tail latency predictable. Rows are tiny so even letting them
+ * accumulate for hours is harmless.
  */
-const consumedJtis = new Map<string, number>();
-
-function purgeExpired() {
-  const now = Math.floor(Date.now() / 1000);
-  for (const [jti, exp] of consumedJtis) {
-    if (exp <= now) consumedJtis.delete(jti);
+async function maybeGarbageCollect() {
+  if (Math.random() > 0.01) return;
+  try {
+    await db
+      .delete(consumedApproverTokens)
+      .where(lt(consumedApproverTokens.expiresAt, new Date()));
+  } catch {
+    // GC is opportunistic; failures must not block the consume path.
   }
 }
 
@@ -58,8 +64,10 @@ export interface ConsumedApprover {
 }
 
 /**
- * Verify token signature, claims, single-use status. Marks jti consumed
- * before returning. Throws on any failure — caller maps to API error.
+ * Verify token signature, claims, and atomically mark single-use via DB
+ * INSERT (PRIMARY KEY collision = already used). Throws on any failure —
+ * caller maps to API error. The atomic INSERT closes the race that the
+ * previous in-memory Map had under multi-instance Vercel serverless.
  */
 export async function consumeApproverToken(
   token: string,
@@ -74,9 +82,6 @@ export async function consumeApproverToken(
   const jti = payload.jti;
   if (!jti) throw new Error("APPROVER_TOKEN_NO_JTI");
 
-  purgeExpired();
-  if (consumedJtis.has(jti)) throw new Error("APPROVER_TOKEN_ALREADY_USED");
-
   if (payload.actionType !== expectedActionType) {
     throw new Error("APPROVER_TOKEN_ACTION_MISMATCH");
   }
@@ -84,7 +89,24 @@ export async function consumeApproverToken(
     throw new Error("APPROVER_TOKEN_TARGET_MISMATCH");
   }
 
-  consumedJtis.set(jti, payload.exp ?? Math.floor(Date.now() / 1000));
+  // Atomic single-use enforcement. ON CONFLICT DO NOTHING returns 0 rows when
+  // the jti was already consumed; a successful insert returns 1 row.
+  const expSec = (payload.exp ?? Math.floor(Date.now() / 1000)) as number;
+  const inserted = await db
+    .insert(consumedApproverTokens)
+    .values({
+      jti,
+      expiresAt: new Date(expSec * 1000),
+    })
+    .onConflictDoNothing()
+    .returning({ jti: consumedApproverTokens.jti });
+
+  if (inserted.length === 0) {
+    throw new Error("APPROVER_TOKEN_ALREADY_USED");
+  }
+
+  // Probabilistic GC of expired rows
+  void maybeGarbageCollect();
 
   return {
     approverId: payload.approverId as string,
