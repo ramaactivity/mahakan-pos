@@ -302,3 +302,34 @@ Pos-test cleanups + M16 implementation in one push:
   * PosShell `printReceiptForTransaction()` runs best-effort after createTransaction success — silent failure (on-screen receipt + history reprint as fallbacks)
 
 Tests: 151 → 175. Hardware verify pending — user pairs RPP02 on Chrome/Edge Android, taps Test Print in Settings, then runs live transaction.
+
+---
+
+### 2026-04-27 (Session 3 — deploy + landing UX iteration)
+
+**M19 deploy completed.** Production live at https://mahakan-pos.vercel.app on Vercel project `ramaactivity98-5695s-projects/mahakan-pos`. GitHub-connected for auto-deploys from `release/phase-1` branch (PR to main not yet merged).
+
+11 commits in this session. Order chronological:
+
+- **chore(deploy)** `vercel.json` pin `next build --webpack` (Serwist v9 needs webpack, Vercel default is Turbopack which crashes with the SW plugin).
+- **feat(ui): split landing** — premium hero at `/` (logo + brand + 2 CTA + capabilities + Owner pitch + scroll indicator + footer); design system reference moved to `/showcase`. Added 3 CSS keyframes (fade-up entrance cascade, drift for decorative blobs, nudge for scroll indicator).
+- **fix(middleware)** whitelist `/showcase` as public route (was being redirected to /login).
+- **docs(m19)** PROGRESS.md M19 marked done.
+- **feat(ui): simplify landing** — per user feedback "tidak perlu ada ini cukup landing page sederhana untuk login", stripped capabilities + Owner pitch + scroll indicator + footer. Result: single-screen logo + tagline + 2 CTA + helper line. Added `scripts/process-logo.ts` — sharp-based luma chroma-key that turns `Logo_Mahakan_Hijau.png` (JPEG-as-PNG with black bg) into proper transparent PNG. 71.3% of pixels (the black square) made transparent; green logo preserved at full opacity with anti-aliased edges.
+- **feat(pwa): proper PNG icons + fullscreen** — `manifest.webmanifest` icons array replaced (out: single JPEG-as-PNG entry that rendered as black square on home screen; in: proper 192/512/maskable-512 PNG entries). `display: standalone` → `fullscreen` so Android status bar also hidden when launched from home screen. Added `scripts/generate-icons.ts` (sharp-based icon generator from the transparent logo + per-spec fillRatio + sage-50 bg for maskable safe zone).
+- **fix(middleware)** whitelist `icon-*.png` + `apple-touch-icon.png` (auth matcher was 307-redirecting them to /login, breaking manifest icon resolution).
+- **fix(ui)** drop chunky focus ring on inputs — Input.tsx + 5 native input/textarea inline styles in admin Cash/Menu sections + POS ItemNoteModal had `border + ring-2 + ring-offset` triple-stack on focus that looked like a chunky frame around typing area. Replaced system-wide with a single border-color shift to mahakan-green-700.
+- **fix(ui+auth)** Per user feedback "hilangkan box seutuhnya" + logout bug:
+  * **Box**: drop ALL focus border-shift on inputs; opt input/textarea/select out of `:focus-visible` outline; kill webkit-autofill blue/yellow tint via canonical 1000px-inset white box-shadow + 600000s color transition. Buttons + nav links keep their focus-visible:ring-2 (only fires on keyboard tab — essential a11y, invisible to mouse users).
+  * **Logout**: `signOut({ redirect: false })` was racing the React session context; AdminShell/PosShell did `router.replace('/login')` (Next client routing, no full reload), `/login` mounted with stale "authenticated" status, useEffect immediately replaced back to /dashboard. Fix: `SessionProvider.logout(callbackUrl?)` now calls `window.location.assign()` after signOut — full page reload guarantees React state is discarded and the new mount sees a clean unauthenticated session. AdminShell + PosShell pass their own callback (`/login`, `/pin`) and drop redundant `router.replace`.
+
+**State at end of sesi 3:**
+- Branch `release/phase-1` synced with origin (HEAD `62b9d66`)
+- 67 commits ahead of `origin/main` (PR not merged yet — Vercel happily deploys from release branch)
+- Build: 11 routes (was 10 — added `/showcase`), webpack mode, 0 warnings beyond Next 16's middleware-deprecation note
+- Tests: 175/175 still
+- PWA fully installable; Android home screen shows clean green Mahakan logo; launches edge-to-edge fullscreen
+- M16 hardware test still pending; M20 soft launch still pending
+- `offline-only-dev-mode` memory marked SUPERSEDED — production is live, push/deploy normal cadence allowed (main + force-push still need explicit confirm)
+
+Handover for sesi 4: `docs/99-HANDOVER-SESSION-4.md`.
