@@ -31,6 +31,13 @@ describe("hasPermission", () => {
     expect(hasPermission("staff", "pos.menu.mark_sold_out")).toBe(true);
   });
 
+  it("Staff can pair + test thermal printer (operasional, not admin)", () => {
+    expect(hasPermission("staff", "settings.printer.pair")).toBe(true);
+    expect(hasPermission("staff", "settings.printer.test")).toBe(true);
+    expect(hasPermission("staff", "settings.business.update")).toBe(false);
+    expect(hasPermission("staff", "settings.hours.update")).toBe(false);
+  });
+
   it("Inventory: Owner + Manager view + receive; Owner-only adjust + delete + cost", () => {
     expect(hasPermission("owner", "inventory.ingredient.view")).toBe(true);
     expect(hasPermission("manager", "inventory.ingredient.view")).toBe(true);

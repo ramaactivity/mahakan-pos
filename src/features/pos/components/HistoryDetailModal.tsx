@@ -49,6 +49,8 @@ interface HistoryDetailModalProps {
   onClose: () => void;
   /** Called when transaction state changes (void/refund/serve) — parent should refresh list. */
   onChanged: () => void;
+  /** Called when user taps "Buka" in the not-paired toast — parent switches to settings tab. */
+  onOpenSettings: () => void;
 }
 
 export function HistoryDetailModal({
@@ -57,6 +59,7 @@ export function HistoryDetailModal({
   viewerRole,
   onClose,
   onChanged,
+  onOpenSettings,
 }: HistoryDetailModalProps) {
   const { session } = useSession();
   const [trx, setTrx] = useState<TransactionWithItems | null>(null);
@@ -73,6 +76,17 @@ export function HistoryDetailModal({
     setReprinting(false);
     if (outcome.ok) {
       toast.success("Struk dicetak ulang");
+    } else if (outcome.reason === "not_paired") {
+      toast.error("Printer belum di-pair", {
+        description: "Pasangkan printer di tab Pengaturan dulu.",
+        action: {
+          label: "Buka",
+          onClick: () => {
+            onClose();
+            onOpenSettings();
+          },
+        },
+      });
     } else {
       toast.error(outcome.message);
     }

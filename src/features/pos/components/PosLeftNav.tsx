@@ -4,12 +4,13 @@ import {
   History,
   LayoutGrid,
   LogOut,
+  Settings,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type PosTab = "cashier" | "history" | "shifts";
+export type PosTab = "cashier" | "history" | "shifts" | "settings";
 
 interface PosLeftNavProps {
   activeTab: PosTab;
@@ -23,6 +24,7 @@ const TABS: Array<{ key: PosTab; label: string; Icon: LucideIcon }> = [
   { key: "cashier", label: "Kasir", Icon: LayoutGrid },
   { key: "history", label: "Riwayat", Icon: History },
   { key: "shifts", label: "Shift", Icon: Wallet },
+  { key: "settings", label: "Pengaturan", Icon: Settings },
 ];
 
 export function PosLeftNav({

@@ -39,6 +39,7 @@ import { NewOrderModal } from "@/features/pos/components/NewOrderModal";
 import { OpenPriceModal } from "@/features/pos/components/OpenPriceModal";
 import { OpenShiftModal } from "@/features/pos/components/OpenShiftModal";
 import { PosLeftNav, type PosTab } from "@/features/pos/components/PosLeftNav";
+import { PosSettingsPanel } from "@/features/pos/components/PosSettingsPanel";
 import { ShiftPanel } from "@/features/pos/components/ShiftPanel";
 import { useCartStore } from "@/features/pos/cartStore";
 import { useSession } from "@/features/auth/SessionProvider";
@@ -445,13 +446,15 @@ export function PosShell() {
             refreshKey={historyRefreshKey}
             onSelectTransaction={(id) => setHistoryDetailId(id)}
           />
-        ) : (
+        ) : tab === "shifts" ? (
           <ShiftPanel
             shift={shift}
             loading={shiftLoading}
             onRequestOpenShift={() => setOpenShiftOpen(true)}
             onRequestCloseShift={() => setCloseShiftOpen(true)}
           />
+        ) : (
+          <PosSettingsPanel shift={shift} />
         )}
       </main>
 
@@ -504,6 +507,7 @@ export function PosShell() {
             trx={rightPanel.trx}
             cashierName={session!.user.name ?? "Kasir"}
             onFinish={handleFinishOrder}
+            onOpenSettings={() => setTab("settings")}
           />
         ) : null}
       </aside>
@@ -599,6 +603,7 @@ export function PosShell() {
         viewerUserId={session.user.id}
         onClose={() => setHistoryDetailId(null)}
         onChanged={() => setHistoryRefreshKey((k) => k + 1)}
+        onOpenSettings={() => setTab("settings")}
       />
     </div>
   );
@@ -1067,9 +1072,15 @@ interface PaidPanelProps {
   trx: TransactionWithItems;
   cashierName: string;
   onFinish: () => void;
+  onOpenSettings: () => void;
 }
 
-function PaidPanel({ trx, cashierName, onFinish }: PaidPanelProps) {
+function PaidPanel({
+  trx,
+  cashierName,
+  onFinish,
+  onOpenSettings,
+}: PaidPanelProps) {
   const [reprinting, setReprinting] = useState(false);
   async function handleReprint() {
     if (reprinting) return;
@@ -1078,6 +1089,11 @@ function PaidPanel({ trx, cashierName, onFinish }: PaidPanelProps) {
     setReprinting(false);
     if (outcome.ok) {
       toast.success("Struk dicetak ulang");
+    } else if (outcome.reason === "not_paired") {
+      toast.error("Printer belum di-pair", {
+        description: "Pasangkan printer di tab Pengaturan dulu.",
+        action: { label: "Buka", onClick: onOpenSettings },
+      });
     } else {
       toast.error(outcome.message);
     }
