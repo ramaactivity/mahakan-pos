@@ -62,3 +62,7 @@ next-env.d.ts
 # AI agent artifacts
 .agents/
 .cursor/
+
+# DB backups (created by scripts/backup-db.sh)
+/backups/
+*.dump

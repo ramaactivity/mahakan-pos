@@ -1,0 +1,60 @@
+name: db-backup
+
+# Weekly Postgres dump of the production Neon DB. Stored as a workflow
+# artifact (90-day retention on GitHub free tier). Trigger manually via
+# `workflow_dispatch` if you need an out-of-band snapshot before a risky
+# migration.
+#
+# Required repo secret: DATABASE_URL_BACKUP — full Postgres connection
+# string with read access to the production DB. Use the *unpooled* URL
+# from Neon (the pooler limits long-running statements like pg_dump).
+
+on:
+  schedule:
+    # Sundays 02:00 UTC = 09:00 WIB Sunday (off-hours for the cafe).
+    - cron: "0 2 * * 0"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PGCONNECT_TIMEOUT: 30
+    steps:
+      - name: Install postgresql-client (matches Neon's PG version)
+        run: |
+          set -euxo pipefail
+          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Dump database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_BACKUP }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "::error::DATABASE_URL_BACKUP secret is not set"
+            exit 1
+          fi
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          OUT="mahakan-pos-${STAMP}.dump"
+          # Custom format (-Fc) is compressed and supports parallel restore.
+          pg_dump --format=custom --no-owner --no-privileges --verbose \
+            --file="${OUT}" "${DATABASE_URL}"
+          ls -lh "${OUT}"
+          echo "OUT=${OUT}" >> "$GITHUB_ENV"
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.OUT }}
+          path: ${{ env.OUT }}
+          # GitHub free tier retains artifacts up to 90 days.
+          retention-days: 90
+          if-no-files-found: error
