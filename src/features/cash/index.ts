@@ -13,9 +13,15 @@ export { isOk } from "./types";
 
 export {
   createExpense,
+  createExpenseCategory,
   createIncome,
+  deleteExpense,
+  deleteExpenseCategory,
   getDailyCashSummary,
   listExpenseCategories,
   listExpenses,
   listIncomes,
+  updateExpense,
+  updateExpenseCategory,
+  type UpdateExpenseInput,
 } from "./actions";

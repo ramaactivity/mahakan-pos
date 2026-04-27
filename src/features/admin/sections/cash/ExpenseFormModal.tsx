@@ -5,7 +5,9 @@ import { Button, Input, Modal, toast } from "@/components/ui";
 import {
   createExpense,
   isOk,
+  updateExpense,
   type CashPaymentMethod,
+  type Expense,
   type ExpenseCategory,
 } from "@/features/cash";
 import { formatRupiah, parseRupiah } from "@/lib/format";
@@ -16,6 +18,8 @@ interface ExpenseFormModalProps {
   categories: ExpenseCategory[];
   /** Kept for callsite compatibility; action derives userId from session. */
   createdBy: string;
+  /** When set, the modal acts as edit instead of create. */
+  edit?: Expense | null;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -23,6 +27,7 @@ interface ExpenseFormModalProps {
 export function ExpenseFormModal({
   open,
   categories,
+  edit,
   onClose,
   onSaved,
 }: ExpenseFormModalProps) {
@@ -37,17 +42,25 @@ export function ExpenseFormModal({
 
   useEffect(() => {
     if (!open) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDate(today);
-    // Default to first non-system category
-    const firstNonSystem = categories.find((c) => !c.isSystem);
-    setCategoryId(firstNonSystem?.id ?? categories[0]?.id ?? "");
-    setDescription("");
-    setAmount("");
-    setMethod("cash");
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (edit) {
+      setDate(edit.expenseDate);
+      setCategoryId(edit.categoryId);
+      setDescription(edit.description);
+      setAmount(String(edit.amount));
+      setMethod(edit.paymentMethod);
+    } else {
+      setDate(today);
+      const firstNonSystem = categories.find((c) => !c.isSystem);
+      setCategoryId(firstNonSystem?.id ?? categories[0]?.id ?? "");
+      setDescription("");
+      setAmount("");
+      setMethod("cash");
+    }
     setError(null);
     setSubmitting(false);
-  }, [open, categories, today]);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [open, categories, today, edit]);
 
   let parsedAmount = 0;
   try {
@@ -68,20 +81,32 @@ export function ExpenseFormModal({
     }
     setSubmitting(true);
     setError(null);
-    const res = await createExpense({
-      expenseDate: date,
-      categoryId,
-      description: description.trim(),
-      amount: parsedAmount,
-      paymentMethod: method,
-      receiptImageUrl: null,
-    });
+    const res = edit
+      ? await updateExpense(edit.id, {
+          expenseDate: date,
+          categoryId,
+          description: description.trim(),
+          amount: parsedAmount,
+          paymentMethod: method,
+        })
+      : await createExpense({
+          expenseDate: date,
+          categoryId,
+          description: description.trim(),
+          amount: parsedAmount,
+          paymentMethod: method,
+          receiptImageUrl: null,
+        });
     if (!isOk(res)) {
       setError(res.error.message);
       setSubmitting(false);
       return;
     }
-    toast.success(`Pengeluaran ${formatRupiah(parsedAmount)} dicatat`);
+    toast.success(
+      edit
+        ? `Pengeluaran diperbarui (${formatRupiah(parsedAmount)})`
+        : `Pengeluaran ${formatRupiah(parsedAmount)} dicatat`,
+    );
     onSaved();
   }
 
@@ -92,7 +117,7 @@ export function ExpenseFormModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Tambah Pengeluaran"
+      title={edit ? "Edit Pengeluaran" : "Tambah Pengeluaran"}
       size="md"
       footer={
         <>
@@ -185,9 +210,6 @@ export function ExpenseFormModal({
           </p>
         ) : null}
 
-        <p className="text-xs text-neutral-500">
-          📷 Upload foto bukti akan ada di M13 (Vercel Blob storage).
-        </p>
       </div>
     </Modal>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Badge,
   Button,
@@ -9,16 +9,20 @@ import {
   CardContent,
   CardHeader,
   Input,
+  Modal,
   Skeleton,
+  toast,
 } from "@/components/ui";
 import { ExpenseFormModal } from "./ExpenseFormModal";
 import {
+  deleteExpense,
   isOk,
   listExpenses,
   listExpenseCategories,
   type Expense,
   type ExpenseCategory,
 } from "@/features/cash";
+import { useSession } from "@/features/auth/SessionProvider";
 import { formatRupiah } from "@/lib/format";
 
 interface ExpensesListProps {
@@ -26,11 +30,15 @@ interface ExpensesListProps {
 }
 
 export function ExpensesList({ createdBy }: ExpensesListProps) {
+  const { session } = useSession();
+  const role = session?.user.role;
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [editTarget, setEditTarget] = useState<Expense | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null);
 
   // Default: this month
   const today = new Date().toISOString().slice(0, 10);
@@ -69,6 +77,34 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
   }, [categories]);
 
   const total = expenses.reduce((s, e) => s + e.amount, 0);
+
+  // Snapshot "now" to a state so the manager 24h-edit cutoff is computed
+  // against a stable timestamp; bumped each load to keep the cutoff current.
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNowMs(Date.now());
+  }, [refreshKey]);
+  function canEditRow(e: Expense): boolean {
+    if (e.refundedTransactionId) return false;
+    if (role === "owner") return true;
+    if (role === "manager") {
+      return nowMs - e.createdAt.getTime() <= 24 * 60 * 60 * 1000;
+    }
+    return false;
+  }
+
+  async function handleConfirmDelete() {
+    if (!deleteTarget) return;
+    const res = await deleteExpense(deleteTarget.id);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success("Pengeluaran dihapus");
+    setDeleteTarget(null);
+    setRefreshKey((k) => k + 1);
+  }
 
   return (
     <div className="space-y-4">
@@ -142,11 +178,13 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
                     <th className="px-4 py-2 text-left font-medium">Deskripsi</th>
                     <th className="px-4 py-2 text-left font-medium">Metode</th>
                     <th className="px-4 py-2 text-right font-medium">Nominal</th>
+                    <th className="px-4 py-2 text-right font-medium">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
                   {expenses.map((e) => {
                     const cat = categoryById[e.categoryId];
+                    const editable = canEditRow(e);
                     return (
                       <tr key={e.id} className="hover:bg-neutral-50">
                         <td className="px-4 py-3 font-mono text-xs">
@@ -173,18 +211,47 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
                         <td className="px-4 py-3 text-right font-mono">
                           {formatRupiah(e.amount)}
                         </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-1">
+                            {editable && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setEditTarget(e)}
+                                aria-label="Edit pengeluaran"
+                              >
+                                <Pencil className="size-4" aria-hidden />
+                              </Button>
+                            )}
+                            {role === "owner" && !e.refundedTransactionId && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setDeleteTarget(e)}
+                                aria-label="Hapus pengeluaran"
+                                className="text-danger-500 hover:bg-danger-100"
+                              >
+                                <Trash2 className="size-4" aria-hidden />
+                              </Button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
                 <tfoot className="border-t-2 border-neutral-200 bg-neutral-50">
                   <tr>
-                    <td colSpan={4} className="px-4 py-3 text-right text-xs font-medium text-neutral-500">
+                    <td
+                      colSpan={4}
+                      className="px-4 py-3 text-right text-xs font-medium text-neutral-500"
+                    >
                       TOTAL
                     </td>
                     <td className="px-4 py-3 text-right font-mono font-bold text-neutral-900">
                       {formatRupiah(total)}
                     </td>
+                    <td />
                   </tr>
                 </tfoot>
               </table>
@@ -194,15 +261,47 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
       </Card>
 
       <ExpenseFormModal
-        open={createOpen}
+        open={createOpen || editTarget !== null}
         categories={categories}
         createdBy={createdBy}
-        onClose={() => setCreateOpen(false)}
+        edit={editTarget}
+        onClose={() => {
+          setCreateOpen(false);
+          setEditTarget(null);
+        }}
         onSaved={() => {
           setCreateOpen(false);
+          setEditTarget(null);
           setRefreshKey((k) => k + 1);
         }}
       />
+
+      <Modal
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title="Hapus pengeluaran?"
+        description={
+          deleteTarget
+            ? `"${deleteTarget.description}" — ${formatRupiah(deleteTarget.amount)}`
+            : ""
+        }
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+              Batal
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmDelete}>
+              Hapus
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-neutral-700">
+          Aksi ini di-soft-delete; ringkasan keuangan langsung di-update. Audit
+          log mencatat siapa yang menghapus.
+        </p>
+      </Modal>
     </div>
   );
 }

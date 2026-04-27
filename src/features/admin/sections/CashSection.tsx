@@ -1,17 +1,19 @@
 "use client";
 
 import { useState } from "react";
+import { CategoriesList } from "./cash/CategoriesList";
 import { ExpensesList } from "./cash/ExpensesList";
 import { IncomesList } from "./cash/IncomesList";
 import { DailySummary } from "./cash/DailySummary";
 import { cn } from "@/lib/utils";
 
-type CashTab = "expenses" | "incomes" | "summary";
+type CashTab = "expenses" | "incomes" | "summary" | "categories";
 
 const TABS: Array<{ key: CashTab; label: string }> = [
   { key: "expenses", label: "Pengeluaran" },
   { key: "incomes", label: "Pemasukan" },
   { key: "summary", label: "Ringkasan" },
+  { key: "categories", label: "Kategori" },
 ];
 
 interface CashSectionProps {
@@ -62,8 +64,10 @@ export function CashSection({ viewerUserId }: CashSectionProps) {
           <ExpensesList createdBy={viewerUserId} />
         ) : tab === "incomes" ? (
           <IncomesList createdBy={viewerUserId} />
-        ) : (
+        ) : tab === "summary" ? (
           <DailySummary />
+        ) : (
+          <CategoriesList />
         )}
       </div>
     </div>
