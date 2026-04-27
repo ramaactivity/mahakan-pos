@@ -5,6 +5,7 @@ import {
   Coffee,
   LayoutDashboard,
   LogOut,
+  Package,
   ScrollText,
   Settings,
   Users,
@@ -18,6 +19,7 @@ import type { Role } from "@/lib/auth";
 export type AdminSection =
   | "dashboard"
   | "menu"
+  | "inventory"
   | "staff"
   | "shifts"
   | "cash"
@@ -44,6 +46,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { key: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
   { key: "menu", label: "Menu", Icon: Coffee },
+  { key: "inventory", label: "Inventory", Icon: Package },
   { key: "staff", label: "Staff", Icon: Users },
   { key: "shifts", label: "Shifts", Icon: Receipt },
   { key: "cash", label: "Kas", Icon: Wallet },

@@ -8,6 +8,7 @@ import {
 import { AuditLogSection } from "@/features/admin/sections/AuditLogSection";
 import { CashSection } from "@/features/admin/sections/CashSection";
 import { DashboardHome } from "@/features/admin/sections/DashboardHome";
+import { InventorySection } from "@/features/admin/sections/InventorySection";
 import { MenuSection } from "@/features/admin/sections/MenuSection";
 import { ReportsSection } from "@/features/admin/sections/ReportsSection";
 import { SettingsSection } from "@/features/admin/sections/SettingsSection";
@@ -38,6 +39,8 @@ export function AdminShell() {
           <DashboardHome user={session.user} />
         ) : section === "menu" ? (
           <MenuSection />
+        ) : section === "inventory" ? (
+          <InventorySection />
         ) : section === "staff" ? (
           <StaffSection
             viewerRole={session.user.role}
