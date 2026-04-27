@@ -9,18 +9,28 @@ import {
   recipeIngredients,
   recipes,
 } from "@/db/schema";
+import { expandRecipeToAtomicLeaves } from "./preparation-flow";
+import { splitLineForMovement } from "./preparation-flow-pure";
 
 /**
  * Internal helper module that links transactions ↔ inventory.
  *
  * Owns the math + DB writes that turn a paid transaction into:
- *   - per-item + per-transaction COGS snapshot
- *   - inventory_movements rows (kind=sale_deduct / void_restore /
- *     refund_restore)
+ *   - per-item + per-transaction COGS snapshot (waste factor included)
+ *   - inventory_movements rows split into kind=sale_deduct (lean) +
+ *     kind=waste (Q Factor buffer) per atomic ingredient
  *   - atomic ingredient.current_stock updates
+ *   - kind=void_restore / refund_restore as 1 combined row per ingredient
+ *     (qty = lean + waste) for transaction reversals
  *
- * Designed to be called inside the same DB transaction that inserts
- * the order so failures roll back atomically.
+ * M23.2 changes (vs M22.5):
+ *   - Recursive recipe expansion: preparation ingredients are replaced with
+ *     their atomic leaves at sale time, scaled by `preparation_yield`.
+ *   - Waste factor (recipe.waste_factor_pct) applied to both COGS and stock.
+ *   - Movement audit splits into 2 rows per atomic ingredient at deduct time.
+ *
+ * Designed to be called inside the same DB transaction that inserts the order
+ * so failures roll back atomically.
  */
 
 type DbTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -37,8 +47,10 @@ export interface StockFlow {
   totalCogs: number;
   /** key = transactionItemId, value = cogs (rupiah) for that whole line */
   itemCogsByTrxItemId: Map<string, number>;
-  /** key = ingredientId, value = qty to deduct (positive) */
+  /** key = ingredientId, value = lean qty to deduct (positive) */
   deductionsByIngredient: Map<string, number>;
+  /** key = ingredientId, value = waste-buffer qty to deduct (positive) */
+  wasteByIngredient: Map<string, number>;
   /** key = ingredientId, value = unit cost snapshot at sale time */
   ingredientCostSnapshot: Map<string, number>;
   /** All menu_items touched — used by sold-out re-eval */
@@ -48,21 +60,24 @@ export interface StockFlow {
 }
 
 /**
- * Looks up recipes for every (menuItemId, variant) tuple in the order
- * and aggregates per-ingredient deductions + per-item COGS.
+ * Looks up recipes for every (menuItemId, variant) tuple in the order, expands
+ * each to atomic leaves (recursive CTE), applies the waste factor, and
+ * aggregates per-ingredient deductions + per-item COGS.
  *
- * Items without a matching recipe (open-price, unconfigured) get
- * cogs=0 and contribute no deductions. They're returned in
- * `itemsWithoutRecipe` for caller-side observability.
+ * Items without a matching recipe (open-price, unconfigured) get cogs=0 and
+ * contribute no deductions. They're returned in `itemsWithoutRecipe` for
+ * caller-side observability.
  */
 export async function computeStockFlowForOrder(
   tx: DbTx,
+  outletId: string,
   items: OrderItemContext[],
 ): Promise<StockFlow> {
   const flow: StockFlow = {
     totalCogs: 0,
     itemCogsByTrxItemId: new Map(),
     deductionsByIngredient: new Map(),
+    wasteByIngredient: new Map(),
     ingredientCostSnapshot: new Map(),
     affectedMenuItemIds: new Set(items.map((i) => i.menuItemId)),
     itemsWithoutRecipe: [],
@@ -70,74 +85,95 @@ export async function computeStockFlowForOrder(
 
   if (items.length === 0) return flow;
 
-  const menuItemIds = Array.from(
-    new Set(items.map((i) => i.menuItemId)),
-  );
+  const menuItemIds = Array.from(new Set(items.map((i) => i.menuItemId)));
 
   const recipeRows = await tx
     .select({
       id: recipes.id,
       menuItemId: recipes.menuItemId,
       variant: recipes.variant,
+      wasteFactorPct: recipes.wasteFactorPct,
     })
     .from(recipes)
-    .where(inArray(recipes.menuItemId, menuItemIds));
+    .where(
+      and(
+        inArray(recipes.menuItemId, menuItemIds),
+        eq(recipes.isActive, true),
+      ),
+    );
 
   if (recipeRows.length === 0) {
     flow.itemsWithoutRecipe = items.map((i) => i.transactionItemId);
     return flow;
   }
 
-  const recipeIds = recipeRows.map((r) => r.id);
-  const lineRows = await tx
-    .select({
-      recipeId: recipeIngredients.recipeId,
-      ingredientId: recipeIngredients.ingredientId,
-      qty: recipeIngredients.qty,
-      costPerUnit: ingredients.costPerUnit,
-    })
-    .from(recipeIngredients)
-    .innerJoin(ingredients, eq(ingredients.id, recipeIngredients.ingredientId))
-    .where(inArray(recipeIngredients.recipeId, recipeIds));
-
-  // Build lookup: (menuItemId|variant) → ingredient lines[]
-  const recipeKeyToLines = new Map<
-    string,
-    Array<{ ingredientId: string; qty: number; costPerUnit: number }>
-  >();
+  // Expand each unique recipe to atomic leaves once + load atomic costs.
+  const recipeKeyToRecipeId = new Map<string, string>();
+  const recipeIdToWaste = new Map<string, number>();
+  const recipeIdToLeaves = new Map<string, Map<string, number>>();
   for (const r of recipeRows) {
+    if (!r.menuItemId) continue;
     const key = `${r.menuItemId}|${r.variant ?? ""}`;
-    const lines = lineRows
-      .filter((l) => l.recipeId === r.id)
-      .map((l) => ({
-        ingredientId: l.ingredientId,
-        qty: l.qty,
-        costPerUnit: l.costPerUnit,
-      }));
-    recipeKeyToLines.set(key, lines);
+    recipeKeyToRecipeId.set(key, r.id);
+    recipeIdToWaste.set(r.id, r.wasteFactorPct);
+    recipeIdToLeaves.set(r.id, await expandRecipeToAtomicLeaves(tx, r.id, outletId));
   }
 
+  // Collect all atomic ingredient ids touched + load their cost_per_unit.
+  const allLeafIds = new Set<string>();
+  for (const leaves of recipeIdToLeaves.values()) {
+    for (const id of leaves.keys()) allLeafIds.add(id);
+  }
+  if (allLeafIds.size > 0) {
+    const costRows = await tx
+      .select({ id: ingredients.id, costPerUnit: ingredients.costPerUnit })
+      .from(ingredients)
+      .where(inArray(ingredients.id, Array.from(allLeafIds)));
+    for (const r of costRows) {
+      flow.ingredientCostSnapshot.set(r.id, r.costPerUnit);
+    }
+  }
+
+  // Per-item: scale leaves × quantity, accumulate deductions + COGS.
   for (const item of items) {
     const key = `${item.menuItemId}|${item.variant ?? ""}`;
-    const lines = recipeKeyToLines.get(key);
-    if (!lines || lines.length === 0) {
+    const recipeId = recipeKeyToRecipeId.get(key);
+    if (!recipeId) {
+      flow.itemsWithoutRecipe.push(item.transactionItemId);
+      flow.itemCogsByTrxItemId.set(item.transactionItemId, 0);
+      continue;
+    }
+    const leaves = recipeIdToLeaves.get(recipeId);
+    const wasteFactor = recipeIdToWaste.get(recipeId) ?? 30;
+    if (!leaves || leaves.size === 0) {
       flow.itemsWithoutRecipe.push(item.transactionItemId);
       flow.itemCogsByTrxItemId.set(item.transactionItemId, 0);
       continue;
     }
 
-    let lineCogs = 0;
-    for (const l of lines) {
-      const totalQtyForLine = l.qty * item.quantity;
+    let lineCogsRaw = 0;
+    for (const [ingredientId, perOrderQty] of leaves) {
+      const cost = flow.ingredientCostSnapshot.get(ingredientId) ?? 0;
+      const totalRawQty = perOrderQty * item.quantity;
+
+      const split = splitLineForMovement(totalRawQty, wasteFactor);
       flow.deductionsByIngredient.set(
-        l.ingredientId,
-        (flow.deductionsByIngredient.get(l.ingredientId) ?? 0) +
-          totalQtyForLine,
+        ingredientId,
+        (flow.deductionsByIngredient.get(ingredientId) ?? 0) + split.leanQty,
       );
-      flow.ingredientCostSnapshot.set(l.ingredientId, l.costPerUnit);
-      lineCogs += l.qty * l.costPerUnit;
+      if (split.wasteQty > 0) {
+        flow.wasteByIngredient.set(
+          ingredientId,
+          (flow.wasteByIngredient.get(ingredientId) ?? 0) + split.wasteQty,
+        );
+      }
+
+      lineCogsRaw += perOrderQty * cost;
     }
-    const totalLineCogs = lineCogs * item.quantity;
+    // Apply waste to COGS once per item, then scale by quantity, round once.
+    const totalLineCogs = Math.round(
+      lineCogsRaw * (1 + wasteFactor / 100) * item.quantity,
+    );
     flow.itemCogsByTrxItemId.set(item.transactionItemId, totalLineCogs);
     flow.totalCogs += totalLineCogs;
   }
@@ -146,9 +182,9 @@ export async function computeStockFlowForOrder(
 }
 
 /**
- * UPDATE current_stock atomically + INSERT inventory_movements rows
- * (kind=sale_deduct) referencing the transaction. Caller must run
- * inside a DB transaction.
+ * UPDATE current_stock atomically + INSERT inventory_movements rows split into
+ * kind=sale_deduct (lean) + kind=waste (Q Factor buffer) per ingredient.
+ * Caller must run inside a DB transaction.
  */
 export async function applyStockDeductions(
   tx: DbTx,
@@ -157,38 +193,67 @@ export async function applyStockDeductions(
   transactionId: string,
   flow: StockFlow,
 ): Promise<void> {
-  for (const [ingredientId, qty] of flow.deductionsByIngredient) {
-    if (qty === 0) continue;
+  // Union of ingredient ids that have lean and/or waste qty.
+  const allIds = new Set<string>([
+    ...flow.deductionsByIngredient.keys(),
+    ...flow.wasteByIngredient.keys(),
+  ]);
+
+  for (const ingredientId of allIds) {
+    const lean = flow.deductionsByIngredient.get(ingredientId) ?? 0;
+    const waste = flow.wasteByIngredient.get(ingredientId) ?? 0;
+    const total = lean + waste;
+    if (total === 0) continue;
+
     await tx
       .update(ingredients)
       .set({
-        currentStock: sql`${ingredients.currentStock} - ${qty}`,
+        currentStock: sql`${ingredients.currentStock} - ${total}`,
         updatedAt: new Date(),
         updatedBy: userId,
       })
       .where(eq(ingredients.id, ingredientId));
 
-    await tx.insert(inventoryMovements).values({
-      outletId,
-      ingredientId,
-      kind: "sale_deduct",
-      qtyDelta: -qty,
-      unitCostAtMovement: flow.ingredientCostSnapshot.get(ingredientId) ?? null,
-      referenceType: "transaction",
-      referenceId: transactionId,
-      reason: null,
-      createdBy: userId,
-    });
+    const unitCost = flow.ingredientCostSnapshot.get(ingredientId) ?? null;
+
+    if (lean > 0) {
+      await tx.insert(inventoryMovements).values({
+        outletId,
+        ingredientId,
+        kind: "sale_deduct",
+        qtyDelta: -lean,
+        unitCostAtMovement: unitCost,
+        referenceType: "transaction",
+        referenceId: transactionId,
+        reason: null,
+        createdBy: userId,
+      });
+    }
+
+    if (waste > 0) {
+      await tx.insert(inventoryMovements).values({
+        outletId,
+        ingredientId,
+        kind: "waste",
+        qtyDelta: -waste,
+        unitCostAtMovement: unitCost,
+        referenceType: "transaction",
+        referenceId: transactionId,
+        reason: "Recipe waste buffer",
+        createdBy: userId,
+      });
+    }
   }
 }
 
 /**
- * Reverses every sale_deduct movement attached to the given transaction
- * by inserting matching positive-delta movements (kind=void_restore or
- * refund_restore) and bumping ingredient.current_stock back up.
+ * Reverses every sale_deduct + waste movement attached to the given transaction
+ * by inserting one combined positive-delta movement per ingredient (qty =
+ * lean + waste) with kind=void_restore or refund_restore, and bumping
+ * ingredient.current_stock back up.
  *
- * Returns the list of ingredient ids that were affected so the caller
- * can trigger sold-out re-evaluation.
+ * Returns the list of ingredient ids that were affected so the caller can
+ * trigger sold-out re-evaluation.
  */
 export async function restoreStockForTransaction(
   tx: DbTx,
@@ -197,58 +262,72 @@ export async function restoreStockForTransaction(
   transactionId: string,
   kind: "void_restore" | "refund_restore",
 ): Promise<string[]> {
-  const saleMovements = await tx
+  const sourceMovements = await tx
     .select()
     .from(inventoryMovements)
     .where(
       and(
         eq(inventoryMovements.referenceId, transactionId),
         eq(inventoryMovements.referenceType, "transaction"),
-        eq(inventoryMovements.kind, "sale_deduct"),
+        inArray(inventoryMovements.kind, ["sale_deduct", "waste"]),
       ),
     );
 
-  if (saleMovements.length === 0) return [];
+  if (sourceMovements.length === 0) return [];
 
-  const affectedIngredients: string[] = [];
-  const reason =
-    kind === "void_restore" ? "Auto-restore void" : "Auto-restore refund";
-
-  for (const m of saleMovements) {
-    const restoreQty = -m.qtyDelta; // saleMovements have negative qty_delta
+  // Aggregate by ingredient: sum absolute qtyDelta, capture cost snapshot.
+  const restoreByIngredient = new Map<
+    string,
+    { totalQty: number; unitCost: number | null }
+  >();
+  for (const m of sourceMovements) {
+    const restoreQty = -m.qtyDelta;
     if (restoreQty <= 0) continue;
+    const prev = restoreByIngredient.get(m.ingredientId);
+    restoreByIngredient.set(m.ingredientId, {
+      totalQty: (prev?.totalQty ?? 0) + restoreQty,
+      unitCost: prev?.unitCost ?? m.unitCostAtMovement,
+    });
+  }
 
+  const reason =
+    kind === "void_restore"
+      ? "Auto-restore void incl. waste buffer"
+      : "Auto-restore refund incl. waste buffer";
+
+  const affected: string[] = [];
+  for (const [ingredientId, { totalQty, unitCost }] of restoreByIngredient) {
     await tx
       .update(ingredients)
       .set({
-        currentStock: sql`${ingredients.currentStock} + ${restoreQty}`,
+        currentStock: sql`${ingredients.currentStock} + ${totalQty}`,
         updatedAt: new Date(),
         updatedBy: userId,
       })
-      .where(eq(ingredients.id, m.ingredientId));
+      .where(eq(ingredients.id, ingredientId));
 
     await tx.insert(inventoryMovements).values({
       outletId,
-      ingredientId: m.ingredientId,
+      ingredientId,
       kind,
-      qtyDelta: restoreQty,
-      unitCostAtMovement: m.unitCostAtMovement,
+      qtyDelta: totalQty,
+      unitCostAtMovement: unitCost,
       referenceType: "transaction",
       referenceId: transactionId,
       reason,
       createdBy: userId,
     });
 
-    affectedIngredients.push(m.ingredientId);
+    affected.push(ingredientId);
   }
 
-  return Array.from(new Set(affectedIngredients));
+  return Array.from(new Set(affected));
 }
 
 /**
- * After a stock change, scan menu items whose recipes reference the
- * given ingredient ids and flip is_sold_out=true if any variant can no
- * longer be fulfilled with current stock. Best-effort — runs after the
+ * After a stock change, scan menu items whose recipes reference (transitively)
+ * the given ingredient ids and flip is_sold_out=true if any variant can no
+ * longer be fulfilled with current atomic stock. Best-effort — runs after the
  * main DB transaction commits so its failure can't roll the sale back.
  *
  * NOTE: this only auto-flips TO sold-out. Owner manually flips back to
@@ -259,16 +338,14 @@ export async function reevaluateSoldOutForIngredients(
 ): Promise<void> {
   if (affectedIngredientIds.length === 0) return;
 
-  // 1. Find all menu_items whose recipes reference any affected ingredient.
-  // Excludes preparation recipes (recipes with menu_item_id IS NULL) — sold-out
-  // flag is a menu-level concept, preps don't surface in POS sold-out logic.
-  const menuRows = await db
+  // Step 1: find menu items whose recipe directly OR transitively references
+  // any affected atomic ingredient. We walk via recipe_ingredients twice (once
+  // direct, once via prep level) since Mahakan ≤ depth 2 in real data.
+  // Excludes preparation recipes from the menu candidate set.
+  const directMenuRows = await db
     .selectDistinct({ menuItemId: recipes.menuItemId })
     .from(recipes)
-    .innerJoin(
-      recipeIngredients,
-      eq(recipeIngredients.recipeId, recipes.id),
-    )
+    .innerJoin(recipeIngredients, eq(recipeIngredients.recipeId, recipes.id))
     .where(
       and(
         inArray(recipeIngredients.ingredientId, affectedIngredientIds),
@@ -276,36 +353,77 @@ export async function reevaluateSoldOutForIngredients(
       ),
     );
 
-  const menuItemIds = menuRows
-    .map((r) => r.menuItemId)
-    .filter((id): id is string => id !== null);
+  // Find prep ingredients that include any affected atomic — those preps may
+  // be referenced by menu recipes too.
+  const dependentPrepIds = await db
+    .selectDistinct({ prepId: recipes.ingredientId })
+    .from(recipes)
+    .innerJoin(recipeIngredients, eq(recipeIngredients.recipeId, recipes.id))
+    .where(
+      and(
+        inArray(recipeIngredients.ingredientId, affectedIngredientIds),
+        isNotNull(recipes.ingredientId),
+      ),
+    );
+  const prepIds = dependentPrepIds.map((r) => r.prepId).filter(
+    (id): id is string => id !== null,
+  );
+
+  let viaPrepMenuRows: Array<{ menuItemId: string | null }> = [];
+  if (prepIds.length > 0) {
+    viaPrepMenuRows = await db
+      .selectDistinct({ menuItemId: recipes.menuItemId })
+      .from(recipes)
+      .innerJoin(recipeIngredients, eq(recipeIngredients.recipeId, recipes.id))
+      .where(
+        and(
+          inArray(recipeIngredients.ingredientId, prepIds),
+          isNotNull(recipes.menuItemId),
+        ),
+      );
+  }
+
+  const menuItemIds = Array.from(
+    new Set(
+      [...directMenuRows, ...viaPrepMenuRows]
+        .map((r) => r.menuItemId)
+        .filter((id): id is string => id !== null),
+    ),
+  );
   if (menuItemIds.length === 0) return;
 
-  // 2. For each menu_item, evaluate all of its recipes.
+  // Step 2: for each menu item, expand each of its recipes to atomic leaves
+  // and check feasibility.
   for (const menuItemId of menuItemIds) {
     const menuRecipes = await db
-      .select({ id: recipes.id })
+      .select({ id: recipes.id, outletId: recipes.outletId })
       .from(recipes)
-      .where(eq(recipes.menuItemId, menuItemId));
+      .where(
+        and(
+          eq(recipes.menuItemId, menuItemId),
+          eq(recipes.isActive, true),
+        ),
+      );
 
     if (menuRecipes.length === 0) continue;
 
     let anyInfeasible = false;
     for (const r of menuRecipes) {
-      const lines = await db
-        .select({
-          qty: recipeIngredients.qty,
-          currentStock: ingredients.currentStock,
-        })
-        .from(recipeIngredients)
-        .innerJoin(
-          ingredients,
-          eq(ingredients.id, recipeIngredients.ingredientId),
-        )
-        .where(eq(recipeIngredients.recipeId, r.id));
+      const leaves = await expandRecipeToAtomicLeaves(db, r.id, r.outletId);
+      if (leaves.size === 0) continue;
 
-      for (const l of lines) {
-        if (l.currentStock < l.qty) {
+      const leafIds = Array.from(leaves.keys());
+      const stockRows = await db
+        .select({ id: ingredients.id, currentStock: ingredients.currentStock })
+        .from(ingredients)
+        .where(inArray(ingredients.id, leafIds));
+      const stockById = new Map(
+        stockRows.map((s) => [s.id, s.currentStock] as const),
+      );
+
+      for (const [leafId, requiredQty] of leaves) {
+        const have = stockById.get(leafId) ?? 0;
+        if (have < requiredQty) {
           anyInfeasible = true;
           break;
         }
@@ -314,7 +432,6 @@ export async function reevaluateSoldOutForIngredients(
     }
 
     if (anyInfeasible) {
-      // Only flip if currently false to avoid spurious updates.
       await db
         .update(menuItems)
         .set({ isSoldOut: true, updatedAt: new Date() })

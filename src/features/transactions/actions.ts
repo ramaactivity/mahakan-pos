@@ -257,6 +257,7 @@ export async function createTransaction(
       // ---- Phase 2 inventory flow: COGS + auto-deduct ----
       const flow = await computeStockFlowForOrder(
         tx,
+        session.user.outletId,
         v.items.map((it, idx) => ({
           transactionItemId: itemsInserted[idx].id,
           menuItemId: it.menuItemId,
