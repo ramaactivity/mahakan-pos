@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { IngredientsList } from "./inventory/IngredientsList";
+import { MovementsList } from "./inventory/MovementsList";
 import { cn } from "@/lib/utils";
 
 type InventoryTab = "ingredients" | "movements" | "recipes";
 
 const TABS: Array<{ key: InventoryTab; label: string; soon?: boolean }> = [
   { key: "ingredients", label: "Bahan" },
-  { key: "movements", label: "Pergerakan", soon: true },
+  { key: "movements", label: "Pergerakan" },
   { key: "recipes", label: "Resep", soon: true },
 ];
 
@@ -59,9 +60,11 @@ export function InventorySection() {
       <div>
         {tab === "ingredients" ? (
           <IngredientsList />
+        ) : tab === "movements" ? (
+          <MovementsList />
         ) : (
           <p className="py-8 text-center text-sm text-neutral-500">
-            Tab ini akan tersedia di sub-chunk berikutnya (M22.4b/c).
+            Tab Resep akan tersedia di sub-chunk berikutnya (M22.4c).
           </p>
         )}
       </div>
