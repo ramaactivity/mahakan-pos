@@ -557,14 +557,38 @@ export async function runImport(
             isNull(menuItems.deletedAt),
           ),
         );
+      // M23.6 fix: detect duplicate menu_item names across categories.
+      // Without this, the map silently overwrites and recipes land on the
+      // wrong menu_item (Mahakan: "Ayam Sambal Matah" exists di Ricebowl +
+      // Bakmie). Track ambiguous names so we can ERROR on lookup instead.
       const menuIdByLower = new Map<string, string>();
-      for (const m of menuRows) menuIdByLower.set(m.name.trim().toLowerCase(), m.id);
+      const ambiguousNames = new Set<string>();
+      for (const m of menuRows) {
+        const key = m.name.trim().toLowerCase();
+        if (menuIdByLower.has(key)) {
+          ambiguousNames.add(key);
+        } else {
+          menuIdByLower.set(key, m.id);
+        }
+      }
 
       // Resolve recipe_id per (menu, variant).
       const menuRecipeIdByKey = new Map<string, string>(); // key → recipe_id
       const menuRecipeErrors = new Set<string>(); // keys with error (to skip lines later)
       for (const { row, data } of input.menuRecipes) {
-        const menuId = menuIdByLower.get(data.menuName.trim().toLowerCase());
+        const lowered = data.menuName.trim().toLowerCase();
+        if (ambiguousNames.has(lowered)) {
+          report.menuRecipes.push({
+            row,
+            action: "ERROR",
+            name: data.menuName,
+            detail: `menu_name "${data.menuName}" ada di lebih dari 1 kategori — rename salah satu via Admin UI dulu`,
+          });
+          menuRecipeErrors.add(menuRecipeKey(data.menuName, data.variant));
+          report.counts.menuRecipes.error++;
+          continue;
+        }
+        const menuId = menuIdByLower.get(lowered);
         if (!menuId) {
           report.menuRecipes.push({
             row,

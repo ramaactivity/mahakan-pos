@@ -327,7 +327,23 @@ export async function cascadeCostUpdate(
   );
 
   const dependentPrepIds = await findDependentPreps(tx, outletId, changedIngredientId);
-  if (dependentPrepIds.length === 0) {
+
+  // M23.6 fix: when changedId is itself a preparation (e.g., new prep added
+  // via importer), include it in the recompute set. `findDependentPreps`
+  // returns preps that USE changedId — not the prep itself. Without this,
+  // a newly-imported prep with fresh recipe lines never has its cost
+  // computed, leading to cost_per_unit=0.
+  const [changedRow] = await tx
+    .select({ isPreparation: ingredients.isPreparation })
+    .from(ingredients)
+    .where(eq(ingredients.id, changedIngredientId))
+    .limit(1);
+
+  const prepsToRecompute = changedRow?.isPreparation
+    ? [changedIngredientId, ...dependentPrepIds.filter((id) => id !== changedIngredientId)]
+    : dependentPrepIds;
+
+  if (prepsToRecompute.length === 0) {
     return { recomputedPrepIds: [] };
   }
 
@@ -347,7 +363,7 @@ export async function cascadeCostUpdate(
     );
   for (const r of beforeRows) before.set(r.id, r.costPerUnit);
 
-  for (const prepId of dependentPrepIds) {
+  for (const prepId of prepsToRecompute) {
     await computePrepCost(tx, outletId, prepId, userId, inProgress, computed);
   }
 
