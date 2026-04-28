@@ -26,9 +26,9 @@ import {
 import { RecipeEditorModal } from "./RecipeEditorModal";
 
 interface RecipeStatus {
-  hot?: { id: string };
-  iced?: { id: string };
-  fixed?: { id: string };
+  hot?: { id: string; wasteFactorPct: number };
+  iced?: { id: string; wasteFactorPct: number };
+  fixed?: { id: string; wasteFactorPct: number };
 }
 
 export function RecipesList() {
@@ -72,9 +72,10 @@ export function RecipesList() {
       // Preparations tab — skip them in the menu Resep view.
       if (r.menuItemId === null) continue;
       const existing = m.get(r.menuItemId) ?? {};
-      if (r.variant === "hot") existing.hot = { id: r.id };
-      else if (r.variant === "iced") existing.iced = { id: r.id };
-      else existing.fixed = { id: r.id };
+      const slot = { id: r.id, wasteFactorPct: r.wasteFactorPct };
+      if (r.variant === "hot") existing.hot = slot;
+      else if (r.variant === "iced") existing.iced = slot;
+      else existing.fixed = slot;
       m.set(r.menuItemId, existing);
     }
     return m;
@@ -277,7 +278,8 @@ function RecipeRow({ item, status, onEdit }: RecipeRowProps) {
                 {item.priceHot !== null ? (
                   status?.hot ? (
                     <Badge variant="success">
-                      <CheckCircle2 className="size-3" aria-hidden /> Hot
+                      <CheckCircle2 className="size-3" aria-hidden /> Hot · Q
+                      {status.hot.wasteFactorPct}%
                     </Badge>
                   ) : (
                     <Badge variant="warning">
@@ -288,7 +290,8 @@ function RecipeRow({ item, status, onEdit }: RecipeRowProps) {
                 {item.priceIced !== null ? (
                   status?.iced ? (
                     <Badge variant="success">
-                      <CheckCircle2 className="size-3" aria-hidden /> Iced
+                      <CheckCircle2 className="size-3" aria-hidden /> Iced · Q
+                      {status.iced.wasteFactorPct}%
                     </Badge>
                   ) : (
                     <Badge variant="warning">
@@ -299,7 +302,8 @@ function RecipeRow({ item, status, onEdit }: RecipeRowProps) {
               </>
             ) : status?.fixed ? (
               <Badge variant="success">
-                <CheckCircle2 className="size-3" aria-hidden /> Resep ada
+                <CheckCircle2 className="size-3" aria-hidden /> Resep ada · Q
+                {status.fixed.wasteFactorPct}%
               </Badge>
             ) : (
               <Badge variant="warning">

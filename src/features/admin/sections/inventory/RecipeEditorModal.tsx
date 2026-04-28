@@ -7,7 +7,8 @@ import {
   createRecipe,
   deleteRecipe,
   isOk,
-  listIngredients,
+  listAtomicIngredients,
+  listPreparations,
   listRecipesForMenuItem,
   updateRecipe,
   type Ingredient,
@@ -29,6 +30,7 @@ interface RecipeFormState {
   variant: Variant;
   recipeId: string | null;
   notes: string;
+  wasteFactorPct: string;
   lines: IngredientLineDraft[];
 }
 
@@ -48,6 +50,7 @@ function emptyDraft(variant: Variant): RecipeFormState {
     variant,
     recipeId: null,
     notes: "",
+    wasteFactorPct: "30",
     lines: [{ key: makeKey(), ingredientId: null, qty: "" }],
   };
 }
@@ -57,6 +60,7 @@ function fromExisting(r: RecipeWithIngredients): RecipeFormState {
     variant: r.variant,
     recipeId: r.id,
     notes: r.notes ?? "",
+    wasteFactorPct: String(r.wasteFactorPct),
     lines: r.ingredients.map((ri) => ({
       key: makeKey(),
       ingredientId: ri.ingredientId,
@@ -71,7 +75,8 @@ export function RecipeEditorModal({
   onClose,
   onSaved,
 }: RecipeEditorModalProps) {
-  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  const [atomics, setAtomics] = useState<Ingredient[]>([]);
+  const [preps, setPreps] = useState<Ingredient[]>([]);
   const [forms, setForms] = useState<RecipeFormState[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -95,12 +100,14 @@ export function RecipeEditorModal({
     async function load() {
       setLoading(true);
       setError(null);
-      const [ingRes, recipesRes] = await Promise.all([
-        listIngredients({ activeOnly: true }),
+      const [atomicRes, prepRes, recipesRes] = await Promise.all([
+        listAtomicIngredients({ activeOnly: true }),
+        listPreparations({ activeOnly: true }),
         listRecipesForMenuItem(menuItem!.id),
       ]);
       if (cancelled) return;
-      if (isOk(ingRes)) setIngredients(ingRes.data.items);
+      if (isOk(atomicRes)) setAtomics(atomicRes.data.items);
+      if (isOk(prepRes)) setPreps(prepRes.data.items);
       const existing = isOk(recipesRes) ? recipesRes.data : [];
       const next: RecipeFormState[] = variantsForMenu.map((v) => {
         const match = existing.find((r) => r.variant === v);
@@ -117,7 +124,9 @@ export function RecipeEditorModal({
 
   if (!menuItem) return null;
 
-  const ingredientById = new Map(ingredients.map((i) => [i.id, i]));
+  const ingredientById = new Map(
+    [...atomics, ...preps].map((i) => [i.id, i]),
+  );
 
   function updateForm(idx: number, fn: (f: RecipeFormState) => RecipeFormState) {
     setForms((prev) => prev.map((f, i) => (i === idx ? fn(f) : f)));
@@ -178,10 +187,17 @@ export function RecipeEditorModal({
       }
     }
 
+    const wasteVal = parseInt(form.wasteFactorPct, 10);
+    if (!Number.isFinite(wasteVal) || wasteVal < 0 || wasteVal > 200) {
+      setError("Q Factor harus 0-200");
+      return;
+    }
+
     setSaving(true);
     const payload = {
       variant: form.variant,
       notes: form.notes.trim() || null,
+      wasteFactorPct: wasteVal,
       ingredients: filledLines.map((l) => ({
         ingredientId: l.ingredientId!,
         qty: parseInt(l.qty, 10),
@@ -231,7 +247,7 @@ export function RecipeEditorModal({
     return "Resep";
   }
 
-  function computeFormCogs(form: RecipeFormState): number {
+  function computeFormCogsBase(form: RecipeFormState): number {
     let total = 0;
     for (const l of form.lines) {
       if (!l.ingredientId) continue;
@@ -242,6 +258,17 @@ export function RecipeEditorModal({
       total += ing.costPerUnit * q;
     }
     return total;
+  }
+
+  function computeFormCogs(form: RecipeFormState): {
+    base: number;
+    waste: number;
+    total: number;
+  } {
+    const base = computeFormCogsBase(form);
+    const w = parseInt(form.wasteFactorPct, 10);
+    const waste = Number.isFinite(w) && w > 0 ? Math.round(base * (w / 100)) : 0;
+    return { base, waste, total: base + waste };
   }
 
   return (
@@ -265,15 +292,16 @@ export function RecipeEditorModal({
         <div className="space-y-3" role="status" aria-label="Memuat resep">
           <Skeleton className="h-32 w-full" />
         </div>
-      ) : ingredients.length === 0 ? (
+      ) : atomics.length + preps.length === 0 ? (
         <p className="rounded-md bg-warning-100/40 p-3 text-sm text-warning-500">
-          Belum ada bahan terdaftar. Tambahkan bahan dulu di tab Bahan sebelum
-          mengatur resep.
+          Belum ada bahan atau preparation terdaftar. Tambahkan dulu di tab
+          Bahan / Preparations sebelum mengatur resep.
         </p>
       ) : (
         <div className="space-y-5">
           {forms.map((form, idx) => {
-            const cogs = computeFormCogs(form);
+            const cogsParts = computeFormCogs(form);
+            const cogs = cogsParts.total;
             const sellingPrice =
               form.variant === "hot"
                 ? menuItem.priceHot ?? 0
@@ -283,6 +311,15 @@ export function RecipeEditorModal({
             const margin = sellingPrice - cogs;
             const marginPct =
               sellingPrice > 0 ? Math.round((margin / sellingPrice) * 100) : 0;
+            const grabgosoPrice =
+              sellingPrice > 0 ? Math.round(sellingPrice * 1.3) : 0;
+            // Banded color: green ≥50%, amber 30-49, red <30
+            const marginColor =
+              marginPct >= 50
+                ? "text-success-500"
+                : marginPct >= 30
+                  ? "text-warning-500"
+                  : "text-danger-500";
 
             return (
               <div
@@ -338,11 +375,24 @@ export function RecipeEditorModal({
                             className="h-9 w-full rounded-md border border-neutral-300 bg-white px-2 text-sm"
                           >
                             <option value="">— pilih bahan —</option>
-                            {ingredients.map((i) => (
-                              <option key={i.id} value={i.id}>
-                                {i.name} ({i.unit})
-                              </option>
-                            ))}
+                            {atomics.length > 0 ? (
+                              <optgroup label="Bahan Baku (atomic)">
+                                {atomics.map((i) => (
+                                  <option key={i.id} value={i.id}>
+                                    {i.name} ({i.unit})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ) : null}
+                            {preps.length > 0 ? (
+                              <optgroup label="Preparations">
+                                {preps.map((i) => (
+                                  <option key={i.id} value={i.id}>
+                                    {i.name} ({i.unit})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ) : null}
                           </select>
                         </div>
                         <div className="w-24">
@@ -378,43 +428,101 @@ export function RecipeEditorModal({
                   </Button>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-medium text-neutral-700">
-                    Catatan (opsional)
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={form.notes}
-                    onChange={(e) =>
-                      updateForm(idx, (f) => ({ ...f, notes: e.target.value }))
-                    }
-                    placeholder="mis. urutan blending, suhu air"
-                    className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm"
-                  />
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700">
+                      Q Factor (%)
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={form.wasteFactorPct}
+                      onChange={(e) =>
+                        updateForm(idx, (f) => ({
+                          ...f,
+                          wasteFactorPct: e.target.value,
+                        }))
+                      }
+                      placeholder="30"
+                      className="mt-1 h-9 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm"
+                    />
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Buffer waste/spillage. Default 30% untuk menu.
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-medium text-neutral-700">
+                      Catatan (opsional)
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={form.notes}
+                      onChange={(e) =>
+                        updateForm(idx, (f) => ({ ...f, notes: e.target.value }))
+                      }
+                      placeholder="mis. urutan blending, suhu air"
+                      className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm"
+                    />
+                  </div>
                 </div>
 
-                {sellingPrice > 0 && cogs > 0 ? (
-                  <div className="grid grid-cols-3 gap-2 rounded-md bg-mahakan-green-100/40 p-2 text-xs">
-                    <div>
-                      <p className="text-neutral-600">COGS</p>
-                      <p className="font-mono font-semibold text-neutral-900">
-                        {formatRupiah(cogs)}
-                      </p>
+                {cogsParts.base > 0 ? (
+                  <div className="space-y-2 rounded-md bg-mahakan-green-100/40 p-3 text-xs">
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                      <div>
+                        <p className="text-neutral-600">TOTAL bahan</p>
+                        <p className="font-mono font-semibold text-neutral-900">
+                          {formatRupiah(cogsParts.base)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-neutral-600">
+                          Q Factor {form.wasteFactorPct || "0"}%
+                        </p>
+                        <p className="font-mono font-semibold text-neutral-900">
+                          {formatRupiah(cogsParts.waste)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-neutral-600">TOTAL COGS</p>
+                        <p className="font-mono font-semibold text-neutral-900">
+                          {formatRupiah(cogs)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-neutral-600">Harga jual</p>
+                        <p className="font-mono font-semibold text-neutral-900">
+                          {sellingPrice > 0 ? formatRupiah(sellingPrice) : "—"}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-neutral-600">Harga jual</p>
-                      <p className="font-mono font-semibold text-neutral-900">
-                        {formatRupiah(sellingPrice)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-neutral-600">Margin</p>
-                      <p
-                        className={`font-mono font-semibold ${margin >= 0 ? "text-success-500" : "text-danger-500"}`}
-                      >
-                        {formatRupiah(margin)} ({marginPct}%)
-                      </p>
-                    </div>
+                    {sellingPrice > 0 ? (
+                      <div className="grid grid-cols-2 gap-2 border-t border-neutral-200/60 pt-2 md:grid-cols-3">
+                        <div>
+                          <p className="text-neutral-600">Margin</p>
+                          <p className={`font-mono font-semibold ${marginColor}`}>
+                            {formatRupiah(margin)} ({marginPct}%)
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-neutral-600">
+                            Cost%
+                          </p>
+                          <p className="font-mono font-semibold text-neutral-900">
+                            {Math.round((cogs / sellingPrice) * 100)}%
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-neutral-600">
+                            GRABGOSO 30%
+                            <span className="ml-1 text-neutral-400">(estimate)</span>
+                          </p>
+                          <p className="font-mono font-semibold text-neutral-700">
+                            {formatRupiah(grabgosoPrice)}
+                          </p>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 
