@@ -333,14 +333,23 @@ export async function createTransaction(
     }
 
     if (validation.recomputedDiscountAmount > 0) {
+      // Compliment is implemented as a 100% discount with reason prefixed
+      // "Compliment: ". Audit event differentiated so reports + compliance
+      // can filter complimented transactions distinctly from regular promo
+      // discounts.
+      const isCompliment = (v.discountReason ?? "").startsWith("Compliment:");
       await logAudit({
-        eventType: "transaction.discount.applied",
+        eventType: isCompliment
+          ? "transaction.compliment.applied"
+          : "transaction.discount.applied",
         userId: session.user.id,
         approverId: discountApproverId,
         entityType: "transaction",
         entityId: result.trx.id,
         payload: {
-          summary: `Diskon ${v.discountType === "percent" ? `${v.discountValue}%` : `Rp${validation.recomputedDiscountAmount.toLocaleString("id-ID")}`} pada ${result.trx.transactionNumber} (${v.discountReason ?? "tanpa alasan"})`,
+          summary: isCompliment
+            ? `Compliment Rp${validation.recomputedDiscountAmount.toLocaleString("id-ID")} pada ${result.trx.transactionNumber} (${(v.discountReason ?? "").replace(/^Compliment:\s*/, "")})`
+            : `Diskon ${v.discountType === "percent" ? `${v.discountValue}%` : `Rp${validation.recomputedDiscountAmount.toLocaleString("id-ID")}`} pada ${result.trx.transactionNumber} (${v.discountReason ?? "tanpa alasan"})`,
           context: {
             transactionNumber: result.trx.transactionNumber,
             discountType: v.discountType,
@@ -349,6 +358,7 @@ export async function createTransaction(
             reason: v.discountReason,
             subtotalBefore: validation.recomputedSubtotal,
             totalAfter: validation.recomputedTotal,
+            isCompliment,
           },
         },
         metadata: {

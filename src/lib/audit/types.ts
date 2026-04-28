@@ -11,6 +11,7 @@ export const AUDIT_EVENT_TYPES = [
   "transaction.void",
   "transaction.refund",
   "transaction.discount.applied",
+  "transaction.compliment.applied",
   // Menu
   "menu.item.create",
   "menu.item.update",

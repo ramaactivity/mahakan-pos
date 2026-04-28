@@ -6,6 +6,7 @@ import {
   Banknote,
   CheckCircle2,
   CreditCard,
+  Gift,
   Percent,
   Plus,
   QrCode,
@@ -28,6 +29,7 @@ import { ApproverOverrideModal } from "@/features/pos/components/ApproverOverrid
 import { CartLineItem } from "@/features/pos/components/CartLineItem";
 import { CategoryTabs } from "@/features/pos/components/CategoryTabs";
 import { CloseShiftModal } from "@/features/pos/components/CloseShiftModal";
+import { ComplimentModal } from "@/features/pos/components/ComplimentModal";
 import { DiscountModal } from "@/features/pos/components/DiscountModal";
 import { HistoryDetailModal } from "@/features/pos/components/HistoryDetailModal";
 import { HistoryPanel } from "@/features/pos/components/HistoryPanel";
@@ -167,6 +169,7 @@ export function PosShell() {
   >({});
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [discountModalOpen, setDiscountModalOpen] = useState(false);
+  const [complimentModalOpen, setComplimentModalOpen] = useState(false);
   const [approverOpen, setApproverOpen] = useState(false);
   const [pendingDiscount, setPendingDiscount] = useState<{
     discount: Discount;
@@ -377,8 +380,23 @@ export function PosShell() {
     setApproverOpen(true);
   }
 
+  function handleComplimentSubmit(reason: string) {
+    if (!activeDraftId || !session) return;
+    // Compliment = 100% gratis seluruh transaksi. Stored as fixed-discount
+    // with full subtotal. ALWAYS requires PIN approver regardless of role
+    // (Owner self-approves with own PIN). Reason already prefixed
+    // "Compliment: " by ComplimentModal so the audit logger can branch.
+    setComplimentModalOpen(false);
+    setPendingDiscount({
+      discount: { type: "fixed", value: subtotal },
+      reason,
+    });
+    setApproverOpen(true);
+  }
+
   function handleApproverVerified(result: { approverId: string; token: string }) {
     if (!pendingDiscount || !activeDraftId) return;
+    const isCompliment = pendingDiscount.reason.startsWith("Compliment:");
     setDiscount(
       activeDraftId,
       pendingDiscount.discount,
@@ -386,7 +404,11 @@ export function PosShell() {
       result.approverId,
       result.token,
     );
-    toast.success("Diskon ditambahkan (PIN-approved)");
+    toast.success(
+      isCompliment
+        ? "Compliment ditambahkan (PIN-approved)"
+        : "Diskon ditambahkan (PIN-approved)",
+    );
     setPendingDiscount(null);
     setApproverOpen(false);
   }
@@ -606,6 +628,7 @@ export function PosShell() {
             onRemoveItem={(id) => removeItem(activeDraft.id, id)}
             onEditNote={(id) => setNoteEditingId(id)}
             onOpenDiscount={() => setDiscountModalOpen(true)}
+            onOpenCompliment={() => setComplimentModalOpen(true)}
             onProceedToPayment={handleProceedToPayment}
             onCancel={handleCancelOrder}
             onSwitchDraft={() => setRightPanel({ kind: "idle" })}
@@ -691,6 +714,12 @@ export function PosShell() {
         onClose={() => setDiscountModalOpen(false)}
         onApply={handleDiscountSubmit}
         onClear={handleClearDiscount}
+      />
+      <ComplimentModal
+        open={complimentModalOpen}
+        subtotal={subtotal}
+        onClose={() => setComplimentModalOpen(false)}
+        onSubmit={handleComplimentSubmit}
       />
       <ApproverOverrideModal
         open={approverOpen}
@@ -922,7 +951,11 @@ function IdlePanel({
   );
 }
 
-interface CartPanelProps {
+interface CartPanelPropsExtra {
+  onOpenCompliment: () => void;
+}
+
+interface CartPanelProps extends CartPanelPropsExtra {
   draft: NonNullable<
     ReturnType<typeof useCartStore.getState>["drafts"][string]
   >;
@@ -933,12 +966,17 @@ interface CartPanelProps {
   onRemoveItem: (cartItemId: string) => void;
   onEditNote: (cartItemId: string) => void;
   onOpenDiscount: () => void;
+  // onOpenCompliment defined in CartPanelPropsExtra
   onProceedToPayment: () => void;
   onCancel: () => void;
   onSwitchDraft: () => void;
 }
 
-function CartPanel({
+function CartPanel(props: CartPanelProps) {
+  return <CartPanelImpl {...props} />;
+}
+
+function CartPanelImpl({
   draft,
   subtotal,
   discountAmount,
@@ -947,6 +985,7 @@ function CartPanel({
   onRemoveItem,
   onEditNote,
   onOpenDiscount,
+  onOpenCompliment,
   onProceedToPayment,
   onCancel,
   onSwitchDraft,
@@ -1029,24 +1068,31 @@ function CartPanel({
         <div className="border-t border-neutral-200 pt-2">
           <Row label="TOTAL" value={formatRupiah(total)} bold />
         </div>
-        <div className="flex gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <Button
             variant="outline"
             onClick={onOpenDiscount}
             disabled={draft.items.length === 0}
-            fullWidth
           >
             <Percent className="size-4" aria-hidden /> Diskon
           </Button>
           <Button
-            size="lg"
-            onClick={onProceedToPayment}
+            variant="outline"
+            onClick={onOpenCompliment}
             disabled={draft.items.length === 0}
-            fullWidth
+            className="!border-warning-500/40 !text-warning-500 hover:!bg-warning-100/50"
           >
-            Bayar
+            <Gift className="size-4" aria-hidden /> Compliment
           </Button>
         </div>
+        <Button
+          size="lg"
+          onClick={onProceedToPayment}
+          disabled={draft.items.length === 0}
+          fullWidth
+        >
+          Bayar
+        </Button>
       </footer>
     </>
   );
