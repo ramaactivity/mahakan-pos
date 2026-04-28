@@ -22,9 +22,13 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
 
   useEffect(() => {
     if (!open) return;
-    // Reset on open
+    // S4: auto-suggest pager = max(active drafts pager) + 1, capped at 99,
+    // fallback 1 when no drafts.
+    const active = useCartStore.getState().drafts;
+    const used = Object.values(active).map((d) => d.pagerNumber);
+    const next = used.length === 0 ? 1 : Math.min(99, Math.max(...used) + 1);
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPager("");
+    setPager(String(next));
     setOrderType("takeaway");
     setError(null);
   }, [open]);

@@ -41,14 +41,16 @@ import { OpenShiftModal } from "@/features/pos/components/OpenShiftModal";
 import { PosLeftNav, type PosTab } from "@/features/pos/components/PosLeftNav";
 import { PosSettingsPanel } from "@/features/pos/components/PosSettingsPanel";
 import { ShiftPanel } from "@/features/pos/components/ShiftPanel";
-import { useCartStore } from "@/features/pos/cartStore";
+import { buildLineItem, useCartStore } from "@/features/pos/cartStore";
 import { useSession } from "@/features/auth/SessionProvider";
 import { isOk } from "@/features/menu";
 import {
   listCategories as listCategoriesAction,
   listMenuItems as listMenuItemsAction,
+  listModifiers as listModifiersAction,
   type Category,
   type MenuItem,
+  type Modifier,
 } from "@/features/menu";
 import {
   createTransaction,
@@ -130,6 +132,13 @@ export function PosShell() {
   const [newOrderOpen, setNewOrderOpen] = useState(false);
   const [variantItem, setVariantItem] = useState<MenuItem | null>(null);
   const [openPriceItem, setOpenPriceItem] = useState<MenuItem | null>(null);
+  // S1: cache item tapped from idle so we can dispatch it after draft created.
+  const [pendingTapItem, setPendingTapItem] = useState<MenuItem | null>(null);
+  // S2: pre-fetched modifiers grouped by category, to short-circuit modal
+  // for fixed-price items that have no applicable modifiers.
+  const [modifiersByCategory, setModifiersByCategory] = useState<
+    Record<string, Modifier[]>
+  >({});
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [discountModalOpen, setDiscountModalOpen] = useState(false);
   const [approverOpen, setApproverOpen] = useState(false);
@@ -168,13 +177,32 @@ export function PosShell() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const [menuRes, catRes] = await Promise.all([
+      const [menuRes, catRes, modRes] = await Promise.all([
         listMenuItemsAction({ activeOnly: true }),
         listCategoriesAction(),
+        listModifiersAction(),
       ]);
       if (cancelled) return;
       if (isOk(menuRes)) setMenuItems(menuRes.data.items);
       if (isOk(catRes)) setCategories(catRes.data.items);
+      if (isOk(modRes)) {
+        // Build categoryId → applicable modifiers map.
+        // appliesToCategories=null/empty = global (applies to ALL); otherwise
+        // only included categoryIds. Mahakan currently has no global mods.
+        const map: Record<string, Modifier[]> = {};
+        const all = modRes.data.items;
+        if (isOk(catRes)) {
+          for (const c of catRes.data.items) {
+            map[c.id] = all.filter(
+              (m) =>
+                !m.appliesToCategories ||
+                m.appliesToCategories.length === 0 ||
+                m.appliesToCategories.includes(c.id),
+            );
+          }
+        }
+        setModifiersByCategory(map);
+      }
       setMenuLoading(false);
     }
     void load();
@@ -229,6 +257,37 @@ export function PosShell() {
     setTab("cashier");
   }
 
+  /** Dispatch an item tap into the right modal (or direct add via S2). */
+  function dispatchItem(draftId: string, item: MenuItem) {
+    if (item.priceType === "open") {
+      setOpenPriceItem(item);
+      return;
+    }
+    // S2: skip modifier modal for fixed-price items that have no applicable
+    // modifiers (Bites/Sweets/Ricebowl/IceCream). Direct add — single tap.
+    const mods = modifiersByCategory[item.categoryId] ?? [];
+    if (item.priceType === "fixed" && mods.length === 0) {
+      const categoryName = categoryNameById[item.categoryId] ?? "";
+      addItem(
+        draftId,
+        buildLineItem({
+          menuItemId: item.id,
+          name: item.name,
+          categoryName,
+          variant: null,
+          unitPrice: item.priceFixed ?? 0,
+          quantity: 1,
+          modifiers: [],
+          note: null,
+          openPriceNote: null,
+        }),
+      );
+      toast.success(`${item.name} ditambahkan`);
+      return;
+    }
+    setVariantItem(item);
+  }
+
   function handleItemTap(item: MenuItem) {
     if (item.isSoldOut) return;
     if (!shift) {
@@ -237,26 +296,30 @@ export function PosShell() {
       return;
     }
     if (rightPanel.kind === "idle") {
-      // Auto-open new order modal so user can add items immediately
+      // S1: cache the tapped item; handleNewOrderCreated will dispatch it
+      // after draft is ready. Saves the user from re-tapping.
+      setPendingTapItem(item);
       setNewOrderOpen(true);
-      // Cache the tapped item to add after draft created? For prototype: just prompt.
       return;
     }
     if (rightPanel.kind !== "cart") {
       toast.info("Selesaikan pembayaran dulu sebelum tambah item baru");
       return;
     }
-    if (item.priceType === "open") {
-      setOpenPriceItem(item);
-      return;
-    }
-    setVariantItem(item);
+    dispatchItem(rightPanel.draftId, item);
   }
 
   function handleNewOrderCreated(draftId: string) {
     setNewOrderOpen(false);
     setRightPanel({ kind: "cart", draftId });
     setTab("cashier");
+    // S1: dispatch any cached tap so user lands in cart with item already
+    // queued (for fixed/open) or modifier modal already open (for variant).
+    if (pendingTapItem) {
+      const item = pendingTapItem;
+      setPendingTapItem(null);
+      dispatchItem(draftId, item);
+    }
   }
 
   function handleDiscountSubmit(discount: Discount, reason: string) {
@@ -515,7 +578,11 @@ export function PosShell() {
       {/* MODALS */}
       <NewOrderModal
         open={newOrderOpen}
-        onClose={() => setNewOrderOpen(false)}
+        onClose={() => {
+          setNewOrderOpen(false);
+          // S1: drop cached tap if user cancels — avoid stale dispatch next round.
+          setPendingTapItem(null);
+        }}
         onCreated={handleNewOrderCreated}
       />
       <ItemModifierModal

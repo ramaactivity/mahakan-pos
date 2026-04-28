@@ -27,6 +27,33 @@ function recalcSubtotal(item: CartLineItem): CartLineItem {
   return { ...item, subtotal };
 }
 
+/**
+ * Equality check for line-merge (S3): two cart line proposals are mergeable
+ * if menu, variant, unit price, modifier set, and notes are identical. Items
+ * with notes or openPriceNote are treated as DIFFERENT — those are
+ * deliberately custom and shouldn't auto-collapse.
+ */
+export function isMergeableLine(
+  a: Omit<CartLineItem, "cartItemId" | "subtotal">,
+  b: Omit<CartLineItem, "cartItemId" | "subtotal">,
+): boolean {
+  if (a.menuItemId !== b.menuItemId) return false;
+  if (a.variant !== b.variant) return false;
+  if (a.unitPrice !== b.unitPrice) return false;
+  if (a.note !== null || b.note !== null) return false;
+  if (a.openPriceNote !== null || b.openPriceNote !== null) return false;
+  if (a.modifiers.length !== b.modifiers.length) return false;
+  // Modifiers are order-stable per ItemModifierModal builder (seed-defined).
+  // Compare slug + selectedValue per index.
+  for (let i = 0; i < a.modifiers.length; i++) {
+    const ma = a.modifiers[i];
+    const mb = b.modifiers[i];
+    if (ma.modifierSlug !== mb.modifierSlug) return false;
+    if (ma.selectedValue !== mb.selectedValue) return false;
+  }
+  return true;
+}
+
 interface CartStore {
   drafts: Record<string, Draft>;
 
@@ -104,6 +131,23 @@ export const useCartStore = create<CartStore>((set, get) => ({
     set((state) => {
       const draft = state.drafts[draftId];
       if (!draft) return state;
+      // S3: merge into existing line if menu+variant+modifiers+price match
+      // (and neither side has a note/openPriceNote — those stay separate).
+      const mergeIdx = draft.items.findIndex((existing) =>
+        isMergeableLine(existing, item),
+      );
+      if (mergeIdx >= 0) {
+        const existing = draft.items[mergeIdx];
+        const merged = recalcSubtotal({
+          ...existing,
+          quantity: existing.quantity + item.quantity,
+        });
+        const next = [...draft.items];
+        next[mergeIdx] = merged;
+        return {
+          drafts: { ...state.drafts, [draftId]: { ...draft, items: next } },
+        };
+      }
       const newItem = recalcSubtotal({
         ...item,
         cartItemId: genCartItemId(),
