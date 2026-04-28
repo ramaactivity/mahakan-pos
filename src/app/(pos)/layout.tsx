@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { OfflineBanner } from "@/components/ui/OfflineBanner";
 import { RequireAuth } from "@/features/auth/RequireAuth";
 import { useSession } from "@/features/auth/SessionProvider";
+import { FullscreenToggle } from "@/features/pos/components/FullscreenToggle";
 
 export default function PosLayout({ children }: { children: ReactNode }) {
   return (
@@ -24,12 +25,15 @@ function PosOuterShell({ children }: { children: ReactNode }) {
         <span className="text-lg font-bold text-mahakan-green-900">
           Mahakan POS
         </span>
-        <span className="text-sm text-neutral-700">
-          {session.user.name}{" "}
-          <span className="text-neutral-500 capitalize">
-            ({session.user.role})
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-neutral-700">
+            {session.user.name}{" "}
+            <span className="text-neutral-500 capitalize">
+              ({session.user.role})
+            </span>
           </span>
-        </span>
+          <FullscreenToggle />
+        </div>
       </header>
       {children}
     </div>
