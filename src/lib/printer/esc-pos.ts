@@ -88,8 +88,8 @@ export function dualLine(
   cols = 32,
 ): Uint8Array {
   if (left.length + right.length + 1 > cols) {
-    const max = cols - right.length - 2;
-    left = max <= 0 ? left.slice(0, 1) : `${left.slice(0, max)}…`;
+    const max = cols - right.length - 3;
+    left = max <= 0 ? left.slice(0, 1) : `${left.slice(0, max)}..`;
   }
   const padding = " ".repeat(cols - left.length - right.length);
   return text(`${left}${padding}${right}\n`);

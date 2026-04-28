@@ -72,10 +72,10 @@ describe("esc-pos line layouts", () => {
     expect(t.length - 1).toBe(32);
   });
 
-  it("dualLine truncates left with ellipsis when too long", () => {
+  it("dualLine truncates left with ASCII ellipsis when too long", () => {
     const t = decode(dualLine("This is a very long item name", "Rp 99.999", 32));
     expect(t.endsWith("Rp 99.999\n")).toBe(true);
-    expect(t).toContain("…");
+    expect(t).toContain("..");
     expect(t.length - 1).toBe(32);
   });
 
@@ -163,7 +163,8 @@ describe("buildReceipt", () => {
     expect(t).toContain("Iced");
     expect(t).toContain("TOTAL");
     expect(t).toContain("Rp 32.000");
-    expect(t).toContain("Tunai");
+    expect(t).toContain("TUNAI");
+    expect(t).toContain("KEMBALI");
     expect(t).toContain("Rp 50.000");
     expect(t).toContain("Rp 18.000");
     expect(t).toContain("Terima kasih");
@@ -205,7 +206,7 @@ describe("buildReceipt", () => {
         }),
       ),
     );
-    expect(t).toContain("Kartu BCA");
+    expect(t).toContain("KARTU BCA");
   });
 
   it("includes discount line when applied", () => {

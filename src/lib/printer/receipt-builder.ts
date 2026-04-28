@@ -67,14 +67,19 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   const parts: Uint8Array[] = [];
   parts.push(init());
 
-  // Header — outlet name (large, centered, bold)
+  // Header — outlet name centered, bold, 2x tall (1x wide so 22+ char names
+  // don't auto-wrap mid-word at 32-col native width).
   parts.push(align("center"));
   parts.push(bold(true));
-  parts.push(size(2, 2));
+  parts.push(size(1, 2));
   parts.push(text(`${d.outletName}\n`));
   parts.push(sizeReset());
   parts.push(bold(false));
-  if (d.outletAddress) parts.push(centerLine(wrapAddress(d.outletAddress), COLS));
+  if (d.outletAddress) {
+    for (const line of wrapAddress(d.outletAddress)) {
+      parts.push(centerLine(line, COLS));
+    }
+  }
   if (d.outletPhone) parts.push(centerLine(d.outletPhone, COLS));
 
   parts.push(align("left"));
@@ -91,11 +96,11 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   }
 
   // Transaction meta
-  parts.push(text(`No  : ${d.transactionNumber}\n`));
-  parts.push(text(`Tgl : ${formatIndonesianDateTime(d.createdAt)}\n`));
+  parts.push(text(`No   : ${d.transactionNumber}\n`));
+  parts.push(text(`Tgl  : ${formatIndonesianDateTime(d.createdAt)}\n`));
   parts.push(
     text(
-      `Pager ${d.pagerNumber} · ${
+      `Pager ${d.pagerNumber} | ${
         d.orderType === "dine_in" ? "Dine-in" : "Takeaway"
       }\n`,
     ),
@@ -103,32 +108,32 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   parts.push(text(`Kasir: ${d.cashierName}\n`));
   parts.push(divider("-", COLS));
 
-  // Items
+  // Items — bold name on own line, mods/notes indented with "- ", price line
+  // dual-aligned (unit×qty left, subtotal right).
   for (const item of d.items) {
     const variantLabel = item.variant
       ? ` (${item.variant === "hot" ? "Hot" : "Iced"})`
       : "";
     const itemHeader = `${item.quantity}x ${item.name}${variantLabel}`;
+    parts.push(bold(true));
     parts.push(text(`${itemHeader}\n`));
+    parts.push(bold(false));
 
-    // Modifiers (sub-line, lighter visual)
     if (item.modifiers.length > 0) {
       const mods = item.modifiers
         .map((m) => m.selectedValue ?? m.modifierSlug)
-        .join(" · ");
-      parts.push(text(`  ${mods}\n`));
+        .join(", ");
+      parts.push(text(`  - ${mods}\n`));
     }
     if (item.openPriceNote) {
-      parts.push(text(`  ${item.openPriceNote}\n`));
+      parts.push(text(`  - ${item.openPriceNote}\n`));
     }
     if (item.note) {
-      parts.push(text(`  catatan: ${item.note}\n`));
+      parts.push(text(`  - catatan: ${item.note}\n`));
     }
 
-    // Price line: unit × qty (+ mod) = subtotal, right-aligned
     const unitWithMod = item.unitPrice + item.modifiersPriceDelta;
-    const detailLeft =
-      `  ${formatRupiah(unitWithMod)} x ${item.quantity}`;
+    const detailLeft = `  @${formatRupiah(unitWithMod)} x ${item.quantity}`;
     parts.push(dualLine(detailLeft, formatRupiah(item.subtotal), COLS));
   }
 
@@ -146,20 +151,22 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   parts.push(dualLine("TOTAL", formatRupiah(d.total), COLS));
   parts.push(bold(false));
 
-  // Payment
+  // Payment — bold so labels stand out at a glance, uppercase for visual weight.
   parts.push(divider("-", COLS));
+  parts.push(bold(true));
   if (d.paymentMethod === "cash") {
     parts.push(
-      dualLine("Tunai", formatRupiah(d.cashReceived ?? 0), COLS),
+      dualLine("TUNAI", formatRupiah(d.cashReceived ?? 0), COLS),
     );
     parts.push(
-      dualLine("Kembali", formatRupiah(d.cashChange ?? 0), COLS),
+      dualLine("KEMBALI", formatRupiah(d.cashChange ?? 0), COLS),
     );
   } else if (d.paymentMethod === "qris") {
-    parts.push(text("Bayar: QRIS\n"));
+    parts.push(text("BAYAR : QRIS\n"));
   } else {
-    parts.push(text("Bayar: Kartu BCA\n"));
+    parts.push(text("BAYAR : KARTU BCA\n"));
   }
+  parts.push(bold(false));
 
   // Footer
   if (d.footerText) {
@@ -169,20 +176,25 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
     parts.push(align("left"));
   }
 
-  parts.push(feed(3));
+  parts.push(feed(4));
   parts.push(cut(false));
 
   return concat(...parts);
 }
 
-function wrapAddress(addr: string): string {
-  // 58mm printer renders ~32 chars; address often longer. Keep first ~60 chars,
-  // splitting on commas if available so it doesn't truncate mid-word.
-  if (addr.length <= 60) return addr;
-  const parts = addr.split(",").map((p) => p.trim());
-  return parts.slice(0, Math.max(1, parts.length - 1)).join(", ");
+function wrapAddress(addr: string): string[] {
+  // 58mm printer renders ~32 chars per line. Split address onto ≤2 lines at
+  // the comma nearest the midpoint so neither line overflows mid-word.
+  if (addr.length <= 32) return [addr];
+  const half = Math.floor(addr.length / 2);
+  const splitAt = addr.indexOf(",", half - 5);
+  if (splitAt > 0 && splitAt < 32) {
+    return [addr.slice(0, splitAt).trim(), addr.slice(splitAt + 1).trim().slice(0, 32)];
+  }
+  // Fallback: hard split at 32 chars boundary.
+  return [addr.slice(0, 32).trim(), addr.slice(32, 64).trim()];
 }
 
 function truncate(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+  return s.length > max ? `${s.slice(0, max - 2)}..` : s;
 }

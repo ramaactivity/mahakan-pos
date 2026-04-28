@@ -81,7 +81,7 @@ export function buildPrepTicket(
   parts.push(size(1, 2));
   parts.push(
     text(
-      `Pager ${d.pagerNumber} · ${
+      `Pager ${d.pagerNumber} | ${
         d.orderType === "dine_in" ? "Dine-in" : "Takeaway"
       }\n`,
     ),
@@ -92,12 +92,12 @@ export function buildPrepTicket(
   parts.push(divider("=", COLS));
 
   // Meta — transaction number + time + cashier
-  parts.push(text(`No  : ${d.transactionNumber}\n`));
-  parts.push(text(`Tgl : ${formatIndonesianDateTime(d.createdAt)}\n`));
+  parts.push(text(`No   : ${d.transactionNumber}\n`));
+  parts.push(text(`Tgl  : ${formatIndonesianDateTime(d.createdAt)}\n`));
   parts.push(text(`Kasir: ${d.cashierName}\n`));
   parts.push(divider("-", COLS));
 
-  // Items — emphasized item lines, quiet modifier/note lines
+  // Items — emphasized item lines, quiet "- "-prefixed sub-lines.
   for (const item of filtered) {
     const variantLabel = item.variant
       ? ` (${item.variant === "hot" ? "Hot" : "Iced"})`
@@ -109,14 +109,14 @@ export function buildPrepTicket(
     if (item.modifiers.length > 0) {
       const mods = item.modifiers
         .map((m) => m.selectedValue ?? m.modifierSlug)
-        .join(" · ");
-      parts.push(text(`  ${mods}\n`));
+        .join(", ");
+      parts.push(text(`  - ${mods}\n`));
     }
     if (item.openPriceNote) {
-      parts.push(text(`  ${item.openPriceNote}\n`));
+      parts.push(text(`  - ${item.openPriceNote}\n`));
     }
     if (item.note) {
-      parts.push(text(`  catatan: ${item.note}\n`));
+      parts.push(text(`  - catatan: ${item.note}\n`));
     }
   }
 
@@ -125,7 +125,7 @@ export function buildPrepTicket(
   parts.push(centerLine(`Total ${filtered.length} item`, COLS));
   parts.push(align("left"));
 
-  parts.push(feed(3));
+  parts.push(feed(4));
   parts.push(cut(false));
 
   return concat(...parts);
