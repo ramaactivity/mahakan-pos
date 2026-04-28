@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Card, CardContent, CardHeader, Input, Skeleton } from "@/components/ui";
+import { Download } from "lucide-react";
+import { Button, Card, CardContent, CardHeader, Input, Skeleton } from "@/components/ui";
 import {
   getMenuEngineeringMatrix,
   isOk,
@@ -11,6 +12,11 @@ import {
 } from "@/features/reports";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import {
+  buildRowsCsv,
+  buildSummaryCsv,
+  downloadCsv,
+} from "./menu-engineering-csv";
 
 const QUADRANT_META: Record<
   MenuQuadrant,
@@ -120,7 +126,7 @@ export function MenuEngineeringView() {
 
       <Card>
         <CardHeader>
-          <div className="grid gap-2 md:grid-cols-3">
+          <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
             <Input
               label="Dari"
               type="date"
@@ -133,6 +139,22 @@ export function MenuEngineeringView() {
               value={to}
               onChange={(e) => setTo(e.target.value)}
             />
+            <Button
+              type="button"
+              variant="secondary"
+              size="md"
+              disabled={loading || !data || data.rows.length === 0}
+              onClick={() => {
+                if (!data) return;
+                downloadCsv(`menu-matrix-summary-${from}-${to}.csv`, buildSummaryCsv(data));
+                downloadCsv(`menu-matrix-rows-${from}-${to}.csv`, buildRowsCsv(data));
+              }}
+              className="self-end"
+              aria-label="Export CSV"
+            >
+              <Download className="size-4" aria-hidden />
+              Export CSV
+            </Button>
           </div>
         </CardHeader>
         <CardContent>
