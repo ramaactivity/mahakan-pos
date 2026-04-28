@@ -402,3 +402,61 @@ Carry-forward: Owner Bakmie rename + engine fix (cascadeCostUpdate +
 # 🛑 END HANDOVER SESI 11
 
 **M23 cost engine VERIFIED LIVE in production with real Mahakan data. 140 atomic ingredients + 20 preparations + 71 recipes + 321 lines, COGS expansion math accurate (engine MORE accurate than Owner spreadsheet on Churros). Sesi 12 = pick next milestone.**
+
+---
+
+## ADDENDUM — M23.6 Menu Engineering Matrix landed (same session, commit `b0f5d84`)
+
+User selected Recommended option ("M23.6 Menu Engineering Matrix") setelah M23.5 close-out, dan implementasi langsung dilakukan dalam sesi yang sama.
+
+### What's added
+
+| Path | Purpose |
+|---|---|
+| `src/features/reports/menu-engineering-pure.ts` | Pure classifier: `linearMedian` + `classifyMenuMatrix` dengan Kasavana-Smith 2x2 logic (median split popularity × contribMargin Rp) |
+| `src/features/reports/types.ts` (extended) | `MenuQuadrant` + `MenuEngineeringRow` + `MenuEngineeringResult` types |
+| `src/features/reports/queries.ts` (extended) | `fetchMenuEngineeringMatrix` reuses `fetchItemPerformance` |
+| `src/features/reports/actions.ts` (extended) | `getMenuEngineeringMatrix` server action; gated by `report.items.view` + `report.cost_visibility` |
+| `src/features/reports/index.ts` (extended) | Export new types + action |
+| `src/features/admin/sections/reports/MenuEngineeringView.tsx` | 2x2 grid UI dengan summary header + per-quadrant card + drop-down unclassified |
+| `src/features/admin/sections/ReportsSection.tsx` (modified) | Add 5th tab "Matriks Menu" (owner-only); restructure `TABS` array dengan `ALL_TABS.filter` |
+| `tests/unit/menu-engineering.test.ts` | 15 unit tests covering median + classification edge cases |
+
+### Quadrant rules (final)
+- **Star**: qty ≥ medianQty AND contribMargin ≥ medianContribMargin → "Pertahankan & promosi"
+- **Plowhorse**: qty ≥ medianQty AND contribMargin < medianContribMargin → "Re-engineer cost atau naikkan harga"
+- **Puzzle**: qty < medianQty AND contribMargin ≥ medianContribMargin → "Tingkatkan exposure"
+- **Dog**: qty < medianQty AND contribMargin < medianContribMargin → "Pertimbangkan dihapus"
+- Ties go UP (≥ median = "high"). Min 4 classifiable items required (else all unclassified state).
+
+### Decisions D37-D39 (locked sesi 11 addendum)
+
+| ID | Decision |
+|---|---|
+| **D37** | Y-axis = Contribution margin Rp (revenue − cogs per period), bukan margin% per unit. Classic Kasavana-Smith. |
+| **D38** | Visualisasi = 2x2 grid cards (no chart lib), color-coded per quadrant, action labels Indonesian. |
+| **D39** | Owner-only tab (`report.cost_visibility` perm), karena margin reveals HPP. |
+
+### Verify (sesi 11 close)
+- typecheck ✓ lint ✓ vitest **291/291** (276 baseline + 15 baru) ✓ build 11 routes ✓
+- HTTP/2 200 untuk prod (deploy belum di-push, masih HEAD `88b5f67` di prod)
+
+### Next session pickup
+
+User push + deploy `release/phase-1` HEAD `b0f5d84` ke Vercel Production:
+```bash
+git push origin release/phase-1
+npx --yes vercel --prod --yes
+```
+Verify deploy: `curl -sI https://mahakan-pos.vercel.app/` HTTP/2 200, login owner → /admin → Laporan → tab "Matriks Menu" → render 2x2 grid dengan data dari M23.5 import.
+
+Sisa carry-forward (sesi 11 closeout §6) tetap berlaku:
+1. Bakmie "Ayam Sambal Matah" rename via Admin UI (HIGH)
+2. First stock-take untuk 140 ingredient (MEDIUM)
+3. Engine fix: `cascadeCostUpdate` self-include (MEDIUM, workaround in place)
+4. Engine fix: `menuIdByLower` duplicate name handling (MEDIUM)
+
+Recommended next milestone: ada 3 candidate sekarang:
+- **A. Engine bug fixes** (M23 follow-up) — patch 2 bugs di import-engine.ts + add coverage. ~1 hari. Reduce risk untuk re-import berikutnya.
+- **B. Tier 1.3 Loyalty + Customer DB** — defer 1-2 minggu untuk live txn data validation, tapi lo bisa start scoping sekarang.
+- **C. Polish M23.6** — CSV export, scatter chart, percentile threshold toggle, time-comparison vs prior period. Each ~0.5-1 hari.
