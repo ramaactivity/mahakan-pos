@@ -4,7 +4,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type ModalSize = "sm" | "md" | "lg" | "xl";
+export type ModalSize = "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "full";
 
 interface ModalProps {
   open: boolean;
@@ -16,10 +16,12 @@ interface ModalProps {
   disableBackdropClose?: boolean;
   /** If true, pressing ESC does NOT close. */
   disableEscClose?: boolean;
-  /** Optional footer area (usually action buttons). */
+  /** Optional footer area (usually action buttons). Sticky at bottom. */
   footer?: ReactNode;
   children?: ReactNode;
   className?: string;
+  /** Body padding override — default px-6 py-5; set "none" to control spacing manually. */
+  bodyPadding?: "default" | "compact" | "none";
 }
 
 const sizeStyles: Record<ModalSize, string> = {
@@ -27,7 +29,16 @@ const sizeStyles: Record<ModalSize, string> = {
   md: "max-w-md",
   lg: "max-w-lg",
   xl: "max-w-2xl",
+  "2xl": "max-w-3xl",
+  "3xl": "max-w-4xl",
+  full: "max-w-[min(95vw,80rem)]",
 };
+
+const bodyPaddingStyles = {
+  default: "px-6 py-5",
+  compact: "px-4 py-3",
+  none: "",
+} as const;
 
 export function Modal({
   open,
@@ -40,6 +51,7 @@ export function Modal({
   footer,
   children,
   className,
+  bodyPadding = "default",
 }: ModalProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
@@ -81,7 +93,7 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby={title ? "modal-title" : undefined}
@@ -100,14 +112,14 @@ export function Modal({
       <div
         ref={contentRef}
         className={cn(
-          "relative w-full rounded-xl bg-white p-6 shadow-xl",
+          "relative flex max-h-[92vh] w-full flex-col overflow-hidden rounded-xl bg-white shadow-xl",
           sizeStyles[size],
           className,
         )}
       >
         {title ? (
-          <div className="mb-4 flex items-start justify-between gap-4">
-            <div className="space-y-1">
+          <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-neutral-200 bg-white px-6 py-4">
+            <div className="space-y-0.5">
               <h2
                 id="modal-title"
                 className="text-lg font-semibold text-neutral-900"
@@ -128,13 +140,15 @@ export function Modal({
             >
               <X className="size-5" />
             </button>
-          </div>
+          </header>
         ) : null}
-        <div className={title ? "" : "pt-2"}>{children}</div>
+        <div className={cn("flex-1 overflow-y-auto", bodyPaddingStyles[bodyPadding])}>
+          {children}
+        </div>
         {footer ? (
-          <div className="mt-6 flex items-center justify-end gap-2 border-t border-neutral-200 pt-4">
+          <footer className="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 border-t border-neutral-200 bg-white px-6 py-3">
             {footer}
-          </div>
+          </footer>
         ) : null}
       </div>
     </div>

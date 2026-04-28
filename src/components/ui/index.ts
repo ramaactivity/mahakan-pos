@@ -19,6 +19,17 @@ export { Input } from "./Input";
 export { Modal } from "./Modal";
 export type { ModalSize } from "./Modal";
 
+export { Select } from "./Select";
+export type { SelectOption, SelectGroup } from "./Select";
+
+export { Combobox } from "./Combobox";
+export type { ComboboxOption, ComboboxGroup } from "./Combobox";
+
+export { DatePicker } from "./DatePicker";
+
+export { DateRangePicker } from "./DateRangePicker";
+export type { DateRangeValue } from "./DateRangePicker";
+
 export { PinPad } from "./PinPad";
 
 export { QuantityStepper } from "./QuantityStepper";

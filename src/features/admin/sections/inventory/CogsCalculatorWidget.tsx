@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Calculator, Plus, Trash2 } from "lucide-react";
-import { Button, Input, Modal } from "@/components/ui";
+import {
+  Button,
+  Combobox,
+  Input,
+  Modal,
+  type ComboboxGroup,
+} from "@/components/ui";
 import {
   isOk,
   listAtomicIngredients,
@@ -74,6 +80,33 @@ export function CogsCalculatorWidget({
     return m;
   }, [atomics, preps]);
 
+  const ingredientGroups: ComboboxGroup[] = useMemo(() => {
+    const groups: ComboboxGroup[] = [];
+    if (atomics.length > 0) {
+      groups.push({
+        label: "Bahan Baku",
+        options: atomics.map((i) => ({
+          value: i.id,
+          label: i.name,
+          hint: i.unit,
+          keywords: [i.unit],
+        })),
+      });
+    }
+    if (preps.length > 0) {
+      groups.push({
+        label: "Preparations",
+        options: preps.map((i) => ({
+          value: i.id,
+          label: i.name,
+          hint: i.unit,
+          keywords: [i.unit, "prep"],
+        })),
+      });
+    }
+    return groups;
+  }, [atomics, preps]);
+
   function addLine() {
     setLines((prev) => [
       ...prev,
@@ -122,7 +155,6 @@ export function CogsCalculatorWidget({
       ? Math.round(totalCost * (markupNum / 100))
       : 0;
   const suggestedSelling = totalCost + markupAmount;
-  // Round suggested up to nearest 1000 for cafe-clean pricing.
   const suggestedSellingRounded =
     suggestedSelling > 0 ? Math.ceil(suggestedSelling / 1000) * 1000 : 0;
   const grabgoso =
@@ -147,211 +179,214 @@ export function CogsCalculatorWidget({
       open={open}
       onClose={onClose}
       title="COGS Calculator"
-      description="Sandbox eksplorasi cost menu baru — input bahan + qty + Q Factor + markup, dapat suggested SELLING + GRABGOSO + margin instant. Tidak nyimpan apa-apa."
-      size="lg"
+      description="Sandbox eksplorasi cost menu baru — tidak menyimpan apa-apa."
+      size="3xl"
       footer={
         <Button variant="ghost" onClick={onClose}>
           Tutup
         </Button>
       }
     >
-      <div className="space-y-4">
-        {loading ? (
-          <p className="py-3 text-center text-sm text-neutral-500">Memuat…</p>
-        ) : atomics.length + preps.length === 0 ? (
-          <p className="rounded-md bg-warning-100/40 p-3 text-sm text-warning-500">
-            Belum ada bahan/preparation. Tambahkan dulu di tab Bahan atau
-            Preparations.
-          </p>
-        ) : (
-          <>
-            {/* ---- Bahan lines ---- */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-neutral-900">Bahan</h3>
-              {lines.map((line) => {
-                const ing = line.ingredientId
-                  ? ingredientById.get(line.ingredientId)
-                  : null;
-                const lineCost =
-                  ing && Number.isFinite(parseInt(line.qty, 10))
-                    ? parseInt(line.qty, 10) * ing.costPerUnit
-                    : 0;
-                return (
-                  <div
-                    key={line.key}
-                    className="flex items-end gap-2 rounded-md bg-neutral-50 p-2"
-                  >
-                    <div className="flex-1 space-y-1">
-                      <label className="block text-xs font-medium text-neutral-700">
-                        Bahan
-                      </label>
-                      <select
-                        value={line.ingredientId ?? ""}
-                        onChange={(e) =>
-                          setLine(line.key, {
-                            ingredientId: e.target.value || null,
-                          })
-                        }
-                        className="h-9 w-full rounded-md border border-neutral-300 bg-white px-2 text-sm"
-                      >
-                        <option value="">— pilih bahan —</option>
-                        {atomics.length > 0 ? (
-                          <optgroup label="Bahan Baku (atomic)">
-                            {atomics.map((i) => (
-                              <option key={i.id} value={i.id}>
-                                {i.name} ({i.unit})
-                              </option>
-                            ))}
-                          </optgroup>
-                        ) : null}
-                        {preps.length > 0 ? (
-                          <optgroup label="Preparations">
-                            {preps.map((i) => (
-                              <option key={i.id} value={i.id}>
-                                {i.name} ({i.unit})
-                              </option>
-                            ))}
-                          </optgroup>
-                        ) : null}
-                      </select>
-                    </div>
-                    <div className="w-24">
-                      <Input
-                        label={`Qty${ing ? ` (${ing.unit})` : ""}`}
-                        value={line.qty}
-                        onChange={(e) =>
-                          setLine(line.key, { qty: e.target.value })
-                        }
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="35"
-                      />
-                    </div>
-                    <div className="w-28 text-right">
-                      <p className="text-xs text-neutral-500">Subtotal</p>
-                      <p className="font-mono text-sm text-neutral-900">
-                        {lineCost > 0 ? formatRupiah(lineCost) : "—"}
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => removeLine(line.key)}
-                      disabled={lines.length === 1}
-                      aria-label="Hapus baris"
-                      className="text-danger-500 hover:bg-danger-100 disabled:opacity-30"
-                    >
-                      <Trash2 className="size-4" aria-hidden />
-                    </Button>
-                  </div>
-                );
-              })}
+      {loading ? (
+        <p className="py-8 text-center text-sm text-neutral-500">Memuat…</p>
+      ) : atomics.length + preps.length === 0 ? (
+        <p className="rounded-md bg-warning-100/40 p-3 text-sm text-warning-500">
+          Belum ada bahan/preparation. Tambahkan dulu di tab Bahan atau
+          Preparations.
+        </p>
+      ) : (
+        <div className="space-y-6">
+          {/* ---- Bahan section ---- */}
+          <section>
+            <header className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-neutral-900">
+                  Bahan
+                </h3>
+                <p className="text-xs text-neutral-500">
+                  Pilih bahan dan masukkan qty. Subtotal dihitung otomatis.
+                </p>
+              </div>
               <Button size="sm" variant="outline" onClick={addLine}>
                 <Plus className="size-4" aria-hidden /> Tambah baris
               </Button>
-            </div>
+            </header>
 
-            {/* ---- Sliders / inputs ---- */}
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+              {/* Header row — hidden on mobile for cleanliness */}
+              <div className="hidden grid-cols-[1fr_8rem_8rem_2.5rem] items-center gap-3 border-b border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-medium uppercase tracking-wide text-neutral-500 md:grid">
+                <span>Bahan</span>
+                <span>Qty</span>
+                <span className="text-right">Subtotal</span>
+                <span />
+              </div>
+              <ul className="divide-y divide-neutral-200">
+                {lines.map((line) => {
+                  const ing = line.ingredientId
+                    ? ingredientById.get(line.ingredientId)
+                    : null;
+                  const lineCost =
+                    ing && Number.isFinite(parseInt(line.qty, 10))
+                      ? parseInt(line.qty, 10) * ing.costPerUnit
+                      : 0;
+                  return (
+                    <li
+                      key={line.key}
+                      className="grid grid-cols-1 gap-2 px-3 py-2.5 md:grid-cols-[1fr_8rem_8rem_2.5rem] md:items-center md:gap-3"
+                    >
+                      <div className="md:hidden">
+                        <p className="mb-1 text-xs font-medium text-neutral-700">
+                          Bahan
+                        </p>
+                      </div>
+                      <Combobox
+                        ariaLabel="Pilih bahan"
+                        groups={ingredientGroups}
+                        value={line.ingredientId}
+                        onChange={(v) =>
+                          setLine(line.key, { ingredientId: v })
+                        }
+                        placeholder="— pilih bahan —"
+                        searchPlaceholder="Cari bahan…"
+                        size="sm"
+                        hideLabel
+                      />
+                      <div className="grid grid-cols-[1fr_8rem_2.5rem] items-center gap-2 md:contents">
+                        <div className="md:hidden">
+                          <p className="text-xs font-medium text-neutral-700">
+                            Qty {ing ? `(${ing.unit})` : ""}
+                          </p>
+                        </div>
+                        <Input
+                          aria-label="Qty"
+                          value={line.qty}
+                          onChange={(e) =>
+                            setLine(line.key, { qty: e.target.value })
+                          }
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="35"
+                          className="h-9"
+                        />
+                        <div className="text-right">
+                          <p className="text-[10px] uppercase tracking-wide text-neutral-500 md:hidden">
+                            Subtotal
+                          </p>
+                          <p className="font-mono text-sm text-neutral-900">
+                            {lineCost > 0 ? formatRupiah(lineCost) : "—"}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => removeLine(line.key)}
+                          disabled={lines.length === 1}
+                          aria-label="Hapus baris"
+                          className="!size-9 !min-h-9 !p-0 text-danger-500 hover:bg-danger-100 disabled:opacity-30"
+                        >
+                          <Trash2 className="size-4" aria-hidden />
+                        </Button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          </section>
+
+          {/* ---- Tunables ---- */}
+          <section className="grid gap-4 md:grid-cols-2">
+            <div>
+              <Input
+                label="Q Factor (%)"
+                value={wasteFactorPct}
+                onChange={(e) => setWasteFactorPct(e.target.value)}
+                type="text"
+                inputMode="numeric"
+                placeholder="30"
+                hint="Buffer waste/spillage. Default 30% untuk menu, 10% prep."
+              />
+            </div>
+            <div>
+              <Input
+                label="Markup (%)"
+                value={markupPct}
+                onChange={(e) => setMarkupPct(e.target.value)}
+                type="text"
+                inputMode="numeric"
+                placeholder="20"
+                hint="Margin target di atas TOTAL COST sebelum dibulatkan."
+              />
+            </div>
+          </section>
+
+          {/* ---- Summary ---- */}
+          <section className="rounded-lg border border-mahakan-green-700/30 bg-mahakan-green-100/40 p-4">
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-mahakan-green-900">
+              <Calculator className="size-4" aria-hidden /> Hasil
+            </div>
+            <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:grid-cols-4">
               <div>
-                <Input
-                  label="Q Factor (%)"
-                  value={wasteFactorPct}
-                  onChange={(e) => setWasteFactorPct(e.target.value)}
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="30"
-                />
-                <p className="mt-1 text-xs text-neutral-500">
-                  Buffer waste/spillage. Default 30% untuk menu, 10% prep.
+                <dt className="text-xs text-neutral-600">TOTAL bahan</dt>
+                <dd className="font-mono font-semibold text-neutral-900">
+                  {formatRupiah(baseCost)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-neutral-600">
+                  Q Factor {Number.isFinite(wasteNum) ? wasteNum : 0}%
+                </dt>
+                <dd className="font-mono font-semibold text-neutral-900">
+                  {formatRupiah(wasteAmount)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-neutral-600">TOTAL COST</dt>
+                <dd className="font-mono font-semibold text-neutral-900">
+                  {formatRupiah(totalCost)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-neutral-600">
+                  Markup {Number.isFinite(markupNum) ? markupNum : 0}%
+                </dt>
+                <dd className="font-mono font-semibold text-neutral-900">
+                  {formatRupiah(markupAmount)}
+                </dd>
+              </div>
+            </dl>
+            <div className="mt-3 grid grid-cols-1 gap-3 border-t border-mahakan-green-700/20 pt-3 sm:grid-cols-3">
+              <div>
+                <dt className="text-xs text-neutral-600">Suggested SELLING</dt>
+                <dd className="font-mono text-base font-bold text-mahakan-green-900">
+                  {formatRupiah(suggestedSellingRounded)}
+                </dd>
+                <p className="mt-0.5 text-[10px] text-neutral-500">
+                  rounded ke 1.000 terdekat
                 </p>
               </div>
               <div>
-                <Input
-                  label="Markup (%)"
-                  value={markupPct}
-                  onChange={(e) => setMarkupPct(e.target.value)}
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="20"
-                />
-                <p className="mt-1 text-xs text-neutral-500">
-                  Margin target di atas TOTAL COST sebelum dibulatkan.
-                </p>
+                <dt className="text-xs text-neutral-600">GRABGOSO 30%</dt>
+                <dd className="font-mono text-base font-bold text-neutral-700">
+                  {formatRupiah(grabgoso)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-neutral-600">Margin</dt>
+                <dd className={`font-mono text-base font-bold ${marginColor}`}>
+                  {formatRupiah(margin)} ({marginPct}%)
+                </dd>
               </div>
             </div>
+          </section>
 
-            {/* ---- Summary ---- */}
-            <div className="space-y-2 rounded-lg border border-mahakan-green-700/30 bg-mahakan-green-100/40 p-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-mahakan-green-900">
-                <Calculator className="size-4" aria-hidden /> Hasil
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
-                <div>
-                  <p className="text-neutral-600">TOTAL bahan</p>
-                  <p className="font-mono font-semibold">
-                    {formatRupiah(baseCost)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-neutral-600">
-                    Q Factor {Number.isFinite(wasteNum) ? wasteNum : 0}%
-                  </p>
-                  <p className="font-mono font-semibold">
-                    {formatRupiah(wasteAmount)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-neutral-600">TOTAL COST</p>
-                  <p className="font-mono font-semibold">
-                    {formatRupiah(totalCost)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-neutral-600">
-                    Markup {Number.isFinite(markupNum) ? markupNum : 0}%
-                  </p>
-                  <p className="font-mono font-semibold">
-                    {formatRupiah(markupAmount)}
-                  </p>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2 border-t border-neutral-200/60 pt-2 text-xs md:grid-cols-3">
-                <div>
-                  <p className="text-neutral-600">Suggested SELLING</p>
-                  <p className="font-mono text-base font-bold text-mahakan-green-900">
-                    {formatRupiah(suggestedSellingRounded)}
-                  </p>
-                  <p className="text-[10px] text-neutral-500">
-                    (rounded ke 1000 terdekat)
-                  </p>
-                </div>
-                <div>
-                  <p className="text-neutral-600">GRABGOSO 30%</p>
-                  <p className="font-mono text-base font-bold text-neutral-700">
-                    {formatRupiah(grabgoso)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-neutral-600">Margin</p>
-                  <p
-                    className={`font-mono text-base font-bold ${marginColor}`}
-                  >
-                    {formatRupiah(margin)} ({marginPct}%)
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <p className="text-xs text-neutral-500">
-              Tip: nilai cost preparation otomatis sudah pakai waste-nya
-              sendiri (cascade engine). Q Factor di kalkulator ini cuma untuk
-              menu-level waste (di atas waste yang sudah baked-in di
-              preparation cost).
-            </p>
-          </>
-        )}
-      </div>
+          <p className="text-xs text-neutral-500">
+            Tip: nilai cost preparation otomatis sudah pakai waste-nya sendiri
+            (cascade engine). Q Factor di kalkulator ini cuma untuk menu-level
+            waste (di atas waste yang sudah baked-in di preparation cost).
+          </p>
+        </div>
+      )}
     </Modal>
   );
 }
