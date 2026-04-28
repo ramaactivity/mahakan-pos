@@ -193,13 +193,12 @@ export function HistoryDetailModal({
       setError("Alasan wajib diisi");
       return;
     }
-    if (isStaff) {
-      setPendingApproval({ actionType: actionModal, finalReason });
-      setActionModal(null);
-      setApproverOpen(true);
-      return;
-    }
-    void performAction(actionModal, finalReason);
+    // PIN required for ALL roles (per Galih's request) — even Owner/Manager
+    // self-approve via own PIN. Eliminates accidental void/refund + gives
+    // audit log a deterministic approver record.
+    setPendingApproval({ actionType: actionModal, finalReason });
+    setActionModal(null);
+    setApproverOpen(true);
   }
 
   function onApproverVerified(result: { approverId: string; token: string }) {

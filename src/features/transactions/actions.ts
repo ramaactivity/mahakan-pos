@@ -399,29 +399,29 @@ export async function voidTransaction(
   }
   const v = parsed.data;
 
-  // Authorization: Owner/Manager directly, Staff via approver token
+  // Authorization: ALL roles require an approver PIN. Owner/Manager can
+  // approve their own action (self-approval) — but the deliberate two-step
+  // ritual reduces accidental void clicks and gives audit log a clean
+  // approver record per Galih's request.
+  if (!hasPermission(session.user.role, "pos.transaction.void")) {
+    return fail("FORBIDDEN", "Tidak punya hak void");
+  }
+  if (!v.approverToken) {
+    return fail("APPROVER_REQUIRED", "Void butuh PIN approver");
+  }
   let approverId: string | null = null;
-  if (session.user.role === "staff") {
-    if (!v.approverToken) {
-      return fail("APPROVER_REQUIRED", "Staff butuh approver untuk void");
-    }
-    try {
-      const consumed = await consumeApproverToken(
-        v.approverToken,
-        "pos.transaction.void",
-        v.transactionId,
-      );
-      approverId = consumed.approverId;
-    } catch (e) {
-      return fail(
-        "APPROVER_TOKEN_INVALID",
-        e instanceof Error ? e.message : "Token gagal",
-      );
-    }
-  } else {
-    if (!hasPermission(session.user.role, "pos.transaction.void")) {
-      return fail("FORBIDDEN", "Tidak punya hak void");
-    }
+  try {
+    const consumed = await consumeApproverToken(
+      v.approverToken,
+      "pos.transaction.void",
+      v.transactionId,
+    );
+    approverId = consumed.approverId;
+  } catch (e) {
+    return fail(
+      "APPROVER_TOKEN_INVALID",
+      e instanceof Error ? e.message : "Token gagal",
+    );
   }
 
   const [current] = await db
@@ -511,28 +511,28 @@ export async function refundTransaction(
   }
   const v = parsed.data;
 
+  // ALL roles require approver PIN — same rationale as void (deliberate
+  // two-step + clean audit trail per Galih's request). Owner/Manager can
+  // self-approve.
+  if (!hasPermission(session.user.role, "pos.transaction.refund")) {
+    return fail("FORBIDDEN", "Tidak punya hak refund");
+  }
+  if (!v.approverToken) {
+    return fail("APPROVER_REQUIRED", "Refund butuh PIN approver");
+  }
   let approverId: string | null = null;
-  if (session.user.role === "staff") {
-    if (!v.approverToken) {
-      return fail("APPROVER_REQUIRED", "Staff butuh approver untuk refund");
-    }
-    try {
-      const consumed = await consumeApproverToken(
-        v.approverToken,
-        "pos.transaction.refund",
-        v.transactionId,
-      );
-      approverId = consumed.approverId;
-    } catch (e) {
-      return fail(
-        "APPROVER_TOKEN_INVALID",
-        e instanceof Error ? e.message : "Token gagal",
-      );
-    }
-  } else {
-    if (!hasPermission(session.user.role, "pos.transaction.refund")) {
-      return fail("FORBIDDEN", "Tidak punya hak refund");
-    }
+  try {
+    const consumed = await consumeApproverToken(
+      v.approverToken,
+      "pos.transaction.refund",
+      v.transactionId,
+    );
+    approverId = consumed.approverId;
+  } catch (e) {
+    return fail(
+      "APPROVER_TOKEN_INVALID",
+      e instanceof Error ? e.message : "Token gagal",
+    );
   }
 
   const [current] = await db

@@ -39,6 +39,11 @@ import {
   useMenuLayout,
 } from "@/features/pos/components/MenuLayoutSwitcher";
 import { MenuListRow } from "@/features/pos/components/MenuListRow";
+import {
+  applyMenuSort,
+  MenuSortSelect,
+  useMenuSort,
+} from "@/features/pos/components/MenuSortSelect";
 import { MenuTile } from "@/features/pos/components/MenuTile";
 import { NewOrderModal } from "@/features/pos/components/NewOrderModal";
 import { OpenPriceModal } from "@/features/pos/components/OpenPriceModal";
@@ -147,6 +152,7 @@ export function PosShell() {
   const [activeCategory, setActiveCategory] = useState<string | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [layoutMode, setLayoutMode] = useMenuLayout();
+  const [sortMode, setSortMode] = useMenuSort();
 
   // Modals
   const [newOrderOpen, setNewOrderOpen] = useState(false);
@@ -266,7 +272,7 @@ export function PosShell() {
 
   const filteredItems = useMemo(() => {
     const searchLower = searchQuery.toLowerCase().trim();
-    return menuItems.filter((it) => {
+    const filtered = menuItems.filter((it) => {
       if (!it.isActive) return false;
       if (activeCategory !== "all" && it.categoryId !== activeCategory)
         return false;
@@ -274,7 +280,8 @@ export function PosShell() {
         return false;
       return true;
     });
-  }, [menuItems, activeCategory, searchQuery]);
+    return applyMenuSort(filtered, sortMode);
+  }, [menuItems, activeCategory, searchQuery, sortMode]);
 
   const editingNoteItem = noteEditingId
     ? activeDraft?.items.find((i) => i.cartItemId === noteEditingId)
@@ -549,6 +556,8 @@ export function PosShell() {
             session={session.user}
             layoutMode={layoutMode}
             setLayoutMode={setLayoutMode}
+            sortMode={sortMode}
+            setSortMode={setSortMode}
           />
         ) : tab === "queue" ? (
           <OrderQueuePanel
@@ -747,6 +756,8 @@ interface CashierMiddleProps {
   session: { name: string; role: string };
   layoutMode: ReturnType<typeof useMenuLayout>[0];
   setLayoutMode: ReturnType<typeof useMenuLayout>[1];
+  sortMode: ReturnType<typeof useMenuSort>[0];
+  setSortMode: ReturnType<typeof useMenuSort>[1];
 }
 
 function CashierMiddle({
@@ -761,6 +772,8 @@ function CashierMiddle({
   onItemTap,
   layoutMode,
   setLayoutMode,
+  sortMode,
+  setSortMode,
 }: CashierMiddleProps) {
   const gridClass = LAYOUT_GRID_CLASS[layoutMode];
   return (
@@ -787,6 +800,11 @@ function CashierMiddle({
               }
             />
           </div>
+          <MenuSortSelect
+            mode={sortMode}
+            onChange={setSortMode}
+            className="w-44 shrink-0"
+          />
           <MenuLayoutSwitcher mode={layoutMode} onChange={setLayoutMode} />
         </div>
         <CategoryTabs
