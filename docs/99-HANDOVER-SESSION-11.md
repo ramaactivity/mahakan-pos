@@ -516,3 +516,63 @@ User selected ALL 4 gap areas (speed, modifiers, queue, audit-first). Recommende
 - Order queue / pending orders clarity (multi-draft tracking, in-progress status)
 
 Lo bisa pilih A atau B atau urutan A→B / B→A di sesi berikutnya.
+
+---
+
+## ADDENDUM 3 — M24 Kitchen + Bar Print Routing landed (commit `eabe648`)
+
+User pilih A→B order, dengan token-hemat mode. Implementasi dalam ~30 menit dengan minimum file footprint (no schema migration).
+
+### Architecture decision: hardcoded station map (not schema field)
+
+User ingin "matangkan backoffice + POS" tapi minta token-hemat. Trade-off analysis:
+- Schema field di `categories.stationTag` = ~150 LoC (migration + seed update + Drizzle apply on prod) + Owner UI editing
+- Hardcoded `categoryNameToStation` map = ~30 LoC, zero migration risk
+
+Mahakan single-outlet + 11 seed-locked categories → hardcoded sufficient. Documented sebagai Phase 3 polish kalau Owner butuh per-outlet flexibility nanti. **Decision D40.**
+
+### What's added
+
+| Path | Purpose |
+|---|---|
+| `src/lib/printer/station-mapping.ts` | `categoryToStation(name)` lookup. Food (Ricebowl/Bakmie/Sweets/Bites) → kitchen; minuman (Coffee Based/Non-Coffee/Tea Based/Frappe/Mocktail/Manual Brew/Ice Cream) → bar |
+| `src/lib/printer/ticket-builder.ts` | Pure `buildPrepTicket(d, station)`. No prices, no totals — staff prep tidak butuh nominal. Returns `null` jika no items match (caller skip). Big bold station label + emphasized pager# + items dengan variant/modifiers/notes + total count footer |
+| `src/lib/printer/print-transaction.ts` (modified) | Build kitchen + bar + customer bytes, concat dalam 1 send call. Prep tickets emit only saat `trx.status=paid` (void/refund tidak emit) |
+| `tests/unit/ticket-builder.test.ts` | 17 unit tests — station mapping coverage, filter edge cases, empty handling, takeaway label, no-prices invariant, total count |
+
+### Print sequence (single Bluetooth transmission, 3 cuts)
+1. Kitchen ticket (TIKET DAPUR) — kalau ada food items
+2. Bar ticket (TIKET BAR) — kalau ada drink items
+3. Customer receipt (existing format) — selalu print
+
+Single printer. Single send. Kasir tear sesuai cut → distribute fisik ke chef + barista + customer.
+
+### Verify (sesi 11 close — final-final)
+- typecheck ✓ lint ✓ vitest **308/308** (291 + 17 baru) ✓ build 11 routes ✓
+- Browser smoke pending (lo test setelah deploy + RPP02 hardware confirm 3-cut sequence works)
+
+### Final commit chain (sesi 11)
+1. `e640f11` — feat(M23.5): first --apply + cost engine verified live
+2. `b0f5d84` — feat(M23.6): menu engineering matrix view
+3. `a573b15` — docs: PROGRESS + handover addendum for M23.6
+4. `32eb883` — fix(M23.7): cascadeCostUpdate self-include + menuIdByLower duplicate detect
+5. `d92b94e` — feat(M23.7): CSV export untuk Menu Engineering Matrix
+6. `9c6d6d1` — docs: PROGRESS + handover for M23.7
+7. `eabe648` — feat(M24): kitchen + bar prep ticket routing
+
+7 commits di local `release/phase-1`. NOT pushed/deployed.
+
+### Sesi 12 starting point: POS UX Audit (B)
+
+User pilih A→B. A done. Next = read-only walkthrough [src/features/pos/PosShell.tsx](src/features/pos/PosShell.tsx) dengan 3 fokus:
+1. Cashier rush hour speed — latency, tap reduction, hot-keys
+2. Modifier flexibility — UI cepat, custom note workflow, preset frequent modifiers
+3. Order queue / pending orders clarity — multi-draft tracking, "sedang dibuat" status
+
+Output: punch-list dengan effort estimate per item, lo pilih top 3-5 untuk implementasi.
+
+### Owner action checklist (post-deploy untuk M24)
+1. Push + deploy: `git push origin release/phase-1 && npx --yes vercel --prod --yes`
+2. Hardware test: Buat 1 transaksi mixed (1 food + 1 drink) → bayar → verifikasi 3 cut keluar dalam urutan dapur → bar → customer
+3. Edge case test: pure-drink order → 2 cut (bar + customer), pure-food → 2 cut (dapur + customer)
+4. Verify prep tickets gak ada price (cuma items + qty + variant + modifiers + notes)
