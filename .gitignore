@@ -69,3 +69,5 @@ next-env.d.ts
 
 # Owner source spreadsheets (read-only inputs for M23.4 importer)
 /data/source-spreadsheets/
+/data/templates/
+/data/exports/
