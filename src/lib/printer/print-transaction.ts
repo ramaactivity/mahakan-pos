@@ -6,16 +6,34 @@ import { buildPrepTicket } from "./ticket-builder";
 import type { TransactionWithItems } from "@/features/transactions";
 
 /**
- * Outlet metadata for the receipt header. Sourced from PRD §12 — should
- * eventually be read from `outlets.settings` instead of hardcoded so Owner
- * edits via Settings UI take effect on receipts. Tracked as Phase 2 polish.
+ * Default outlet metadata used when caller doesn't pass an explicit
+ * ReceiptConfig. Owner/Manager edits real values via Settings → Edit Struk
+ * which writes to `outlets.settings.receipt`; PosShell fetches them at mount
+ * and threads through to printTickets.
  */
-const OUTLET_META = {
-  name: "Mahakan Coffee & Space",
-  address: "Puncak Rd KM 22, Cisarua, Bogor Regency, West Java 16750",
-  phone: "0838-1977-5665",
-  footer: "Terima kasih, sampai jumpa!",
-} as const;
+const DEFAULT_RECEIPT_CONFIG: ReceiptConfig = {
+  outletName: "Mahakan Coffee & Space",
+  outletAddress: "Puncak Rd KM 22, Cisarua, Bogor Regency, West Java 16750",
+  outletPhone: "0838-1977-5665",
+  footerText: "Terima kasih, sampai jumpa!",
+  headerLines: [],
+  extraFooterLines: [],
+};
+
+export interface ReceiptConfig {
+  outletName: string;
+  outletAddress: string | null;
+  outletPhone: string | null;
+  /** Optional 1-3 lines printed above the outlet name (promo banners). */
+  headerLines?: string[];
+  /** Footer text — default "Terima kasih, sampai jumpa!". */
+  footerText?: string;
+  /** Optional 1-3 free-form lines printed after the footer. */
+  extraFooterLines?: string[];
+  /** Optional WiFi info printed in the footer area. */
+  wifiSsid?: string;
+  wifiPassword?: string;
+}
 
 export type PrintOutcome =
   | { ok: true }
@@ -52,11 +70,12 @@ export function getStationCoverage(
 function buildCustomerBytes(
   trx: TransactionWithItems,
   cashierName: string,
+  config: ReceiptConfig,
 ): Uint8Array {
   return buildReceipt({
-    outletName: OUTLET_META.name,
-    outletAddress: OUTLET_META.address,
-    outletPhone: OUTLET_META.phone,
+    outletName: config.outletName,
+    outletAddress: config.outletAddress,
+    outletPhone: config.outletPhone,
     transactionNumber: trx.transactionNumber,
     pagerNumber: trx.pagerNumber,
     orderType: trx.orderType,
@@ -85,7 +104,11 @@ function buildCustomerBytes(
     cashReceived: trx.cashReceived,
     cashChange: trx.cashChange,
     status: trx.status,
-    footerText: OUTLET_META.footer,
+    footerText: config.footerText ?? null,
+    headerLines: config.headerLines,
+    wifiSsid: config.wifiSsid,
+    wifiPassword: config.wifiPassword,
+    extraFooterLines: config.extraFooterLines,
   });
 }
 
@@ -136,6 +159,7 @@ export async function printTickets(
   trx: TransactionWithItems,
   cashierName: string,
   sections: TicketSection[],
+  config?: Partial<ReceiptConfig>,
 ): Promise<PrintOutcome> {
   if (sections.length === 0) {
     return {
@@ -153,6 +177,7 @@ export async function printTickets(
     };
   }
   try {
+    const merged: ReceiptConfig = { ...DEFAULT_RECEIPT_CONFIG, ...config };
     const stream: Uint8Array[] = [];
 
     if (sections.includes("kitchen")) {
@@ -164,7 +189,7 @@ export async function printTickets(
       if (bytes) stream.push(bytes);
     }
     if (sections.includes("customer")) {
-      stream.push(buildCustomerBytes(trx, cashierName));
+      stream.push(buildCustomerBytes(trx, cashierName, merged));
     }
 
     if (stream.length === 0) {
@@ -189,11 +214,41 @@ export async function printTickets(
 /**
  * Backwards-compat wrapper. Existing call sites that haven't migrated to
  * `printTickets()` yet still pull all three sections like before.
- * @deprecated Use `printTickets(trx, cashierName, sections)` directly.
+ * @deprecated Use `printTickets(trx, cashierName, sections, config?)` directly.
  */
 export async function printTransactionReceipt(
   trx: TransactionWithItems,
   cashierName: string,
 ): Promise<PrintOutcome> {
   return printTickets(trx, cashierName, ["customer", "kitchen", "bar"]);
+}
+
+/** Convert outlet DB row into ReceiptConfig consumed by printTickets. */
+export function outletToReceiptConfig(outlet: {
+  name: string;
+  address: string | null;
+  phone: string | null;
+  settings?:
+    | {
+        receipt?: {
+          footerText?: string;
+          headerLines?: string[];
+          wifiSsid?: string;
+          wifiPassword?: string;
+          extraFooterLines?: string[];
+        };
+      }
+    | null;
+}): ReceiptConfig {
+  const r = outlet.settings?.receipt ?? {};
+  return {
+    outletName: outlet.name,
+    outletAddress: outlet.address,
+    outletPhone: outlet.phone,
+    headerLines: r.headerLines ?? [],
+    footerText: r.footerText ?? DEFAULT_RECEIPT_CONFIG.footerText,
+    extraFooterLines: r.extraFooterLines ?? [],
+    wifiSsid: r.wifiSsid,
+    wifiPassword: r.wifiPassword,
+  };
 }

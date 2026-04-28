@@ -85,7 +85,7 @@ export const permissions = {
   "settings.printer.pair": ["owner", "manager", "staff"],
   "settings.printer.test": ["owner", "manager", "staff"],
   "settings.hours.update": ["owner"],
-  "settings.receipt.update": ["owner"],
+  "settings.receipt.update": ["owner", "manager"],
   "settings.thresholds.update": ["owner"],
   "settings.features.update": ["owner"],
 

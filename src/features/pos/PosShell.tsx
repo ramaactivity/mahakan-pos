@@ -33,6 +33,12 @@ import { HistoryDetailModal } from "@/features/pos/components/HistoryDetailModal
 import { HistoryPanel } from "@/features/pos/components/HistoryPanel";
 import { ItemModifierModal } from "@/features/pos/components/ItemModifierModal";
 import { ItemNoteModal } from "@/features/pos/components/ItemNoteModal";
+import {
+  LAYOUT_GRID_CLASS,
+  MenuLayoutSwitcher,
+  useMenuLayout,
+} from "@/features/pos/components/MenuLayoutSwitcher";
+import { MenuListRow } from "@/features/pos/components/MenuListRow";
 import { MenuTile } from "@/features/pos/components/MenuTile";
 import { NewOrderModal } from "@/features/pos/components/NewOrderModal";
 import { OpenPriceModal } from "@/features/pos/components/OpenPriceModal";
@@ -59,10 +65,15 @@ import {
   type PaymentMethod,
   type TransactionWithItems,
 } from "@/features/transactions";
+import { getOwnOutlet } from "@/features/outlets";
 import { getActiveShift, type Shift } from "@/features/shifts";
 import { queuePendingTransaction } from "@/lib/offline/queue";
 import { usePendingSync } from "@/lib/offline/usePendingSync";
-import { printTickets } from "@/lib/printer/print-transaction";
+import {
+  outletToReceiptConfig,
+  printTickets,
+  type ReceiptConfig,
+} from "@/lib/printer/print-transaction";
 import type { Discount } from "@/lib/money";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
@@ -122,12 +133,20 @@ export function PosShell() {
   const [shift, setShift] = useState<Shift | null>(null);
   const [shiftLoading, setShiftLoading] = useState(true);
 
+  // Outlet receipt config — fetched once at mount; threaded to all print
+  // call sites so footer/header/wifi edits at admin Settings take effect
+  // without a tab reload.
+  const [receiptConfig, setReceiptConfig] = useState<ReceiptConfig | null>(
+    null,
+  );
+
   // Menu
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [menuLoading, setMenuLoading] = useState(true);
   const [activeCategory, setActiveCategory] = useState<string | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [layoutMode, setLayoutMode] = useMenuLayout();
 
   // Modals
   const [newOrderOpen, setNewOrderOpen] = useState(false);
@@ -170,6 +189,22 @@ export function PosShell() {
       setShiftLoading(false);
     }
     void loadShift();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    async function loadOutlet() {
+      const res = await getOwnOutlet();
+      if (cancelled) return;
+      if (res.success === true) {
+        setReceiptConfig(outletToReceiptConfig(res.data));
+      }
+    }
+    void loadOutlet();
     return () => {
       cancelled = true;
     };
@@ -451,8 +486,14 @@ export function PosShell() {
       // Best-effort: print ONLY customer receipt automatically. Kitchen + bar
       // tickets are printed manually via the Pesanan queue tab — kasir tears
       // the customer struk for hand-off, then triggers prep tickets when ready
-      // to call the order out to staff.
-      void printTickets(res.data, session!.user.name, ["customer"]);
+      // to call the order out to staff. Pass receiptConfig so outlet-level
+      // edits (header/footer/wifi) appear on the printed struk.
+      void printTickets(
+        res.data,
+        session!.user.name,
+        ["customer"],
+        receiptConfig ?? undefined,
+      );
     } catch (e) {
       // Network error mid-flight: queue and surface as offline-paid.
       try {
@@ -506,10 +547,13 @@ export function PosShell() {
             setSearchQuery={setSearchQuery}
             onItemTap={handleItemTap}
             session={session.user}
+            layoutMode={layoutMode}
+            setLayoutMode={setLayoutMode}
           />
         ) : tab === "queue" ? (
           <OrderQueuePanel
             cashierName={session.user.name}
+            receiptConfig={receiptConfig}
             refreshKey={historyRefreshKey}
             onOpenSettings={() => setTab("settings")}
           />
@@ -578,6 +622,7 @@ export function PosShell() {
           <PaidPanel
             trx={rightPanel.trx}
             cashierName={session!.user.name ?? "Kasir"}
+            receiptConfig={receiptConfig}
             onFinish={handleFinishOrder}
             onOpenSettings={() => setTab("settings")}
           />
@@ -700,6 +745,8 @@ interface CashierMiddleProps {
   setSearchQuery: (q: string) => void;
   onItemTap: (item: MenuItem) => void;
   session: { name: string; role: string };
+  layoutMode: ReturnType<typeof useMenuLayout>[0];
+  setLayoutMode: ReturnType<typeof useMenuLayout>[1];
 }
 
 function CashierMiddle({
@@ -712,28 +759,36 @@ function CashierMiddle({
   searchQuery,
   setSearchQuery,
   onItemTap,
+  layoutMode,
+  setLayoutMode,
 }: CashierMiddleProps) {
+  const gridClass = LAYOUT_GRID_CLASS[layoutMode];
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <header className="flex flex-col gap-3 border-b border-neutral-200 bg-white p-4">
-        <Input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Cari menu…"
-          leadingIcon={<Search className="size-4" aria-hidden />}
-          trailingSlot={
-            searchQuery ? (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                aria-label="Hapus pencarian"
-              >
-                <X className="size-4" />
-              </button>
-            ) : undefined
-          }
-        />
+        <div className="flex items-center gap-3">
+          <div className="flex-1">
+            <Input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cari menu…"
+              leadingIcon={<Search className="size-4" aria-hidden />}
+              trailingSlot={
+                searchQuery ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    aria-label="Hapus pencarian"
+                  >
+                    <X className="size-4" />
+                  </button>
+                ) : undefined
+              }
+            />
+          </div>
+          <MenuLayoutSwitcher mode={layoutMode} onChange={setLayoutMode} />
+        </div>
         <CategoryTabs
           categories={categories}
           activeId={activeCategory}
@@ -744,12 +799,15 @@ function CashierMiddle({
       <div className="flex-1 overflow-y-auto p-4">
         {menuLoading ? (
           <div
-            className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
+            className={gridClass}
             role="status"
             aria-label="Memuat menu"
           >
             {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-28 w-full" />
+              <Skeleton
+                key={i}
+                className={layoutMode === "list" ? "h-16 w-full" : "h-28 w-full"}
+              />
             ))}
           </div>
         ) : filteredItems.length === 0 ? (
@@ -757,10 +815,14 @@ function CashierMiddle({
             Tidak ada item yang cocok.
           </p>
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-            {filteredItems.map((item) => (
-              <MenuTile key={item.id} item={item} onSelect={onItemTap} />
-            ))}
+          <div className={gridClass}>
+            {filteredItems.map((item) =>
+              layoutMode === "list" ? (
+                <MenuListRow key={item.id} item={item} onSelect={onItemTap} />
+              ) : (
+                <MenuTile key={item.id} item={item} onSelect={onItemTap} />
+              ),
+            )}
           </div>
         )}
       </div>
@@ -1147,6 +1209,7 @@ function PayingPanel({
 interface PaidPanelProps {
   trx: TransactionWithItems;
   cashierName: string;
+  receiptConfig: ReceiptConfig | null;
   onFinish: () => void;
   onOpenSettings: () => void;
 }
@@ -1154,6 +1217,7 @@ interface PaidPanelProps {
 function PaidPanel({
   trx,
   cashierName,
+  receiptConfig,
   onFinish,
   onOpenSettings,
 }: PaidPanelProps) {
@@ -1256,6 +1320,7 @@ function PaidPanel({
           <PrintStationButtons
             trx={trx}
             cashierName={cashierName}
+            receiptConfig={receiptConfig}
             onOpenSettings={onOpenSettings}
             size="sm"
           />

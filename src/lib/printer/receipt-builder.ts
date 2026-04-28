@@ -61,11 +61,29 @@ export interface ReceiptData {
   cashChange: number | null;
   status: "paid" | "voided" | "refunded";
   footerText: string | null;
+  /** Optional 1-3 lines printed above the outlet name (promo banners). */
+  headerLines?: string[];
+  /** Optional WiFi credentials printed in the footer area. */
+  wifiSsid?: string;
+  wifiPassword?: string;
+  /** Optional 1-3 free-form lines printed after the footer text. */
+  extraFooterLines?: string[];
 }
 
 export function buildReceipt(d: ReceiptData): Uint8Array {
   const parts: Uint8Array[] = [];
   parts.push(init());
+
+  // Optional header lines (e.g., promo banners) — printed centered above
+  // the outlet name. Owner edits via Settings → Edit Struk modal.
+  if (d.headerLines && d.headerLines.length > 0) {
+    parts.push(align("center"));
+    for (const line of d.headerLines) {
+      const trimmed = line.trim();
+      if (trimmed.length > 0) parts.push(centerLine(trimmed, COLS));
+    }
+    parts.push(text("\n"));
+  }
 
   // Header — outlet name centered, bold, 2x tall (1x wide so 22+ char names
   // don't auto-wrap mid-word at 32-col native width).
@@ -168,11 +186,33 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   }
   parts.push(bold(false));
 
-  // Footer
-  if (d.footerText) {
+  // Footer block — divider, footer text, optional WiFi info, optional extra
+  // free-form lines. Skip whole block if nothing to print.
+  const hasFooterText = d.footerText && d.footerText.trim().length > 0;
+  const hasWifi = d.wifiSsid && d.wifiSsid.trim().length > 0;
+  const extraLines =
+    d.extraFooterLines?.filter((l) => l.trim().length > 0) ?? [];
+
+  if (hasFooterText || hasWifi || extraLines.length > 0) {
     parts.push(divider("=", COLS));
     parts.push(align("center"));
-    parts.push(centerLine(d.footerText, COLS));
+    if (hasFooterText) {
+      parts.push(centerLine(d.footerText!, COLS));
+    }
+    if (hasWifi) {
+      parts.push(text("\n"));
+      parts.push(centerLine("WiFi", COLS));
+      parts.push(centerLine(`SSID: ${d.wifiSsid}`, COLS));
+      if (d.wifiPassword && d.wifiPassword.trim().length > 0) {
+        parts.push(centerLine(`Password: ${d.wifiPassword}`, COLS));
+      }
+    }
+    if (extraLines.length > 0) {
+      parts.push(text("\n"));
+      for (const line of extraLines) {
+        parts.push(centerLine(line.trim(), COLS));
+      }
+    }
     parts.push(align("left"));
   }
 

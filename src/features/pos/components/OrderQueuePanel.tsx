@@ -26,6 +26,7 @@ import {
   type TransactionWithItems,
 } from "@/features/transactions";
 import { categoryToStation } from "@/lib/printer/station-mapping";
+import type { ReceiptConfig } from "@/lib/printer/print-transaction";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianTime, toJakartaDateOnly } from "@/lib/date";
 import { cn } from "@/lib/utils";
@@ -34,6 +35,8 @@ type FilterState = "active" | "all" | "served";
 
 interface OrderQueuePanelProps {
   cashierName: string;
+  /** Outlet-driven receipt config; threaded to print buttons. */
+  receiptConfig: ReceiptConfig | null;
   /** Bumped when other panels (history void/refund) commit changes. */
   refreshKey: number;
   onOpenSettings: () => void;
@@ -55,6 +58,7 @@ const FILTERS: Array<{ value: FilterState; label: string }> = [
  */
 export function OrderQueuePanel({
   cashierName,
+  receiptConfig,
   refreshKey,
   onOpenSettings,
 }: OrderQueuePanelProps) {
@@ -232,6 +236,7 @@ export function OrderQueuePanel({
                 summary={t}
                 detail={details[t.id]}
                 cashierName={cashierName}
+                receiptConfig={receiptConfig}
                 marking={marking === t.id}
                 onMarkServed={() => handleMarkServed(t.id)}
                 onOpenSettings={onOpenSettings}
@@ -248,6 +253,7 @@ interface OrderCardProps {
   summary: Transaction;
   detail: TransactionWithItems | undefined;
   cashierName: string;
+  receiptConfig: ReceiptConfig | null;
   marking: boolean;
   onMarkServed: () => void;
   onOpenSettings: () => void;
@@ -257,6 +263,7 @@ function OrderCard({
   summary,
   detail,
   cashierName,
+  receiptConfig,
   marking,
   onMarkServed,
   onOpenSettings,
@@ -345,6 +352,7 @@ function OrderCard({
           <PrintStationButtons
             trx={detail}
             cashierName={cashierName}
+            receiptConfig={receiptConfig}
             onOpenSettings={onOpenSettings}
             size="sm"
           />

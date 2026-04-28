@@ -6,6 +6,7 @@ import { Button, toast } from "@/components/ui";
 import {
   getStationCoverage,
   printTickets,
+  type ReceiptConfig,
   type TicketSection,
 } from "@/lib/printer/print-transaction";
 import type { TransactionWithItems } from "@/features/transactions";
@@ -14,6 +15,9 @@ import { cn } from "@/lib/utils";
 interface PrintStationButtonsProps {
   trx: TransactionWithItems;
   cashierName: string;
+  /** Outlet-driven receipt config (header/footer/wifi/etc). When null,
+   * falls back to hardcoded defaults inside printTickets. */
+  receiptConfig?: ReceiptConfig | null;
   /** Called when "Pasangkan printer" toast action is tapped. */
   onOpenSettings?: () => void;
   /** Visual size — sm fits in compact card rows, md for prominent actions. */
@@ -42,6 +46,7 @@ type SectionKey = keyof typeof SECTION_LABEL;
 export function PrintStationButtons({
   trx,
   cashierName,
+  receiptConfig,
   onOpenSettings,
   size = "sm",
   layout = "grid",
@@ -53,7 +58,12 @@ export function PrintStationButtons({
   async function handlePrint(key: SectionKey, sections: TicketSection[]) {
     if (activeSection !== null) return;
     setActiveSection(key);
-    const outcome = await printTickets(trx, cashierName, sections);
+    const outcome = await printTickets(
+      trx,
+      cashierName,
+      sections,
+      receiptConfig ?? undefined,
+    );
     setActiveSection(null);
     if (outcome.ok) {
       toast.success(`${SECTION_LABEL[key]} dicetak`);

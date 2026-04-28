@@ -23,8 +23,16 @@ export type OutletSettings = {
     showHppToStaff?: boolean;
   };
   receipt?: {
+    /** Existing: short text below "Terima kasih" line. */
     footerText?: string;
     showQrRating?: boolean;
+    /** New: 1-3 lines printed above the outlet name (promo banners). */
+    headerLines?: string[];
+    /** New: WiFi credentials printed in the footer area for customers. */
+    wifiSsid?: string;
+    wifiPassword?: string;
+    /** New: 1-3 free-form lines printed after the footer (notes, IG, etc). */
+    extraFooterLines?: string[];
   };
   thresholds?: {
     shiftVarianceAlert?: number;

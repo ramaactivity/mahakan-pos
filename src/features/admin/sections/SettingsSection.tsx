@@ -23,6 +23,7 @@ import { formatRupiah } from "@/lib/format";
 import { useSession } from "@/features/auth/SessionProvider";
 import { BusinessInfoModal } from "./settings/BusinessInfoModal";
 import { OperationalHoursModal } from "./settings/OperationalHoursModal";
+import { ReceiptEditorModal } from "./settings/ReceiptEditorModal";
 import { SettingsTunablesModal } from "./settings/SettingsTunablesModal";
 
 type OperationalHours = NonNullable<Outlet["operationalHours"]>;
@@ -37,7 +38,7 @@ const DAY_LABELS: Record<keyof OperationalHours, string> = {
   sun: "Minggu",
 };
 
-type EditTarget = "business" | "hours" | "tunables" | null;
+type EditTarget = "business" | "hours" | "tunables" | "receipt" | null;
 
 export function SettingsSection() {
   const { session } = useSession();
@@ -46,6 +47,8 @@ export function SettingsSection() {
   const [edit, setEdit] = useState<EditTarget>(null);
 
   const isOwner = session?.user.role === "owner";
+  const canEditReceipt =
+    session?.user.role === "owner" || session?.user.role === "manager";
 
   useEffect(() => {
     let cancelled = false;
@@ -198,20 +201,25 @@ export function SettingsSection() {
         </CardContent>
       </Card>
 
-      {/* Receipt + thresholds + features */}
+      {/* Receipt — dedicated card; Owner + Manager bisa edit */}
       <Card>
         <CardHeader>
           <div className="flex items-start justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <ScrollText className="size-5" aria-hidden /> Receipt, Threshold &amp;
-              Features
-            </CardTitle>
-            {isOwner && (
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <ScrollText className="size-5" aria-hidden /> Format Struk
+              </CardTitle>
+              <CardDescription>
+                Header promo, footer, info WiFi, dan baris tambahan yang dicetak
+                di struk customer. Owner + Manager bisa edit.
+              </CardDescription>
+            </div>
+            {canEditReceipt && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setEdit("tunables")}
-                aria-label="Edit setting"
+                onClick={() => setEdit("receipt")}
+                aria-label="Edit format struk"
               >
                 <Pencil className="size-4" /> Edit
               </Button>
@@ -221,10 +229,63 @@ export function SettingsSection() {
         <CardContent>
           <dl className="grid gap-4 md:grid-cols-2">
             <Field
-              label="Footer Struk"
+              label="Header Promo"
+              value={
+                outlet.settings?.receipt?.headerLines &&
+                outlet.settings.receipt.headerLines.length > 0
+                  ? outlet.settings.receipt.headerLines.join(" / ")
+                  : "—"
+              }
+              colSpan={2}
+            />
+            <Field
+              label="Footer"
               value={`"${outlet.settings?.receipt?.footerText ?? "—"}"`}
               colSpan={2}
             />
+            <Field
+              label="WiFi SSID"
+              value={outlet.settings?.receipt?.wifiSsid || "—"}
+            />
+            <Field
+              label="WiFi Password"
+              value={outlet.settings?.receipt?.wifiPassword ? "•••••••" : "—"}
+            />
+            <Field
+              label="Baris Tambahan"
+              value={
+                outlet.settings?.receipt?.extraFooterLines &&
+                outlet.settings.receipt.extraFooterLines.length > 0
+                  ? outlet.settings.receipt.extraFooterLines.join(" / ")
+                  : "—"
+              }
+              colSpan={2}
+            />
+          </dl>
+        </CardContent>
+      </Card>
+
+      {/* Threshold + features — Owner only */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <ScrollText className="size-5" aria-hidden /> Threshold &amp; Features
+            </CardTitle>
+            {isOwner && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setEdit("tunables")}
+                aria-label="Edit threshold &amp; features"
+              >
+                <Pencil className="size-4" /> Edit
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid gap-4 md:grid-cols-2">
             <Field
               label="QR Rating di Struk"
               value={outlet.settings?.receipt?.showQrRating ? "Aktif" : "Mati"}
@@ -267,6 +328,12 @@ export function SettingsSection() {
       />
       <SettingsTunablesModal
         open={edit === "tunables"}
+        outlet={outlet}
+        onClose={() => setEdit(null)}
+        onSaved={onSaved}
+      />
+      <ReceiptEditorModal
+        open={edit === "receipt"}
         outlet={outlet}
         onClose={() => setEdit(null)}
         onSaved={onSaved}

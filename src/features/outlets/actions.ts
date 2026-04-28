@@ -200,6 +200,16 @@ export async function updateOperationalHours(
 const receiptSchema = z.object({
   footerText: z.string().trim().max(200).optional(),
   showQrRating: z.boolean().optional(),
+  headerLines: z
+    .array(z.string().trim().max(64))
+    .max(3, "Maksimal 3 baris header")
+    .optional(),
+  wifiSsid: z.string().trim().max(48).optional(),
+  wifiPassword: z.string().trim().max(48).optional(),
+  extraFooterLines: z
+    .array(z.string().trim().max(64))
+    .max(3, "Maksimal 3 baris tambahan footer")
+    .optional(),
 });
 
 const thresholdsSchema = z.object({
