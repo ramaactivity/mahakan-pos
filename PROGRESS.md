@@ -5,7 +5,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 ## Current Status
 
 **Phase:** Phase 2 Tier 1.2 + **M24 + M25-S quick wins LANDED** (sesi 11 selesai 2026-04-28: M23.5/6/7 + M24 kitchen+bar print + M25-S POS audit + 4 cashier speed wins).
-**Active Milestone:** Awaiting Owner deploy approval (HEAD `f5b2c9f` local).
+**Active Milestone (sesi 12):** Deploy 10 sesi-11 commits + **hardware-verify M24** (kitchen + bar print routing) di RPP02. Plus optional E1-E5 enhancements pending real-printer feedback. Lihat `docs/99-HANDOVER-SESSION-12.md` untuk full plan.
+**Local HEAD:** `de93520` (10 commits ahead remote `release/phase-1` HEAD `88b5f67`). NOT pushed/deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, **inventory data populated** — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
