@@ -460,3 +460,59 @@ Recommended next milestone: ada 3 candidate sekarang:
 - **A. Engine bug fixes** (M23 follow-up) — patch 2 bugs di import-engine.ts + add coverage. ~1 hari. Reduce risk untuk re-import berikutnya.
 - **B. Tier 1.3 Loyalty + Customer DB** — defer 1-2 minggu untuk live txn data validation, tapi lo bisa start scoping sekarang.
 - **C. Polish M23.6** — CSV export, scatter chart, percentile threshold toggle, time-comparison vs prior period. Each ~0.5-1 hari.
+
+---
+
+## ADDENDUM 2 — M23.7 (A + C) landed (same session, commits `32eb883` + `d92b94e`)
+
+User picked: **A + C bundled** (sequencing) + **CSV export only** untuk C (skip scatter chart + period comparison). Loyalty/Customer DB explicitly deferred — Owner ingin matangkan backoffice + POS dulu.
+
+### A — Engine bug fixes (commit `32eb883`)
+
+**A1: `cascadeCostUpdate` self-include** ([src/features/inventory/preparation-flow.ts](src/features/inventory/preparation-flow.ts))
+
+Detect if `changedIngredientId` is a preparation (queries `ingredients.is_preparation`); if yes, prepend it to `prepsToRecompute` list. Otherwise behavior unchanged (atomic ingredient → only dependents recomputed).
+
+Effect: future imports of new preps will compute their cost correctly inline. The workaround `scripts/_oneshot/recompute-all-preps.ts` becomes redundant. Existing prod data (sesi 11 import) sudah have correct cost values via the workaround, so this fix is forward-only — no migration needed.
+
+**A2: `menuIdByLower` duplicate detection** ([src/features/inventory/import-engine.ts](src/features/inventory/import-engine.ts))
+
+Build map dengan duplicate detection — accumulate ambiguous names ke `Set`. Recipe lookup loop sekarang check `ambiguousNames.has(lowered)` BEFORE `menuIdByLower.get(lowered)` dan emit ERROR jelas: `menu_name "X" ada di lebih dari 1 kategori — rename salah satu via Admin UI dulu`. File 05 cascades via existing `menuRecipeErrors` set (no separate fix).
+
+Verify: dry-run `npm run inventory:import` confirmed Ayam Sambal Matah now ERRORs di row 47 + 6 cascade rows in file 05. Owner action item (rename Bakmie via Admin UI) tetap berlaku, tapi sekarang kalau Owner re-import tanpa rename, error message jelas instead of silent mis-attachment.
+
+### C — Menu Engineering CSV export (commit `d92b94e`)
+
+New file [src/features/admin/sections/reports/menu-engineering-csv.ts](src/features/admin/sections/reports/menu-engineering-csv.ts):
+- `buildSummaryCsv(result)` — per-quadrant rollup (5 rows: Star, Puzzle, Plowhorse, Dog, Belum diklasifikasi)
+- `buildRowsCsv(result)` — full per-menu drill-down dengan quadrant + all metrics
+- `downloadCsv(filename, content)` — browser Blob+a.click pattern
+
+UI change ([MenuEngineeringView.tsx](src/features/admin/sections/reports/MenuEngineeringView.tsx)): "Export CSV" button di header (kanan date pickers), disabled saat loading/empty, fires 2 download. Filenames: `menu-matrix-summary-<from>-<to>.csv` + `menu-matrix-rows-<from>-<to>.csv`.
+
+### Verify (sesi 11 close — final)
+- typecheck ✓ lint ✓ vitest **291/291** ✓ build 11 routes ✓
+- Dry-run `inventory:import` → Ayam Sambal Matah error confirmed
+- Browser smoke pending (lo test setelah deploy)
+
+### Final commit chain (sesi 11)
+1. `e640f11` — feat(M23.5): first --apply + cost engine verified live
+2. `b0f5d84` — feat(M23.6): menu engineering matrix view (Kasavana-Smith 2x2)
+3. `a573b15` — docs: PROGRESS + handover addendum for M23.6
+4. `32eb883` — fix(inventory): cascadeCostUpdate self-include + menuIdByLower duplicate detect
+5. `d92b94e` — feat(admin): CSV export untuk Menu Engineering Matrix
+
+5 commits di local `release/phase-1`. NOT pushed/deployed.
+
+### Sesi 12 candidates (final, post M23.7)
+
+**Recommended A: Kitchen + Bar Print Routing** (~3-4 hari)
+User explicitly selected "Single printer, multi-ticket per transaksi" model. Operasional priority untuk kafe. Pre-req: category `stationTag` field, receipt builder split, auto-print emits 3 cuts (kitchen + bar + customer). Schema migration kecil.
+
+**Recommended B: POS UX Audit** (~0.5 hari audit + variable implementation)
+User selected ALL 4 gap areas (speed, modifiers, queue, audit-first). Recommended start = audit-first walkthrough. Output: prioritized punch-list dengan effort estimates per item, then user picks top items. Audit sub-areas:
+- Cashier rush hour speed (latency, taps reduction, hot-keys)
+- Modifier flexibility (UI cepat, custom note, frequent modifier preset)
+- Order queue / pending orders clarity (multi-draft tracking, in-progress status)
+
+Lo bisa pilih A atau B atau urutan A→B / B→A di sesi berikutnya.
