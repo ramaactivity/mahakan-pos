@@ -1,5 +1,6 @@
 export type {
   ApiResult,
+  CloseOpenBillInput,
   CreateTransactionInput,
   CreateTransactionItemInput,
   CreateTransactionItemModifierInput,
@@ -8,6 +9,7 @@ export type {
   Paginated,
   PaymentMethod,
   RefundTransactionInput,
+  SaveOpenBillInput,
   Transaction,
   TransactionItem,
   TransactionItemModifier,
@@ -19,10 +21,12 @@ export type {
 export { isOk } from "./types";
 
 export {
+  closeOpenBill,
   createTransaction,
   getTransaction,
   listTransactions,
   markServed,
   refundTransaction,
+  saveAsOpenBill,
   voidTransaction,
 } from "./actions";

@@ -59,7 +59,7 @@ export interface ReceiptData {
   paymentMethod: "cash" | "qris" | "card_bca";
   cashReceived: number | null;
   cashChange: number | null;
-  status: "paid" | "voided" | "refunded";
+  status: "paid" | "voided" | "refunded" | "open";
   footerText: string | null;
   /** Optional 1-3 lines printed above the outlet name (promo banners). */
   headerLines?: string[];
@@ -103,11 +103,15 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   parts.push(align("left"));
   parts.push(divider("=", COLS));
 
-  // Status banner if not paid
+  // Status banner if not paid (voided/refunded use uppercase status; open
+  // bills print "*** BELUM LUNAS ***" so customer + kasir can spot the
+  // pending bill copy at a glance).
   if (d.status !== "paid") {
     parts.push(align("center"));
     parts.push(bold(true));
-    parts.push(text(`*** ${d.status.toUpperCase()} ***\n`));
+    const banner =
+      d.status === "open" ? "BELUM LUNAS" : d.status.toUpperCase();
+    parts.push(text(`*** ${banner} ***\n`));
     parts.push(bold(false));
     parts.push(align("left"));
     parts.push(divider("=", COLS));

@@ -42,10 +42,13 @@ import { validateCreateTransaction } from "./validation";
 import {
   fail,
   ok,
+  isOk,
   type ApiResult,
+  type CloseOpenBillInput,
   type CreateTransactionInput,
   type Paginated,
   type RefundTransactionInput,
+  type SaveOpenBillInput,
   type Transaction,
   type TransactionWithItems,
   type VoidTransactionInput,
@@ -676,4 +679,162 @@ export async function markServed(
     .returning();
   if (!row) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
   return ok(row);
+}
+
+// ---------- Open Bills (saveAsOpenBill + closeOpenBill) ----------
+
+/**
+ * Save a transaction as an "open bill" — items locked, stock decremented as
+ * usual, but no payment yet. Implementation wraps `createTransaction` with
+ * placeholder payment fields that pass validation, then mutates the row to
+ * status="open" + reset cashReceived/cashChange to 0.
+ *
+ * Workflow: kasir input order → tap "Simpan Bill" → trx persisted with
+ * status="open" → customer leaves → returns later → kasir tap bill in
+ * "Bill Aktif" tab → closeOpenBill processes payment + auto-prints struk.
+ */
+export async function saveAsOpenBill(
+  input: SaveOpenBillInput,
+): Promise<ApiResult<TransactionWithItems>> {
+  const session = await requireSession();
+
+  // Step 1: createTransaction with placeholder payment so validation passes
+  // (cashReceived === total, cashChange === 0). Stock deduction + audit log
+  // for discount fire as normal during this step.
+  const placeholder: CreateTransactionInput = {
+    clientRefId: input.clientRefId,
+    shiftId: input.shiftId,
+    cashierId: input.cashierId,
+    pagerNumber: input.pagerNumber,
+    orderType: input.orderType,
+    items: input.items,
+    subtotal: input.subtotal,
+    discountType: input.discountType,
+    discountValue: input.discountValue,
+    discountAmount: input.discountAmount,
+    discountReason: input.discountReason,
+    total: input.total,
+    paymentMethod: "cash",
+    cashReceived: input.total,
+    cashChange: 0,
+    discountApproverToken: input.discountApproverToken,
+  };
+  const created = await createTransaction(placeholder);
+  if (!isOk(created)) return created;
+
+  // Step 2: flip to open status + reset payment fields. cashReceived stays
+  // 0 (NOT NULL) to satisfy ck_transactions_cash_fields when payment_method
+  // remains 'cash' as placeholder.
+  const [updated] = await db
+    .update(transactions)
+    .set({
+      status: "open",
+      cashReceived: 0,
+      cashChange: 0,
+      updatedAt: new Date(),
+    })
+    .where(eq(transactions.id, created.data.id))
+    .returning();
+
+  await logAudit({
+    eventType: "transaction.open_bill.create",
+    userId: session.user.id,
+    entityType: "transaction",
+    entityId: created.data.id,
+    payload: {
+      summary: `Open bill ${created.data.transactionNumber} disimpan (Pager ${created.data.pagerNumber}, total Rp${created.data.total.toLocaleString("id-ID")})`,
+      context: {
+        transactionNumber: created.data.transactionNumber,
+        total: created.data.total,
+        itemCount: created.data.items.length,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  });
+
+  const refreshed = await fetchTransactionById(updated.id);
+  return refreshed ? ok(refreshed) : ok({ ...created.data, status: "open" });
+}
+
+/**
+ * Close an open bill — finalize the actual payment method + cash received,
+ * transition status="open" → "paid". Caller (UI) is responsible for
+ * triggering customer receipt auto-print after this returns ok.
+ */
+export async function closeOpenBill(
+  input: CloseOpenBillInput,
+): Promise<ApiResult<TransactionWithItems>> {
+  const session = await requireSession();
+
+  const current = await fetchTransactionById(input.transactionId);
+  if (!current) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+  if (current.status !== "open") {
+    return fail(
+      "BUSINESS_RULE_VIOLATION",
+      `Hanya open bill yang bisa di-close (status saat ini: ${current.status})`,
+    );
+  }
+
+  // Cash math validation
+  if (input.paymentMethod === "cash") {
+    if (input.cashReceived === null || input.cashReceived < current.total) {
+      return fail(
+        "INSUFFICIENT_CASH",
+        `Tunai kurang. Total Rp${current.total.toLocaleString("id-ID")}.`,
+      );
+    }
+  } else {
+    if (input.cashReceived !== null) {
+      return fail(
+        "CASH_FIELDS_INVALID",
+        "Non-cash tidak butuh cashReceived",
+      );
+    }
+  }
+
+  const cashChange =
+    input.paymentMethod === "cash" && input.cashReceived !== null
+      ? input.cashReceived - current.total
+      : null;
+
+  await db
+    .update(transactions)
+    .set({
+      status: "paid",
+      paymentMethod: input.paymentMethod,
+      cashReceived: input.paymentMethod === "cash" ? input.cashReceived : null,
+      cashChange:
+        input.paymentMethod === "cash" ? cashChange : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(transactions.id, input.transactionId));
+
+  await logAudit({
+    eventType: "transaction.open_bill.close",
+    userId: session.user.id,
+    entityType: "transaction",
+    entityId: input.transactionId,
+    payload: {
+      summary: `Close open bill ${current.transactionNumber} via ${input.paymentMethod} (Rp${current.total.toLocaleString("id-ID")})`,
+      context: {
+        transactionNumber: current.transactionNumber,
+        paymentMethod: input.paymentMethod,
+        total: current.total,
+        cashReceived: input.cashReceived,
+        cashChange,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  });
+
+  const refreshed = await fetchTransactionById(input.transactionId);
+  return refreshed
+    ? ok(refreshed)
+    : fail("DB_ERROR", "Gagal fetch transaksi setelah close");
 }

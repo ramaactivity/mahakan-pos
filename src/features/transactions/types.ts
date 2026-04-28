@@ -15,7 +15,7 @@ export type Variant = "hot" | "iced";
 export type DiscountType = "percent" | "fixed";
 export type PaymentMethod = "cash" | "qris" | "card_bca";
 export type OrderType = "dine_in" | "takeaway";
-export type TransactionStatus = "paid" | "voided" | "refunded";
+export type TransactionStatus = "paid" | "voided" | "refunded" | "open";
 
 export interface TransactionWithItems extends Transaction {
   items: Array<TransactionItem & { modifiers: TransactionItemModifier[] }>;
@@ -105,4 +105,36 @@ export interface RefundTransactionInput {
   transactionId: string;
   reason: string;
   approverToken?: string;
+}
+
+/**
+ * Save transaction as an open bill — items locked, stock decremented as
+ * usual, but no payment yet. Status="open" until customer returns to pay.
+ * Same shape as CreateTransactionInput minus payment fields (placeholders
+ * are filled server-side with paymentMethod="cash", cashReceived=0).
+ */
+export interface SaveOpenBillInput {
+  clientRefId?: string;
+  shiftId: string;
+  cashierId: string;
+  pagerNumber: number;
+  orderType: OrderType;
+  items: CreateTransactionItemInput[];
+  subtotal: number;
+  discountType: DiscountType | null;
+  discountValue: number | null;
+  discountAmount: number;
+  discountReason: string | null;
+  total: number;
+  discountApproverToken?: string;
+}
+
+/**
+ * Close an open bill — finalize payment + transition to "paid". Triggers
+ * customer receipt auto-print on success (client-side after action).
+ */
+export interface CloseOpenBillInput {
+  transactionId: string;
+  paymentMethod: PaymentMethod;
+  cashReceived: number | null;
 }

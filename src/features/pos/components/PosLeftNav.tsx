@@ -2,6 +2,7 @@
 
 import {
   ClipboardList,
+  FileText,
   History,
   LayoutGrid,
   LogOut,
@@ -13,6 +14,7 @@ import { cn } from "@/lib/utils";
 
 export type PosTab =
   | "cashier"
+  | "open_bills"
   | "queue"
   | "history"
   | "shifts"
@@ -26,10 +28,13 @@ interface PosLeftNavProps {
   cashierBadge?: number;
   /** Optional badge for queue tab (pending paid transactions). */
   queueBadge?: number;
+  /** Optional badge for open_bills tab (unpaid transactions). */
+  openBillsBadge?: number;
 }
 
 const TABS: Array<{ key: PosTab; label: string; Icon: LucideIcon }> = [
   { key: "cashier", label: "Kasir", Icon: LayoutGrid },
+  { key: "open_bills", label: "Bill Aktif", Icon: FileText },
   { key: "queue", label: "Pesanan", Icon: ClipboardList },
   { key: "history", label: "Riwayat", Icon: History },
   { key: "shifts", label: "Shift", Icon: Wallet },
@@ -42,6 +47,7 @@ export function PosLeftNav({
   onLogout,
   cashierBadge,
   queueBadge,
+  openBillsBadge,
 }: PosLeftNavProps) {
   return (
     <nav
@@ -58,7 +64,9 @@ export function PosLeftNav({
               ? cashierBadge
               : tab.key === "queue"
                 ? queueBadge
-                : undefined;
+                : tab.key === "open_bills"
+                  ? openBillsBadge
+                  : undefined;
           return (
             <NavButton
               key={tab.key}

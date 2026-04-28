@@ -51,7 +51,9 @@ export const transactions = pgTable(
 
     cogs: bigint("cogs", { mode: "number" }),
 
-    status: text("status", { enum: ["paid", "voided", "refunded"] })
+    status: text("status", {
+      enum: ["paid", "voided", "refunded", "open"],
+    })
       .notNull()
       .default("paid"),
 

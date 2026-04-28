@@ -6,6 +6,7 @@ import {
   Banknote,
   CheckCircle2,
   CreditCard,
+  FileText,
   Gift,
   Percent,
   Plus,
@@ -48,6 +49,7 @@ import {
 } from "@/features/pos/components/MenuSortSelect";
 import { MenuTile } from "@/features/pos/components/MenuTile";
 import { NewOrderModal } from "@/features/pos/components/NewOrderModal";
+import { OpenBillPanel } from "@/features/pos/components/OpenBillPanel";
 import { OpenPriceModal } from "@/features/pos/components/OpenPriceModal";
 import { OpenShiftModal } from "@/features/pos/components/OpenShiftModal";
 import { OrderQueuePanel } from "@/features/pos/components/OrderQueuePanel";
@@ -69,6 +71,7 @@ import {
 import {
   createTransaction,
   markServed,
+  saveAsOpenBill,
   type PaymentMethod,
   type TransactionWithItems,
 } from "@/features/transactions";
@@ -440,6 +443,55 @@ export function PosShell() {
     setRightPanel({ kind: "paying", draftId: activeDraft.id });
   }
 
+  async function handleSaveAsOpenBill() {
+    if (!activeDraft || !shift || !session) return;
+    if (activeDraft.items.length === 0) return;
+    setPaymentSubmitting(true);
+    setPaymentError(null);
+    const payload = {
+      clientRefId: crypto.randomUUID(),
+      shiftId: shift.id,
+      cashierId: session.user.id,
+      pagerNumber: activeDraft.pagerNumber,
+      orderType: activeDraft.orderType,
+      items: activeDraft.items.map((item) => ({
+        menuItemId: item.menuItemId,
+        variant: item.variant,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        modifiersPriceDelta: item.modifiersPriceDelta,
+        subtotal: item.subtotal,
+        note: item.note,
+        openPriceNote: item.openPriceNote,
+        modifiers: item.modifiers.map((m) => ({
+          modifierSlug: m.modifierSlug,
+          selectedValue: m.selectedValue,
+          priceDelta: m.priceDelta,
+        })),
+      })),
+      subtotal,
+      discountType: activeDraft.discount?.type ?? null,
+      discountValue: activeDraft.discount?.value ?? null,
+      discountAmount,
+      discountReason: activeDraft.discountReason,
+      total,
+      discountApproverToken: activeDraft.discountApproverToken ?? undefined,
+    };
+    const res = await saveAsOpenBill(payload);
+    setPaymentSubmitting(false);
+    if (!res.success) {
+      setPaymentError(res.error.message);
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(
+      `Open bill ${res.data.transactionNumber} disimpan. Customer bayar nanti via tab Bill Aktif.`,
+    );
+    removeDraft(activeDraft.id);
+    setRightPanel({ kind: "idle" });
+    setHistoryRefreshKey((k) => k + 1);
+  }
+
   async function handleProcessPayment() {
     if (paymentSubmitting || !activeDraft || !shift) return;
     if (!cashSufficient) {
@@ -581,6 +633,13 @@ export function PosShell() {
             sortMode={sortMode}
             setSortMode={setSortMode}
           />
+        ) : tab === "open_bills" ? (
+          <OpenBillPanel
+            cashierName={session.user.name}
+            receiptConfig={receiptConfig}
+            refreshKey={historyRefreshKey}
+            onOpenSettings={() => setTab("settings")}
+          />
         ) : tab === "queue" ? (
           <OrderQueuePanel
             cashierName={session.user.name}
@@ -629,6 +688,7 @@ export function PosShell() {
             onEditNote={(id) => setNoteEditingId(id)}
             onOpenDiscount={() => setDiscountModalOpen(true)}
             onOpenCompliment={() => setComplimentModalOpen(true)}
+            onSaveAsOpenBill={handleSaveAsOpenBill}
             onProceedToPayment={handleProceedToPayment}
             onCancel={handleCancelOrder}
             onSwitchDraft={() => setRightPanel({ kind: "idle" })}
@@ -953,6 +1013,7 @@ function IdlePanel({
 
 interface CartPanelPropsExtra {
   onOpenCompliment: () => void;
+  onSaveAsOpenBill: () => void;
 }
 
 interface CartPanelProps extends CartPanelPropsExtra {
@@ -986,6 +1047,7 @@ function CartPanelImpl({
   onEditNote,
   onOpenDiscount,
   onOpenCompliment,
+  onSaveAsOpenBill,
   onProceedToPayment,
   onCancel,
   onSwitchDraft,
@@ -1085,6 +1147,14 @@ function CartPanelImpl({
             <Gift className="size-4" aria-hidden /> Compliment
           </Button>
         </div>
+        <Button
+          variant="outline"
+          onClick={onSaveAsOpenBill}
+          disabled={draft.items.length === 0}
+          fullWidth
+        >
+          <FileText className="size-4" aria-hidden /> Simpan sebagai Open Bill
+        </Button>
         <Button
           size="lg"
           onClick={onProceedToPayment}
