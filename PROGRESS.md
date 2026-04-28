@@ -4,12 +4,12 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 Tier 1.2 — **IN PROGRESS** (sesi 8 selesai 2026-04-27 dengan M23.2 cascade engine code-complete + deployed).
-**Active Milestone:** M23.3 UI (Preparations tab + COGS Calculator widget + recipe editor enhancements).
-**Mode:** Online (production stable at https://mahakan-pos.vercel.app dengan M23.2 code live; tabel inventory masih kosong, prep features inert sampai import M23.4)
+**Phase:** Phase 2 Tier 1.2 — **IN PROGRESS** (sesi 10 selesai 2026-04-28 dengan M23.4 importer/exporter/template code-complete; M23.3 + M23.4 belum di-deploy).
+**Active Milestone:** M23.5 verify + Owner reconcile + first --apply + handover.
+**Mode:** Online (production stable at https://mahakan-pos.vercel.app dengan M23.2 code live; tabel inventory masih kosong; M23.3 UI + M23.4 CLI tools menunggu single-release window di M23.5)
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `7d88a0e`, deploy `dpl_5PonsDNfLQkor4hQ3uS6FHaS8Gee` 2026-04-27)
+**Branch:** `release/phase-1` (HEAD `3512df4`; production tetap di `37d9350` deploy `dpl_5PonsDNfLQkor4hQ3uS6FHaS8Gee`)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md`
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
 **Phase 2 Tier 1.2 plan (M23.2):** `~/.claude/plans/halo-gua-mau-lanjut-gleaming-fern.md` (cascade engine implementation)
@@ -78,9 +78,9 @@ System upgrades over spreadsheet:
 
 - [x] **M23.1** — Schema extension: ingredients `{is_preparation, preparation_yield, cost_last_changed_at}` + recipes `{ingredient_id, waste_factor_pct}` + nullable `menu_item_id` + XOR check + 3 partial unique indexes + 6 audit event types _(done 2026-04-27 sesi 7, commit `094dca3`, migration `0003_absent_metal_master.sql` applied; backup run `24999330539`)_
 - [x] **M23.2** — Cost cascade engine: `preparation-flow-pure.ts` (4 pure helpers + 23 unit tests) + `preparation-flow.ts` (server-only DB CTE: `expandRecipeToAtomicLeaves`, `detectCycleForRecipeUpsert`, `cascadeCostUpdate` with `pg_advisory_xact_lock`, `computePrepCost` recursive with `inProgress`+`computed` dual visited); cascade hooks wired in `updateIngredient`/`receiveStock`/prep `createRecipe`/`updateRecipe`; cycle detect + RECIPE_CYCLE error in prep recipe upserts; delete guards (INGREDIENT_HAS_DEPENDENTS, PREP_HAS_DEPENDENTS); transaction-flow split into `kind=sale_deduct` + `kind=waste` movements + 1 combined `void_restore`/`refund_restore` per ingredient; recursive recipe expansion in `computeStockFlowForOrder` + `reevaluateSoldOutForIngredients` _(done 2026-04-27 sesi 8, commits `2000df6` + `e2fe24f` + `e081f7f`, pushed + deployed `dpl_5PonsDNfLQkor4hQ3uS6FHaS8Gee`; backwards-compatible — DB tabel inventory masih kosong, prep features inert sampai import M23.4)_
-- [ ] **M23.3** — UI: Preparations tab + COGS Calculator widget + Recipe editor enhancements (waste factor field, channel pricing GRABGOSO ×1.30 display, grouped select atomic vs preps, banded margin badge)
-- [ ] **M23.4** — TSV Importer (CLI `scripts/import-mahakan-data.ts`): mini parser handling Indonesian number format → 168 ingredients + 12 preps + 50 menu recipes; dry-run + reconciliation + --apply
-- [ ] **M23.5** — Verify + import dry-run + Owner reconcile non-matching menu names + apply + handover
+- [x] **M23.3** — UI: Preparations tab (`PreparationsList` + `PreparationFormModal`) + COGS Calculator widget (`CogsCalculatorWidget`) + IngredientsList atomic-only filter + RecipeEditorModal enhancements (Q Factor field, grouped select atomic/prep via `<optgroup>`, banded margin green/amber/red, GRABGOSO 30% display) + RecipesList Q badge inline + 3 server action wrappers (`listAtomicIngredients`, `listPreparations`, `getPreparationRecipe`) _(done 2026-04-28 sesi 9, commits `c8b10fc` + `1ecc604` + `b8daca2`; deploy ditunda ke M23.5 single-release)_
+- [x] **M23.4** — CSV Importer/Exporter/Template generator (long-format 5-file CSV, NOT Owner spreadsheet layout — clean standardized template). 3 npm scripts (`inventory:template`, `inventory:export`, `inventory:import`); `import-engine-pure.ts` (zod-style row normalizers + diff + topological sort + duplicate detection, 32 unit tests) + `import-engine.ts` (DB orchestration: pre-flight cycle check via merged adjacency, atomic single-tx, REPLACE recipe lines, cascade auto-fire per prep, refuse-on-error commit semantics); CLI prints per-row [NEW]/[UPDATE]/[SKIP]/[ERROR] table + JSON sidecar; audit `inventory.import.run` with runId; outlet auto-detect + actor via `SEED_OWNER_EMAIL`; csv-io tests (12 cases); `docs/M23.4-CSV-IMPORT.md` operational guide. Drop `import "server-only"` dari `preparation-flow.ts` + `audit/logger.ts` agar reusable dari Node CLI _(done 2026-04-28 sesi 10, commits `e509fc1` + `f46d298` + `a48e696` + `3512df4`; smoke verified dry-run; --apply belum dijalankan di prod, menunggu Owner-curated CSV)_
+- [ ] **M23.5** — Verify e2e: deploy M23.3 + M23.4 ke production; Owner curate CSV (export current state via UI yang baru, fill data dari spreadsheet existing); import dry-run di prod; Owner reconcile menu name mismatch via Admin UI; first `--apply` di prod; smoke 1 transaksi end-to-end → verify P&L COGS; handover sesi 12.
 
 ---
 
