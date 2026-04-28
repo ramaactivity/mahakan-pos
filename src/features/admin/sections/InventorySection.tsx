@@ -1,29 +1,47 @@
 "use client";
 
 import { useState } from "react";
+import { Calculator } from "lucide-react";
+import { Button } from "@/components/ui";
+import { CogsCalculatorWidget } from "./inventory/CogsCalculatorWidget";
 import { IngredientsList } from "./inventory/IngredientsList";
 import { MovementsList } from "./inventory/MovementsList";
+import { PreparationsList } from "./inventory/PreparationsList";
 import { RecipesList } from "./inventory/RecipesList";
 import { cn } from "@/lib/utils";
 
-type InventoryTab = "ingredients" | "movements" | "recipes";
+type InventoryTab =
+  | "ingredients"
+  | "preparations"
+  | "movements"
+  | "recipes";
 
 const TABS: Array<{ key: InventoryTab; label: string; soon?: boolean }> = [
   { key: "ingredients", label: "Bahan" },
+  { key: "preparations", label: "Preparations" },
   { key: "movements", label: "Pergerakan" },
   { key: "recipes", label: "Resep" },
 ];
 
 export function InventorySection() {
   const [tab, setTab] = useState<InventoryTab>("ingredients");
+  const [calcOpen, setCalcOpen] = useState(false);
 
   return (
     <div className="space-y-4 p-6">
-      <header>
-        <h1 className="text-2xl font-bold text-mahakan-green-900">Inventory</h1>
-        <p className="text-sm text-neutral-700">
-          Kelola bahan, terima stok, dan catat pergerakan inventory.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-mahakan-green-900">
+            Inventory
+          </h1>
+          <p className="text-sm text-neutral-700">
+            Kelola bahan, preparation, terima stok, dan pantau pergerakan
+            inventory.
+          </p>
+        </div>
+        <Button variant="outline" onClick={() => setCalcOpen(true)}>
+          <Calculator className="size-4" aria-hidden /> COGS Calculator
+        </Button>
       </header>
 
       <div
@@ -61,12 +79,19 @@ export function InventorySection() {
       <div>
         {tab === "ingredients" ? (
           <IngredientsList />
+        ) : tab === "preparations" ? (
+          <PreparationsList />
         ) : tab === "movements" ? (
           <MovementsList />
         ) : (
           <RecipesList />
         )}
       </div>
+
+      <CogsCalculatorWidget
+        open={calcOpen}
+        onClose={() => setCalcOpen(false)}
+      />
     </div>
   );
 }
