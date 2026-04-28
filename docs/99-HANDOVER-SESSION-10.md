@@ -3,7 +3,7 @@
 **Untuk:** Claude AI agent (sesi 11)
 **Dari:** Sesi 10 (Phase 2 Tier 1.2 — M23.4 CSV Importer/Exporter/Template)
 **Date:** 2026-04-28
-**Status:** **M23.4 code-complete locally**. Sesi 9 (M23.3 UI) + sesi 10 (M23.4 CLI) total 7 commits di `release/phase-1`, NOT yet deployed. Sesi 11 = M23.5: deploy + Owner reconcile + first `--apply` di prod.
+**Status:** **M23.3 + M23.4 deployed ke production** (`dpl_68UGimfxb3rxzANA3LpA1ZTS7c4j`). 8 commits di `release/phase-1` HEAD `2764102` pushed + live. Sesi 11 = M23.5: Owner curate CSV + dry-run + first `--apply` di prod + smoke verify P&L.
 
 ---
 
@@ -22,16 +22,16 @@
 
 **Verify:** typecheck ✓ lint ✓ vitest **276/276** (was 232 + 44 baru) ✓ build 11 routes ✓.
 
-**Production unchanged:** `37d9350` (M23.2 deploy `dpl_5PonsDNfLQkor4hQ3uS6FHaS8Gee` sesi 8).
+**Production state:** HEAD `2764102` deployed via `dpl_68UGimfxb3rxzANA3LpA1ZTS7c4j` 2026-04-28 (HTTP/2 200 verified). M23.3 UI + M23.4 CLI live; tabel inventory tetap kosong sampai Owner import.
 
 **Sesi 11 work (M23.5):**
-1. Push 7 commit + deploy ke production via `npx vercel --prod --yes`
-2. Owner curate CSV (load 5 file dari `data/source-spreadsheets/` → port ke standardized format, atau export blank → fill manual)
-3. `npm run inventory:import` dry-run di prod → reconcile mismatch (terutama menu names)
-4. Owner add missing menu_items via Admin UI
-5. `npm run inventory:import -- --apply` di prod
-6. Smoke 1 transaksi end-to-end → verify COGS muncul di P&L
-7. Handover sesi 12
+1. Owner curate CSV (load 5 file dari `data/source-spreadsheets/` → port ke standardized format, atau pakai `npm run inventory:template` → fill manual)
+2. `npm run inventory:import` dry-run → reconcile mismatch (terutama menu names — engine refuse auto-create)
+3. Owner add missing menu_items via Admin UI yang sekarang live di prod
+4. **Backup DB pre-apply** via GHA workflow (per `migration-ordering-rule`)
+5. `npm run inventory:import -- --apply` (first live write — destructive, irreversible without restore)
+6. Smoke 1 transaksi POS end-to-end → verify COGS muncul di P&L (M22.6)
+7. Handover sesi 12 + close M23 milestone
 
 ---
 
@@ -40,11 +40,13 @@
 | URL | Purpose |
 |---|---|
 | https://mahakan-pos.vercel.app | Production alias (stable) |
-| Latest immutable | M23.2 deploy `dpl_5PonsDNfLQkor4hQ3uS6FHaS8Gee` (sesi 8) — TIDAK ADA deploy baru sesi 9-10 |
+| Latest immutable | `dpl_68UGimfxb3rxzANA3LpA1ZTS7c4j` deployed 2026-04-28 sesi 10 (HEAD `2764102`) |
+| Inspector | https://vercel.com/ramaactivity98-5695s-projects/mahakan-pos/68UGimfxb3rxzANA3LpA1ZTS7c4j |
 
-- `release/phase-1` HEAD `3512df4` — pushed via sesi 8 last; **7 commits sesi 9+10 belum di-push**.
-- Production tetap M23.2 schema + cascade engine. M23.3 UI + M23.4 CLI keduanya backwards-compatible (no schema, no breaking change to existing flows).
-- DB tabel inventory tetap kosong di prod.
+- `release/phase-1` HEAD `2764102` — pushed + live di prod. Backwards-compatible (no schema, no breaking change ke existing flows).
+- M23.3 UI live: Preparations tab, COGS Calculator, recipe editor enhancements semua accessible via Admin → Inventory.
+- M23.4 CLI live: 3 npm scripts (`inventory:template`, `inventory:export`, `inventory:import`) callable dari local terminal (server-side scripts, tidak deployed ke Vercel — jalan dari local box dengan akses ke Neon DATABASE_URL).
+- DB tabel inventory tetap kosong di prod sampai Owner import.
 
 ---
 
@@ -122,18 +124,15 @@ Plan agent + user-confirmed via AskUserQuestion (D17, D18) + plan agent recommen
 
 ## 4. M23.5 Step-by-Step Plan (sesi 11)
 
-### Step 1 — Push + deploy (~10 min)
+### Step 1 — DONE (sesi 10 sudah push + deploy)
 
-```bash
-git push origin release/phase-1
-npx --yes vercel --prod --yes
-curl -sI https://mahakan-pos.vercel.app/   # expect HTTP/2 200
-```
+`dpl_68UGimfxb3rxzANA3LpA1ZTS7c4j` live. Sesi 11 mulai langsung di Step 2.
 
-Verify:
-- M23.3 Preparations tab muncul di Admin → Inventory
-- COGS Calculator button accessible
-- Recipe editor punya Q Factor field
+Sanity verify dulu sebelum continue:
+- Login Admin POS → Admin → Inventory
+- Tab "Preparations" terlihat
+- "COGS Calculator" button accessible di header
+- Edit any menu recipe → Q Factor field muncul
 
 ### Step 2 — Owner curate CSV (~30 min)
 
@@ -230,13 +229,9 @@ curl -sI https://mahakan-pos.vercel.app/   # HTTP/2 200, M23.2 deployment
 
 Engine smoke-tested di dry-run mode against prod DB (synthetic + template fixtures). Apply path 100% code-path tested via dry-run + sentinel rollback (same orchestrator). First real `--apply` planned di sesi 11.
 
-### 7.2 7 commit belum di-push
+### 7.2 (resolved sesi 10) — 8 commits pushed + deployed
 
-`release/phase-1` HEAD lokal = `3512df4`, remote terakhir = `7d88a0e` (sesi 8). Push pending per `pat-handling-preference` memory.
-
-### 7.3 Production tertinggal 7 commit
-
-Akan deploy bareng di Step 1 sesi 11. Backwards-compatible — tidak ada breaking change ke flow existing (M22.x sale path tetap kompatibel; new prep features inert sampai data ada).
+`release/phase-1` HEAD `2764102` synced ke remote, deployed via `dpl_68UGimfxb3rxzANA3LpA1ZTS7c4j`. Production tetap backwards-compatible (M22.x sale path kompatibel; M23 prep features inert sampai data import).
 
 ### 7.4 `server-only` removed dari 2 module
 
@@ -297,26 +292,27 @@ Aktif yang tetap force:
 ## 10. Final Status Snapshot
 
 ```
-Date:        2026-04-28 (end of sesi 10)
-Branch:      release/phase-1 (HEAD 3512df4)
+Date:        2026-04-28 (end of sesi 10, post-deploy)
+Branch:      release/phase-1 (HEAD 2764102, pushed)
 Build:       ✓ 11 routes, webpack mode
 Tests:       ✓ 276/276 (232 sesi 8 baseline + 12 csv-io + 32 import-engine-pure)
 Lint:        ✓ clean
 Typecheck:   ✓ strict mode, no any
 
-Production:  ✓ https://mahakan-pos.vercel.app (commit 094dca3 schema + 37d9350 deploy from sesi 8)
+Production:  ✓ https://mahakan-pos.vercel.app (deploy dpl_68UGimfxb3rxzANA3LpA1ZTS7c4j 2026-04-28)
+             — M23.3 UI live, M23.4 CLI ready dari local box
 DB on Neon:  Migration 0003 (sesi 7) applied. Tables empty. No new migration sesi 9-10.
-Backup:      GHA run 24999330539 pre-M23.1 (still last; M23.5 should trigger pre-apply)
+Backup:      GHA run 24999330539 pre-M23.1 (still last; M23.5 MUST trigger pre-apply)
 
 Phase 2:
   Tier 1.1 Recipe/BOM + Inventory  ✅ CODE-COMPLETE (sesi 6)
-  Tier 1.2 Cost Engine M23         🔄 M23.1-M23.4 done; M23.5 pending
+  Tier 1.2 Cost Engine M23         🔄 M23.1-M23.4 done + deployed; M23.5 pending
   Tier 1.3 Loyalty + Customer DB   ⏸ defer until Tier 1.2 ship + 1 week stable
 
-Next action: M23.5 — push 7 commits + deploy + Owner curate CSV +
-             dry-run + first --apply + smoke + handover. ~1 sesi work.
+Next action: M23.5 — Owner curate CSV + dry-run + backup + first --apply
+             + smoke verify P&L COGS + handover. ~1 sesi work.
              High-risk step (live DB writes); explicit Owner approval +
-             pre-backup mandatory.
+             pre-backup MANDATORY.
 ```
 
 ---
