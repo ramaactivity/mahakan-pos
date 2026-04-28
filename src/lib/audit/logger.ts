@@ -1,5 +1,5 @@
-import "server-only";
-
+// Server-side: writes to audit_logs via @/db. Reused by CLI scripts (M23.4
+// importer) untuk emit inventory.import.run events.
 import { db } from "@/db";
 import { auditLogs } from "@/db/schema";
 import type {

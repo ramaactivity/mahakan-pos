@@ -1,5 +1,6 @@
-import "server-only";
-
+// Server-side module: pulls in @/db (Postgres pool), so client-bundle inclusion
+// would fail at runtime anyway. Pure helpers live in `preparation-flow-pure.ts`
+// for client + Node CLI use without the @/db transitive dep.
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
