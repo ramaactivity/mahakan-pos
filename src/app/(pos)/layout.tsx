@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { OfflineBanner } from "@/components/ui/OfflineBanner";
+import { WorkspaceSwitcher } from "@/components/ui/WorkspaceSwitcher";
 import { RequireAuth } from "@/features/auth/RequireAuth";
 import { useSession } from "@/features/auth/SessionProvider";
 import { FullscreenToggle } from "@/features/pos/components/FullscreenToggle";
@@ -32,6 +33,7 @@ function PosOuterShell({ children }: { children: ReactNode }) {
               ({session.user.role})
             </span>
           </span>
+          <WorkspaceSwitcher current="pos" role={session.user.role} />
           <FullscreenToggle />
         </div>
       </header>

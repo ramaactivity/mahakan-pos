@@ -30,6 +30,8 @@ export { DatePicker } from "./DatePicker";
 export { DateRangePicker } from "./DateRangePicker";
 export type { DateRangeValue } from "./DateRangePicker";
 
+export { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+
 export { PinPad } from "./PinPad";
 
 export { QuantityStepper } from "./QuantityStepper";

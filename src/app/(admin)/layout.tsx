@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { OfflineBanner } from "@/components/ui/OfflineBanner";
+import { WorkspaceSwitcher } from "@/components/ui/WorkspaceSwitcher";
 import { RequireAuth } from "@/features/auth/RequireAuth";
 import { useSession } from "@/features/auth/SessionProvider";
 
@@ -29,12 +30,15 @@ function AdminOuterShell({ children }: { children: ReactNode }) {
             Back Office
           </span>
         </div>
-        <span className="text-sm text-neutral-700">
-          {session.user.name}{" "}
-          <span className="text-neutral-500 capitalize">
-            ({session.user.role})
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-neutral-700">
+            {session.user.name}{" "}
+            <span className="text-neutral-500 capitalize">
+              ({session.user.role})
+            </span>
           </span>
-        </span>
+          <WorkspaceSwitcher current="admin" role={session.user.role} />
+        </div>
       </header>
       {children}
     </div>
