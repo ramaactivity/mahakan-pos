@@ -18,11 +18,14 @@ import {
 } from "./preparation-flow";
 import {
   fetchAllRecipes,
+  fetchAtomicIngredients,
   fetchIngredientById,
   fetchIngredients,
   fetchLowStockIngredients,
   fetchMovements,
+  fetchPreparations,
   fetchRecipeById,
+  fetchRecipeForPreparation,
   fetchRecipesForMenuItem,
   type ListIngredientsOptions,
 } from "./queries";
@@ -97,6 +100,40 @@ export async function listLowStockIngredients(): Promise<
     return fail("FORBIDDEN", "Tidak punya hak lihat bahan");
   }
   return ok(await fetchLowStockIngredients(session.user.outletId));
+}
+
+export async function listAtomicIngredients(
+  opts: ListIngredientsOptions = {},
+): Promise<ApiResult<Paginated<Ingredient>>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.ingredient.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat bahan");
+  }
+  return ok(await fetchAtomicIngredients(session.user.outletId, opts));
+}
+
+export async function listPreparations(
+  opts: ListIngredientsOptions = {},
+): Promise<ApiResult<Paginated<Ingredient>>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.preparation.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat preparation");
+  }
+  return ok(await fetchPreparations(session.user.outletId, opts));
+}
+
+export async function getPreparationRecipe(
+  ingredientId: string,
+): Promise<ApiResult<RecipeWithIngredients | null>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.preparation.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat preparation");
+  }
+  const recipe = await fetchRecipeForPreparation(ingredientId);
+  if (recipe && recipe.outletId !== session.user.outletId) {
+    return fail("NOT_FOUND", "Preparation tidak ditemukan");
+  }
+  return ok(recipe);
 }
 
 export async function listMovements(

@@ -24,7 +24,7 @@ import {
 import {
   deleteIngredient,
   isOk,
-  listIngredients,
+  listAtomicIngredients,
   listLowStockIngredients,
   type Ingredient,
 } from "@/features/inventory";
@@ -72,7 +72,10 @@ export function IngredientsList() {
     async function load() {
       setLoading(true);
       const [listRes, lowRes] = await Promise.all([
-        listIngredients({ activeOnly: !showInactive, search: search || undefined }),
+        listAtomicIngredients({
+          activeOnly: !showInactive,
+          search: search || undefined,
+        }),
         listLowStockIngredients(),
       ]);
       if (cancelled) return;
@@ -112,11 +115,13 @@ export function IngredientsList() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-neutral-900">
-            Bahan ({ingredients.length})
+            Bahan Baku ({ingredients.length})
           </h2>
           <p className="text-xs text-neutral-500">
-            Stok terupdate via Terima / Adjust / Waste; juga otomatis terkurang
-            saat transaksi POS (Phase 2 M22.5).
+            Bahan atomik (raw ingredient). Untuk bahan turunan seperti
+            Prep-Espresso, Prep-Sambal-Matah, lihat tab Preparations. Stok
+            terupdate via Terima / Adjust / Waste dan otomatis terkurang saat
+            transaksi POS.
           </p>
         </div>
         {canCreate ? (

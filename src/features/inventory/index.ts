@@ -50,7 +50,10 @@ export {
 
 export {
   listIngredients,
+  listAtomicIngredients,
+  listPreparations,
   getIngredient,
+  getPreparationRecipe,
   listLowStockIngredients,
   listMovements,
   createIngredient,
