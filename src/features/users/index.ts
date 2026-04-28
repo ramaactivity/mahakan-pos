@@ -1,6 +1,7 @@
 export type {
   ApiResult,
   CreateManagerInput,
+  CreateOwnerInput,
   CreateStaffInput,
   ListUsersOptions,
   Paginated,
@@ -14,6 +15,7 @@ export { isOk } from "./types";
 
 export {
   createManager,
+  createOwner,
   createStaff,
   deactivateUser,
   getUser,

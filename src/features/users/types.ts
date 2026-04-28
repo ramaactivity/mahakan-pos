@@ -70,6 +70,13 @@ export interface CreateManagerInput {
   pin?: string;
 }
 
+export interface CreateOwnerInput {
+  name: string;
+  email: string;
+  password: string;
+  pin?: string;
+}
+
 export interface UpdateUserInput {
   id: string;
   name?: string;

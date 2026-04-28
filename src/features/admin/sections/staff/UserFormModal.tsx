@@ -1,15 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ShieldAlert } from "lucide-react";
 import { Button, Input, Modal, toast } from "@/components/ui";
 import {
   createManager,
+  createOwner,
   createStaff,
   isOk,
   updateUser,
 } from "@/features/users";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+
+type CreateRole = "staff" | "manager" | "owner";
 
 type Mode = { kind: "create" } | { kind: "edit"; userId: string; name: string };
 
@@ -31,7 +35,7 @@ export function UserFormModal({
   onClose,
   onSaved,
 }: UserFormModalProps) {
-  const [createRole, setCreateRole] = useState<"staff" | "manager">("staff");
+  const [createRole, setCreateRole] = useState<CreateRole>("staff");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -87,6 +91,23 @@ export function UserFormModal({
       return;
     }
 
+    if (createRole === "owner") {
+      const res = await createOwner({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        pin: pin.trim() || undefined,
+      });
+      if (!isOk(res)) {
+        setError(res.error.message);
+        setSubmitting(false);
+        return;
+      }
+      toast.success(`Owner ${name} ditambahkan`);
+      onSaved();
+      return;
+    }
+
     // Create manager
     const res = await createManager({
       name: name.trim(),
@@ -105,6 +126,8 @@ export function UserFormModal({
 
   const isEdit = mode?.kind === "edit";
   const canCreateManager = viewerRole === "owner";
+  const canCreateOwner = viewerRole === "owner";
+  const needsEmail = createRole === "manager" || createRole === "owner";
 
   return (
     <Modal
@@ -129,31 +152,55 @@ export function UserFormModal({
             <label className="block text-sm font-medium text-neutral-900">
               Role
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
+            <div
+              className={cn(
+                "grid gap-2",
+                canCreateOwner ? "grid-cols-3" : "grid-cols-2",
+              )}
+              role="radiogroup"
+              aria-label="Role user"
+            >
+              <RoleButton
+                label="Staff"
+                hint="PIN"
+                active={createRole === "staff"}
                 onClick={() => setCreateRole("staff")}
-                className={cn(
-                  "rounded-md border py-2 text-sm font-medium transition-all",
-                  createRole === "staff"
-                    ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
-                    : "border-neutral-300 bg-white hover:bg-neutral-100",
-                )}
-              >
-                Staff (PIN)
-              </button>
-              <button
-                type="button"
+              />
+              <RoleButton
+                label="Manager"
+                hint="Email"
+                active={createRole === "manager"}
                 onClick={() => setCreateRole("manager")}
-                className={cn(
-                  "rounded-md border py-2 text-sm font-medium transition-all",
-                  createRole === "manager"
-                    ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
-                    : "border-neutral-300 bg-white hover:bg-neutral-100",
-                )}
-              >
-                Manager (Email)
-              </button>
+              />
+              {canCreateOwner ? (
+                <RoleButton
+                  label="Owner"
+                  hint="Email"
+                  active={createRole === "owner"}
+                  onClick={() => setCreateRole("owner")}
+                  emphasis
+                />
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {!isEdit && createRole === "owner" ? (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-md border border-warning-500/40 bg-warning-100/50 p-3 text-xs text-warning-500"
+          >
+            <ShieldAlert className="size-4 shrink-0" aria-hidden />
+            <div className="space-y-1">
+              <p className="font-semibold uppercase tracking-wide">
+                Owner = akses penuh sistem
+              </p>
+              <p className="text-warning-500/90">
+                User Owner baru bisa mengelola semua data, lihat P&amp;L, hapus
+                transaksi, mengubah harga, dan menambah Owner lain. Hanya buat
+                Owner kalau lo benar-benar percaya orangnya. Semua aksi tercatat
+                di Audit Log.
+              </p>
             </div>
           </div>
         ) : null}
@@ -167,22 +214,34 @@ export function UserFormModal({
           maxLength={120}
         />
 
-        {!isEdit && createRole === "manager" ? (
+        {!isEdit && needsEmail ? (
           <>
             <Input
               label="Email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="manager@mahakan.id"
+              placeholder={
+                createRole === "owner"
+                  ? "owner@mahakan.id"
+                  : "manager@mahakan.id"
+              }
               required
             />
             <Input
-              label="Password Sementara (min 8 karakter)"
+              label={
+                createRole === "owner"
+                  ? "Password Sementara (min 12 karakter)"
+                  : "Password Sementara (min 8 karakter)"
+              }
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              hint="Manager bisa ganti sendiri setelah login"
+              hint={
+                createRole === "owner"
+                  ? "Owner harus pakai password kuat. Owner baru bisa ganti setelah login."
+                  : "Manager bisa ganti sendiri setelah login"
+              }
               required
             />
             <Input
@@ -213,5 +272,43 @@ export function UserFormModal({
         ) : null}
       </div>
     </Modal>
+  );
+}
+
+interface RoleButtonProps {
+  label: string;
+  hint: string;
+  active: boolean;
+  onClick: () => void;
+  emphasis?: boolean;
+}
+
+function RoleButton({ label, hint, active, onClick, emphasis }: RoleButtonProps) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      onClick={onClick}
+      className={cn(
+        "flex flex-col items-center justify-center gap-0.5 rounded-md border py-2 text-sm font-medium transition-all",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700 focus-visible:ring-offset-1",
+        active
+          ? emphasis
+            ? "border-warning-500 bg-warning-100/60 text-warning-500"
+            : "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+          : "border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-100",
+      )}
+    >
+      <span>{label}</span>
+      <span
+        className={cn(
+          "text-[10px] uppercase tracking-wide",
+          active ? "opacity-80" : "text-neutral-500",
+        )}
+      >
+        {hint}
+      </span>
+    </button>
   );
 }

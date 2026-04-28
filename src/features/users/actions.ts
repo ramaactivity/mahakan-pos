@@ -21,6 +21,7 @@ import {
   ok,
   type ApiResult,
   type CreateManagerInput,
+  type CreateOwnerInput,
   type CreateStaffInput,
   type ListUsersOptions,
   type Paginated,
@@ -42,6 +43,13 @@ const createManagerSchema = z.object({
   name: z.string().trim().min(1).max(80),
   email: z.email(),
   password: z.string().min(8).max(200),
+  pin: pinSchema.optional(),
+});
+
+const createOwnerSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  email: z.email(),
+  password: z.string().min(12).max(200),
   pin: pinSchema.optional(),
 });
 
@@ -177,6 +185,58 @@ export async function createManager(
     entityId: row.id,
     payload: {
       summary: `Tambah manager ${row.name} (${row.email})`,
+      after: { name: row.name, email: row.email, role: row.role, status: row.status },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+  return ok(toPublicUser(row));
+}
+
+export async function createOwner(
+  input: CreateOwnerInput,
+): Promise<ApiResult<PublicUser>> {
+  const session = await requirePerm("user.create.owner");
+
+  const parsed = createOwnerSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+  const email = v.email.toLowerCase();
+
+  if (await emailTaken(session.user.outletId, email)) {
+    return fail("EMAIL_DUPLICATE", "Email sudah terdaftar", "email");
+  }
+
+  const passwordHash = await hashPassword(v.password);
+  const pinHash = v.pin ? await hashPin(v.pin) : null;
+
+  const [row] = await db
+    .insert(users)
+    .values({
+      outletId: session.user.outletId,
+      name: v.name,
+      email,
+      passwordHash,
+      pinHash,
+      role: "owner",
+      status: "active",
+      createdBy: session.user.id,
+    })
+    .returning();
+
+  // Owner creation is sensitive — surface in summary so it stands out in
+  // audit log filter; also include actor email for traceability.
+  await logAudit({
+    eventType: "user.create",
+    userId: session.user.id,
+    entityType: "user",
+    entityId: row.id,
+    payload: {
+      summary: `Tambah OWNER ${row.name} (${row.email}) — granted full access`,
       after: { name: row.name, email: row.email, role: row.role, status: row.status },
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
