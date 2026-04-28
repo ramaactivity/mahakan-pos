@@ -4,8 +4,8 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 Tier 1.2 + **M24 LANDED** (sesi 11 selesai 2026-04-28: M23.5/6/7 + M24 kitchen+bar print routing).
-**Active Milestone:** Awaiting Owner deploy approval (HEAD `eabe648` local); next = POS UX audit (B).
+**Phase:** Phase 2 Tier 1.2 + **M24 + M25-S quick wins LANDED** (sesi 11 selesai 2026-04-28: M23.5/6/7 + M24 kitchen+bar print + M25-S POS audit + 4 cashier speed wins).
+**Active Milestone:** Awaiting Owner deploy approval (HEAD `f5b2c9f` local).
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, **inventory data populated** — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
@@ -87,6 +87,10 @@ System upgrades over spreadsheet:
 #### M24 — Kitchen + Bar Print Routing (single-printer multi-ticket model)
 
 - [x] **M24** — Setiap transaksi `paid` sekarang emit 3-cut sequence: kitchen ticket (food only) → bar ticket (drinks only) → customer receipt. Empty station skip (mis. pure-drink order = 2 cut). Hardcoded `category → station` map untuk 11 seeded categories di [src/lib/printer/station-mapping.ts](src/lib/printer/station-mapping.ts). Pure ticket builder [src/lib/printer/ticket-builder.ts](src/lib/printer/ticket-builder.ts) — no prices, no totals, big bold pager + items dengan variant/modifiers/notes. [print-transaction.ts](src/lib/printer/print-transaction.ts) modified untuk concat 3 ticket bytes dalam 1 send call (single Bluetooth transmission). 17 unit tests covering station mapping, item filtering, build edge cases (empty, takeaway, no-prices invariant, total count footer). Void/refund transactions tidak emit prep tickets (operasi sudah done). Schema field per kategori deferred — single-outlet + 11 seed-locked cats sufficient untuk hardcoded approach _(done 2026-04-28 sesi 11, commit `eabe648`; verify typecheck ✓ lint ✓ vitest 308/308 ✓ build 11 routes ✓; awaiting Owner push + deploy + hardware test on RPP02)_
+
+#### M25 — POS UX Improvements (Phase 2 Tier 2.1)
+
+- [x] **M25-S** — Audit-driven cashier rush-hour speed wins. Audit identified 4 highest-impact daily-friction items (S1-S4). **S1**: Cache item tapped from idle state in `pendingTapItem`, auto-dispatch via `dispatchItem(draftId, item)` post-`handleNewOrderCreated` — eliminates "tap ulang" friction. Cancel NewOrderModal clears cache. **S2**: Pre-fetch all modifiers + build `categoryId→Modifier[]` map saat PosShell mount; predicate di `dispatchItem` skip ItemModifierModal entirely untuk fixed-price items dengan empty modifiers list (Bites/Sweets/Ricebowl/IceCream ~15 menu items) — direct addItem dengan defaults. **S3**: `isMergeableLine` helper + `addItem` merge logic — same `(menuItemId, variant, unitPrice, modifiers slug+value)` increments existing line qty instead of appending. Items dengan note/openPriceNote stay separate (custom by intent). **S4**: NewOrderModal pre-fills pager dengan `max(active drafts) + 1` via `useCartStore.getState()` di useEffect saat open. 15 unit tests di [tests/unit/cart-merge.test.ts](tests/unit/cart-merge.test.ts) covering merge edge cases (different menu/variant/price/modifiers, notes block merge, identical modifier sets, addItem merge behavior) _(done 2026-04-28 sesi 11, commit `f5b2c9f`; verify typecheck ✓ lint ✓ vitest 323/323 ✓ build 11 routes ✓; awaiting Owner push + deploy + browser smoke; deferred follow-ups: M2 inline-note ~1.5j, Q1 switch-draft-from-cart ~1.5j, M3 last-used variant memory ~1j, Q3 draft sort by age ~1j)_
 
 ---
 

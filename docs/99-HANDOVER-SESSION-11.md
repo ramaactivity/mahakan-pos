@@ -576,3 +576,75 @@ Output: punch-list dengan effort estimate per item, lo pilih top 3-5 untuk imple
 2. Hardware test: Buat 1 transaksi mixed (1 food + 1 drink) → bayar → verifikasi 3 cut keluar dalam urutan dapur → bar → customer
 3. Edge case test: pure-drink order → 2 cut (bar + customer), pure-food → 2 cut (dapur + customer)
 4. Verify prep tickets gak ada price (cuma items + qty + variant + modifiers + notes)
+
+---
+
+## ADDENDUM 4 — POS UX Audit + S1-S4 Quick Wins landed (commit `f5b2c9f`)
+
+Token-hemat audit + bundled implementation. User pilih: implement S1+S2+S3+S4 langsung tanpa interim review.
+
+### Audit punch-list (in-chat — not committed sebagai doc)
+
+3 area, 12 gap identified, dibagi prioritas:
+- **HIGH** (S1, S2): tap dari idle gak auto-add + modifier modal forced even untuk fixed-price-no-mod items
+- **MEDIUM** (S3, S4, M2, Q1): line merge same-modifier, pager auto-suggest, inline note, switch draft from cart
+- **LOW polish** (S5, M3, M4, Q3): cash quick-amount config, last-used variant memory, modifier preset, draft age sort
+- **DEFER** (Q2): KDS-style in-progress status — Phase 2 Tier 4 trigger only
+
+S1+S2+S3+S4 implemented sesi 11 (~3.5 jam estimated, total ~287 lines diff including tests).
+
+### What's added
+
+| Area | Path | Change |
+|---|---|---|
+| S1 + S2 | [src/features/pos/PosShell.tsx](src/features/pos/PosShell.tsx) | `pendingTapItem` state + `modifiersByCategory` pre-fetched map + `dispatchItem` helper + handleItemTap rewrite. Pre-fetch `listModifiers()` parallel with menu/categories di mount effect. |
+| S3 | [src/features/pos/cartStore.ts](src/features/pos/cartStore.ts) | `isMergeableLine(a, b)` exported helper + `addItem` merge logic. Item dengan `note` atau `openPriceNote` block merge (custom items stay separate by design). |
+| S4 | [src/features/pos/components/NewOrderModal.tsx](src/features/pos/components/NewOrderModal.tsx) | Auto-suggest pager via `useCartStore.getState()` di useEffect open trigger. |
+| Tests | [tests/unit/cart-merge.test.ts](tests/unit/cart-merge.test.ts) | 15 tests: isMergeableLine 8 cases + addItem merge behavior 7 cases. |
+
+### Decisions D41-D43
+
+| ID | Decision |
+|---|---|
+| **D41** | Pre-fetch ALL modifiers di PosShell mount (parallel `Promise.all` dengan menu+categories), build map sekali. Alternatif (lazy fetch per-item-tap) ditolak — menambah latency exactly di rush hour. |
+| **D42** | Notes/openPriceNote block merge — items custom punya intent berbeda. Trade-off: kasir harus manual merge kalau mau gabung 2 same-note items, tapi avoid silent collapse data. |
+| **D43** | S2 predicate: `priceType==="fixed" AND modifiers.length===0`. Variants (Coffee/NonCoffee/Tea/Frappe/Mocktail) + open-price (Manual Brew) tetap pakai modal — variant pilih + price input butuh user input. Bakmie ada modifier (`extra_topping_ayam`), tetap modal. |
+
+### Verify (sesi 11 close — final-final-final)
+- typecheck ✓ lint ✓ vitest **323/323** ✓ build 11 routes ✓
+- auth-password 4 timeouts saat parallel = known bcrypt flake per sesi 10; pass isolated 4/4
+- Browser smoke pending (lo test setelah deploy)
+
+### Final commit chain (sesi 11 — 9 commits)
+1. `e640f11` — feat(M23.5): first --apply + cost engine verified live
+2. `b0f5d84` — feat(M23.6): menu engineering matrix view
+3. `a573b15` — docs: PROGRESS + handover for M23.6
+4. `32eb883` — fix(M23.7): cascadeCostUpdate self-include + menuIdByLower duplicate detect
+5. `d92b94e` — feat(M23.7): CSV export untuk Menu Engineering Matrix
+6. `9c6d6d1` — docs: PROGRESS + handover for M23.7
+7. `eabe648` — feat(M24): kitchen + bar prep ticket routing
+8. `c2ac765` — docs: PROGRESS + handover for M24
+9. `f5b2c9f` — feat(M25-S): cashier rush-hour speed wins (S1+S2+S3+S4)
+
+NOT pushed/deployed.
+
+### Sesi 12 starting candidates (post M25-S)
+
+**Carry-forward POS audit deferred items:**
+- M2 inline-note workflow (~1.5j) — single tap from cart line ke note input, no separate modal
+- Q1 switch-draft-from-cart (~1.5j) — peek lain draft dari cart panel tanpa cancel current
+- M3 last-used variant memory (~1j) — per item: remember "kasir terakhir pilih iced" + default ke itu
+- Q3 draft sort by age (~1j) — oldest draft di atas, dengan time indicator
+- S5 cash quick-amount config (~20 menit polish)
+
+**Or new direction:**
+- Tier 2.2 supplier invoice tracking (~1 minggu)
+- Tier 1.3 Loyalty (Owner explicitly DEFER sebelumnya, tetap defer kecuali Owner ubah pikiran)
+- Hardware verify M24 + smoke verify all sesi 11 work
+
+### Owner deploy + verify checklist
+
+1. `git push origin release/phase-1 && npx --yes vercel --prod --yes` (8 commits sesi 11)
+2. **M24 hardware test** (RPP02): mixed order 1 food + 1 drink → 3 cut output dapur + bar + customer; pure-drink → 2 cut bar + customer; pure-food → 2 cut dapur + customer; verify NO prices di prep tickets
+3. **M25-S smoke test**: dari idle tap "Iced Americano" → modal NewOrder muncul dengan pager auto-fill → submit → langsung ke modifier modal (S1 working). Tap "French Fries" dari cart panel → langsung ke-add ke cart tanpa modal (S2). Tap "French Fries" lagi → quantity=2 di line yang sama (S3). Buat draft kedua → pager otomatis bertambah (S4).
+4. **M23.5 follow-up**: Login Admin → Menu → cari Bakmie "Ayam Sambal Matah" → rename ke "Bakmie Sambal Matah" (atau nama lain unik) → re-export / re-import file 04+05 jika perlu attach proper recipe.
