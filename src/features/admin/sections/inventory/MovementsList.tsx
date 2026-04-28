@@ -8,8 +8,11 @@ import {
   Card,
   CardContent,
   CardHeader,
-  Input,
+  Combobox,
+  DatePicker,
+  Select,
   Skeleton,
+  type ComboboxGroup,
 } from "@/components/ui";
 import {
   isOk,
@@ -164,53 +167,48 @@ export function MovementsList() {
             <Filter className="size-4" aria-hidden /> Filter
           </div>
           <div className="grid gap-3 md:grid-cols-4">
-            <Input
+            <DatePicker
               label="Dari Tanggal"
-              type="date"
               value={from}
-              onChange={(e) => setFrom(e.target.value)}
+              maxDate={to}
+              onChange={(v) => setFrom(v ?? "")}
+              clearable={false}
             />
-            <Input
+            <DatePicker
               label="Sampai Tanggal"
-              type="date"
               value={to}
-              onChange={(e) => setTo(e.target.value)}
+              minDate={from}
+              onChange={(v) => setTo(v ?? "")}
+              clearable={false}
             />
-            <div className="space-y-1.5">
-              <label className="block text-sm font-medium text-neutral-900">
-                Bahan
-              </label>
-              <select
-                value={ingredientFilter}
-                onChange={(e) => setIngredientFilter(e.target.value)}
-                className="h-10 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
-              >
-                <option value="all">Semua bahan</option>
-                {ingredients.map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="block text-sm font-medium text-neutral-900">
-                Tipe
-              </label>
-              <select
-                value={kindFilter}
-                onChange={(e) =>
-                  setKindFilter(e.target.value as MovementKind | "all")
-                }
-                className="h-10 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
-              >
-                {KIND_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Combobox
+              label="Bahan"
+              placeholder="Semua bahan"
+              searchPlaceholder="Cari bahan…"
+              clearable
+              groups={[
+                {
+                  label: "",
+                  options: ingredients.map((i) => ({
+                    value: i.id,
+                    label: i.name,
+                    hint: i.unit,
+                    keywords: [i.unit],
+                  })),
+                } satisfies ComboboxGroup,
+              ]}
+              value={ingredientFilter === "all" ? null : ingredientFilter}
+              onChange={(v) => setIngredientFilter(v ?? "all")}
+            />
+            <Select
+              label="Tipe"
+              options={KIND_OPTIONS.map((o) => ({
+                value: o.value,
+                label: o.label,
+              }))}
+              value={kindFilter}
+              onValueChange={(v) => setKindFilter(v as MovementKind | "all")}
+            />
           </div>
         </CardHeader>
         <CardContent className="px-0">

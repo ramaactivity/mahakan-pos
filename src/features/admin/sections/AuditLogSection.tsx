@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { Select, DatePicker, type SelectGroup } from "@/components/ui";
 import { listAuditLogs } from "@/features/audit";
 import type { AuditLogRow } from "@/lib/audit";
 import { AUDIT_EVENT_TYPES } from "@/lib/audit";
@@ -124,56 +125,43 @@ export function AuditLogSection() {
 
       <Card className="p-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium text-neutral-700">Event</span>
-            <select
-              aria-label="Filter event type"
-              value={eventType}
-              onChange={(e) => {
-                setEventType(e.target.value);
-                setPage(0);
-              }}
-              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm"
-            >
-              <option value="all">Semua</option>
-              {EVENT_GROUPS.map((g) => (
-                <optgroup key={g.label} label={g.label}>
-                  {g.types.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium text-neutral-700">Dari tanggal</span>
-            <input
-              type="date"
-              value={fromDate}
-              max={toDate}
-              onChange={(e) => {
-                setFromDate(e.target.value);
-                setPage(0);
-              }}
-              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm"
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium text-neutral-700">Sampai tanggal</span>
-            <input
-              type="date"
-              value={toDate}
-              min={fromDate}
-              max={today}
-              onChange={(e) => {
-                setToDate(e.target.value);
-                setPage(0);
-              }}
-              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm"
-            />
-          </label>
+          <Select
+            label="Event"
+            ariaLabel="Filter event type"
+            options={[{ value: "all", label: "Semua" }]}
+            groups={
+              EVENT_GROUPS.map<SelectGroup>((g) => ({
+                label: g.label,
+                options: g.types.map((t) => ({ value: t, label: t })),
+              }))
+            }
+            value={eventType}
+            onValueChange={(v) => {
+              setEventType(v);
+              setPage(0);
+            }}
+          />
+          <DatePicker
+            label="Dari tanggal"
+            value={fromDate}
+            maxDate={toDate}
+            onChange={(v) => {
+              setFromDate(v ?? "");
+              setPage(0);
+            }}
+            clearable={false}
+          />
+          <DatePicker
+            label="Sampai tanggal"
+            value={toDate}
+            minDate={fromDate}
+            maxDate={today}
+            onChange={(v) => {
+              setToDate(v ?? "");
+              setPage(0);
+            }}
+            clearable={false}
+          />
         </div>
       </Card>
 

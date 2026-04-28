@@ -18,6 +18,7 @@ import {
   CardHeader,
   Input,
   Modal,
+  Select,
   Skeleton,
   toast,
 } from "@/components/ui";
@@ -237,19 +238,17 @@ export function ItemsList() {
                 }
               />
             </div>
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              aria-label="Filter kategori"
-              className="h-10 rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
-            >
-              <option value="all">Semua kategori</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+            <div className="w-full sm:w-56">
+              <Select
+                ariaLabel="Filter kategori"
+                options={[
+                  { value: "all", label: "Semua kategori" },
+                  ...categories.map((c) => ({ value: c.id, label: c.name })),
+                ]}
+                value={categoryFilter}
+                onValueChange={(v) => setCategoryFilter(v as string | "all")}
+              />
+            </div>
           </div>
         </CardHeader>
         <CardContent className="px-0">

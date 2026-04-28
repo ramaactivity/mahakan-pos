@@ -2,7 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Download } from "lucide-react";
-import { Button, Card, CardContent, CardHeader, Input, Skeleton } from "@/components/ui";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  DateRangePicker,
+  Skeleton,
+} from "@/components/ui";
 import {
   getMenuEngineeringMatrix,
   isOk,
@@ -126,19 +133,17 @@ export function MenuEngineeringView() {
 
       <Card>
         <CardHeader>
-          <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
-            <Input
-              label="Dari"
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-            />
-            <Input
-              label="Sampai"
-              type="date"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-            />
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-0 flex-1">
+              <DateRangePicker
+                label="Periode"
+                value={{ from, to }}
+                onChange={(v) => {
+                  setFrom(v.from ?? monthStart);
+                  setTo(v.to ?? today);
+                }}
+              />
+            </div>
             <Button
               type="button"
               variant="secondary"
@@ -149,7 +154,6 @@ export function MenuEngineeringView() {
                 downloadCsv(`menu-matrix-summary-${from}-${to}.csv`, buildSummaryCsv(data));
                 downloadCsv(`menu-matrix-rows-${from}-${to}.csv`, buildRowsCsv(data));
               }}
-              className="self-end"
               aria-label="Export CSV"
             >
               <Download className="size-4" aria-hidden />

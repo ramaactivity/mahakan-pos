@@ -7,7 +7,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  Input,
+  DatePicker,
   Skeleton,
 } from "@/components/ui";
 import {
@@ -50,12 +50,13 @@ export function DailySummary() {
             Net cash flow per hari = (POS revenue + manual income) − expenses − refunds.
           </p>
         </div>
-        <div className="w-44">
-          <Input
+        <div className="w-52">
+          <DatePicker
             label="Tanggal"
-            type="date"
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            onChange={(v) => setDate(v ?? today)}
+            maxDate={today}
+            clearable={false}
           />
         </div>
       </header>

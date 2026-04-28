@@ -18,6 +18,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DateRangePicker,
   Skeleton,
 } from "@/components/ui";
 import {
@@ -32,9 +33,6 @@ import {
 } from "@/features/outlets";
 import { exportSalesRangePdf } from "@/lib/pdf-export";
 import { formatRupiah } from "@/lib/format";
-import { cn } from "@/lib/utils";
-
-type Preset = "7d" | "30d" | "month" | "custom";
 
 function isoDaysAgo(days: number): string {
   const d = new Date();
@@ -44,33 +42,13 @@ function isoDaysAgo(days: number): string {
 function isoToday(): string {
   return new Date().toISOString().slice(0, 10);
 }
-function startOfThisMonth(): string {
-  const d = new Date();
-  d.setDate(1);
-  return d.toISOString().slice(0, 10);
-}
 
 export function SalesRangeView() {
-  const [preset, setPreset] = useState<Preset>("7d");
   const [from, setFrom] = useState<string>(isoDaysAgo(6));
   const [to, setTo] = useState<string>(isoToday());
   const [report, setReport] = useState<SalesRangeReport | null>(null);
   const [outlet, setOutlet] = useState<Outlet | null>(null);
   const [loading, setLoading] = useState(true);
-
-  function applyPreset(p: Preset) {
-    setPreset(p);
-    if (p === "7d") {
-      setFrom(isoDaysAgo(6));
-      setTo(isoToday());
-    } else if (p === "30d") {
-      setFrom(isoDaysAgo(29));
-      setTo(isoToday());
-    } else if (p === "month") {
-      setFrom(startOfThisMonth());
-      setTo(isoToday());
-    }
-  }
 
   useEffect(() => {
     let cancelled = false;
@@ -108,56 +86,16 @@ export function SalesRangeView() {
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
-          <div role="radiogroup" aria-label="Preset periode" className="flex gap-1">
-            {(
-              [
-                { v: "7d" as const, label: "7 Hari" },
-                { v: "30d" as const, label: "30 Hari" },
-                { v: "month" as const, label: "Bulan Ini" },
-                { v: "custom" as const, label: "Custom" },
-              ]
-            ).map((opt) => (
-              <button
-                key={opt.v}
-                type="button"
-                role="radio"
-                aria-checked={preset === opt.v}
-                onClick={() => applyPreset(opt.v)}
-                className={cn(
-                  "rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
-                  preset === opt.v
-                    ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
-                    : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50",
-                )}
-              >
-                {opt.label}
-              </button>
-            ))}
+          <div className="min-w-[16rem]">
+            <DateRangePicker
+              ariaLabel="Periode laporan"
+              value={{ from, to }}
+              onChange={(v) => {
+                setFrom(v.from ?? isoDaysAgo(6));
+                setTo(v.to ?? isoToday());
+              }}
+            />
           </div>
-          <input
-            type="date"
-            aria-label="Tanggal mulai"
-            value={from}
-            max={to}
-            onChange={(e) => {
-              setFrom(e.target.value);
-              setPreset("custom");
-            }}
-            className="h-9 rounded-md border border-neutral-300 bg-white px-2 text-sm"
-          />
-          <span className="text-sm text-neutral-500">→</span>
-          <input
-            type="date"
-            aria-label="Tanggal selesai"
-            value={to}
-            min={from}
-            max={isoToday()}
-            onChange={(e) => {
-              setTo(e.target.value);
-              setPreset("custom");
-            }}
-            className="h-9 rounded-md border border-neutral-300 bg-white px-2 text-sm"
-          />
           <Button
             variant="outline"
             onClick={onExport}

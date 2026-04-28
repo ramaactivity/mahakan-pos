@@ -9,6 +9,7 @@ import {
   CardContent,
   CardHeader,
   Input,
+  Select,
   Skeleton,
 } from "@/components/ui";
 import {
@@ -160,41 +161,27 @@ export function RecipesList() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <div className="space-y-1.5">
-              <label className="block text-sm font-medium text-neutral-900">
-                Kategori
-              </label>
-              <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
-                className="h-10 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
-              >
-                <option value="all">Semua kategori</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="block text-sm font-medium text-neutral-900">
-                Status Resep
-              </label>
-              <select
-                value={statusFilter}
-                onChange={(e) =>
-                  setStatusFilter(
-                    e.target.value as "all" | "configured" | "missing",
-                  )
-                }
-                className="h-10 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
-              >
-                <option value="all">Semua status</option>
-                <option value="configured">✓ Sudah terisi lengkap</option>
-                <option value="missing">⚠️ Belum lengkap</option>
-              </select>
-            </div>
+            <Select
+              label="Kategori"
+              options={[
+                { value: "all", label: "Semua kategori" },
+                ...categories.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+              value={categoryFilter}
+              onValueChange={setCategoryFilter}
+            />
+            <Select
+              label="Status Resep"
+              options={[
+                { value: "all", label: "Semua status" },
+                { value: "configured", label: "Sudah terisi lengkap" },
+                { value: "missing", label: "Belum lengkap" },
+              ]}
+              value={statusFilter}
+              onValueChange={(v) =>
+                setStatusFilter(v as "all" | "configured" | "missing")
+              }
+            />
           </div>
         </CardHeader>
         <CardContent>

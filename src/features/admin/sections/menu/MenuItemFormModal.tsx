@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Input, Modal, toast } from "@/components/ui";
+import { Button, Input, Modal, Select, toast } from "@/components/ui";
 import {
   isOk,
   createMenuItem,
@@ -141,22 +141,12 @@ export function MenuItemFormModal({
           maxLength={120}
         />
 
-        <div className="space-y-1.5">
-          <label className="block text-sm font-medium text-neutral-900">
-            Kategori
-          </label>
-          <select
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
-            className="h-10 w-full rounded-md border border-neutral-300 bg-white px-3 text-base text-neutral-900"
-          >
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        <Select
+          label="Kategori"
+          options={categories.map((c) => ({ value: c.id, label: c.name }))}
+          value={categoryId}
+          onValueChange={setCategoryId}
+        />
 
         <Input
           label="Deskripsi (opsional)"

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Input, Modal, toast } from "@/components/ui";
+import { Button, DatePicker, Input, Modal, Select, toast } from "@/components/ui";
 import {
   createExpense,
   isOk,
@@ -131,30 +131,23 @@ export function ExpenseFormModal({
       }
     >
       <div className="space-y-4">
-        <Input
+        <DatePicker
           label="Tanggal"
-          type="date"
           value={date}
-          onChange={(e) => setDate(e.target.value)}
+          onChange={(v) => setDate(v ?? today)}
           required
+          clearable={false}
         />
 
-        <div className="space-y-1.5">
-          <label className="block text-sm font-medium text-neutral-900">
-            Kategori
-          </label>
-          <select
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
-            className="h-10 w-full rounded-md border border-neutral-300 bg-white px-3 text-base text-neutral-900"
-          >
-            {userVisibleCategories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        <Select
+          label="Kategori"
+          options={userVisibleCategories.map((c) => ({
+            value: c.id,
+            label: c.name,
+          }))}
+          value={categoryId}
+          onValueChange={setCategoryId}
+        />
 
         <Input
           label="Deskripsi"

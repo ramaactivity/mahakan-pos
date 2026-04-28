@@ -8,8 +8,9 @@ import {
   Card,
   CardContent,
   CardHeader,
-  Input,
+  DateRangePicker,
   Modal,
+  Select,
   Skeleton,
   toast,
 } from "@/components/ui";
@@ -125,36 +126,24 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
 
       <Card>
         <CardHeader>
-          <div className="grid gap-2 md:grid-cols-3">
-            <Input
-              label="Dari Tanggal"
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
+          <div className="grid gap-3 md:grid-cols-2">
+            <DateRangePicker
+              label="Periode"
+              value={{ from, to }}
+              onChange={(v) => {
+                setFrom(v.from ?? monthStart);
+                setTo(v.to ?? today);
+              }}
             />
-            <Input
-              label="Sampai Tanggal"
-              type="date"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
+            <Select
+              label="Kategori"
+              options={[
+                { value: "all", label: "Semua kategori" },
+                ...categories.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+              value={categoryFilter}
+              onValueChange={(v) => setCategoryFilter(v as string | "all")}
             />
-            <div className="space-y-1.5">
-              <label className="block text-sm font-medium text-neutral-900">
-                Kategori
-              </label>
-              <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
-                className="h-10 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
-              >
-                <option value="all">Semua kategori</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
         </CardHeader>
         <CardContent className="px-0">

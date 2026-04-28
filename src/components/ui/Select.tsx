@@ -165,16 +165,17 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(function Select
             className="z-[60] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-neutral-200 bg-white shadow-lg"
           >
             <RadixSelect.Viewport className="max-h-[18rem] p-1">
-              {groups
-                ? groups.map((g, gi) => (
-                    <RadixSelect.Group key={`${g.label}-${gi}`}>
-                      <RadixSelect.Label className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                        {g.label}
-                      </RadixSelect.Label>
-                      {g.options.map(renderOption)}
-                    </RadixSelect.Group>
-                  ))
-                : options?.map(renderOption)}
+              {options?.map(renderOption)}
+              {groups?.map((g, gi) => (
+                <RadixSelect.Group key={`${g.label}-${gi}`}>
+                  {g.label ? (
+                    <RadixSelect.Label className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      {g.label}
+                    </RadixSelect.Label>
+                  ) : null}
+                  {g.options.map(renderOption)}
+                </RadixSelect.Group>
+              ))}
             </RadixSelect.Viewport>
           </RadixSelect.Content>
         </RadixSelect.Portal>

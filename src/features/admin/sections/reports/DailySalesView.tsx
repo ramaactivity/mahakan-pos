@@ -18,7 +18,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  Input,
+  DatePicker,
   Skeleton,
 } from "@/components/ui";
 import {
@@ -77,12 +77,13 @@ export function DailySalesView() {
           </p>
         </div>
         <div className="flex items-end gap-2">
-          <div className="w-44">
-            <Input
+          <div className="w-52">
+            <DatePicker
               label="Tanggal"
-              type="date"
               value={date}
-              onChange={(e) => setDate(e.target.value)}
+              onChange={(v) => setDate(v ?? today)}
+              maxDate={today}
+              clearable={false}
             />
           </div>
           <Button

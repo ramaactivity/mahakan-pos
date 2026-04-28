@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Input, Modal, toast } from "@/components/ui";
+import { Button, DatePicker, Input, Modal, toast } from "@/components/ui";
 import {
   createIncome,
   isOk,
@@ -95,12 +95,12 @@ export function IncomeFormModal({
       }
     >
       <div className="space-y-4">
-        <Input
+        <DatePicker
           label="Tanggal"
-          type="date"
           value={date}
-          onChange={(e) => setDate(e.target.value)}
+          onChange={(v) => setDate(v ?? today)}
           required
+          clearable={false}
         />
         <Input
           label="Deskripsi"

@@ -7,7 +7,7 @@ import {
   Card,
   CardContent,
   CardHeader,
-  Input,
+  DateRangePicker,
   Skeleton,
 } from "@/components/ui";
 import { IncomeFormModal } from "./IncomeFormModal";
@@ -64,20 +64,14 @@ export function IncomesList({ createdBy }: IncomesListProps) {
 
       <Card>
         <CardHeader>
-          <div className="grid gap-2 md:grid-cols-2">
-            <Input
-              label="Dari Tanggal"
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-            />
-            <Input
-              label="Sampai Tanggal"
-              type="date"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-            />
-          </div>
+          <DateRangePicker
+            label="Periode"
+            value={{ from, to }}
+            onChange={(v) => {
+              setFrom(v.from ?? monthStart);
+              setTo(v.to ?? today);
+            }}
+          />
         </CardHeader>
         <CardContent className="px-0">
           {loading ? (

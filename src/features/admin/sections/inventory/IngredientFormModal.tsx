@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Input, Modal, toast } from "@/components/ui";
+import { Button, Input, Modal, Select, toast } from "@/components/ui";
 import {
   createIngredient,
   isOk,
@@ -169,24 +169,24 @@ export function IngredientFormModal({
               Unit
             </label>
             <div className="flex gap-1">
-              <select
-                value={COMMON_UNITS.includes(unit) ? unit : "__custom"}
-                onChange={(e) => {
-                  if (e.target.value === "__custom") {
-                    if (COMMON_UNITS.includes(unit)) setUnit("");
-                  } else {
-                    setUnit(e.target.value);
-                  }
-                }}
-                className="h-10 w-24 rounded-md border border-neutral-300 bg-white px-2 text-sm text-neutral-900"
-              >
-                {COMMON_UNITS.map((u) => (
-                  <option key={u} value={u}>
-                    {u}
-                  </option>
-                ))}
-                <option value="__custom">…lainnya</option>
-              </select>
+              <div className="w-24">
+                <Select
+                  ariaLabel="Unit preset"
+                  options={[
+                    ...COMMON_UNITS.map((u) => ({ value: u, label: u })),
+                    { value: "__custom", label: "…lainnya" },
+                  ]}
+                  value={COMMON_UNITS.includes(unit) ? unit : "__custom"}
+                  onValueChange={(v) => {
+                    if (v === "__custom") {
+                      if (COMMON_UNITS.includes(unit)) setUnit("");
+                    } else {
+                      setUnit(v);
+                    }
+                  }}
+                  size="sm"
+                />
+              </div>
               {!COMMON_UNITS.includes(unit) ? (
                 <input
                   type="text"

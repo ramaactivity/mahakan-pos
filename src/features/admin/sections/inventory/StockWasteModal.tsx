@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Input, Modal, toast } from "@/components/ui";
+import { Button, Input, Modal, Select, toast } from "@/components/ui";
 import { isOk, recordWaste, type Ingredient } from "@/features/inventory";
 import { formatRupiah } from "@/lib/format";
 
@@ -123,28 +123,19 @@ export function StockWasteModal({
           autoFocus
         />
 
-        <div className="space-y-1.5">
-          <label className="block text-sm font-medium text-neutral-900">
-            Alasan
-          </label>
-          <select
+        <div className="space-y-2">
+          <Select
+            label="Alasan"
+            options={REASON_PRESETS.map((r) => ({ value: r, label: r }))}
             value={reasonPreset}
-            onChange={(e) => setReasonPreset(e.target.value)}
-            className="h-10 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
-          >
-            {REASON_PRESETS.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
+            onValueChange={setReasonPreset}
+          />
           {reasonPreset === "Lainnya" ? (
-            <input
-              type="text"
+            <Input
+              aria-label="Alasan custom"
               placeholder="Tulis alasan…"
               value={customReason}
               onChange={(e) => setCustomReason(e.target.value)}
-              className="mt-2 h-10 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
             />
           ) : null}
         </div>

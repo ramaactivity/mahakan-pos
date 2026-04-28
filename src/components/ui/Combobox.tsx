@@ -10,7 +10,7 @@
 
 import * as Popover from "@radix-ui/react-popover";
 import { Command } from "cmdk";
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, Search, X } from "lucide-react";
 import {
   useId,
   useMemo,
@@ -60,6 +60,8 @@ interface ComboboxProps {
   renderSelected?: (option: ComboboxOption) => ReactNode;
   /** If true, the trigger reserves no space for label (use inside dense rows). */
   hideLabel?: boolean;
+  /** Show X button on trigger to clear the value. Default false. */
+  clearable?: boolean;
   className?: string;
 }
 
@@ -81,6 +83,7 @@ export function Combobox({
   size = "md",
   renderSelected,
   hideLabel,
+  clearable = false,
   className,
 }: ComboboxProps) {
   const reactId = useId();
@@ -166,7 +169,7 @@ export function Combobox({
               !selected && "text-neutral-500",
             )}
           >
-            <span className="truncate">
+            <span className="flex-1 truncate">
               {selected
                 ? renderSelected
                   ? renderSelected(selected)
@@ -175,6 +178,27 @@ export function Combobox({
                 ? "Memuat…"
                 : placeholder}
             </span>
+            {clearable && selected && !disabled ? (
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label="Bersihkan pilihan"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChange(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onChange(null);
+                  }
+                }}
+                className="rounded-sm p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+              >
+                <X className="size-3.5" aria-hidden />
+              </span>
+            ) : null}
             <ChevronDown className="size-4 shrink-0 text-neutral-500" aria-hidden />
           </button>
         </Popover.Trigger>
@@ -198,17 +222,16 @@ export function Combobox({
                 <Command.Empty className="py-6 text-center text-sm text-neutral-500">
                   {emptyText}
                 </Command.Empty>
-                {groups
-                  ? groups.map((g, gi) => (
-                      <Command.Group
-                        key={`${g.label}-${gi}`}
-                        heading={g.label}
-                        className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-neutral-500"
-                      >
-                        {g.options.map(renderItem)}
-                      </Command.Group>
-                    ))
-                  : options?.map(renderItem)}
+                {options?.map(renderItem)}
+                {groups?.map((g, gi) => (
+                  <Command.Group
+                    key={`${g.label}-${gi}`}
+                    heading={g.label || undefined}
+                    className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-neutral-500"
+                  >
+                    {g.options.map(renderItem)}
+                  </Command.Group>
+                ))}
               </Command.List>
             </Command>
           </Popover.Content>

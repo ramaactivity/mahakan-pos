@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
-import { Button, Input, Modal, toast } from "@/components/ui";
+import {
+  Button,
+  Combobox,
+  Input,
+  Modal,
+  Select,
+  toast,
+  type ComboboxGroup,
+} from "@/components/ui";
 import {
   computePrepCostFromLines,
   createIngredient,
@@ -374,24 +382,24 @@ export function PreparationFormModal({
               Unit Yield
             </label>
             <div className="flex gap-1">
-              <select
-                value={COMMON_UNITS.includes(unit) ? unit : "__custom"}
-                onChange={(e) => {
-                  if (e.target.value === "__custom") {
-                    if (COMMON_UNITS.includes(unit)) setUnit("");
-                  } else {
-                    setUnit(e.target.value);
-                  }
-                }}
-                className="h-10 w-24 rounded-md border border-neutral-300 bg-white px-2 text-sm text-neutral-900"
-              >
-                {COMMON_UNITS.map((u) => (
-                  <option key={u} value={u}>
-                    {u}
-                  </option>
-                ))}
-                <option value="__custom">…lainnya</option>
-              </select>
+              <div className="w-24">
+                <Select
+                  ariaLabel="Unit preset"
+                  options={[
+                    ...COMMON_UNITS.map((u) => ({ value: u, label: u })),
+                    { value: "__custom", label: "…lainnya" },
+                  ]}
+                  value={COMMON_UNITS.includes(unit) ? unit : "__custom"}
+                  onValueChange={(v) => {
+                    if (v === "__custom") {
+                      if (COMMON_UNITS.includes(unit)) setUnit("");
+                    } else {
+                      setUnit(v);
+                    }
+                  }}
+                  size="sm"
+                />
+              </div>
               {!COMMON_UNITS.includes(unit) ? (
                 <input
                   type="text"
@@ -487,66 +495,66 @@ export function PreparationFormModal({
                 const ing = line.ingredientId
                   ? ingredientById(line.ingredientId)
                   : null;
+                const ingredientGroups: ComboboxGroup[] = [];
+                if (atomicOptions.length > 0) {
+                  ingredientGroups.push({
+                    label: "Bahan Baku",
+                    options: atomicOptions.map((i) => ({
+                      value: i.id,
+                      label: i.name,
+                      hint: i.unit,
+                      keywords: [i.unit],
+                    })),
+                  });
+                }
+                const filteredPreps = prepOptions.filter(
+                  (p) => p.id !== edit?.id,
+                );
+                if (filteredPreps.length > 0) {
+                  ingredientGroups.push({
+                    label: "Preparation lain",
+                    options: filteredPreps.map((i) => ({
+                      value: i.id,
+                      label: i.name,
+                      hint: i.unit,
+                      keywords: [i.unit, "prep"],
+                    })),
+                  });
+                }
                 return (
                   <div
                     key={line.key}
-                    className="flex items-end gap-2 rounded-md bg-neutral-50 p-2"
+                    className="grid grid-cols-1 gap-2 rounded-md bg-neutral-50 p-2 md:grid-cols-[1fr_8rem_2.5rem] md:items-end"
                   >
-                    <div className="flex-1 space-y-1">
-                      <label className="block text-xs font-medium text-neutral-700">
-                        Bahan
-                      </label>
-                      <select
-                        value={line.ingredientId ?? ""}
-                        onChange={(e) =>
-                          setLine(line.key, {
-                            ingredientId: e.target.value || null,
-                          })
-                        }
-                        className="h-9 w-full rounded-md border border-neutral-300 bg-white px-2 text-sm"
-                      >
-                        <option value="">— pilih bahan —</option>
-                        {atomicOptions.length > 0 ? (
-                          <optgroup label="Bahan Baku (atomic)">
-                            {atomicOptions.map((i) => (
-                              <option key={i.id} value={i.id}>
-                                {i.name} ({i.unit})
-                              </option>
-                            ))}
-                          </optgroup>
-                        ) : null}
-                        {prepOptions.filter((p) => p.id !== edit?.id).length >
-                        0 ? (
-                          <optgroup label="Preparation lain">
-                            {prepOptions
-                              .filter((p) => p.id !== edit?.id)
-                              .map((i) => (
-                                <option key={i.id} value={i.id}>
-                                  {i.name} ({i.unit})
-                                </option>
-                              ))}
-                          </optgroup>
-                        ) : null}
-                      </select>
-                    </div>
-                    <div className="w-24">
-                      <Input
-                        label={`Qty${ing ? ` (${ing.unit})` : ""}`}
-                        value={line.qty}
-                        onChange={(e) =>
-                          setLine(line.key, { qty: e.target.value })
-                        }
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="16"
-                      />
-                    </div>
+                    <Combobox
+                      ariaLabel="Pilih bahan"
+                      groups={ingredientGroups}
+                      value={line.ingredientId}
+                      onChange={(v) =>
+                        setLine(line.key, { ingredientId: v })
+                      }
+                      placeholder="— pilih bahan —"
+                      searchPlaceholder="Cari bahan…"
+                      size="sm"
+                      hideLabel
+                    />
+                    <Input
+                      aria-label={`Qty${ing ? ` (${ing.unit})` : ""}`}
+                      placeholder={ing ? ing.unit : "16"}
+                      value={line.qty}
+                      onChange={(e) =>
+                        setLine(line.key, { qty: e.target.value })
+                      }
+                      type="text"
+                      inputMode="numeric"
+                      className="h-9"
+                    />
                     <Button
                       size="sm"
                       variant="ghost"
                       onClick={() => removeLine(line.key)}
                       aria-label="Hapus bahan"
-                      className="text-danger-500 hover:bg-danger-100"
+                      className="!size-9 !min-h-9 !p-0 text-danger-500 hover:bg-danger-100"
                     >
                       <Trash2 className="size-4" aria-hidden />
                     </Button>
