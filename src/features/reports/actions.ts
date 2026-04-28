@@ -6,6 +6,7 @@ import { todayWibIso } from "@/features/cash/helpers";
 import {
   fetchDailySalesReport,
   fetchItemPerformance,
+  fetchMenuEngineeringMatrix,
   fetchPnlReport,
   fetchSalesRangeReport,
 } from "./queries";
@@ -15,6 +16,7 @@ import {
   type ApiResult,
   type DailySalesReport,
   type ItemPerformanceRow,
+  type MenuEngineeringResult,
   type PnlReport,
   type SalesRangeReport,
 } from "./types";
@@ -57,6 +59,27 @@ export async function getItemPerformance(
   return ok(
     await fetchItemPerformance(session.user.outletId, from, to, sort, limit),
   );
+}
+
+export async function getMenuEngineeringMatrix(
+  from: string,
+  to: string,
+): Promise<ApiResult<MenuEngineeringResult>> {
+  const session = await requireSession();
+  // Requires items report perm + cost visibility (since margin reveals cogs).
+  if (!hasPermission(session.user.role, "report.items.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat performa item");
+  }
+  if (!hasPermission(session.user.role, "report.cost_visibility")) {
+    return fail("FORBIDDEN", "Margin/HPP hanya untuk Owner");
+  }
+  if (!ISO_DATE.test(from) || !ISO_DATE.test(to)) {
+    return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
+  }
+  if (from > to) {
+    return fail("VALIDATION_ERROR", "Tanggal mulai > tanggal selesai");
+  }
+  return ok(await fetchMenuEngineeringMatrix(session.user.outletId, from, to));
 }
 
 export async function getSalesRangeReport(

@@ -4,6 +4,9 @@ export type {
   DailySalesReport,
   HourlyBucket,
   ItemPerformanceRow,
+  MenuEngineeringResult,
+  MenuEngineeringRow,
+  MenuQuadrant,
   PaymentMethodBreakdown,
   PnlReport,
   SalesRangeReport,
@@ -14,6 +17,7 @@ export { isOk } from "./types";
 export {
   getDailySalesReport,
   getItemPerformance,
+  getMenuEngineeringMatrix,
   getPnlReport,
   getSalesRangeReport,
 } from "./actions";

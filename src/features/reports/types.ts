@@ -115,6 +115,40 @@ export interface ItemPerformanceRow {
   marginPct: number | null;
 }
 
+/**
+ * Menu engineering quadrant labels (Kasavana-Smith framework).
+ * - star:      high popularity + high contribution margin Rp → maintain & promote
+ * - plowhorse: high popularity + low contribution margin → re-engineer cost / raise price
+ * - puzzle:    low popularity + high contribution margin → improve marketing / positioning
+ * - dog:       low popularity + low contribution margin → consider removing
+ * - unclassified: insufficient data (no sales OR no cogs) — can't classify
+ */
+export type MenuQuadrant = "star" | "plowhorse" | "puzzle" | "dog" | "unclassified";
+
+export interface MenuEngineeringRow extends ItemPerformanceRow {
+  /** Total contribution margin Rp = (revenue - cogs); null when cogs unknown. */
+  contribMarginRp: number | null;
+  quadrant: MenuQuadrant;
+}
+
+export interface MenuEngineeringResult {
+  rows: MenuEngineeringRow[];
+  /** Linear-interpolation median of qty across CLASSIFIED rows (qty>0 && cogs). */
+  medianQty: number | null;
+  /** Linear-interpolation median of contribMarginRp across CLASSIFIED rows. */
+  medianContribMargin: number | null;
+  /** Aggregate sums across ALL rows (for header summary). */
+  totals: {
+    revenue: number;
+    cogs: number;
+    contribMargin: number;
+  };
+  /** Per-quadrant counts for header summary. */
+  counts: Record<MenuQuadrant, number>;
+  /** True when we have ≥4 classifiable items with non-trivial spread; otherwise classification skipped. */
+  classified: boolean;
+}
+
 export interface PnlReport {
   period: { from: string; to: string };
   income: {

@@ -18,11 +18,13 @@ import type {
   DailySalesReport,
   HourlyBucket,
   ItemPerformanceRow,
+  MenuEngineeringResult,
   PaymentMethodBreakdown,
   PnlReport,
   SalesRangeReport,
   TopItem,
 } from "./types";
+import { classifyMenuMatrix } from "./menu-engineering-pure";
 import type { PaymentMethod } from "@/features/transactions";
 
 export async function fetchDailySalesReport(
@@ -211,6 +213,21 @@ export async function fetchItemPerformance(
   });
 
   return enriched.slice(0, limit);
+}
+
+/**
+ * M23.6 — Menu engineering matrix. Reuses fetchItemPerformance (no limit cap)
+ * and classifies via pure helper (median split on qty + contribMargin Rp).
+ */
+export async function fetchMenuEngineeringMatrix(
+  outletId: string,
+  from: string,
+  to: string,
+): Promise<MenuEngineeringResult> {
+  // Fetch all items with sales (limit=500 covers Mahakan's 43 menu items easily,
+  // and matches the action-layer cap).
+  const rows = await fetchItemPerformance(outletId, from, to, "qty", 500);
+  return classifyMenuMatrix(rows);
 }
 
 export async function fetchPnlReport(

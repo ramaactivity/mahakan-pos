@@ -3,12 +3,13 @@
 import { useState } from "react";
 import { DailySalesView } from "./reports/DailySalesView";
 import { ItemPerformanceView } from "./reports/ItemPerformanceView";
+import { MenuEngineeringView } from "./reports/MenuEngineeringView";
 import { PnlView } from "./reports/PnlView";
 import { SalesRangeView } from "./reports/SalesRangeView";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
-type ReportTab = "sales" | "range" | "items" | "pnl";
+type ReportTab = "sales" | "range" | "items" | "matrix" | "pnl";
 
 interface ReportsSectionProps {
   viewerRole: Role;
@@ -17,12 +18,15 @@ interface ReportsSectionProps {
 export function ReportsSection({ viewerRole }: ReportsSectionProps) {
   const [tab, setTab] = useState<ReportTab>("sales");
 
-  const TABS: Array<{ key: ReportTab; label: string; ownerOnly?: boolean }> = [
+  const isOwner = viewerRole === "owner";
+  const ALL_TABS: Array<{ key: ReportTab; label: string; ownerOnly?: boolean }> = [
     { key: "sales", label: "Penjualan Harian" },
     { key: "range", label: "Mingguan / Bulanan" },
     { key: "items", label: "Performa Item" },
-    { key: "pnl", label: "P&L (Owner)" },
+    { key: "matrix", label: "Matriks Menu", ownerOnly: true },
+    { key: "pnl", label: "P&L (Owner)", ownerOnly: true },
   ];
+  const TABS = ALL_TABS.filter((t) => !t.ownerOnly || isOwner);
 
   return (
     <div className="p-6 space-y-4">
@@ -65,6 +69,8 @@ export function ReportsSection({ viewerRole }: ReportsSectionProps) {
           <SalesRangeView />
         ) : tab === "items" ? (
           <ItemPerformanceView />
+        ) : tab === "matrix" ? (
+          <MenuEngineeringView />
         ) : (
           <PnlView viewerRole={viewerRole} />
         )}
