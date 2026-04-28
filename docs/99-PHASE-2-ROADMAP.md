@@ -219,17 +219,73 @@ Saat ini production = release/phase-1 langsung. Phase 2 mungkin butuh staging br
 
 ## 10. Decision Log
 
-| Decision | Rationale | Date |
-|---|---|---|
-| Tier 1 starts dengan Recipe/BOM, bukan Loyalty | Akurasi finansial > customer growth pada tahap ini | 2026-04-27 |
-| Defer multi-device offline sync ke setelah outlet ke-2 | Single device sufficient untuk single outlet | 2026-04-27 |
-| Audit log retention = Tier 3 (bukan urgent) | Volume rendah, table growth slow | 2026-04-27 |
-| middleware → proxy rename = bundle dengan Phase 2 sesi pertama | Non-blocking, warm-up task | 2026-04-27 |
+| ID | Decision | Rationale | Date |
+|---|---|---|---|
+| | Tier 1 starts dengan Recipe/BOM, bukan Loyalty | Akurasi finansial > customer growth pada tahap ini | 2026-04-27 |
+| | Defer multi-device offline sync ke setelah outlet ke-2 | Single device sufficient untuk single outlet | 2026-04-27 |
+| | Audit log retention = Tier 3 (bukan urgent) | Volume rendah, table growth slow | 2026-04-27 |
+| | middleware → proxy rename = bundle dengan Phase 2 sesi pertama | Non-blocking, warm-up task | 2026-04-27 |
+| **D44** | Auto-print on payment hanya customer struk (bukan 3 sekaligus). Prep tickets manual via queue tab | Galih hardware-test feedback + side-fix BLE buffer overflow risk pada payload combined ~1200 byte | 2026-04-28 |
+| **D45** | Compliment dipisah dari discount via reason prefix `Compliment:` (bukan schema column baru). Audit event `transaction.compliment.applied` differentiated | Trade-off: simpler migration vs hidden in reason text. Audit event makes reporting/filtering possible | 2026-04-28 |
+| **D46** | Void/Refund PIN required SEMUA role (Owner included), bukan hanya staff. Owner self-approve dengan PIN sendiri | Galih request — deliberate two-step ritual reduces accidental ops + clean approver record | 2026-04-28 |
+| **D47** | Open Bill = status enum extension `"open"` + placeholder `paymentMethod="cash"` `cashReceived=0`. NO schema migration | Drizzle text+enum compile-time only; existing `ck_transactions_cash_fields` constraint satisfied via placeholder | 2026-04-28 |
+| **D48** | `settings.receipt.update` permission opened ke `["owner", "manager"]`. Brand-level fields tetap owner-only | Galih (manager) operasional day-to-day; brand stays Owner | 2026-04-28 |
+| **D49** | Per-device localStorage untuk POS layout + sort + fullscreen state (bukan per-user di DB) | Tablets shared between staff; consistency > personalization | 2026-04-28 |
+| **D50** | Drift dari original Phase 2 Roadmap intentional. Sesi 12-13 prioritize operational pain points (Galih) over Tier 1.3 Loyalty. Re-prioritize di sesi 14 setelah field-validate | Galih + Owner pain emerged real-time saat M24 hardware test; Loyalty masih design-stage | 2026-04-28 |
 
 Decisions baru selama Phase 2 ditambahkan di sini saat pengambilan keputusan.
 
 ---
 
+## 11. Sesi 12-13 Off-Roadmap Additions (recap, 2026-04-28)
+
+Roadmap original §3 Tier 1 setelah Tier 1.2 cost engine = Tier 1.3 Loyalty (~2 minggu). Actual yang dikerjakan sesi 12-13 = M26 + M27, off-roadmap karena:
+
+1. **Galih (manager kafe) hardware-test feedback** — saat field-test M24 kitchen+bar print di RPP02, ditemukan banyak operational pain points yang tidak ditangkap di PRD/roadmap.
+2. **Owner UX requests** — Owner CRUD (currently single owner from seed), fullscreen toggle, workspace switch admin↔POS muncul saat Owner pakai produknya intensif.
+3. **Admin UI mood-killer** — COGS Calculator overflow + native browser dropdowns + native date pickers di tablet visual feedback bikin Owner gelisah, ngajak full overhaul ke Linear/Notion clean minimal density.
+
+### Apa yang di-deliver sesi 12-13
+
+**M26 — Admin UI/UX Overhaul (shadcn/ui + Linear/Notion density)**
+- M26.0 Foundation: Radix Select, Combobox (cmdk-powered), DatePicker, DateRangePicker; Modal enhanced sticky header/footer + new sizes
+- M26.1 Hot-spot redesign: COGS Calculator + Recipe Editor modal
+- M26.2-M26.4: Sweep entire admin — 16 native `<select>` + 20 native date inputs across 25 files migrated to **0 native UI** elements
+
+**M27 — Galih Operational Feature Set + Owner UX**
+- M27.1 Owner role creation flow (UserFormModal 3-button picker)
+- M27.2 POS fullscreen toggle button
+- M27.3 Cross-workspace switcher (admin ↔ POS)
+- M27.4 Order queue tab + per-station print split (auto-print customer-only)
+- M27.5 Receipt editor (Owner+Manager) + POS layout switcher 4 modes
+- M27.6 Menu sort 6 modes + Void/Refund PIN required for ALL roles
+- M27.7 Compliment + PIN approval + audit log
+- M27.8 Open Bill workflow + Bill Aktif tab + auto-print on close
+
+11 commits. Detailed file list di [docs/99-HANDOVER-SESSION-13.md](docs/99-HANDOVER-SESSION-13.md) §3.
+
+### Status Tier 1.3 Loyalty (deferred)
+
+Original §3.2: ~2 minggu, customers table + phone PK + points (1pt/Rp1000) + redemption flow. **Status sekarang: deferred — pending Owner decision setelah sesi 14 field-validate sesi 12-13 features adopted.**
+
+Re-evaluation di sesi 14 setelah Galih + staff test:
+- Kalau M27 features cukup operationally → Loyalty masih relevan, lanjut sesi 15
+- Kalau ternyata Owner ingin lebih banyak quick-wins (continued Galih asks di "Items NOT YET BUILT" section di handover) → defer Loyalty further
+
+### Tier 2 + 3 + 4 + Tech Debt sections
+
+**Tidak berubah** dari roadmap original §4-§7. Sesi 12-13 tidak menambah / hapus item dari tier-tier itu.
+
+### Operational Feature Documentation
+
+Detail "why" + "how" untuk M26 + M27 features di:
+- [PROGRESS.md](../PROGRESS.md) (milestone-by-milestone implementation summary)
+- [docs/99-HANDOVER-SESSION-13.md](99-HANDOVER-SESSION-13.md) §3 (file-level changes per commit)
+- [docs/99-HANDOVER-SESSION-13.md](99-HANDOVER-SESSION-13.md) §4 (decisions D44-D50 with rationale)
+- [docs/99-HANDOVER-SESSION-13.md](99-HANDOVER-SESSION-13.md) §5 (critical files index)
+
+---
+
 # 🛑 END PHASE 2 ROADMAP DRAFT
 
-**Reviewed dan approved oleh Owner sebelum implementation. Update sesuai realita field testing Phase 1.**
+**Reviewed dan approved oleh Owner sebelum implementation. Update sesuai realita field testing Phase 1. Last update 2026-04-28: §11 added for sesi 12-13 drift.**

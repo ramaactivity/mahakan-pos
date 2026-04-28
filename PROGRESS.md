@@ -4,16 +4,17 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 Tier 1.2 + **M24 + M25-S quick wins LANDED** (sesi 11 selesai 2026-04-28: M23.5/6/7 + M24 kitchen+bar print + M25-S POS audit + 4 cashier speed wins).
-**Active Milestone (sesi 12):** Deploy 10 sesi-11 commits + **hardware-verify M24** (kitchen + bar print routing) di RPP02. Plus optional E1-E5 enhancements pending real-printer feedback. Lihat `docs/99-HANDOVER-SESSION-12.md` untuk full plan.
-**Local HEAD:** `de93520` (10 commits ahead remote `release/phase-1` HEAD `88b5f67`). NOT pushed/deployed.
-**Mode:** Online (production live at https://mahakan-pos.vercel.app, **inventory data populated** — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
+**Phase:** Phase 2 — **M26 (Admin UI overhaul) + M27 (Galih operational feature set) LANDED** (sesi 12-13 selesai 2026-04-28). Off the original Phase 2 Roadmap (Tier 1.3 Loyalty deferred); pivot driven by Galih hardware-test feedback + Owner UX requests.
+**Active Milestone (sesi 14):** **FIELD VALIDATE** sesi 12-13 features (Galih + staff test compliment, open bill, receipt editor, PIN guards, menu sort/layout). Lihat `docs/99-HANDOVER-SESSION-13.md` untuk boot prompt + direction options A/B/C/D.
+**Local HEAD:** `3105302` — synced with `origin/release/phase-1`, all deployed.
+**Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `b0f5d84` local — M23.6 not yet pushed; HEAD `e640f11` was M23.5 commit; pre-sesi11 production deploy `dpl_68UGimfxb3rxzANA3LpA1ZTS7c4j` masih di HEAD `88b5f67`)
-**Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md`
+**Branch:** `release/phase-1` (HEAD `3105302` local + remote, last big deploy via `dpl_3usMA2yTtfR11zoRnqLVzxBWCbto`)
+**Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44+ for sesi 12-13 drift)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
 **Phase 2 Tier 1.2 plan (M23.2):** `~/.claude/plans/halo-gua-mau-lanjut-gleaming-fern.md` (cascade engine implementation)
+**Sesi 12-13 close plan:** `~/.claude/plans/halo-gua-mau-lanjut-nested-riddle.md` (M26 + M27 + handover)
 
 ---
 
@@ -91,7 +92,32 @@ System upgrades over spreadsheet:
 
 #### M25 — POS UX Improvements (Phase 2 Tier 2.1)
 
-- [x] **M25-S** — Audit-driven cashier rush-hour speed wins. Audit identified 4 highest-impact daily-friction items (S1-S4). **S1**: Cache item tapped from idle state in `pendingTapItem`, auto-dispatch via `dispatchItem(draftId, item)` post-`handleNewOrderCreated` — eliminates "tap ulang" friction. Cancel NewOrderModal clears cache. **S2**: Pre-fetch all modifiers + build `categoryId→Modifier[]` map saat PosShell mount; predicate di `dispatchItem` skip ItemModifierModal entirely untuk fixed-price items dengan empty modifiers list (Bites/Sweets/Ricebowl/IceCream ~15 menu items) — direct addItem dengan defaults. **S3**: `isMergeableLine` helper + `addItem` merge logic — same `(menuItemId, variant, unitPrice, modifiers slug+value)` increments existing line qty instead of appending. Items dengan note/openPriceNote stay separate (custom by intent). **S4**: NewOrderModal pre-fills pager dengan `max(active drafts) + 1` via `useCartStore.getState()` di useEffect saat open. 15 unit tests di [tests/unit/cart-merge.test.ts](tests/unit/cart-merge.test.ts) covering merge edge cases (different menu/variant/price/modifiers, notes block merge, identical modifier sets, addItem merge behavior) _(done 2026-04-28 sesi 11, commit `f5b2c9f`; verify typecheck ✓ lint ✓ vitest 323/323 ✓ build 11 routes ✓; awaiting Owner push + deploy + browser smoke; deferred follow-ups: M2 inline-note ~1.5j, Q1 switch-draft-from-cart ~1.5j, M3 last-used variant memory ~1j, Q3 draft sort by age ~1j)_
+- [x] **M25-S** — Audit-driven cashier rush-hour speed wins. Audit identified 4 highest-impact daily-friction items (S1-S4). **S1**: Cache item tapped from idle state in `pendingTapItem`, auto-dispatch via `dispatchItem(draftId, item)` post-`handleNewOrderCreated` — eliminates "tap ulang" friction. Cancel NewOrderModal clears cache. **S2**: Pre-fetch all modifiers + build `categoryId→Modifier[]` map saat PosShell mount; predicate di `dispatchItem` skip ItemModifierModal entirely untuk fixed-price items dengan empty modifiers list (Bites/Sweets/Ricebowl/IceCream ~15 menu items) — direct addItem dengan defaults. **S3**: `isMergeableLine` helper + `addItem` merge logic — same `(menuItemId, variant, unitPrice, modifiers slug+value)` increments existing line qty instead of appending. Items dengan note/openPriceNote stay separate (custom by intent). **S4**: NewOrderModal pre-fills pager dengan `max(active drafts) + 1` via `useCartStore.getState()` di useEffect saat open. 15 unit tests di [tests/unit/cart-merge.test.ts](tests/unit/cart-merge.test.ts) covering merge edge cases (different menu/variant/price/modifiers, notes block merge, identical modifier sets, addItem merge behavior) _(done 2026-04-28 sesi 11, commit `f5b2c9f`; verify typecheck ✓ lint ✓ vitest 323/323 ✓ build 11 routes ✓)_
+
+#### M24-fix — Receipt + Prep Ticket Layout Polish (sesi 12 hardware feedback)
+
+- [x] **M24-fix** — Galih hardware-test feedback (foto WA): `·` middle dot di "Pager 1 · Takeaway" rendered as `┬·` mojibake di RPP02 (UTF-8 0xC2 0xB7 baca sebagai 2 byte di CP437); item name overflow merge dengan divider line; `…` ellipsis sama bug; `Tunai` label kurang prominent. Fix: `·` → `\|` (ASCII pipe), `…` → `..`, outlet name `size(2,2)` → `size(1,2)` no auto-wrap, item header bold + mods/notes prefix `  - `, modifier separator `,`, price line `@Rp X x N` format, address split 2 lines via `wrapAddress` array, TUNAI/KEMBALI/TOTAL bold uppercase, feed 3→4 _(done 2026-04-28 sesi 12, commit `560e287`; deployed; verify typecheck ✓ lint ✓ tests 323/323 ✓)_
+
+#### M26 — Admin UI/UX Overhaul (Linear/Notion clean minimal density)
+
+User complaint sesi 12-13: COGS Calculator + Recipe modal overflow di tablet, banyak native browser dropdown + date picker yang mood-killing. Approach: shadcn/ui (Radix + Tailwind), per-component opt-in, copy-paste owned source.
+
+- [x] **M26.0** — Foundation primitives di [src/components/ui/](src/components/ui/): `Select.tsx` (Radix Select), `Combobox.tsx` (cmdk-powered searchable + grouped + clearable), `DatePicker.tsx` (react-day-picker + Radix Popover, ID locale), `DateRangePicker.tsx` (range + 5 presets sidebar). Modal enhanced: sticky header + scrollable body + sticky footer + new sizes `2xl/3xl/full` + `bodyPadding` prop. Deps added: `@radix-ui/react-select/popover/dialog`, `react-day-picker`, `cmdk` (~120KB gzipped) _(done 2026-04-28 sesi 12, commit `0aa9813`)_
+- [x] **M26.1** — Hot-spot redesign per Owner foto overflow: [CogsCalculatorWidget](src/features/admin/sections/inventory/CogsCalculatorWidget.tsx) + [RecipeEditorModal](src/features/admin/sections/inventory/RecipeEditorModal.tsx) — Combobox replaces native `<select>` (140 atomic + 20 preps searchable), table-style row layout with desktop header strip + mobile stacked, modal size `3xl`, RecipeEditor action buttons (Save/Delete) promoted to per-form card header _(done 2026-04-28 sesi 12, same commit `0aa9813`)_
+- [x] **M26.2** — Inventory section migration: [MovementsList](src/features/admin/sections/inventory/MovementsList.tsx) Bahan filter as searchable Combobox (140 ingredients) + Tipe Select + 2 DatePicker, [RecipesList](src/features/admin/sections/inventory/RecipesList.tsx) Kategori + Status Select, [IngredientFormModal](src/features/admin/sections/inventory/IngredientFormModal.tsx) + [PreparationFormModal](src/features/admin/sections/inventory/PreparationFormModal.tsx) unit Select + Combobox (recipe lines), [StockAdjustModal](src/features/admin/sections/inventory/StockAdjustModal.tsx) + [StockWasteModal](src/features/admin/sections/inventory/StockWasteModal.tsx) reason Select _(done 2026-04-28 sesi 13, commit `b95a456`)_
+- [x] **M26.3** — Reports section migration: [DailySalesView](src/features/admin/sections/reports/DailySalesView.tsx) DatePicker, [SalesRangeView](src/features/admin/sections/reports/SalesRangeView.tsx) DateRangePicker (drops separate preset radio buttons; presets di popover), [ItemPerformanceView](src/features/admin/sections/reports/ItemPerformanceView.tsx) + [PnlView](src/features/admin/sections/reports/PnlView.tsx) + [MenuEngineeringView](src/features/admin/sections/reports/MenuEngineeringView.tsx) DateRangePicker _(done 2026-04-28 sesi 13, same commit `b95a456`)_
+- [x] **M26.4** — Cash + Menu + Audit migration: [ExpensesList](src/features/admin/sections/cash/ExpensesList.tsx) + [IncomesList](src/features/admin/sections/cash/IncomesList.tsx) DateRangePicker + Kategori Select, [ExpenseFormModal](src/features/admin/sections/cash/ExpenseFormModal.tsx) + [IncomeFormModal](src/features/admin/sections/cash/IncomeFormModal.tsx) + [DailySummary](src/features/admin/sections/cash/DailySummary.tsx) DatePicker, [ItemsList](src/features/admin/sections/menu/ItemsList.tsx) + [MenuItemFormModal](src/features/admin/sections/menu/MenuItemFormModal.tsx) Kategori Select, [AuditLogSection](src/features/admin/sections/AuditLogSection.tsx) Event filter as Select with grouped sections (Auth / Transaksi / Menu / User / Kas / Settings / Inventory) + 2 DatePicker. **Total**: 16 native `<select>` + 20 native date inputs across 13+12 files migrated to 0 native UI elements in admin _(done 2026-04-28 sesi 13, same commit `b95a456`)_
+
+#### M27 — Operational Feature Set (Galih + Owner requests, sesi 12-13)
+
+- [x] **M27.1** — Owner role creation flow ([UserFormModal](src/features/admin/sections/staff/UserFormModal.tsx)). Permission `user.create.owner` already in RBAC; missing piece was action + UI. Server: `createOwner` di [users/actions.ts](src/features/users/actions.ts) (password min 12 chars vs Manager 8; audit log explicit "OWNER ... — granted full access"). UI: 3-button role picker (Staff/Manager/Owner amber warning) + ShieldAlert banner saat Owner selected, RoleButton sub-component _(done 2026-04-28 sesi 12, commit `909428c`)_
+- [x] **M27.2** — POS fullscreen toggle button ([FullscreenToggle](src/features/pos/components/FullscreenToggle.tsx)). Browser Fullscreen API + `fullscreenchange` listener untuk state sync. Maximize↔Minimize icon flip. Mounted di [POS layout header](src/app/\(pos\)/layout.tsx). iOS Safari restricted = silent no-op (PWA `display=fullscreen` covers itu) _(done 2026-04-28 sesi 12, commit `8fde3d9`)_
+- [x] **M27.3** — Cross-workspace switcher ([WorkspaceSwitcher](src/components/ui/WorkspaceSwitcher.tsx)). Owner+Manager often flip antara back office & POS dalam 1 shift; sebelumnya harus manual ketik URL. Single button di topbar mau ke workspace yang lain (ShoppingBag icon untuk POS, LayoutDashboard untuk admin). Hidden untuk Staff (gak punya akses admin). Mounted di kedua [(admin)/layout.tsx](src/app/\(admin\)/layout.tsx) + [(pos)/layout.tsx](src/app/\(pos\)/layout.tsx) topbar _(done 2026-04-28 sesi 12, commit `946b603`)_
+- [x] **M27.4** — Order queue tab + per-station print split. **Galih hardware feedback**: auto-bundled bar/dapur/customer print → kacau workflow. **Solution**: refactor `printTransactionReceipt` → `printTickets(trx, name, sections[], config?)` with section selection ([print-transaction.ts](src/lib/printer/print-transaction.ts)). Auto-print on payment **only customer struk** now (prep tickets manual). New reusable [PrintStationButtons](src/features/pos/components/PrintStationButtons.tsx) 4-button (Customer/Dapur/Bar/Semua) dengan station-aware disabled state. New "Pesanan" tab di POS + [OrderQueuePanel](src/features/pos/components/OrderQueuePanel.tsx) KDS-style queue, items grouped by station, "Tandai Dikirim" button via existing `markServed` action, auto-refresh 30s, lazy-fetch detail. Side benefit: smaller payload reduces BLE buffer overflow risk _(done 2026-04-28 sesi 13, commit `2c1aea7`)_
+- [x] **M27.5** — Receipt editor (advanced) + POS menu layout switcher. **Receipt editor** ([ReceiptEditorModal](src/features/admin/sections/settings/ReceiptEditorModal.tsx)): schema extended `OutletSettings.receipt` dengan `headerLines[]` (1-3 promo banner di atas outlet name), `wifiSsid` + `wifiPassword`, `extraFooterLines[]`. RBAC `settings.receipt.update` opened ke `["owner", "manager"]` (Galih bisa edit). 2-col modal: form di kiri, live monospace 32-col preview di kanan. Server-side `outletToReceiptConfig()` helper bridge outlet DB → ReceiptConfig threaded through `printTickets`. **Layout switcher** ([MenuLayoutSwitcher](src/features/pos/components/MenuLayoutSwitcher.tsx) + [MenuListRow](src/features/pos/components/MenuListRow.tsx)): 4 modes Compact/Normal/Comfy/List dengan `useMenuLayout` localStorage persistence per device _(done 2026-04-28 sesi 13, commit `b1e5557`)_
+- [x] **M27.6** — Menu sort 6 modes + PIN-required void/refund (all roles). **Sort** ([MenuSortSelect](src/features/pos/components/MenuSortSelect.tsx) + `applyMenuSort`): Default / Nama A-Z / Nama Z-A / Termurah / Termahal / Signature dulu (open-price items sort to end on price-asc), localStorage persisted. **PIN guard**: void/refund actions di [transactions/actions.ts](src/features/transactions/actions.ts) sekarang require approverToken untuk SEMUA role (sebelumnya Owner/Manager skip). Owner self-approve via own PIN. HistoryDetailModal `onSubmitAction` always opens ApproverOverrideModal regardless of `isStaff` _(done 2026-04-28 sesi 13, commit `e8be08c`)_
+- [x] **M27.7** — Compliment feature ([ComplimentModal](src/features/pos/components/ComplimentModal.tsx)). Galih ask: tombol gratis 100% transaksi sebagai goodwill (VIP/karyawan/service recovery/test menu/tamu owner/lainnya). Implementation: 100% discount via `discount = { type: "fixed", value: subtotal }` + reason prefix `"Compliment: "`. Audit event `transaction.compliment.applied` (separate dari `transaction.discount.applied`) — registered di [audit/types.ts](src/lib/audit/types.ts) AUDIT_EVENT_TYPES. createTransaction emits compliment event when reason matches `^Compliment:`. ALWAYS requires approver PIN regardless of role (deliberate two-step + clean approver record). Cart panel: 2-col row "Diskon | Compliment" (warning amber) above full-width Bayar button _(done 2026-04-28 sesi 13, commit `0496faa`)_
+- [x] **M27.8** — Open Bill workflow. Galih ask: customer order tapi belum bayar → save bill → kembali nanti → bayar + struk auto-cetak. **Schema**: `transactions.status` enum extended ke `["paid", "voided", "refunded", "open"]` (no DB migration karena Drizzle text+enum compile-time only; existing `ck_transactions_cash_fields` constraint satisfied via placeholder `paymentMethod="cash"` + `cashReceived=0`). **Actions** ([transactions/actions.ts](src/features/transactions/actions.ts)): `saveAsOpenBill` wraps createTransaction with placeholder cash fields then mutates row to `status="open"`; `closeOpenBill(trxId, paymentMethod, cashReceived)` validates + transitions to paid. Stock deducted at SAVE (kitchen prep timing accurate). Audit events `transaction.open_bill.create` + `transaction.open_bill.close`. **UI**: New "Bill Aktif" tab (FileText icon, antara Kasir & Pesanan) + [OpenBillPanel](src/features/pos/components/OpenBillPanel.tsx) KDS-style listing dengan stale warning >2h via `useBillAge` hook + [CloseOpenBillModal](src/features/pos/components/CloseOpenBillModal.tsx) payment picker + auto-print struk via `printTickets(["customer"])` on close. Receipt-builder ReceiptData status type extended; `*** BELUM LUNAS ***` banner kalau status="open". Cart panel: "Simpan sebagai Open Bill" button antara Diskon/Compliment row dan Bayar button _(done 2026-04-28 sesi 13, commit `3105302`)_
 
 ---
 
@@ -422,3 +448,58 @@ Handover for sesi 4: `docs/99-HANDOVER-SESSION-4.md`.
 - M20 soft launch still pending
 
 Handover for sesi 6: `docs/99-HANDOVER-SESSION-5.md`. Phase 2 roadmap: `docs/99-PHASE-2-ROADMAP.md`.
+
+---
+
+### 2026-04-28 (Session 12-13 — Hardware feedback chain → off-roadmap UX overhaul + Galih ops feature set)
+
+Sesi panjang yang dimulai sebagai sesi 12 (M24 hardware-verify focus) tapi melebar ke 11 commits karena Galih (manager kafe) mengajukan banyak operational ask saat field-test, plus Owner UX requests muncul (Owner CRUD, fullscreen, workspace switch). Sesi log lompat dari 11 langsung ke "12-13" karena scope dua-sesi-worth.
+
+**Wave 1 — M24 hardware-feedback fix (commit `560e287`):**
+Galih foto WA struk customer: `Pager 1 · Takeaway` muncul `┬·` mojibake; "Iced Americano" wrap merge dengan divider line; `…` ellipsis sama bug; `Tunai` label hilang/kurang prominent. Fix: middle dot `·` (UTF-8 0xC2 0xB7 = 2 byte di CP437) → ASCII `|`; `…` → `..`; outlet name `size(2,2)` → `size(1,2)` no auto-wrap; item header bold + `  - ` prefix sub-line; modifier separator `,`; price line `@Rp X x N`; address split 2 lines centered; TUNAI/KEMBALI/TOTAL bold uppercase; feed 3→4. Tests update: `…` → `..`, `Tunai` → `TUNAI`, `Kartu BCA` → `KARTU BCA`. typecheck + lint + 323/323 tests. Push + deploy.
+
+**Wave 2 — Admin UI overhaul (M26.0-M26.4, commits `0aa9813` + `b95a456`):**
+Owner foto admin: COGS Calculator overflow di tablet, banyak native dropdown + date picker yang mood-killing. Decision (per AskUserQuestion): shadcn/ui (Radix + Tailwind) per-component opt-in, scope = entire admin dashboard, reference Linear/Notion clean minimal density. Foundation 4 primitives di `src/components/ui/`. Modal enhanced sticky header/scrollable body/sticky footer + `2xl/3xl/full` sizes. Hot spots refactored (CogsCalculatorWidget + RecipeEditorModal). Then full sweep: 16 native `<select>` + 20 native date inputs across admin → 0 native UI elements. Reports section consolidated (DateRangePicker replaces preset radio buttons di SalesRangeView).
+
+**Wave 3 — Owner UX requests (commits `909428c` + `8fde3d9` + `946b603`):**
+Owner ask: Owner CRUD (currently single owner from seed). Permission `user.create.owner` already in RBAC; missing was action + UI. Added `createOwner` server action + 3-button picker (Staff/Manager/Owner amber) + warning banner + RoleButton sub-component. Owner ask: tombol fullscreen di POS untuk hide address bar di tablet. Built `FullscreenToggle` reusable. Owner ask: gampangin switch admin↔POS. Built `WorkspaceSwitcher` button mounted di kedua topbar; hidden untuk Staff. Q3 (multi-user concurrent login safety) answered in chat: stack safe via stateless JWT + Postgres ACID + audit log per actor.
+
+**Wave 4 — Galih ops feature set (commits `2c1aea7` + `b1e5557` + `e8be08c` + `0496faa` + `3105302`):**
+Galih kembali setelah hardware test M24 dengan banyak request:
+- Print buttons split: bar/dapur/customer jangan auto-bundle. Solution: `printTickets(trx, name, sections[])` refactor + auto-print on payment customer-only + new "Pesanan" tab (KDS-style queue) + `PrintStationButtons` reusable 4-button.
+- Receipt editor: tambah header promo, WiFi info, footer extra. Solution: schema extension `OutletSettings.receipt.{headerLines, wifiSsid, wifiPassword, extraFooterLines}` + RBAC opens ke `["owner", "manager"]` (Galih bisa edit) + dedicated `ReceiptEditorModal` dengan live monospace preview + `outletToReceiptConfig` helper threaded ke `printTickets`.
+- POS layout customization: 4 modes (Compact/Normal/Comfy/List) via `MenuLayoutSwitcher` + `MenuListRow` + `useMenuLayout` localStorage.
+- Menu sort/filter: 6 modes via `MenuSortSelect` + `applyMenuSort` pure function.
+- Compliment di payment + PIN + audit. Solution: 100% discount via reason prefix `"Compliment: "` + new audit event `transaction.compliment.applied` + ALWAYS PIN required regardless of role.
+- Void/Refund harus PIN semua role: changed actions to require approver token even for Owner/Manager (was only Staff). Owner self-approve via own PIN.
+- Open Bill workflow: schema status enum extended `"open"` (no DB migration via placeholder pattern) + `saveAsOpenBill` + `closeOpenBill` actions + new "Bill Aktif" tab + `OpenBillPanel` KDS-style + stale warning >2h + auto-print struk on close. Stock deducted at SAVE (kitchen prep accurate).
+
+**Decisions D44-D50 locked** (see `docs/99-PHASE-2-ROADMAP.md` §10):
+D44 customer-only auto-print, D45 compliment via reason prefix (no schema), D46 PIN void/refund all roles, D47 open bill via status enum + placeholder (no migration), D48 receipt edit opened to manager, D49 per-device localStorage for POS prefs, D50 drift dari Tier 1.3 Loyalty intentional.
+
+**State akhir sesi 12-13:**
+- Branch `release/phase-1` HEAD `3105302`, synced dengan remote, all 11 commits deployed
+- typecheck + lint clean; **323/323 tests** (no new tests added for M27 features — backlog)
+- 11 routes build via webpack + Serwist
+- Production stable
+- Galih + staff awaiting field-validate sesi 14
+
+**Pending field-validate (sesi 14 priority):**
+1. M27.5 Receipt editor: Galih test edit header promo + WiFi → cetak → verify format
+2. M27.6 PIN guard: Owner test void → verify modal PIN muncul
+3. M27.7 Compliment: scenario VIP customer + Owner self-approve → verify Rp 0 + audit log
+4. M27.8 Open Bill: end-to-end save → leave → return → close → struk auto-cetak
+5. M24 ulang: hardware kitchen+bar split print after Q4 deploy (BLE buffer overflow likely fixed via customer-only auto-print)
+
+**Items NOT YET BUILT (sesi 14+ candidates)** dari Galih invitation "jika ada fitur lain boleh juga ditambahkan":
+- Customer name field di transaction (helpful saat call out by name vs pager)
+- Sort/filter di Reports views (currently DateRangePicker only; could add category filter, sort by metric in tables)
+- Quick-favorites bar in POS (pin frequent items)
+- Bill_label / customer hint di open bill (currently using pager)
+- Receipt logo print (currently text-only header)
+- Edit open bill items (currently locked once saved)
+- HistoryDetailModal split print buttons (currently single Cetak Ulang)
+- Audit reprint events
+- Multi-printer routing (separate physical printers untuk dapur vs bar)
+
+Handover for sesi 14: `docs/99-HANDOVER-SESSION-13.md`. Phase 2 roadmap update: `docs/99-PHASE-2-ROADMAP.md` §11 + decisions D44+.
