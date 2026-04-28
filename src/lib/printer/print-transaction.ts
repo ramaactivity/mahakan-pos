@@ -1,5 +1,7 @@
 import { getPrinterClient } from "./bluetooth";
+import { concat } from "./esc-pos";
 import { buildReceipt } from "./receipt-builder";
+import { buildPrepTicket } from "./ticket-builder";
 import type { TransactionWithItems } from "@/features/transactions";
 
 /**
@@ -39,7 +41,29 @@ export async function printTransactionReceipt(
     };
   }
   try {
-    const bytes = buildReceipt({
+    // Prep ticket payload (no prices) — shared shape for kitchen + bar.
+    const prepData = {
+      transactionNumber: trx.transactionNumber,
+      pagerNumber: trx.pagerNumber,
+      orderType: trx.orderType,
+      createdAt: trx.createdAt,
+      cashierName,
+      items: trx.items.map((item) => ({
+        name: item.itemName,
+        variant: item.variant,
+        quantity: item.quantity,
+        note: item.note,
+        openPriceNote: item.openPriceNote,
+        categoryName: item.itemCategoryName,
+        modifiers: item.modifiers.map((m) => ({
+          modifierSlug: m.modifierSlug,
+          selectedValue: m.selectedValue,
+        })),
+      })),
+    };
+
+    // Customer receipt (existing — with prices, totals, payment).
+    const customerBytes = buildReceipt({
       outletName: OUTLET_META.name,
       outletAddress: OUTLET_META.address,
       outletPhone: OUTLET_META.phone,
@@ -73,7 +97,20 @@ export async function printTransactionReceipt(
       status: trx.status,
       footerText: OUTLET_META.footer,
     });
-    await printer.send(bytes);
+
+    // Print order: kitchen → bar → customer. Each ticket ends with its own
+    // cut, so kasir can tear and route physically. Prep tickets emit only
+    // when items match the station; customer receipt always emitted (paid +
+    // void/refund variants — only paid normally hits this path post-payment).
+    const kitchenBytes = trx.status === "paid" ? buildPrepTicket(prepData, "kitchen") : null;
+    const barBytes = trx.status === "paid" ? buildPrepTicket(prepData, "bar") : null;
+
+    const stream: Uint8Array[] = [];
+    if (kitchenBytes) stream.push(kitchenBytes);
+    if (barBytes) stream.push(barBytes);
+    stream.push(customerBytes);
+
+    await printer.send(concat(...stream));
     return { ok: true };
   } catch (e) {
     return {
