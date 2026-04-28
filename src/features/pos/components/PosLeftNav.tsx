@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ClipboardList,
   History,
   LayoutGrid,
   LogOut,
@@ -10,7 +11,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type PosTab = "cashier" | "history" | "shifts" | "settings";
+export type PosTab =
+  | "cashier"
+  | "queue"
+  | "history"
+  | "shifts"
+  | "settings";
 
 interface PosLeftNavProps {
   activeTab: PosTab;
@@ -18,10 +24,13 @@ interface PosLeftNavProps {
   onLogout: () => void;
   /** Optional badge count for cashier tab (drafts count, etc.) */
   cashierBadge?: number;
+  /** Optional badge for queue tab (pending paid transactions). */
+  queueBadge?: number;
 }
 
 const TABS: Array<{ key: PosTab; label: string; Icon: LucideIcon }> = [
   { key: "cashier", label: "Kasir", Icon: LayoutGrid },
+  { key: "queue", label: "Pesanan", Icon: ClipboardList },
   { key: "history", label: "Riwayat", Icon: History },
   { key: "shifts", label: "Shift", Icon: Wallet },
   { key: "settings", label: "Pengaturan", Icon: Settings },
@@ -32,6 +41,7 @@ export function PosLeftNav({
   onTabChange,
   onLogout,
   cashierBadge,
+  queueBadge,
 }: PosLeftNavProps) {
   return (
     <nav
@@ -42,16 +52,24 @@ export function PosLeftNav({
         <div className="mb-3 flex size-10 items-center justify-center rounded-lg bg-mahakan-green-700 text-white text-xs font-bold">
           MK
         </div>
-        {TABS.map((tab) => (
-          <NavButton
-            key={tab.key}
-            label={tab.label}
-            Icon={tab.Icon}
-            active={activeTab === tab.key}
-            onClick={() => onTabChange(tab.key)}
-            badge={tab.key === "cashier" ? cashierBadge : undefined}
-          />
-        ))}
+        {TABS.map((tab) => {
+          const badge =
+            tab.key === "cashier"
+              ? cashierBadge
+              : tab.key === "queue"
+                ? queueBadge
+                : undefined;
+          return (
+            <NavButton
+              key={tab.key}
+              label={tab.label}
+              Icon={tab.Icon}
+              active={activeTab === tab.key}
+              onClick={() => onTabChange(tab.key)}
+              badge={badge}
+            />
+          );
+        })}
       </div>
       <NavButton label="Keluar" Icon={LogOut} active={false} onClick={onLogout} />
     </nav>

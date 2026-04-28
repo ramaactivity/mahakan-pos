@@ -8,7 +8,6 @@ import {
   CreditCard,
   Percent,
   Plus,
-  Printer,
   QrCode,
   Search,
   ShoppingCart,
@@ -38,8 +37,10 @@ import { MenuTile } from "@/features/pos/components/MenuTile";
 import { NewOrderModal } from "@/features/pos/components/NewOrderModal";
 import { OpenPriceModal } from "@/features/pos/components/OpenPriceModal";
 import { OpenShiftModal } from "@/features/pos/components/OpenShiftModal";
+import { OrderQueuePanel } from "@/features/pos/components/OrderQueuePanel";
 import { PosLeftNav, type PosTab } from "@/features/pos/components/PosLeftNav";
 import { PosSettingsPanel } from "@/features/pos/components/PosSettingsPanel";
+import { PrintStationButtons } from "@/features/pos/components/PrintStationButtons";
 import { ShiftPanel } from "@/features/pos/components/ShiftPanel";
 import { buildLineItem, useCartStore } from "@/features/pos/cartStore";
 import { useSession } from "@/features/auth/SessionProvider";
@@ -61,7 +62,7 @@ import {
 import { getActiveShift, type Shift } from "@/features/shifts";
 import { queuePendingTransaction } from "@/lib/offline/queue";
 import { usePendingSync } from "@/lib/offline/usePendingSync";
-import { printTransactionReceipt } from "@/lib/printer/print-transaction";
+import { printTickets } from "@/lib/printer/print-transaction";
 import type { Discount } from "@/lib/money";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
@@ -447,9 +448,11 @@ export function PosShell() {
       setPaymentSubmitting(false);
       toast.success(`Transaksi ${res.data.transactionNumber} berhasil`);
 
-      // Best-effort thermal print. Silent on failure — user has on-screen
-      // receipt + can re-print from history later.
-      void printReceiptForTransaction(res.data, session!.user.name);
+      // Best-effort: print ONLY customer receipt automatically. Kitchen + bar
+      // tickets are printed manually via the Pesanan queue tab — kasir tears
+      // the customer struk for hand-off, then triggers prep tickets when ready
+      // to call the order out to staff.
+      void printTickets(res.data, session!.user.name, ["customer"]);
     } catch (e) {
       // Network error mid-flight: queue and surface as offline-paid.
       try {
@@ -503,6 +506,12 @@ export function PosShell() {
             setSearchQuery={setSearchQuery}
             onItemTap={handleItemTap}
             session={session.user}
+          />
+        ) : tab === "queue" ? (
+          <OrderQueuePanel
+            cashierName={session.user.name}
+            refreshKey={historyRefreshKey}
+            onOpenSettings={() => setTab("settings")}
           />
         ) : tab === "history" ? (
           <HistoryPanel
@@ -1148,23 +1157,6 @@ function PaidPanel({
   onFinish,
   onOpenSettings,
 }: PaidPanelProps) {
-  const [reprinting, setReprinting] = useState(false);
-  async function handleReprint() {
-    if (reprinting) return;
-    setReprinting(true);
-    const outcome = await printTransactionReceipt(trx, cashierName);
-    setReprinting(false);
-    if (outcome.ok) {
-      toast.success("Struk dicetak ulang");
-    } else if (outcome.reason === "not_paired") {
-      toast.error("Printer belum di-pair", {
-        description: "Pasangkan printer di tab Pengaturan dulu.",
-        action: { label: "Buka", onClick: onOpenSettings },
-      });
-    } else {
-      toast.error(outcome.message);
-    }
-  }
   return (
     <>
       <header className="flex flex-col items-center gap-2 border-b border-neutral-200 p-4">
@@ -1256,15 +1248,22 @@ function PaidPanel({
         </div>
       </div>
 
-      <footer className="border-t border-neutral-200 p-4 space-y-2">
-        <Button
-          variant="outline"
-          fullWidth
-          loading={reprinting}
-          onClick={handleReprint}
-        >
-          <Printer className="size-4" aria-hidden /> Cetak Ulang
-        </Button>
+      <footer className="space-y-3 border-t border-neutral-200 p-4">
+        <div className="space-y-1.5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            Cetak Tiket
+          </p>
+          <PrintStationButtons
+            trx={trx}
+            cashierName={cashierName}
+            onOpenSettings={onOpenSettings}
+            size="sm"
+          />
+          <p className="text-[11px] text-neutral-500">
+            Struk customer otomatis tercetak. Cetak Dapur / Bar saat siap call
+            order.
+          </p>
+        </div>
         <Button size="lg" fullWidth onClick={onFinish}>
           Selesai (Order Disiapkan)
         </Button>
@@ -1377,14 +1376,3 @@ function Line({
   );
 }
 
-async function printReceiptForTransaction(
-  trx: TransactionWithItems,
-  cashierName: string,
-): Promise<void> {
-  // Best-effort auto-print after payment success — silent on failure since
-  // the on-screen receipt + history reprint are the user-facing fallbacks.
-  const outcome = await printTransactionReceipt(trx, cashierName);
-  if (!outcome.ok) {
-    console.warn("[print]", outcome.reason, outcome.message);
-  }
-}
