@@ -22,19 +22,31 @@ import {
 import { PrinterControls } from "@/features/printer/PrinterControls";
 import { useSession } from "@/features/auth/SessionProvider";
 import { getOwnOutlet, type Outlet } from "@/features/outlets";
-import { isOk } from "@/features/menu";
+import { isOk, type Category, type MenuItem } from "@/features/menu";
 import { useOnlineStatus } from "@/lib/useOnlineStatus";
 import { countPendingTransactions } from "@/lib/offline/queue";
 import { syncPendingTransactions } from "@/lib/offline/sync";
 import type { Shift } from "@/features/shifts";
+import { MenuStatusCard } from "./MenuStatusCard";
 
 const APP_VERSION = "Phase 2 Tier 1.1 (M22.X)";
 
 interface PosSettingsPanelProps {
   shift: Shift | null;
+  menuItems: MenuItem[];
+  categories: Category[];
+  onMenuItemUpdated: (next: MenuItem) => void;
 }
 
-export function PosSettingsPanel({ shift }: PosSettingsPanelProps) {
+export function PosSettingsPanel({
+  shift,
+  menuItems,
+  categories,
+  onMenuItemUpdated,
+}: PosSettingsPanelProps) {
+  const { session } = useSession();
+  const role = session?.user.role;
+
   return (
     <div className="h-full overflow-y-auto bg-neutral-50 p-6">
       <div className="mx-auto max-w-3xl space-y-4">
@@ -47,12 +59,20 @@ export function PosSettingsPanel({ shift }: PosSettingsPanelProps) {
               Pengaturan POS
             </h1>
             <p className="text-sm text-neutral-600">
-              Setup printer, status sinkronisasi, dan info kasir.
+              Setup printer, status menu, sinkronisasi, dan info kasir.
             </p>
           </div>
         </div>
 
         <PrinterCard />
+        {role ? (
+          <MenuStatusCard
+            menuItems={menuItems}
+            categories={categories}
+            role={role}
+            onItemUpdated={onMenuItemUpdated}
+          />
+        ) : null}
         <SyncCard />
         <AboutCard shift={shift} />
       </div>

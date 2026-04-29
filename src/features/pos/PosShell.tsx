@@ -786,7 +786,16 @@ export function PosShell() {
             onRequestCloseShift={() => setCloseShiftOpen(true)}
           />
         ) : (
-          <PosSettingsPanel shift={shift} />
+          <PosSettingsPanel
+            shift={shift}
+            menuItems={menuItems}
+            categories={categories}
+            onMenuItemUpdated={(next) =>
+              setMenuItems((items) =>
+                items.map((it) => (it.id === next.id ? next : it)),
+              )
+            }
+          />
         )}
       </main>
 
