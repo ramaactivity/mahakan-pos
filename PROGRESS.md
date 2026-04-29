@@ -4,13 +4,13 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 — **Sesi 14 multi-cycle PUSH selesai 2026-04-29**. M28 (Galih quick-wins, customer name etc) + M28.5 (Edit open bill) + Tech debt (proxy rename + receipt cleanup) + **M29 Tier 1.3 Loyalty** all landed in 4 commits across 3 deploy cycles.
-**Active Milestone (sesi 15):** **FIELD VALIDATE** sesi 12-14 features. Galih + staff field-test compliment, open bill (now editable), receipt editor, PIN guards, menu sort/layout, customer name, history split print, reprint audit, **loyalty member registration + auto-earn**. Customer testing in progress per Owner (sesi 14 close).
-**Local HEAD:** `960f4b0` — synced with `origin/release/phase-1`, all deployed.
+**Phase:** Phase 2 — **Sesi 15 admin polish + POS quick-favorites deployed 2026-04-29**. 2 commits orthogonal: D bundle (CustomerDetailModal + Top Member report + ItemPerformance polish) + C bundle (quick-favorites bar). Field-test Galih + staff continues in parallel.
+**Active Milestone (sesi 15+):** **FIELD VALIDATE** sesi 12-14 features. Galih + staff field-test compliment, open bill (now editable), receipt editor, PIN guards, menu sort/layout, customer name, history split print, reprint audit, **loyalty member registration + auto-earn**, **+ new sesi 15 quick-favorites** + admin Member edit modal + Top Member report + Items report category filter/CSV.
+**Local HEAD:** `3ebfb52` — synced with `origin/release/phase-1`, all deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `960f4b0` local + remote, deployed 2026-04-29 sesi 14 multi-cycle)
+**Branch:** `release/phase-1` (HEAD `3ebfb52` local + remote, deployed 2026-04-29 sesi 15 dpl `EviYNH7XdnBkjZXNBBpcQz6ybeJW`)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift; M29 Loyalty landed)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
 **Phase 2 Tier 1.2 plan (M23.2):** `~/.claude/plans/halo-gua-mau-lanjut-gleaming-fern.md` (cascade engine implementation)
@@ -144,6 +144,17 @@ Original Phase 2 roadmap §3.2. Jumped from Tier 1.3 design-stage to live produc
 - [x] **M29.4** — POS UI: NewOrderModal "Nomor HP Member (opsional)" input above existing customer name field. Debounced `lookupCustomerByPhone` fires at 6+ digits → surfaces "✓ Member: <name> · <X> poin" hint atau "Member baru — auto daftar saat bayar". Auto-fills name from member record kalau name field kosong. Draft.customerPhone added; threaded through PosShell to all transaction payloads. CartPanel header: customer name + phone subline shown when set _(done 2026-04-29 sesi 14, same commit `960f4b0`)_
 - [x] **M29.5** — Receipt loyalty info. ReceiptData extended dengan memberPhone + memberTotalPoints + pointsEarned. buildReceipt prints "MEMBER" centered + phone + "Poin diperoleh: +N" + "Saldo poin: <total>" block above the existing footer when sale has loyalty data. TransactionWithItems extended dengan optional `member: { id, name, phone, totalPoints }`; queries.ts fetchTransactionById LEFT JOIN customers when customerId set. print-transaction.buildCustomerBytes threads via trx.member _(done 2026-04-29 sesi 14, same commit `960f4b0`)_
 - [x] **M29.6** — Admin Customers section. New "Member" sidebar item (Heart icon) between Inventory dan Staff. CustomersSection: stat cards (total / poin beredar / lifetime spend) + search bar (name atau phone) + sortable table (nama / HP / poin badge / lifetime spend / diupdate). Owner+Manager only via customer.view permission _(done 2026-04-29 sesi 14, same commit `960f4b0`)_
+
+#### Sesi 15 — Admin polish + POS quick-favorites (C+D bundle, 2026-04-29)
+
+Direction C (continued Galih asks tersisa) + D (tech debt sweep) selected by Owner setelah sesi 14 multi-cycle. 2 commits orthogonal untuk rollback boundary, single Vercel prod deploy.
+
+- [x] **D-detail** — `CustomerDetailModal` (admin Member section). Tap row → modal: stat cards (saldo poin + lifetime spend) + nama/HP/catatan + tanggal bergabung+diupdate. Edit mode (Pencil button) → form yang call `updateCustomer` action (audit emit otomatis). Update list row + modal state via `onUpdated` callback. New file [CustomerDetailModal.tsx](src/features/admin/sections/customers/CustomerDetailModal.tsx); [CustomersSection.tsx](src/features/admin/sections/CustomersSection.tsx) clickable rows _(done 2026-04-29 sesi 15, commit `0648d8b`)_
+- [x] **D-topmember** — Top Member report tab (Admin → Laporan). New tab "Top Member" (visible owner+manager via existing admin gate). [TopCustomersView.tsx](src/features/admin/sections/reports/TopCustomersView.tsx) reuse existing `topCustomers(limit)` action: limit Top 10/25/50/100 select + sort spend/poin/diupdate + CSV export (papaparse). [ReportsSection.tsx](src/features/admin/sections/ReportsSection.tsx) tab list extended _(done 2026-04-29 sesi 15, same commit `0648d8b`)_
+- [x] **C-itemsfilter** — ItemPerformance polish ([ItemPerformanceView.tsx](src/features/admin/sections/reports/ItemPerformanceView.tsx)): kategori Select filter (auto-derived dari result row categoryNames sorted A-Z) + CSV export button (filename includes period + category tag). Quartile + totals re-compute terhadap filtered subset _(done 2026-04-29 sesi 15, same commit `0648d8b`)_
+- [x] **C-favorites** — Quick-favorites bar di POS. New [useFavorites.ts](src/features/pos/components/useFavorites.ts) hook: localStorage-backed (key `mahakan-pos-favorites-v1`, max 10 items, per-device, no server roundtrip). New [FavoritesBar.tsx](src/features/pos/components/FavoritesBar.tsx): horizontal strip muncul di atas search header dalam CashierMiddle saat ada favorit. Each pinned item = small button (name + price), tap = dispatch via existing `onItemTap`, X = unpin. Items yang dihapus dari menu di-skip silently dari bar (tetap di storage in case kembali). [MenuTile.tsx](src/features/pos/components/MenuTile.tsx) + [MenuListRow.tsx](src/features/pos/components/MenuListRow.tsx) get optional Star button overlay (top-right corner / right-side) dengan `aria-pressed` toggle. [PosShell.tsx](src/features/pos/PosShell.tsx) wires `useFavorites()` + `menuItemsById` map → CashierMiddle props _(done 2026-04-29 sesi 15, commit `3ebfb52`)_
+
+Verify: typecheck ✓ lint ✓ vitest 337/337 ✓ build 11 routes ✓. Production deploy `dpl_EviYNH7XdnBkjZXNBBpcQz6ybeJW` aliased ke mahakan-pos.vercel.app, HTTP 200. Field-test Galih + staff still in progress (sesi 14 features + new sesi 15 surfaces).
 
 ---
 
