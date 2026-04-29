@@ -35,17 +35,31 @@ async function requireSession() {
  *  1. Outlet settings.approval.notifyEmail (Owner override)
  *  2. First active Owner user's email
  *  3. null (caller surfaces error) */
-async function resolveApprovalEmail(
+/**
+ * Resolve all email recipients for the approval flow. Order:
+ *  1. `notifyEmails` array (multi-recipient) — primary
+ *  2. `notifyEmail` legacy single string — fallback
+ *  3. First active Owner's user.email — last-resort default
+ *
+ * Returns at least one recipient, or null if none found. The first owner
+ * is included regardless (for greeting display name).
+ */
+async function resolveApprovalRecipients(
   outletId: string,
-): Promise<{ email: string; owner: { id: string; name: string; email: string } | null } | null> {
+): Promise<{
+  emails: string[];
+  primaryOwner: { id: string; name: string; email: string } | null;
+} | null> {
   const [outlet] = await db
     .select()
     .from(outlets)
     .where(eq(outlets.id, outletId))
     .limit(1);
-  const overrideEmail =
-    (outlet?.settings as { approval?: { notifyEmail?: string } } | null)
-      ?.approval?.notifyEmail ?? null;
+  const approval = (outlet?.settings as
+    | {
+        approval?: { notifyEmail?: string; notifyEmails?: string[] };
+      }
+    | null)?.approval;
 
   const [ownerUser] = await db
     .select({ id: users.id, name: users.name, email: users.email })
@@ -61,21 +75,31 @@ async function resolveApprovalEmail(
     .orderBy(asc(users.createdAt))
     .limit(1);
 
-  if (overrideEmail && overrideEmail.includes("@")) {
-    return {
-      email: overrideEmail,
-      owner: ownerUser?.email
-        ? { id: ownerUser.id, name: ownerUser.name, email: ownerUser.email }
-        : null,
-    };
+  const collected = new Set<string>();
+  if (approval?.notifyEmails && approval.notifyEmails.length > 0) {
+    for (const e of approval.notifyEmails) {
+      const trimmed = e.trim();
+      if (trimmed.includes("@")) collected.add(trimmed);
+    }
   }
-  if (ownerUser?.email) {
-    return {
-      email: ownerUser.email,
-      owner: { id: ownerUser.id, name: ownerUser.name, email: ownerUser.email },
-    };
+  if (
+    collected.size === 0 &&
+    approval?.notifyEmail &&
+    approval.notifyEmail.includes("@")
+  ) {
+    collected.add(approval.notifyEmail.trim());
   }
-  return null;
+  if (collected.size === 0 && ownerUser?.email) {
+    collected.add(ownerUser.email);
+  }
+
+  if (collected.size === 0) return null;
+  return {
+    emails: Array.from(collected),
+    primaryOwner: ownerUser?.email
+      ? { id: ownerUser.id, name: ownerUser.name, email: ownerUser.email }
+      : null,
+  };
 }
 
 /**
@@ -117,11 +141,11 @@ export async function requestApprovalCode(
     );
   }
 
-  const target = await resolveApprovalEmail(session.user.outletId);
-  if (!target) {
+  const recipients = await resolveApprovalRecipients(session.user.outletId);
+  if (!recipients) {
     return fail(
       "NO_OWNER_EMAIL",
-      "Email Owner belum diset. Owner login → Pengaturan → update email dulu.",
+      "Email Owner belum diset. Owner login → Pengaturan → tambah email approval dulu.",
     );
   }
 
@@ -162,26 +186,43 @@ export async function requestApprovalCode(
     })
     .returning();
 
-  // Best-effort email send. Audit either outcome.
+  // Multi-recipient fan-out: send the same email to every recipient in
+  // parallel. Result is "sent" if ANY succeeded, "failed" if ALL failed,
+  // "logged" only when no provider configured.
   const [outletRow] = await db
     .select({ name: outlets.name })
     .from(outlets)
     .where(eq(outlets.id, session.user.outletId))
     .limit(1);
-  const emailMsg = buildApprovalCodeEmail({
-    toEmail: target.email,
-    ownerName: target.owner?.name ?? "Owner",
-    actionType: input.actionType,
-    code,
-    transactionNumber: trx.transactionNumber,
-    transactionTotal: trx.total,
-    reason,
-    requestedByName: session.user.name,
-    requestedByRole: session.user.role,
-    expiresAt,
-    outletName: outletRow?.name ?? "Mahakan Coffee & Space",
-  });
-  const sendResult = await sendEmail(emailMsg);
+  const sendPromises = recipients.emails.map((toEmail) =>
+    sendEmail(
+      buildApprovalCodeEmail({
+        toEmail,
+        ownerName: recipients.primaryOwner?.name ?? "Owner",
+        actionType: input.actionType,
+        code,
+        transactionNumber: trx.transactionNumber,
+        transactionTotal: trx.total,
+        reason,
+        requestedByName: session.user.name,
+        requestedByRole: session.user.role,
+        expiresAt,
+        outletName: outletRow?.name ?? "Mahakan Coffee & Space",
+      }),
+    ),
+  );
+  const sendResults = await Promise.all(sendPromises);
+
+  const anySent = sendResults.some((r) => r.mode === "sent");
+  const anyLogged = sendResults.some((r) => r.mode === "logged");
+  const overallMode: "sent" | "logged" | "failed" = anySent
+    ? "sent"
+    : anyLogged
+      ? "logged"
+      : "failed";
+  const firstError = sendResults.find((r) => r.mode === "failed");
+
+  const maskedTargets = recipients.emails.map(maskEmail).join(", ");
 
   await logAudit({
     eventType: "approval_code.generate",
@@ -189,15 +230,21 @@ export async function requestApprovalCode(
     entityType: "approval_code",
     entityId: inserted.id,
     payload: {
-      summary: `Request ${input.actionType === "pos.transaction.void" ? "void" : "refund"} TRX ${trx.transactionNumber} — kode terkirim ke ${maskEmail(target.email)} (${sendResult.mode})`,
+      summary: `Request ${input.actionType === "pos.transaction.void" ? "void" : "refund"} TRX ${trx.transactionNumber} — kode terkirim ke ${maskedTargets} (${overallMode})`,
       context: {
         transactionNumber: trx.transactionNumber,
         actionType: input.actionType,
         reason,
         codeFirstTwo,
         expiresAt: expiresAt.toISOString(),
-        emailMode: sendResult.mode,
-        emailMessageId: sendResult.messageId,
+        emailMode: overallMode,
+        recipientCount: recipients.emails.length,
+        recipientResults: sendResults.map((r, i) => ({
+          email: maskEmail(recipients.emails[i]),
+          mode: r.mode,
+          messageId: r.messageId,
+          error: r.error,
+        })),
       },
     },
     metadata: {
@@ -206,17 +253,22 @@ export async function requestApprovalCode(
     },
   });
 
-  if (sendResult.mode === "failed") {
+  if (overallMode === "failed") {
     await logAudit({
       eventType: "approval_code.email_failed",
       userId: session.user.id,
       entityType: "approval_code",
       entityId: inserted.id,
       payload: {
-        summary: `Email gagal kirim untuk approval code TRX ${trx.transactionNumber}`,
+        summary: `Email gagal kirim ke SEMUA ${recipients.emails.length} recipient untuk TRX ${trx.transactionNumber}`,
         context: {
-          error: sendResult.error,
-          target: maskEmail(target.email),
+          error: firstError?.error,
+          targets: maskedTargets,
+          allResults: sendResults.map((r, i) => ({
+            email: maskEmail(recipients.emails[i]),
+            error: r.error,
+            errorCode: r.errorCode,
+          })),
         },
       },
       metadata: {
@@ -229,11 +281,10 @@ export async function requestApprovalCode(
   return ok({
     codeFirstTwo,
     expiresAt: expiresAt.toISOString(),
-    emailMode: sendResult.mode,
-    ownerEmailMasked: maskEmail(target.email),
-    emailError: sendResult.mode === "failed" ? sendResult.error : undefined,
-    emailErrorCode:
-      sendResult.mode === "failed" ? sendResult.errorCode : undefined,
+    emailMode: overallMode,
+    ownerEmailMasked: maskedTargets,
+    emailError: overallMode === "failed" ? firstError?.error : undefined,
+    emailErrorCode: overallMode === "failed" ? firstError?.errorCode : undefined,
   });
 }
 
@@ -281,22 +332,39 @@ export async function sendTestEmail(): Promise<
   if (!hasPermission(session.user.role, "approval_code.view")) {
     return fail("FORBIDDEN", "Owner-only");
   }
-  const target = await resolveApprovalEmail(session.user.outletId);
-  if (!target) {
+  const recipients = await resolveApprovalRecipients(session.user.outletId);
+  if (!recipients) {
     return fail("NO_OWNER_EMAIL", "Email Owner belum diset");
   }
-  const result = await sendEmail({
-    to: target.email,
-    subject: "[Mahakan POS] Test Email",
-    text: `Halo ${target.owner?.name ?? "Owner"},\n\nIni test email dari Mahakan POS untuk verifikasi setup approval-code.\n\nKalau email ini sampai, berarti Gmail SMTP / Resend sudah benar.\n\nWaktu test: ${new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB\n\n— Mahakan POS`,
-    html: `<p>Halo <strong>${target.owner?.name ?? "Owner"}</strong>,</p><p>Ini test email dari Mahakan POS untuk verifikasi setup approval-code.</p><p>Kalau email ini sampai, berarti Gmail SMTP / Resend sudah benar.</p><p>Waktu test: ${new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB</p><p>— Mahakan POS</p>`,
-  });
+  const ownerName = recipients.primaryOwner?.name ?? "Owner";
+  const ts = new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" });
+  const text = `Halo ${ownerName},\n\nIni test email dari Mahakan POS untuk verifikasi setup approval-code.\n\nKalau email ini sampai, berarti Gmail SMTP / Resend sudah benar.\n\nWaktu test: ${ts} WIB\nDikirim ke: ${recipients.emails.join(", ")}\n\n— Mahakan POS`;
+  const html = `<p>Halo <strong>${ownerName}</strong>,</p><p>Ini test email dari Mahakan POS untuk verifikasi setup approval-code.</p><p>Kalau email ini sampai, berarti Gmail SMTP / Resend sudah benar.</p><p>Waktu test: ${ts} WIB<br/>Dikirim ke: ${recipients.emails.join(", ")}</p><p>— Mahakan POS</p>`;
+
+  const results = await Promise.all(
+    recipients.emails.map((to) =>
+      sendEmail({
+        to,
+        subject: "[Mahakan POS] Test Email",
+        text,
+        html,
+      }),
+    ),
+  );
+  const anySent = results.some((r) => r.mode === "sent");
+  const anyLogged = results.some((r) => r.mode === "logged");
+  const overallMode: "sent" | "logged" | "failed" = anySent
+    ? "sent"
+    : anyLogged
+      ? "logged"
+      : "failed";
+  const firstError = results.find((r) => r.mode === "failed");
   return ok({
-    provider: result.provider,
-    mode: result.mode,
-    targetMasked: maskEmail(target.email),
-    error: result.error,
-    errorCode: result.errorCode,
+    provider: results[0]?.provider ?? "dev-log",
+    mode: overallMode,
+    targetMasked: recipients.emails.map(maskEmail).join(", "),
+    error: firstError?.error,
+    errorCode: firstError?.errorCode,
   });
 }
 

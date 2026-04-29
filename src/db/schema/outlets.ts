@@ -44,10 +44,13 @@ export type OutletSettings = {
      * isn't disrupted. Owner flips to "code" after team training. */
     voidMode?: "pin" | "code";
     refundMode?: "pin" | "code";
-    /** Override target — defaults to first active Owner's email. Useful
-     * when Owner uses different email for approvals (e.g. dedicated
-     * inbox) without changing their login email. */
+    /** @deprecated single-email — superseded by `notifyEmails` array.
+     * Read by resolveApprovalEmail as fallback when notifyEmails empty. */
     notifyEmail?: string;
+    /** List of recipient emails — code is sent to ALL of them so any
+     * Owner/Manager available can forward to staff. Empty = fallback to
+     * first active Owner's user.email. */
+    notifyEmails?: string[];
   };
 };
 

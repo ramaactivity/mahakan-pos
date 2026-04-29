@@ -226,6 +226,7 @@ const featuresSchema = z.object({
 const approvalSchema = z.object({
   voidMode: z.enum(["pin", "code"]).optional(),
   refundMode: z.enum(["pin", "code"]).optional(),
+  /** @deprecated kept for back-compat */
   notifyEmail: z
     .string()
     .trim()
@@ -235,6 +236,21 @@ const approvalSchema = z.object({
       (s) => !s || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s),
       "Email tidak valid",
     ),
+  /** New: multi-recipient. Each entry validated individually. Max 10
+   * to prevent abuse. */
+  notifyEmails: z
+    .array(
+      z
+        .string()
+        .trim()
+        .max(120)
+        .refine(
+          (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s),
+          "Email tidak valid",
+        ),
+    )
+    .max(10, "Maksimal 10 email tujuan")
+    .optional(),
 });
 
 async function updateSettingsSection(

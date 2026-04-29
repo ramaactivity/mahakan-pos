@@ -31,9 +31,32 @@ import { Resend } from "resend";
  */
 
 const GMAIL_USER = process.env.GMAIL_USER;
-const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
+// Gmail App Password — Google displays as "abcd efgh ijkl mnop" but the
+// SMTP auth wants no spaces. Some Owners copy with spaces; we normalize.
+const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, "");
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const EMAIL_FROM_ENV = process.env.EMAIL_FROM;
+
+/**
+ * Hard wrapper to prevent any SMTP / Resend op from hanging past `ms` —
+ * used so a Vercel function never spins on a stuck handshake. Returns
+ * the original promise's value or a synthetic SendResult-shaped error.
+ */
+async function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  onTimeout: () => T,
+): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(onTimeout()), ms);
+  });
+  try {
+    return await Promise.race([p, timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 type Provider = "gmail" | "resend" | "dev-log";
 
@@ -140,7 +163,14 @@ export async function verifyEmailProvider(): Promise<SendResult> {
   if (provider === "gmail") {
     try {
       const t = gmailTransporter();
-      await t.verify();
+      // Wrap verify in 8s hard timeout — verify() can hang on bad
+      // network paths despite SMTPTransport's connectionTimeout. This
+      // ensures the server action returns inside Vercel's 10s budget.
+      // verify() returns true on success, throws on failure — wrap in
+      // a hard timeout so we never hang past Vercel's 10s budget.
+      await withTimeout(t.verify(), 8_000, () => {
+        throw new Error("ETIMEDOUT — verify melebihi 8 detik");
+      });
       return {
         ok: true,
         messageId: null,
@@ -149,6 +179,7 @@ export async function verifyEmailProvider(): Promise<SendResult> {
       };
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
+      console.error("[email/send] verify failed:", e);
       return {
         ok: false,
         messageId: null,
@@ -192,15 +223,21 @@ export async function sendEmail(msg: EmailMessage): Promise<SendResult> {
   if (provider === "gmail") {
     try {
       const t = gmailTransporter();
-      const result = await t.sendMail({
-        // Gmail SMTP requires from = authenticated account. Display name
-        // can be customized though.
-        from: `Mahakan POS <${GMAIL_USER}>`,
-        to: msg.to,
-        subject: msg.subject,
-        text: msg.text,
-        html: msg.html,
-      });
+      const result = await withTimeout(
+        t.sendMail({
+          // Gmail SMTP requires from = authenticated account. Display
+          // name can be customized though.
+          from: `Mahakan POS <${GMAIL_USER}>`,
+          to: msg.to,
+          subject: msg.subject,
+          text: msg.text,
+          html: msg.html,
+        }),
+        9_000,
+        () => {
+          throw new Error("ETIMEDOUT — sendMail melebihi 9 detik");
+        },
+      );
       return {
         ok: true,
         messageId: result.messageId ?? null,

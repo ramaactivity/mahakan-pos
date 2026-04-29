@@ -25,6 +25,16 @@ interface Props {
  * fields are short and Owner usually edits these together.
  */
 export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props) {
+  // Resolve initial recipient list — prefer notifyEmails array; fall back
+  // to legacy single notifyEmail. Empty array = use first Owner default.
+  const initialEmails = (() => {
+    const arr = outlet.settings?.approval?.notifyEmails ?? null;
+    if (arr && arr.length > 0) return arr.slice(0, 10);
+    const legacy = outlet.settings?.approval?.notifyEmail;
+    if (legacy && legacy.includes("@")) return [legacy];
+    return [];
+  })();
+
   const initial = {
     footerText: outlet.settings?.receipt?.footerText ?? "Terima kasih, sampai jumpa!",
     showQrRating: outlet.settings?.receipt?.showQrRating ?? false,
@@ -32,7 +42,7 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     showHpp: outlet.settings?.features?.showHppToStaff ?? false,
     voidMode: outlet.settings?.approval?.voidMode === "code" ? "code" : "pin",
     refundMode: outlet.settings?.approval?.refundMode === "code" ? "code" : "pin",
-    notifyEmail: outlet.settings?.approval?.notifyEmail ?? "",
+    notifyEmails: initialEmails,
   } as const;
   const [footer, setFooter] = useState(initial.footerText);
   const [showQr, setShowQr] = useState(initial.showQrRating);
@@ -42,7 +52,8 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
   const [refundCodeMode, setRefundCodeMode] = useState(
     initial.refundMode === "code",
   );
-  const [notifyEmail, setNotifyEmail] = useState(initial.notifyEmail);
+  const [notifyEmails, setNotifyEmails] = useState<string[]>(initial.notifyEmails);
+  const [pendingEmail, setPendingEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,12 +66,36 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setShowHpp(initial.showHpp);
     setVoidCodeMode(initial.voidMode === "code");
     setRefundCodeMode(initial.refundMode === "code");
-    setNotifyEmail(initial.notifyEmail);
+    setNotifyEmails(initial.notifyEmails);
+    setPendingEmail("");
     setError(null);
     setSubmitting(false);
     /* eslint-enable react-hooks/set-state-in-effect */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, outlet]);
+
+  function addEmail() {
+    const trimmed = pendingEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setError("Format email tidak valid");
+      return;
+    }
+    if (notifyEmails.includes(trimmed)) {
+      setError("Email sudah ada di daftar");
+      return;
+    }
+    if (notifyEmails.length >= 10) {
+      setError("Maksimal 10 email tujuan");
+      return;
+    }
+    setNotifyEmails((prev) => [...prev, trimmed]);
+    setPendingEmail("");
+    setError(null);
+  }
+
+  function removeEmail(idx: number) {
+    setNotifyEmails((prev) => prev.filter((_, i) => i !== idx));
+  }
 
   let parsedVariance = 0;
   try {
@@ -122,16 +157,22 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
 
     const wantVoidMode = voidCodeMode ? "code" : "pin";
     const wantRefundMode = refundCodeMode ? "code" : "pin";
-    const wantNotifyEmail = notifyEmail.trim();
+    const emailsChanged =
+      notifyEmails.length !== initial.notifyEmails.length ||
+      notifyEmails.some((e, i) => e !== initial.notifyEmails[i]);
     if (
       wantVoidMode !== initial.voidMode ||
       wantRefundMode !== initial.refundMode ||
-      wantNotifyEmail !== initial.notifyEmail
+      emailsChanged
     ) {
       const r4 = await updateApproval({
         voidMode: wantVoidMode,
         refundMode: wantRefundMode,
-        notifyEmail: wantNotifyEmail || undefined,
+        // Always send the array (even empty — treats as "use Owner default").
+        // Drop legacy single notifyEmail by sending empty string (server
+        // ignores undefined at the merge layer).
+        notifyEmails,
+        notifyEmail: "",
       });
       if (!isOk(r4)) {
         setError(r4.error.message);
@@ -250,14 +291,67 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
               checked={refundCodeMode}
               onChange={setRefundCodeMode}
             />
-            <Input
-              label="Email override (opsional)"
-              type="email"
-              value={notifyEmail}
-              onChange={(e) => setNotifyEmail(e.target.value)}
-              placeholder="ex: approval@mahakancoffee.id"
-              hint="Default: email Owner pertama yang aktif. Isi kalau approval mau dikirim ke email khusus."
-            />
+            <div>
+              <label className="block text-xs font-medium text-neutral-700">
+                Email Tujuan Approval (max 10)
+              </label>
+              <p className="mt-0.5 text-[11px] text-neutral-500">
+                Kode dikirim ke SEMUA email di daftar — siapa pun yang baca
+                duluan bisa forward via WA. Default kalau kosong: email Owner
+                pertama yang aktif.
+              </p>
+              {notifyEmails.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {notifyEmails.map((e, idx) => (
+                    <span
+                      key={`${e}-${idx}`}
+                      className="inline-flex items-center gap-1 rounded-md border border-mahakan-green-200 bg-mahakan-green-50/40 px-2 py-1 text-xs text-mahakan-green-900"
+                    >
+                      <span className="font-mono">{e}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeEmail(idx)}
+                        aria-label={`Hapus ${e}`}
+                        className="ml-0.5 size-4 rounded text-neutral-500 hover:bg-mahakan-green-100 hover:text-danger-500"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="mt-2 flex gap-2">
+                <input
+                  type="email"
+                  value={pendingEmail}
+                  onChange={(ev) => setPendingEmail(ev.target.value)}
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Enter") {
+                      ev.preventDefault();
+                      addEmail();
+                    }
+                  }}
+                  placeholder="email@gmail.com"
+                  disabled={notifyEmails.length >= 10}
+                  className="flex-1 rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-mahakan-green-700 focus:outline-none focus:ring-2 focus:ring-mahakan-green-700/20 disabled:bg-neutral-100"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={addEmail}
+                  disabled={
+                    notifyEmails.length >= 10 || pendingEmail.trim().length === 0
+                  }
+                >
+                  Tambah
+                </Button>
+              </div>
+              {notifyEmails.length >= 10 ? (
+                <p className="mt-1 text-[11px] text-warning-500">
+                  Maksimal 10 email. Hapus salah satu untuk tambah baru.
+                </p>
+              ) : null}
+            </div>
           </div>
         </section>
 
