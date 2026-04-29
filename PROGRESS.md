@@ -4,13 +4,13 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 — **Sesi B-3 + email diagnostics CLOSE 2026-04-29**: partial refund + email approval Gmail SMTP both verified end-to-end di production. Owner test berhasil: void TRX-0006, refund TRX-0005/0007, partial refund flow. Email auth via `mahakankuy@gmail.com` aktif dengan multi-recipient support. **Owner submit 17 staff revisions** dari field-test — handover ke sesi chat baru untuk sesi C.
-**Active Milestone (sesi C-1):** UI polish bundle — receipt design fix (#1), bill aktif tab badge count (#3), sidebar truncation+collapse toggle (#14+#15 Galih addendum), login screens height fix (#16 Galih addendum). HR module B-4..B-6 dibumped jadi C-6..C-8 setelah staff revisions ship.
-**Local HEAD:** `d95fbae` — synced with `origin/release/phase-1`, all deployed.
+**Phase:** Phase 2 — **Sesi C-1 CLOSE 2026-04-29**: 5-item UI polish bundle deployed to production (deploy `dpl_582chk3egmBZ7QXh7KWqw3eXJjxB`). Receipt double-centering fix (root cause of "wifi belum di-center"), Bill Aktif tab live badge counter, login screens responsive sizing (no more iPad scroll), collapsible sidebar with persisted preference + readable expanded labels (Galih addenda #14+#15+#16). 4 commits, ~150 LOC, no schema changes.
+**Active Milestone (sesi C-2 next):** Cashier flow reorder (#4), per-bill notes (#5), buka shift stok-check (#6), post-action print confirm modal (#17). HR module bumped to C-6..C-8.
+**Local HEAD:** `3b3b3f3` — synced with `origin/release/phase-1`, all deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `d95fbae` local + remote, latest deploy 2026-04-29 sesi B-3 + email diagnostics)
+**Branch:** `release/phase-1` (HEAD `3b3b3f3` local + remote, latest deploy 2026-04-29 sesi C-1 UI polish bundle)
 **Sesi C plan:** `~/.claude/plans/compiled-hugging-marble.md` (REWRITTEN as handover; 17 staff revisions sequenced as C-1..C-5, then HR C-6..C-8; ~11-12 sesi total)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift; M29 Loyalty landed)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
