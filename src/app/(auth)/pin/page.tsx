@@ -195,7 +195,7 @@ export default function PinLoginPage() {
           </div>
         )}
         <div className="mt-6 border-t border-neutral-200 pt-4 text-center text-sm text-neutral-500">
-          Owner / Manager?{" "}
+          Mau ke Back Office?{" "}
           <Link
             href="/login"
             className="font-medium text-mahakan-green-700 hover:underline"

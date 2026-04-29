@@ -76,9 +76,10 @@ function LoginContent() {
   return (
     <Card className={shake ? "animate-shake" : undefined}>
       <CardHeader>
-        <CardTitle>Masuk — Owner / Manager</CardTitle>
+        <CardTitle>Masuk — Back Office</CardTitle>
         <CardDescription>
-          Login dengan email dan password untuk akses back office.
+          Login dengan email dan password untuk akses dashboard, laporan, dan
+          pengaturan. Khusus Owner / Manager.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -115,12 +116,12 @@ function LoginContent() {
           </Button>
         </form>
         <div className="mt-6 border-t border-neutral-200 pt-4 text-center text-sm text-neutral-500">
-          Kamu barista/kasir?{" "}
+          Mau langsung ke kasir?{" "}
           <Link
             href="/pin"
             className="font-medium text-mahakan-green-700 hover:underline"
           >
-            Login dengan PIN
+            Masuk POS dengan PIN
           </Link>
         </div>
       </CardContent>

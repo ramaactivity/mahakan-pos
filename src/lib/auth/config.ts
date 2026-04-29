@@ -294,12 +294,20 @@ export const authConfig: NextAuthConfig = {
   },
   callbacks: {
     async jwt({ token, user }) {
+      const nowSec = Math.floor(Date.now() / 1000);
       if (user) {
         token.userId = user.id as string;
         token.role = user.role;
         token.outletId = user.outletId;
-        token.roleExp =
-          Math.floor(Date.now() / 1000) + sessionMaxAgeSeconds(user.role);
+        token.roleExp = nowSec + sessionMaxAgeSeconds(user.role);
+      } else if (token.role) {
+        // Sliding expiry: every request that successfully decodes the token
+        // pushes roleExp forward. Active users stay logged in; inactive users
+        // expire after sessionMaxAgeSeconds(role) of silence. Cookie maxAge
+        // (12h) is the hard cap regardless. Without sliding the window, any
+        // session older than the role's window forces a re-login mid-shift —
+        // which is what was breaking Owner during multi-hour back-office work.
+        token.roleExp = nowSec + sessionMaxAgeSeconds(token.role);
       }
       return token;
     },

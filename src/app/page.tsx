@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, KeyRound } from "lucide-react";
+import { LayoutDashboard, ShoppingBag } from "lucide-react";
 
 export default function LandingPage() {
   return (
@@ -29,20 +29,21 @@ export default function LandingPage() {
             href="/login"
             className="group inline-flex items-center justify-center gap-2 rounded-xl bg-mahakan-green-700 px-6 py-3.5 text-base font-medium text-white shadow-lg shadow-mahakan-green-900/15 transition hover:-translate-y-0.5 hover:bg-mahakan-green-800 hover:shadow-xl hover:shadow-mahakan-green-900/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-mahakan-green-700"
           >
-            Masuk Owner / Manager
-            <ArrowRight className="size-4 transition group-hover:translate-x-0.5" aria-hidden />
+            <LayoutDashboard className="size-4" aria-hidden />
+            Masuk Back Office
           </Link>
           <Link
             href="/pin"
             className="group inline-flex items-center justify-center gap-2 rounded-xl border border-mahakan-green-200 bg-white/80 px-6 py-3.5 text-base font-medium text-mahakan-green-900 backdrop-blur transition hover:-translate-y-0.5 hover:border-mahakan-green-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-mahakan-green-700"
           >
-            <KeyRound className="size-4" aria-hidden />
-            Login Staff dengan PIN
+            <ShoppingBag className="size-4" aria-hidden />
+            Masuk POS / Kasir
           </Link>
         </div>
 
         <p className="mt-6 text-xs text-neutral-500 animate-fade-up [animation-delay:360ms]">
-          Owner pakai email + password · Staff cukup pilih avatar &amp; ketik PIN
+          Back Office: Owner / Manager (email + password) · POS: semua role (PIN
+          avatar)
         </p>
       </div>
     </main>
