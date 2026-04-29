@@ -4,13 +4,13 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 — **Sesi C-1 CLOSE 2026-04-29**: 5-item UI polish bundle deployed to production (deploy `dpl_582chk3egmBZ7QXh7KWqw3eXJjxB`). Receipt double-centering fix (root cause of "wifi belum di-center"), Bill Aktif tab live badge counter, login screens responsive sizing (no more iPad scroll), collapsible sidebar with persisted preference + readable expanded labels (Galih addenda #14+#15+#16). 4 commits, ~150 LOC, no schema changes.
-**Active Milestone (sesi C-2 next):** Cashier flow reorder (#4), per-bill notes (#5), buka shift stok-check (#6), post-action print confirm modal (#17). HR module bumped to C-6..C-8.
-**Local HEAD:** `3b3b3f3` — synced with `origin/release/phase-1`, all deployed.
+**Phase:** Phase 2 — **Sesi C-2 CLOSE 2026-04-29**: 4-item flow & UX bundle deployed to production. Cashier flow reorder (#4 — items first, metadata at Bayar/Simpan Bill, pager nullable via migration 0010), per-bill notes (#5 — `transactions.note` via migration 0009, threaded through actions + receipt + prep tickets), post-action print confirm modal (#17 — 3 entry points), buka shift 2-step pre-check stok menu (#6). 1 bundle commit `a17221c`, 2 migrations applied to Neon, ~600 LOC, vitest 372/372 + build 11 routes + bundle leak scan empty.
+**Active Milestone (sesi C-3 next):** Open bill edit + reprint buttons (#9), loading open bill profiling (#7), loading payment confirm profiling (#8). HR module bumped to C-6..C-8.
+**Local HEAD:** `a17221c` — synced with `origin/release/phase-1`, all deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `3b3b3f3` local + remote, latest deploy 2026-04-29 sesi C-1 UI polish bundle)
+**Branch:** `release/phase-1` (HEAD `a17221c` local + remote, latest deploy 2026-04-29 sesi C-2 flow + UX bundle, migrations 0009 + 0010 applied)
 **Sesi C plan:** `~/.claude/plans/compiled-hugging-marble.md` (REWRITTEN as handover; 17 staff revisions sequenced as C-1..C-5, then HR C-6..C-8; ~11-12 sesi total)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift; M29 Loyalty landed)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
