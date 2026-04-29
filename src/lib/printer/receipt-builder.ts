@@ -61,6 +61,10 @@ export interface ReceiptData {
   memberTotalPoints?: number | null;
   /** Optional points earned on this transaction. Shows "+<N> poin". */
   pointsEarned?: number | null;
+  /** Optional points redeemed on this transaction. When >0 the discount
+   * line is relabelled "Tukar Poin" and the MEMBER block prints the
+   * redemption count. */
+  pointsRedeemed?: number | null;
   items: ReceiptItem[];
   subtotal: number;
   discountAmount: number;
@@ -177,9 +181,16 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   // Totals
   parts.push(dualLine("Subtotal", formatRupiah(d.subtotal), COLS));
   if (d.discountAmount > 0) {
-    const discLabel = d.discountReason
-      ? `Diskon (${truncate(d.discountReason, 18)})`
-      : "Diskon";
+    const isRedemption =
+      (d.pointsRedeemed ?? 0) > 0 ||
+      (d.discountReason ?? "").startsWith("Tukar Poin:");
+    const discLabel = isRedemption
+      ? d.pointsRedeemed
+        ? `Tukar Poin (-${d.pointsRedeemed})`
+        : "Tukar Poin"
+      : d.discountReason
+        ? `Diskon (${truncate(d.discountReason, 18)})`
+        : "Diskon";
     parts.push(dualLine(discLabel, `-${formatRupiah(d.discountAmount)}`, COLS));
   }
   parts.push(bold(true));
@@ -204,10 +215,11 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   parts.push(bold(false));
 
   // Loyalty block — printed before the regular footer when the sale was
-  // attached to a member. Shows phone + points earned + total balance.
+  // attached to a member. Shows phone + redemption + earn + total balance.
   const hasMember =
     Boolean(d.memberPhone && d.memberPhone.trim().length > 0) ||
-    Boolean(d.pointsEarned && d.pointsEarned > 0);
+    Boolean(d.pointsEarned && d.pointsEarned > 0) ||
+    Boolean(d.pointsRedeemed && d.pointsRedeemed > 0);
 
   if (hasMember) {
     parts.push(divider("-", COLS));
@@ -219,6 +231,9 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
       parts.push(centerLine(d.memberPhone, COLS));
     }
     parts.push(align("left"));
+    if (d.pointsRedeemed && d.pointsRedeemed > 0) {
+      parts.push(dualLine("Tukar poin", `-${d.pointsRedeemed}`, COLS));
+    }
     if (d.pointsEarned && d.pointsEarned > 0) {
       parts.push(dualLine("Poin diperoleh", `+${d.pointsEarned}`, COLS));
     }

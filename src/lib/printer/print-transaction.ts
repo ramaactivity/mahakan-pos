@@ -72,6 +72,7 @@ function buildCustomerBytes(
     memberPhone: trx.member?.phone ?? null,
     memberTotalPoints: trx.member?.totalPoints ?? null,
     pointsEarned: trx.loyaltyPointsEarned ?? null,
+    pointsRedeemed: trx.loyaltyPointsRedeemed ?? null,
     items: trx.items.map((item) => ({
       name: item.itemName,
       variant: item.variant,

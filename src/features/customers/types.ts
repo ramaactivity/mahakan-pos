@@ -52,9 +52,48 @@ export function isOk<T>(
  * ratio. Configurable later via outlet settings; hardcoded for Phase 2 v1. */
 export const POINTS_PER_RUPIAH = 1 / 1000;
 
+/** Redemption ratio: 1 point = Rp 1000 discount. Mirror of the earn ratio
+ * for now. If the policy diverges later (e.g. earn 1000=1 but redeem
+ * 1500=1), only this constant changes. */
+export const RUPIAH_PER_POINT_REDEEMED = 1000;
+
 export function computePointsEarned(rupiahSpent: number): number {
   if (rupiahSpent <= 0) return 0;
   return Math.floor(rupiahSpent * POINTS_PER_RUPIAH);
+}
+
+/** Rupiah discount for a given redemption count. */
+export function computeRedemptionAmount(points: number): number {
+  if (points <= 0) return 0;
+  return Math.floor(points) * RUPIAH_PER_POINT_REDEEMED;
+}
+
+/**
+ * Clamp a kasir-requested redemption count to what is actually allowed.
+ * Returns the largest valid integer point count in [0, requestedPoints]
+ * such that:
+ *   - it does not exceed the member's available balance
+ *   - the resulting rupiah discount does not exceed the eligible subtotal
+ *     (i.e. cannot make total go negative)
+ *
+ * `eligibleSubtotal` is the cart subtotal the redemption is being applied
+ * against (after any pre-existing discount/compliment is removed — caller
+ * decides). The XOR-with-manual-discount rule is enforced UI-side so the
+ * pure helper stays narrow.
+ */
+export function clampRedemption(
+  requestedPoints: number,
+  balance: number,
+  eligibleSubtotal: number,
+): number {
+  if (!Number.isFinite(requestedPoints) || requestedPoints <= 0) return 0;
+  if (balance <= 0 || eligibleSubtotal <= 0) return 0;
+  const maxByBalance = Math.floor(balance);
+  const maxBySubtotal = Math.floor(eligibleSubtotal / RUPIAH_PER_POINT_REDEEMED);
+  return Math.max(
+    0,
+    Math.min(Math.floor(requestedPoints), maxByBalance, maxBySubtotal),
+  );
 }
 
 /**

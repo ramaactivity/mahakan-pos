@@ -96,6 +96,11 @@ interface CartStore {
     approverToken?: string,
   ) => void;
 
+  /** Loyalty redemption — sets discount + reason atomically and tracks the
+   * point count separately. Pass `points=0` to clear the redemption.
+   * Caller responsibility: validate balance + subtotal coverage upstream. */
+  applyRedemption: (draftId: string, points: number) => void;
+
   // Selectors (computed)
   // NOTE: never call these inside a Zustand selector that returns a
   // non-primitive (`useCartStore((s) => s.someFn())`) — they may produce
@@ -128,6 +133,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
       discountApproverId: null,
       discountApproverToken: null,
       editingBillId: null,
+      loyaltyPointsRedeemed: null,
       createdAt: now,
     };
     set((state) => ({ drafts: { ...state.drafts, [id]: draft } }));
@@ -177,6 +183,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
       discountApproverId: trx.discountApprover ?? null,
       discountApproverToken: null, // approver token is single-use; re-approve on save if discount changes
       editingBillId: trx.id,
+      loyaltyPointsRedeemed: null, // redemption is paid-flow only — edit-bill resets it
       createdAt: now,
     };
     set((state) => ({ drafts: { ...state.drafts, [id]: draft } }));
@@ -307,6 +314,11 @@ export const useCartStore = create<CartStore>((set, get) => ({
     set((state) => {
       const draft = state.drafts[draftId];
       if (!draft) return state;
+      // Manual discount/compliment clears any pre-existing redemption — XOR.
+      // Passing the redemption-shaped reason here also keeps the count if
+      // applyRedemption is the actual caller (it dispatches via setDiscount
+      // internally for shared persistence).
+      const isRedemption = (reason ?? "").startsWith("Tukar Poin:");
       return {
         drafts: {
           ...state.drafts,
@@ -316,6 +328,44 @@ export const useCartStore = create<CartStore>((set, get) => ({
             discountReason: reason,
             discountApproverId: approverId ?? null,
             discountApproverToken: approverToken ?? null,
+            loyaltyPointsRedeemed: isRedemption
+              ? draft.loyaltyPointsRedeemed
+              : null,
+          },
+        },
+      };
+    }),
+
+  applyRedemption: (draftId, points) =>
+    set((state) => {
+      const draft = state.drafts[draftId];
+      if (!draft) return state;
+      if (points <= 0) {
+        return {
+          drafts: {
+            ...state.drafts,
+            [draftId]: {
+              ...draft,
+              discount: null,
+              discountReason: null,
+              discountApproverId: null,
+              discountApproverToken: null,
+              loyaltyPointsRedeemed: null,
+            },
+          },
+        };
+      }
+      const rupiah = points * 1000;
+      return {
+        drafts: {
+          ...state.drafts,
+          [draftId]: {
+            ...draft,
+            discount: { type: "fixed", value: rupiah },
+            discountReason: `Tukar Poin: ${points} poin`,
+            discountApproverId: null,
+            discountApproverToken: null,
+            loyaltyPointsRedeemed: points,
           },
         },
       };

@@ -8,13 +8,17 @@ export type {
 } from "./types";
 export {
   POINTS_PER_RUPIAH,
+  RUPIAH_PER_POINT_REDEEMED,
+  clampRedemption,
   computePointsEarned,
+  computeRedemptionAmount,
   isOk,
   normalisePhone,
 } from "./types";
 
 export {
   bumpCustomerEarnInTx,
+  bumpCustomerRedeemInTx,
   customerStats,
   earnPointsForTransaction,
   findOrCreateCustomer,

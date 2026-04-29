@@ -76,6 +76,7 @@ export const transactions = pgTable(
 
     customerId: uuid("customer_id").references(() => customers.id),
     loyaltyPointsEarned: integer("loyalty_points_earned"),
+    loyaltyPointsRedeemed: integer("loyalty_points_redeemed"),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

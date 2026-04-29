@@ -55,6 +55,13 @@ export interface Draft {
    * "Simpan sebagai Open Bill" + "Bayar" buttons with a single "Update Bill"
    * action and routes save through `editOpenBill` instead of `saveAsOpenBill`. */
   editingBillId: string | null;
+  /** Loyalty points the kasir applied as redemption on this draft. When
+   * set, `discount` is auto-populated with type=fixed value=points*1000 and
+   * `discountReason` is "Tukar Poin: N poin". XOR with manual discount /
+   * compliment is enforced UI-side — applying a manual discount clears
+   * any existing redemption, and applying redemption clears any existing
+   * discount/compliment. */
+  loyaltyPointsRedeemed: number | null;
   createdAt: string;
 }
 

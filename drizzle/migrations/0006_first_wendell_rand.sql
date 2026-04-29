@@ -1,0 +1,1 @@
+ALTER TABLE "transactions" ADD COLUMN "loyalty_points_redeemed" integer;

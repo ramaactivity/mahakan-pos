@@ -22,6 +22,8 @@ import {
   restoreStockForTransaction,
 } from "@/features/inventory/transaction-flow";
 import {
+  bumpCustomerRedeemInTx,
+  computeRedemptionAmount,
   earnPointsForTransaction,
   findOrCreateCustomer,
 } from "@/features/customers";
@@ -193,6 +195,7 @@ export async function createTransaction(
   // shouldn't block the sale; we proceed with no customer linkage.
   let customerId: string | null = null;
   let customerNameSnapshot = v.customerName ?? null;
+  let resolvedCustomerBalance = 0;
   if (v.customerPhone) {
     const customerRes = await findOrCreateCustomer({
       phone: v.customerPhone,
@@ -200,6 +203,7 @@ export async function createTransaction(
     });
     if (customerRes.success) {
       customerId = customerRes.data.id;
+      resolvedCustomerBalance = customerRes.data.totalPoints;
       // Use the canonical customer name from the loyalty record so the struk
       // and history reflect the registered name (kasir's free-text label
       // takes priority though if explicitly typed).
@@ -209,6 +213,39 @@ export async function createTransaction(
     }
     // If find-or-create failed (e.g. invalid phone), silently continue
     // without loyalty linkage — sale must not block on this.
+  }
+
+  // Loyalty redemption pre-flight. The actual balance decrement happens
+  // inside the sale tx (atomic with the insert) so a rollback also
+  // rolls back the deduction. Here we only sanity-check the request shape
+  // matches the discount slot the client populated.
+  const redeemPoints = v.loyaltyPointsRedeemed ?? 0;
+  if (redeemPoints > 0) {
+    if (customerId === null) {
+      return fail(
+        "REDEEM_NO_CUSTOMER",
+        "Tukar poin butuh nomor HP member yang valid",
+      );
+    }
+    if (redeemPoints > resolvedCustomerBalance) {
+      return fail(
+        "REDEEM_BALANCE_INSUFFICIENT",
+        `Saldo poin tidak cukup (saldo ${resolvedCustomerBalance}, diminta ${redeemPoints})`,
+      );
+    }
+    const expectedRupiah = computeRedemptionAmount(redeemPoints);
+    if (validation.recomputedDiscountAmount !== expectedRupiah) {
+      return fail(
+        "REDEEM_DISCOUNT_MISMATCH",
+        `Discount amount tidak match (expected ${expectedRupiah}, got ${validation.recomputedDiscountAmount})`,
+      );
+    }
+    if (!(v.discountReason ?? "").startsWith("Tukar Poin:")) {
+      return fail(
+        "REDEEM_REASON_REQUIRED",
+        "Discount reason harus dimulai 'Tukar Poin:' saat redemption",
+      );
+    }
   }
 
   // Atomic insert: advisory lock + sequence + insert in single transaction
@@ -252,6 +289,7 @@ export async function createTransaction(
           orderType: v.orderType,
           customerName: customerNameSnapshot,
           customerId,
+          loyaltyPointsRedeemed: redeemPoints > 0 ? redeemPoints : null,
           subtotal: validation.recomputedSubtotal,
           discountType: v.discountType,
           discountValue: v.discountValue,
@@ -265,6 +303,20 @@ export async function createTransaction(
           discountApprover: discountApproverId,
         })
         .returning();
+
+      // Loyalty redemption — decrement member balance atomically with the
+      // sale. Helper throws INSUFFICIENT_POINTS_RACE if a concurrent
+      // redemption drove the balance below 0; the throw rolls back the
+      // entire sale tx (insert + items + stock movements) cleanly.
+      let memberAfterRedeem: { id: string; totalPoints: number; name: string; phone: string } | null = null;
+      if (redeemPoints > 0 && customerId !== null) {
+        memberAfterRedeem = await bumpCustomerRedeemInTx(
+          tx,
+          customerId,
+          redeemPoints,
+          session.user.id,
+        );
+      }
 
       const itemsInserted = await tx
         .insert(transactionItems)
@@ -357,6 +409,7 @@ export async function createTransaction(
         })),
         mods: modsInserted,
         deductedIngredientIds: Array.from(flow.deductionsByIngredient.keys()),
+        memberAfterRedeem,
       };
     });
 
@@ -403,6 +456,33 @@ export async function createTransaction(
       });
     }
 
+    // Loyalty redemption audit — emitted after the sale tx commits since
+    // the deduction was atomic with the insert. Records the count of
+    // points spent + new member balance for compliance/abuse monitoring.
+    if (redeemPoints > 0 && result.memberAfterRedeem) {
+      await logAudit({
+        eventType: "transaction.points.redeemed",
+        userId: session.user.id,
+        entityType: "transaction",
+        entityId: result.trx.id,
+        payload: {
+          summary: `-${redeemPoints} poin pada TRX ${result.trx.transactionNumber} (Rp${computeRedemptionAmount(redeemPoints).toLocaleString("id-ID")} discount)`,
+          context: {
+            transactionNumber: result.trx.transactionNumber,
+            customerId: customerId,
+            pointsRedeemed: redeemPoints,
+            rupiahRedeemed: computeRedemptionAmount(redeemPoints),
+            memberBalanceAfter: result.memberAfterRedeem.totalPoints,
+            memberPhone: result.memberAfterRedeem.phone,
+          },
+        },
+        metadata: {
+          outletId: session.user.outletId,
+          actorRole: session.user.role,
+        },
+      });
+    }
+
     // Loyalty earn — best-effort, fired after the sale tx commits. Skipped
     // when called from saveAsOpenBill (status will be flipped to "open"
     // before the bill is paid; closeOpenBill fires earn later).
@@ -431,6 +511,15 @@ export async function createTransaction(
         const full = await fetchTransactionById(existing.id);
         if (full) return ok(full);
       }
+    }
+    // Concurrent redemption race — bumpCustomerRedeemInTx threw because the
+    // tx-internal balance went negative. Surface a clean kasir-actionable
+    // error instead of generic DB_ERROR.
+    if (e instanceof Error && e.message === "INSUFFICIENT_POINTS_RACE") {
+      return fail(
+        "REDEEM_BALANCE_RACE",
+        "Saldo poin member berubah saat checkout. Coba ulang dengan jumlah lebih kecil.",
+      );
     }
     const msg = e instanceof Error ? e.message : "Database error";
     return fail("DB_ERROR", msg);

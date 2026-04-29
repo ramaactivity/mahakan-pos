@@ -13,6 +13,7 @@ import {
   QrCode,
   Search,
   ShoppingCart,
+  Sparkles,
   X,
 } from "lucide-react";
 import {
@@ -32,6 +33,8 @@ import { CategoryTabs } from "@/features/pos/components/CategoryTabs";
 import { CloseShiftModal } from "@/features/pos/components/CloseShiftModal";
 import { ComplimentModal } from "@/features/pos/components/ComplimentModal";
 import { DiscountModal } from "@/features/pos/components/DiscountModal";
+import { RedeemPointsModal } from "@/features/pos/components/RedeemPointsModal";
+import { lookupCustomerByPhone } from "@/features/customers";
 import { FavoritesBar } from "@/features/pos/components/FavoritesBar";
 import { useFavorites } from "@/features/pos/components/useFavorites";
 import { HistoryDetailModal } from "@/features/pos/components/HistoryDetailModal";
@@ -140,6 +143,7 @@ export function PosShell() {
   const removeItem = useCartStore((s) => s.removeItem);
   const updateNote = useCartStore((s) => s.updateNote);
   const setDiscount = useCartStore((s) => s.setDiscount);
+  const applyRedemption = useCartStore((s) => s.applyRedemption);
   const removeDraft = useCartStore((s) => s.removeDraft);
   const loadOpenBillIntoDraft = useCartStore((s) => s.loadOpenBillIntoDraft);
 
@@ -183,6 +187,14 @@ export function PosShell() {
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [discountModalOpen, setDiscountModalOpen] = useState(false);
   const [complimentModalOpen, setComplimentModalOpen] = useState(false);
+  const [redeemModalOpen, setRedeemModalOpen] = useState(false);
+  const [redeemMember, setRedeemMember] = useState<{
+    id: string;
+    name: string;
+    phone: string;
+    totalPoints: number;
+  } | null>(null);
+  const [redeemLoading, setRedeemLoading] = useState(false);
   const [approverOpen, setApproverOpen] = useState(false);
   const [pendingDiscount, setPendingDiscount] = useState<{
     discount: Discount;
@@ -399,6 +411,53 @@ export function PosShell() {
     setApproverOpen(true);
   }
 
+  async function handleOpenRedeem() {
+    if (!activeDraft) return;
+    if (!activeDraft.customerPhone) {
+      toast.error("Input nomor HP member dulu di Order Baru");
+      return;
+    }
+    if (subtotal <= 0) {
+      toast.error("Tambah item ke cart dulu");
+      return;
+    }
+    setRedeemLoading(true);
+    const res = await lookupCustomerByPhone(activeDraft.customerPhone);
+    setRedeemLoading(false);
+    if (!res.success) {
+      toast.error(res.error.message);
+      return;
+    }
+    if (!res.data) {
+      toast.error(
+        "Member tidak ditemukan. Pastikan nomor HP terdaftar (auto saat sale pertama).",
+      );
+      return;
+    }
+    if (res.data.totalPoints <= 0) {
+      toast.info("Saldo poin member 0 — belum ada yang bisa ditukar");
+      return;
+    }
+    setRedeemMember({
+      id: res.data.id,
+      name: res.data.name,
+      phone: res.data.phone,
+      totalPoints: res.data.totalPoints,
+    });
+    setRedeemModalOpen(true);
+  }
+
+  function handleApplyRedemption(points: number) {
+    if (!activeDraft) return;
+    applyRedemption(activeDraft.id, points);
+    setRedeemModalOpen(false);
+    if (points > 0) {
+      toast.success(`-${points} poin diaplikasikan`);
+    } else {
+      toast.info("Tukar poin dihapus");
+    }
+  }
+
   function handleComplimentSubmit(reason: string) {
     if (!activeDraftId || !session) return;
     // Compliment = 100% gratis seluruh transaksi. Stored as fixed-discount
@@ -585,6 +644,7 @@ export function PosShell() {
       cashReceived: paymentMethod === "cash" ? cashReceived : null,
       cashChange: paymentMethod === "cash" ? cashChange : null,
       discountApproverToken: activeDraft.discountApproverToken ?? undefined,
+      loyaltyPointsRedeemed: activeDraft.loyaltyPointsRedeemed,
     };
 
     // Offline path: queue locally, drop the draft, show offline-paid screen.
@@ -754,6 +814,8 @@ export function PosShell() {
             onEditNote={(id) => setNoteEditingId(id)}
             onOpenDiscount={() => setDiscountModalOpen(true)}
             onOpenCompliment={() => setComplimentModalOpen(true)}
+            onOpenRedeem={handleOpenRedeem}
+            redeemLoading={redeemLoading}
             onSaveAsOpenBill={handleSaveAsOpenBill}
             onProceedToPayment={handleProceedToPayment}
             onCancel={handleCancelOrder}
@@ -841,6 +903,15 @@ export function PosShell() {
         onApply={handleDiscountSubmit}
         onClear={handleClearDiscount}
       />
+      <RedeemPointsModal
+        open={redeemModalOpen && redeemMember !== null}
+        memberName={redeemMember?.name ?? null}
+        balance={redeemMember?.totalPoints ?? 0}
+        eligibleSubtotal={subtotal}
+        onClose={() => setRedeemModalOpen(false)}
+        onSubmit={handleApplyRedemption}
+      />
+
       <ComplimentModal
         open={complimentModalOpen}
         subtotal={subtotal}
@@ -1109,6 +1180,8 @@ function IdlePanel({
 interface CartPanelPropsExtra {
   onOpenCompliment: () => void;
   onSaveAsOpenBill: () => void;
+  onOpenRedeem: () => void;
+  redeemLoading: boolean;
 }
 
 interface CartPanelProps extends CartPanelPropsExtra {
@@ -1142,6 +1215,8 @@ function CartPanelImpl({
   onEditNote,
   onOpenDiscount,
   onOpenCompliment,
+  onOpenRedeem,
+  redeemLoading,
   onSaveAsOpenBill,
   onProceedToPayment,
   onCancel,
@@ -1225,11 +1300,15 @@ function CartPanelImpl({
         <Row label="Subtotal" value={formatRupiah(subtotal)} muted />
         {draft.discount ? (
           <Row
-            label={`Diskon ${
-              draft.discount.type === "percent"
-                ? `(${draft.discount.value}%)`
-                : ""
-            }`}
+            label={
+              draft.loyaltyPointsRedeemed && draft.loyaltyPointsRedeemed > 0
+                ? `Tukar Poin (-${draft.loyaltyPointsRedeemed})`
+                : `Diskon ${
+                    draft.discount.type === "percent"
+                      ? `(${draft.discount.value}%)`
+                      : ""
+                  }`
+            }
             value={`- ${formatRupiah(discountAmount)}`}
             danger
           />
@@ -1254,6 +1333,22 @@ function CartPanelImpl({
             <Gift className="size-4" aria-hidden /> Compliment
           </Button>
         </div>
+        {draft.customerPhone ? (
+          <Button
+            variant="outline"
+            onClick={onOpenRedeem}
+            disabled={draft.items.length === 0 || redeemLoading}
+            fullWidth
+            className="!border-amber-300/60 !text-amber-700 hover:!bg-amber-100/40"
+          >
+            <Sparkles className="size-4" aria-hidden />
+            {redeemLoading
+              ? "Memuat saldo..."
+              : draft.loyaltyPointsRedeemed && draft.loyaltyPointsRedeemed > 0
+                ? `Tukar Poin: ${draft.loyaltyPointsRedeemed} pt diaplikasikan`
+                : "Tukar Poin Member"}
+          </Button>
+        ) : null}
         {draft.editingBillId ? (
           <Button
             size="lg"

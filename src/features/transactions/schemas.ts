@@ -49,6 +49,13 @@ export const createTransactionSchema = z.object({
   cashReceived: moneySchema.nullable(),
   cashChange: moneySchema.nullable(),
   discountApproverToken: z.string().optional(),
+  loyaltyPointsRedeemed: z
+    .number()
+    .int()
+    .min(0)
+    .max(99_999)
+    .nullish()
+    .transform((n) => (typeof n === "number" && n > 0 ? n : null)),
 });
 
 export const voidTransactionSchema = z.object({

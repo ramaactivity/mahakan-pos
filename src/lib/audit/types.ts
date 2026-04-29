@@ -64,6 +64,7 @@ export const AUDIT_EVENT_TYPES = [
   "customer.create",
   "customer.update",
   "transaction.points.earned",
+  "transaction.points.redeemed",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];

@@ -112,6 +112,13 @@ export interface CreateTransactionInput {
   cashChange: number | null;
   /** For Staff-initiated discount: token from /api/v1/auth/verify-approver. */
   discountApproverToken?: string;
+  /** Loyalty redemption: number of points the member tukar on this sale.
+   * When >0, server validates customerId is set + balance ≥ N + the
+   * provided discountAmount equals N * RUPIAH_PER_POINT_REDEEMED + the
+   * discountReason starts with "Tukar Poin:". The redemption rupiah rides
+   * on the existing discount slot — XOR with manual discount/compliment
+   * is enforced UI-side. */
+  loyaltyPointsRedeemed?: number | null;
 }
 
 export interface VoidTransactionInput {

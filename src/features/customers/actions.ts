@@ -234,6 +234,53 @@ export async function updateCustomer(
 }
 
 /**
+ * Decrement points balance atomically as part of a redemption. Caller passes
+ * its own DbTx so the decrement is in the same DB transaction as the sale —
+ * if the sale rolls back, the balance change rolls back too.
+ *
+ * Returns the customer row AFTER the decrement so the caller can include
+ * the new balance in the audit summary + receipt.
+ *
+ * IMPORTANT: caller must validate `points <= currentBalance` BEFORE calling.
+ * This helper does not re-check (the SQL update would silently produce a
+ * negative balance otherwise — there's no DB-level non-negative constraint
+ * because our schema uses bigint signed).
+ */
+export async function bumpCustomerRedeemInTx(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  customerId: string,
+  points: number,
+  userId: string,
+): Promise<{ id: string; totalPoints: number; name: string; phone: string }> {
+  if (points <= 0) {
+    throw new Error("INVALID_REDEMPTION_POINTS");
+  }
+  const { customers: customersTable } = await import("@/db/schema");
+  const { eq: eqOp } = await import("drizzle-orm");
+  const [updated] = await tx
+    .update(customersTable)
+    .set({
+      totalPoints: sql`${customersTable.totalPoints} - ${points}`,
+      updatedAt: new Date(),
+      updatedBy: userId,
+    })
+    .where(eqOp(customersTable.id, customerId))
+    .returning();
+  if (updated.totalPoints < 0) {
+    // Race: someone else redeemed concurrently between our pre-flight
+    // balance check and this update. Throw so the surrounding DB tx
+    // rolls back cleanly.
+    throw new Error("INSUFFICIENT_POINTS_RACE");
+  }
+  return {
+    id: updated.id,
+    totalPoints: updated.totalPoints,
+    name: updated.name,
+    phone: updated.phone,
+  };
+}
+
+/**
  * Apply earned points to a customer atomically inside a transaction.
  * Caller (createTransaction / closeOpenBill) passes its own DbTx so the
  * earn happens in the same DB tx as the sale.
