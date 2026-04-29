@@ -148,7 +148,9 @@ export async function fetchMovements(
   outletId: string,
   opts: ListMovementsOptions = {},
 ): Promise<Paginated<MovementWithIngredient>> {
-  const limit = opts.limit ?? 100;
+  // Cap upper bound at 5000 to support CSV export while preventing accidental
+  // megabyte responses. Paginated viewer never exceeds PAGE_SIZE=50.
+  const limit = Math.min(opts.limit ?? 100, 5000);
   const offset = opts.offset ?? 0;
 
   const conds = [eq(inventoryMovements.outletId, outletId)];

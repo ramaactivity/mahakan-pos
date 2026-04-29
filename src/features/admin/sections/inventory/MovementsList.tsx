@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Filter, RefreshCw } from "lucide-react";
+import { Download, Filter, RefreshCw } from "lucide-react";
+import Papa from "papaparse";
 import {
   Badge,
   Button,
@@ -12,6 +13,7 @@ import {
   DatePicker,
   Select,
   Skeleton,
+  toast,
   type ComboboxGroup,
 } from "@/components/ui";
 import {
@@ -26,6 +28,9 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { useSession } from "@/features/auth/SessionProvider";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
+import { downloadCsv } from "../reports/menu-engineering-csv";
+
+const EXPORT_CAP = 5000;
 
 const KIND_LABELS: Record<MovementKind, string> = {
   initial: "Stok awal",
@@ -83,6 +88,7 @@ export function MovementsList() {
   const [ingredientFilter, setIngredientFilter] = useState<string>("all");
   const [kindFilter, setKindFilter] = useState<MovementKind | "all">("all");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [exporting, setExporting] = useState(false);
 
   // Load ingredients once for filter dropdown
   useEffect(() => {
@@ -124,6 +130,61 @@ export function MovementsList() {
     };
   }, [refreshKey, from, to, ingredientFilter, kindFilter]);
 
+  async function onExportCsv() {
+    if (exporting) return;
+    setExporting(true);
+    const res = await listMovements({
+      ingredientId: ingredientFilter === "all" ? undefined : ingredientFilter,
+      kind: kindFilter === "all" ? undefined : kindFilter,
+      dateFrom: from ? new Date(`${from}T00:00:00+07:00`) : undefined,
+      dateTo: to ? new Date(`${to}T23:59:59+07:00`) : undefined,
+      limit: EXPORT_CAP,
+      offset: 0,
+    });
+    setExporting(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    if (res.data.items.length === 0) {
+      toast.info("Tidak ada pergerakan untuk filter ini");
+      return;
+    }
+    if (res.data.hasMore) {
+      toast.warning(
+        `Lebih dari ${EXPORT_CAP} entry — export dibatasi ${EXPORT_CAP} terbaru. Persempit range tanggal untuk export semua.`,
+      );
+    }
+    const data = res.data.items.map((m) => {
+      const value =
+        m.unitCostAtMovement !== null
+          ? Math.abs(m.qtyDelta) * m.unitCostAtMovement
+          : null;
+      const row: Record<string, string | number> = {
+        Tanggal: new Date(m.createdAt).toISOString(),
+        Bahan: m.ingredient.name,
+        Unit: m.ingredient.unit,
+        Tipe: KIND_LABELS[m.kind],
+        Delta: m.qtyDelta,
+        Catatan: m.reason ?? "",
+      };
+      if (canSeeCost) {
+        row["Nilai (Rp)"] = value ?? "";
+      }
+      return row;
+    });
+    const csv = Papa.unparse(data, { newline: "\n" });
+    const ingTag =
+      ingredientFilter === "all"
+        ? "all"
+        : ingredients.find((i) => i.id === ingredientFilter)?.name
+            .toLowerCase()
+            .replace(/\s+/g, "-") ?? "filtered";
+    const kindTag = kindFilter === "all" ? "all" : kindFilter;
+    downloadCsv(`movements-${from}-${to}-${ingTag}-${kindTag}.csv`, csv);
+    toast.success(`Export ${res.data.items.length} entries`);
+  }
+
   async function loadMore() {
     const nextOffset = offset + PAGE_SIZE;
     const res = await listMovements({
@@ -154,13 +215,24 @@ export function MovementsList() {
             waste, refund. Append-only — tidak bisa edit/hapus.
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setRefreshKey((k) => k + 1)}
-        >
-          <RefreshCw className="size-4" aria-hidden /> Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onExportCsv}
+            disabled={exporting || movements.length === 0}
+          >
+            <Download className="size-4" aria-hidden />
+            {exporting ? "Memuat..." : "CSV"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setRefreshKey((k) => k + 1)}
+          >
+            <RefreshCw className="size-4" aria-hidden /> Refresh
+          </Button>
+        </div>
       </header>
 
       <Card>

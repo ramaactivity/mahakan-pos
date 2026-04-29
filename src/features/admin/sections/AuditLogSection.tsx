@@ -1,17 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, RefreshCw } from "lucide-react";
+import Papa from "papaparse";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { Select, DatePicker, type SelectGroup } from "@/components/ui";
+import { Select, DatePicker, toast, type SelectGroup } from "@/components/ui";
 import { listAuditLogs } from "@/features/audit";
 import type { AuditLogRow } from "@/lib/audit";
 import { AUDIT_EVENT_TYPES } from "@/lib/audit";
 import { formatDateTime } from "@/lib/format";
 import { todayWibIso } from "@/features/cash/helpers";
+import { downloadCsv } from "./reports/menu-engineering-csv";
+
+const EXPORT_CAP = 5000;
 
 const PAGE_SIZE = 50;
 
@@ -79,6 +83,7 @@ export function AuditLogSection() {
   const [toDate, setToDate] = useState<string>(today);
   const [page, setPage] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -104,6 +109,50 @@ export function AuditLogSection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventType, fromDate, toDate, page]);
 
+  async function onExportCsv() {
+    if (exporting) return;
+    setExporting(true);
+    const r = await listAuditLogs({
+      eventType: eventType === "all" ? undefined : (eventType as never),
+      fromDate,
+      toDate,
+      limit: EXPORT_CAP,
+      offset: 0,
+    });
+    setExporting(false);
+    if (!r.ok) {
+      toast.error("Gagal load audit log untuk export");
+      return;
+    }
+    if (r.data.rows.length === 0) {
+      toast.info("Tidak ada entry untuk filter ini");
+      return;
+    }
+    if (r.data.total > EXPORT_CAP) {
+      toast.warning(
+        `Total ${r.data.total} entry, export dibatasi ${EXPORT_CAP}. Persempit range tanggal untuk export semua.`,
+      );
+    }
+    const csvData = r.data.rows.map((row) => ({
+      Waktu: new Date(row.createdAt).toISOString(),
+      Event: row.eventType,
+      Pelaku: row.userName ?? "",
+      Role: row.userRole ?? "",
+      Approver: row.approverName ?? "",
+      Entitas: row.entityType ?? "",
+      "Entity ID": row.entityId ?? "",
+      Ringkasan: (row.payload?.summary as string | undefined) ?? "",
+      Konteks: row.payload?.context
+        ? JSON.stringify(row.payload.context)
+        : "",
+      Diff: row.payload?.diff ? JSON.stringify(row.payload.diff) : "",
+    }));
+    const csv = Papa.unparse(csvData, { newline: "\n" });
+    const tag = eventType === "all" ? "all" : eventType.replace(/\./g, "-");
+    downloadCsv(`audit-log-${fromDate}-${toDate}-${tag}.csv`, csv);
+    toast.success(`Export ${r.data.rows.length} entries`);
+  }
+
   return (
     <div className="space-y-4 p-6">
       <header className="flex items-center justify-between">
@@ -113,14 +162,25 @@ export function AuditLogSection() {
             Catatan aktivitas sistem (login, void, refund, perubahan harga, dll). Owner-only.
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => load()}
-          aria-label="Refresh"
-        >
-          <RefreshCw className="size-4" /> Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onExportCsv}
+            disabled={exporting || !rows || rows.length === 0}
+          >
+            <Download className="size-4" />
+            {exporting ? "Memuat..." : "CSV"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => load()}
+            aria-label="Refresh"
+          >
+            <RefreshCw className="size-4" /> Refresh
+          </Button>
+        </div>
       </header>
 
       <Card className="p-4">

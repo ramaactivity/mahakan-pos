@@ -55,7 +55,10 @@ export async function fetchAuditLogs(opts: ListAuditLogsOptions = {}): Promise<{
   }
   const where = conds.length > 0 ? and(...conds) : undefined;
 
-  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  // Cap raised to 5000 to support CSV export in addition to paginated viewer
+  // (which never asks for more than PAGE_SIZE=50). 5000 covers ~3-4 months
+  // for single-outlet ~50 events/day; exporters narrow date range if more.
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 5000);
   const offset = Math.max(opts.offset ?? 0, 0);
 
   const actor = aliasedTable(users, "u_actor");
