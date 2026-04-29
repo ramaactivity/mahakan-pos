@@ -32,6 +32,8 @@ import { CategoryTabs } from "@/features/pos/components/CategoryTabs";
 import { CloseShiftModal } from "@/features/pos/components/CloseShiftModal";
 import { ComplimentModal } from "@/features/pos/components/ComplimentModal";
 import { DiscountModal } from "@/features/pos/components/DiscountModal";
+import { FavoritesBar } from "@/features/pos/components/FavoritesBar";
+import { useFavorites } from "@/features/pos/components/useFavorites";
 import { HistoryDetailModal } from "@/features/pos/components/HistoryDetailModal";
 import { HistoryPanel } from "@/features/pos/components/HistoryPanel";
 import { ItemModifierModal } from "@/features/pos/components/ItemModifierModal";
@@ -160,6 +162,12 @@ export function PosShell() {
   const [searchQuery, setSearchQuery] = useState("");
   const [layoutMode, setLayoutMode] = useMenuLayout();
   const [sortMode, setSortMode] = useMenuSort();
+  const {
+    favorites: favoriteIds,
+    toggle: toggleFavorite,
+    isFavorite,
+    remove: removeFavorite,
+  } = useFavorites();
 
   // Modals
   const [newOrderOpen, setNewOrderOpen] = useState(false);
@@ -290,6 +298,12 @@ export function PosShell() {
     });
     return applyMenuSort(filtered, sortMode);
   }, [menuItems, activeCategory, searchQuery, sortMode]);
+
+  const menuItemsById = useMemo(() => {
+    const m: Record<string, MenuItem> = {};
+    for (const it of menuItems) m[it.id] = it;
+    return m;
+  }, [menuItems]);
 
   const editingNoteItem = noteEditingId
     ? activeDraft?.items.find((i) => i.cartItemId === noteEditingId)
@@ -674,6 +688,11 @@ export function PosShell() {
             setLayoutMode={setLayoutMode}
             sortMode={sortMode}
             setSortMode={setSortMode}
+            favoriteIds={favoriteIds}
+            menuItemsById={menuItemsById}
+            isFavorite={isFavorite}
+            onToggleFavorite={toggleFavorite}
+            onUnpinFavorite={removeFavorite}
           />
         ) : tab === "open_bills" ? (
           <OpenBillPanel
@@ -895,6 +914,11 @@ interface CashierMiddleProps {
   setLayoutMode: ReturnType<typeof useMenuLayout>[1];
   sortMode: ReturnType<typeof useMenuSort>[0];
   setSortMode: ReturnType<typeof useMenuSort>[1];
+  favoriteIds: string[];
+  menuItemsById: Record<string, MenuItem>;
+  isFavorite: (id: string) => boolean;
+  onToggleFavorite: (id: string) => void;
+  onUnpinFavorite: (id: string) => void;
 }
 
 function CashierMiddle({
@@ -911,10 +935,21 @@ function CashierMiddle({
   setLayoutMode,
   sortMode,
   setSortMode,
+  favoriteIds,
+  menuItemsById,
+  isFavorite,
+  onToggleFavorite,
+  onUnpinFavorite,
 }: CashierMiddleProps) {
   const gridClass = LAYOUT_GRID_CLASS[layoutMode];
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      <FavoritesBar
+        favoriteIds={favoriteIds}
+        itemsById={menuItemsById}
+        onSelect={onItemTap}
+        onUnpin={onUnpinFavorite}
+      />
       <header className="flex flex-col gap-3 border-b border-neutral-200 bg-white p-4">
         <div className="flex items-center gap-3">
           <div className="flex-1">
@@ -973,9 +1008,21 @@ function CashierMiddle({
           <div className={gridClass}>
             {filteredItems.map((item) =>
               layoutMode === "list" ? (
-                <MenuListRow key={item.id} item={item} onSelect={onItemTap} />
+                <MenuListRow
+                  key={item.id}
+                  item={item}
+                  onSelect={onItemTap}
+                  isFavorite={isFavorite(item.id)}
+                  onToggleFavorite={onToggleFavorite}
+                />
               ) : (
-                <MenuTile key={item.id} item={item} onSelect={onItemTap} />
+                <MenuTile
+                  key={item.id}
+                  item={item}
+                  onSelect={onItemTap}
+                  isFavorite={isFavorite(item.id)}
+                  onToggleFavorite={onToggleFavorite}
+                />
               ),
             )}
           </div>
