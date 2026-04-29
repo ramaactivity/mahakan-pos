@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, Download } from "lucide-react";
+import Papa from "papaparse";
 import {
   Badge,
+  Button,
   Card,
   CardContent,
   CardHeader,
   DateRangePicker,
+  Select,
   Skeleton,
 } from "@/components/ui";
 import {
@@ -17,8 +20,11 @@ import {
 } from "@/features/reports";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "./menu-engineering-csv";
 
 type SortKey = "qty" | "revenue" | "avg";
+
+const ALL_CATEGORIES = "__all__";
 
 export function ItemPerformanceView() {
   const today = new Date().toISOString().slice(0, 10);
@@ -26,6 +32,7 @@ export function ItemPerformanceView() {
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(today);
   const [sort, setSort] = useState<SortKey>("qty");
+  const [categoryFilter, setCategoryFilter] = useState<string>(ALL_CATEGORIES);
   const [rows, setRows] = useState<ItemPerformanceRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -44,14 +51,49 @@ export function ItemPerformanceView() {
     };
   }, [from, to, sort]);
 
+  const filteredRows = useMemo(() => {
+    if (categoryFilter === ALL_CATEGORIES) return rows;
+    return rows.filter((r) => r.categoryName === categoryFilter);
+  }, [rows, categoryFilter]);
+
+  const categoryOptions = useMemo(() => {
+    const unique = new Set<string>();
+    for (const r of rows) unique.add(r.categoryName);
+    const sorted = Array.from(unique).sort((a, b) => a.localeCompare(b));
+    return [
+      { value: ALL_CATEGORIES, label: "Semua kategori" },
+      ...sorted.map((c) => ({ value: c, label: c })),
+    ];
+  }, [rows]);
+
   const totalRevenue = useMemo(
-    () => rows.reduce((s, r) => s + r.revenue, 0),
-    [rows],
+    () => filteredRows.reduce((s, r) => s + r.revenue, 0),
+    [filteredRows],
   );
   const totalQty = useMemo(
-    () => rows.reduce((s, r) => s + r.quantity, 0),
-    [rows],
+    () => filteredRows.reduce((s, r) => s + r.quantity, 0),
+    [filteredRows],
   );
+
+  function onExportCsv() {
+    if (filteredRows.length === 0) return;
+    const data = filteredRows.map((r, idx) => ({
+      Rank: idx + 1,
+      Item: r.name,
+      Kategori: r.categoryName,
+      Qty: r.quantity,
+      "Revenue (Rp)": r.revenue,
+      "Avg/Unit (Rp)": r.averageOrderValue,
+      "HPP (Rp)": r.cogs ?? "",
+      "Margin %": r.marginPct ?? "",
+    }));
+    const csv = Papa.unparse(data, { newline: "\n" });
+    const tag =
+      categoryFilter === ALL_CATEGORIES
+        ? "all"
+        : categoryFilter.toLowerCase().replace(/\s+/g, "-");
+    downloadCsv(`performa-item-${from}-${to}-${tag}.csv`, csv);
+  }
 
   /**
    * Quartile thresholds for Best/Slow badges. Computed off the *current sort
@@ -60,7 +102,7 @@ export function ItemPerformanceView() {
    * otherwise no badges are emitted (avoids labelling 2-item lists).
    */
   const quartiles = useMemo(() => {
-    const qtys = rows
+    const qtys = filteredRows
       .map((r) => r.quantity)
       .filter((q) => q > 0)
       .sort((a, b) => a - b);
@@ -77,30 +119,51 @@ export function ItemPerformanceView() {
     const q3 = q(0.75);
     if (q3 - q1 < 1) return null; // no meaningful spread
     return { q1, q3 };
-  }, [rows]);
+  }, [filteredRows]);
 
   return (
     <div className="space-y-4">
-      <header>
-        <h2 className="text-lg font-semibold text-neutral-900">
-          Performa Item
-        </h2>
-        <p className="text-xs text-neutral-500">
-          {rows.length} item · {totalQty} unit · {formatRupiah(totalRevenue)}{" "}
-          revenue total
-        </p>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-neutral-900">
+            Performa Item
+          </h2>
+          <p className="text-xs text-neutral-500">
+            {filteredRows.length} item · {totalQty} unit ·{" "}
+            {formatRupiah(totalRevenue)} revenue total
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={onExportCsv}
+          disabled={filteredRows.length === 0 || loading}
+        >
+          <Download className="size-4" /> CSV
+        </Button>
       </header>
 
       <Card>
         <CardHeader>
-          <DateRangePicker
-            label="Periode"
-            value={{ from, to }}
-            onChange={(v) => {
-              setFrom(v.from ?? monthStart);
-              setTo(v.to ?? today);
-            }}
-          />
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-[16rem]">
+              <DateRangePicker
+                label="Periode"
+                value={{ from, to }}
+                onChange={(v) => {
+                  setFrom(v.from ?? monthStart);
+                  setTo(v.to ?? today);
+                }}
+              />
+            </div>
+            <div className="w-52">
+              <Select
+                label="Kategori"
+                value={categoryFilter}
+                onValueChange={setCategoryFilter}
+                options={categoryOptions}
+              />
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="px-0">
           {loading ? (
@@ -109,9 +172,11 @@ export function ItemPerformanceView() {
                 <Skeleton key={i} className="h-10 w-full" />
               ))}
             </div>
-          ) : rows.length === 0 ? (
+          ) : filteredRows.length === 0 ? (
             <p className="py-8 text-center text-sm text-neutral-500">
-              Tidak ada penjualan di range ini.
+              {rows.length === 0
+                ? "Tidak ada penjualan di range ini."
+                : "Tidak ada item di kategori ini untuk range ini."}
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -142,7 +207,7 @@ export function ItemPerformanceView() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
-                  {rows.map((row, idx) => {
+                  {filteredRows.map((row, idx) => {
                     const badge = quartiles
                       ? row.quantity >= quartiles.q3
                         ? "best"

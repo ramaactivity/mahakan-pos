@@ -16,6 +16,7 @@ import {
   type Customer,
 } from "@/features/customers";
 import { formatRupiah } from "@/lib/format";
+import { CustomerDetailModal } from "./customers/CustomerDetailModal";
 
 const PAGE_SIZE = 50;
 
@@ -29,6 +30,7 @@ export function CustomersSection() {
     totalPointsOutstanding: number;
     lifetimeSpend: number;
   } | null>(null);
+  const [detail, setDetail] = useState<Customer | null>(null);
 
   // Debounce search → re-fetch list.
   useEffect(() => {
@@ -177,10 +179,20 @@ export function CustomersSection() {
                   {rows?.map((c) => (
                     <tr
                       key={c.id}
-                      className="border-b border-neutral-100 last:border-0 hover:bg-neutral-50"
+                      onClick={() => setDetail(c)}
+                      className="cursor-pointer border-b border-neutral-100 last:border-0 hover:bg-neutral-50 focus-within:bg-neutral-50"
                     >
                       <td className="px-4 py-3 font-medium text-neutral-900">
-                        {c.name}
+                        <button
+                          type="button"
+                          className="text-left hover:text-mahakan-green-900 focus-visible:outline-none focus-visible:underline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDetail(c);
+                          }}
+                        >
+                          {c.name}
+                        </button>
                       </td>
                       <td className="px-4 py-3 font-mono text-neutral-700">
                         {c.phone}
@@ -212,6 +224,18 @@ export function CustomersSection() {
           </Card>
         )}
       </div>
+
+      <CustomerDetailModal
+        open={detail !== null}
+        customer={detail}
+        onClose={() => setDetail(null)}
+        onUpdated={(next) => {
+          setDetail(next);
+          setRows((prev) =>
+            prev ? prev.map((r) => (r.id === next.id ? next : r)) : prev,
+          );
+        }}
+      />
     </div>
   );
 }

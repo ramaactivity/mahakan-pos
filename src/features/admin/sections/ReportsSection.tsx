@@ -6,10 +6,11 @@ import { ItemPerformanceView } from "./reports/ItemPerformanceView";
 import { MenuEngineeringView } from "./reports/MenuEngineeringView";
 import { PnlView } from "./reports/PnlView";
 import { SalesRangeView } from "./reports/SalesRangeView";
+import { TopCustomersView } from "./reports/TopCustomersView";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
-type ReportTab = "sales" | "range" | "items" | "matrix" | "pnl";
+type ReportTab = "sales" | "range" | "items" | "matrix" | "members" | "pnl";
 
 interface ReportsSectionProps {
   viewerRole: Role;
@@ -24,6 +25,7 @@ export function ReportsSection({ viewerRole }: ReportsSectionProps) {
     { key: "range", label: "Mingguan / Bulanan" },
     { key: "items", label: "Performa Item" },
     { key: "matrix", label: "Matriks Menu", ownerOnly: true },
+    { key: "members", label: "Top Member" },
     { key: "pnl", label: "P&L (Owner)", ownerOnly: true },
   ];
   const TABS = ALL_TABS.filter((t) => !t.ownerOnly || isOwner);
@@ -71,6 +73,8 @@ export function ReportsSection({ viewerRole }: ReportsSectionProps) {
           <ItemPerformanceView />
         ) : tab === "matrix" ? (
           <MenuEngineeringView />
+        ) : tab === "members" ? (
+          <TopCustomersView />
         ) : (
           <PnlView viewerRole={viewerRole} />
         )}
