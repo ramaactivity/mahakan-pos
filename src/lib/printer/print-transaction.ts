@@ -5,20 +5,7 @@ import { categoryToStation } from "./station-mapping";
 import { buildPrepTicket } from "./ticket-builder";
 import type { TransactionWithItems } from "@/features/transactions";
 
-/**
- * Default outlet metadata used when caller doesn't pass an explicit
- * ReceiptConfig. Owner/Manager edits real values via Settings → Edit Struk
- * which writes to `outlets.settings.receipt`; PosShell fetches them at mount
- * and threads through to printTickets.
- */
-const DEFAULT_RECEIPT_CONFIG: ReceiptConfig = {
-  outletName: "Mahakan Coffee & Space",
-  outletAddress: "Puncak Rd KM 22, Cisarua, Bogor Regency, West Java 16750",
-  outletPhone: "0838-1977-5665",
-  footerText: "Terima kasih, sampai jumpa!",
-  headerLines: [],
-  extraFooterLines: [],
-};
+const DEFAULT_FOOTER_TEXT = "Terima kasih, sampai jumpa!";
 
 export interface ReceiptConfig {
   outletName: string;
@@ -161,7 +148,7 @@ export async function printTickets(
   trx: TransactionWithItems,
   cashierName: string,
   sections: TicketSection[],
-  config?: Partial<ReceiptConfig>,
+  config: ReceiptConfig,
 ): Promise<PrintOutcome> {
   if (sections.length === 0) {
     return {
@@ -179,7 +166,6 @@ export async function printTickets(
     };
   }
   try {
-    const merged: ReceiptConfig = { ...DEFAULT_RECEIPT_CONFIG, ...config };
     const stream: Uint8Array[] = [];
 
     if (sections.includes("kitchen")) {
@@ -191,7 +177,7 @@ export async function printTickets(
       if (bytes) stream.push(bytes);
     }
     if (sections.includes("customer")) {
-      stream.push(buildCustomerBytes(trx, cashierName, merged));
+      stream.push(buildCustomerBytes(trx, cashierName, config));
     }
 
     if (stream.length === 0) {
@@ -211,18 +197,6 @@ export async function printTickets(
       message: e instanceof Error ? e.message : "Gagal kirim ke printer",
     };
   }
-}
-
-/**
- * Backwards-compat wrapper. Existing call sites that haven't migrated to
- * `printTickets()` yet still pull all three sections like before.
- * @deprecated Use `printTickets(trx, cashierName, sections, config?)` directly.
- */
-export async function printTransactionReceipt(
-  trx: TransactionWithItems,
-  cashierName: string,
-): Promise<PrintOutcome> {
-  return printTickets(trx, cashierName, ["customer", "kitchen", "bar"]);
 }
 
 /** Convert outlet DB row into ReceiptConfig consumed by printTickets. */
@@ -248,7 +222,7 @@ export function outletToReceiptConfig(outlet: {
     outletAddress: outlet.address,
     outletPhone: outlet.phone,
     headerLines: r.headerLines ?? [],
-    footerText: r.footerText ?? DEFAULT_RECEIPT_CONFIG.footerText,
+    footerText: r.footerText ?? DEFAULT_FOOTER_TEXT,
     extraFooterLines: r.extraFooterLines ?? [],
     wifiSsid: r.wifiSsid,
     wifiPassword: r.wifiPassword,

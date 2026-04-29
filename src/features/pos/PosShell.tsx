@@ -604,13 +604,16 @@ export function PosShell() {
       // tickets are printed manually via the Pesanan queue tab — kasir tears
       // the customer struk for hand-off, then triggers prep tickets when ready
       // to call the order out to staff. Pass receiptConfig so outlet-level
-      // edits (header/footer/wifi) appear on the printed struk.
-      void printTickets(
-        res.data,
-        session!.user.name,
-        ["customer"],
-        receiptConfig ?? undefined,
-      );
+      // edits (header/footer/wifi) appear on the printed struk. Skip silently
+      // if outlet config not yet loaded — kasir can reprint via Riwayat later.
+      if (receiptConfig) {
+        void printTickets(
+          res.data,
+          session!.user.name,
+          ["customer"],
+          receiptConfig,
+        );
+      }
     } catch (e) {
       // Network error mid-flight: queue and surface as offline-paid.
       try {

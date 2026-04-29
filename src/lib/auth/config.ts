@@ -25,8 +25,8 @@ const pinSchema = z.object({
 
 /**
  * Cookie maxAge = 12h (longest tier per C2). Per-role expiry (Owner/Manager 2h)
- * is enforced in middleware via `sessionMaxAgeSeconds(role)` against
- * `token.iat`. See `src/middleware.ts`.
+ * is enforced in proxy (Next 16 middleware) via `sessionMaxAgeSeconds(role)`
+ * against `token.iat`. See `src/proxy.ts`.
  */
 const COOKIE_MAX_AGE_SECONDS = 12 * 60 * 60;
 

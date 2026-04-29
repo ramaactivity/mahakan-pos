@@ -81,20 +81,20 @@ export function CloseOpenBillModal({
     toast.success(
       `Open bill ${res.data.transactionNumber} di-close (${formatRupiah(res.data.total)})`,
     );
-    // Auto-print customer receipt — best-effort, silent on printer fail
-    void printTickets(
-      res.data,
-      cashierName,
-      ["customer"],
-      receiptConfig ?? undefined,
-    ).then((outcome) => {
-      if (!outcome.ok && outcome.reason === "not_paired") {
-        toast.error("Printer belum di-pair", {
-          description: "Pasangkan printer di Pengaturan untuk auto-print.",
-          action: { label: "Buka", onClick: onOpenSettings },
-        });
-      }
-    });
+    // Auto-print customer receipt — best-effort, silent on printer fail.
+    // Skip if outlet config not yet loaded; struk reprint via Riwayat after.
+    if (receiptConfig) {
+      void printTickets(res.data, cashierName, ["customer"], receiptConfig).then(
+        (outcome) => {
+          if (!outcome.ok && outcome.reason === "not_paired") {
+            toast.error("Printer belum di-pair", {
+              description: "Pasangkan printer di Pengaturan untuk auto-print.",
+              action: { label: "Buka", onClick: onOpenSettings },
+            });
+          }
+        },
+      );
+    }
     setSubmitting(false);
     onClosed();
   }

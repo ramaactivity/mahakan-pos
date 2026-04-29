@@ -61,13 +61,12 @@ export function PrintStationButtons({
 
   async function handlePrint(key: SectionKey, sections: TicketSection[]) {
     if (activeSection !== null) return;
+    if (!receiptConfig) {
+      toast.error("Outlet config belum dimuat. Coba refresh atau tunggu sebentar.");
+      return;
+    }
     setActiveSection(key);
-    const outcome = await printTickets(
-      trx,
-      cashierName,
-      sections,
-      receiptConfig ?? undefined,
-    );
+    const outcome = await printTickets(trx, cashierName, sections, receiptConfig);
     setActiveSection(null);
     if (outcome.ok) {
       onAfterPrint?.(key, sections);
