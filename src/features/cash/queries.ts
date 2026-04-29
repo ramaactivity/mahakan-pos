@@ -107,6 +107,7 @@ export async function fetchDailyCashSummary(
       status: transactions.status,
       paymentMethod: transactions.paymentMethod,
       total: transactions.total,
+      refundedAmount: transactions.refundedAmount,
     })
     .from(transactions)
     .where(
@@ -123,10 +124,17 @@ export async function fetchDailyCashSummary(
   let refundedCount = 0;
   let refundedTotal = 0;
   for (const t of trxRows) {
-    if (t.status === "paid") {
-      if (t.paymentMethod === "cash") posCash += t.total;
-      else if (t.paymentMethod === "qris") posQris += t.total;
-      else posCard += t.total;
+    // paid + partially_refunded both contribute revenue (net of partial refund)
+    if (t.status === "paid" || t.status === "partially_refunded") {
+      const net = t.total - t.refundedAmount;
+      if (t.paymentMethod === "cash") posCash += net;
+      else if (t.paymentMethod === "qris") posQris += net;
+      else posCard += net;
+      // Partial refund contribution to refunded totals
+      if (t.refundedAmount > 0) {
+        refundedTotal += t.refundedAmount;
+        // Don't increment refundedCount for partial — only count fully-refunded
+      }
     } else if (t.status === "refunded") {
       refundedCount += 1;
       refundedTotal += t.total;

@@ -83,6 +83,26 @@ export const refundTransactionSchema = z.object({
     .optional(),
 });
 
+export const refundTransactionPartialSchema = z.object({
+  transactionId: z.uuid(),
+  items: z
+    .array(
+      z.object({
+        transactionItemId: z.uuid(),
+        quantity: z.number().int().min(1).max(99),
+      }),
+    )
+    .min(1)
+    .max(50),
+  reason: z.string().trim().min(3).max(200),
+  approverToken: z.string().optional(),
+  approvalCode: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/)
+    .optional(),
+});
+
 export const editOpenBillSchema = z.object({
   transactionId: z.uuid(),
   customerName: z

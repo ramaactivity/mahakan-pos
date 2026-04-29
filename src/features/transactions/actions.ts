@@ -143,9 +143,19 @@ import {
 import {
   createTransactionSchema,
   editOpenBillSchema,
+  refundTransactionPartialSchema,
   refundTransactionSchema,
   voidTransactionSchema,
 } from "./schemas";
+import {
+  refundEventItems,
+  refundEvents,
+  transactionItems as transactionItemsSchema,
+} from "@/db/schema";
+import {
+  computePartialRefund,
+  nextStatusAfterRefund,
+} from "./refund-pure";
 import {
   endOfWibDayUtc,
   formatTransactionNumber,
@@ -163,6 +173,7 @@ import {
   type EditOpenBillInput,
   type Paginated,
   type RefundTransactionInput,
+  type RefundTransactionPartialInput,
   type SaveOpenBillInput,
   type Transaction,
   type TransactionWithItems,
@@ -826,10 +837,50 @@ export async function refundTransaction(
           refundedBy: session.user.id,
           refundedApprover: approverId,
           refundReason: v.reason,
+          refundedAmount: current.total,
           updatedAt: new Date(),
         })
         .where(eq(transactions.id, v.transactionId))
         .returning();
+
+      // Mirror refund event in the immutable log + mark all transaction
+      // items as fully refunded so partial refund can never re-charge them.
+      const [evt] = await tx
+        .insert(refundEvents)
+        .values({
+          transactionId: v.transactionId,
+          outletId: current.outletId,
+          kind: "full",
+          totalRefunded: current.total,
+          reason: v.reason,
+          createdByUserId: session.user.id,
+          approverUserId: approverId,
+        })
+        .returning();
+
+      const trxItems = await tx
+        .select()
+        .from(transactionItemsSchema)
+        .where(eq(transactionItemsSchema.transactionId, v.transactionId));
+      if (trxItems.length > 0) {
+        await tx.insert(refundEventItems).values(
+          trxItems.map((it) => ({
+            refundEventId: evt.id,
+            transactionItemId: it.id,
+            quantityRefunded: it.quantity - it.refundedQuantity,
+            amountRefunded: it.subtotal - it.refundedAmount,
+          })),
+        );
+        for (const it of trxItems) {
+          await tx
+            .update(transactionItemsSchema)
+            .set({
+              refundedQuantity: it.quantity,
+              refundedAmount: it.subtotal,
+            })
+            .where(eq(transactionItemsSchema.id, it.id));
+        }
+      }
 
       await tx.insert(expenses).values({
         outletId: current.outletId,
@@ -882,6 +933,229 @@ export async function refundTransaction(
   });
 
   return ok({ transaction: result });
+}
+
+// ---------- refundTransactionPartial ----------
+
+/**
+ * Refund a subset of items from a paid transaction. Same eligibility rules
+ * as full refund (cash + same-day). Computes pro-rata refund amount, writes
+ * a refund_events log row + per-item lines, updates transaction_items
+ * cumulative refunded fields, bumps transactions.refunded_amount, and flips
+ * status → partially_refunded (or refunded if cumulative reaches total).
+ *
+ * NOTE: stock restoration for partial refunds is intentionally NOT done in
+ * v1 (full refund still restores). Owner can manually adjust ingredients
+ * via Admin → Inventory if needed. Trade-off for ship simplicity; can be
+ * added later by extending restoreStockForTransaction with itemFilter.
+ */
+export async function refundTransactionPartial(
+  input: RefundTransactionPartialInput,
+): Promise<ApiResult<{ transaction: Transaction; eventId: string }>> {
+  const session = await requireSession();
+
+  const parsed = refundTransactionPartialSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  const auth_ = await authorizeVoidRefund(
+    session.user.outletId,
+    v.transactionId,
+    "pos.transaction.refund",
+    v,
+  );
+  if (!auth_.ok) {
+    return fail(auth_.code, auth_.message);
+  }
+  const approverId = auth_.approverId;
+
+  const [current] = await db
+    .select()
+    .from(transactions)
+    .where(eq(transactions.id, v.transactionId))
+    .limit(1);
+  if (!current) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+  if (current.status !== "paid" && current.status !== "partially_refunded") {
+    return fail(
+      "BUSINESS_RULE_VIOLATION",
+      "Hanya transaksi paid / partially_refunded yang bisa di-refund parsial",
+    );
+  }
+  if (current.paymentMethod !== "cash") {
+    return fail(
+      "REFUND_NOT_ALLOWED_NON_CASH",
+      "Phase 1: hanya cash yang bisa di-refund",
+    );
+  }
+
+  const todayYmd = todayWibYmd();
+  const trxYmd = todayWibYmd(current.createdAt);
+  if (trxYmd !== todayYmd) {
+    return fail(
+      "REFUND_NOT_ALLOWED_PAST_DAY",
+      "Refund hanya untuk transaksi hari yang sama",
+    );
+  }
+
+  // Look up the system "Refund" expense category
+  const [refundCat] = await db
+    .select({ id: expenseCategories.id })
+    .from(expenseCategories)
+    .where(
+      and(
+        eq(expenseCategories.outletId, current.outletId),
+        eq(expenseCategories.name, "Refund"),
+        eq(expenseCategories.isSystem, true),
+      ),
+    )
+    .limit(1);
+  if (!refundCat) {
+    return fail(
+      "REFUND_CATEGORY_MISSING",
+      "Kategori expense 'Refund' belum di-seed",
+    );
+  }
+
+  // Snapshot current item state for pure-helper validation + computation
+  const trxItems = await db
+    .select()
+    .from(transactionItemsSchema)
+    .where(eq(transactionItemsSchema.transactionId, v.transactionId));
+
+  const computation = computePartialRefund(
+    v.items,
+    trxItems.map((it) => ({
+      transactionItemId: it.id,
+      quantity: it.quantity,
+      refundedQuantity: it.refundedQuantity,
+      subtotal: it.subtotal,
+    })),
+    current.subtotal,
+    current.discountAmount,
+    current.refundedAmount,
+    current.total,
+  );
+
+  if (!computation.ok) {
+    return fail(
+      computation.errorCode ?? "VALIDATION_ERROR",
+      computation.errorMessage ?? "Input refund tidak valid",
+    );
+  }
+
+  const todayDate = todayWibYmd().replace(
+    /(\d{4})(\d{2})(\d{2})/,
+    "$1-$2-$3",
+  );
+  const newCumulative = current.refundedAmount + computation.totalRefunded;
+  const nextStatus = nextStatusAfterRefund(newCumulative, current.total);
+
+  const result = await db.transaction(async (tx) => {
+    // Insert refund event
+    const [evt] = await tx
+      .insert(refundEvents)
+      .values({
+        transactionId: v.transactionId,
+        outletId: current.outletId,
+        kind: "partial",
+        totalRefunded: computation.totalRefunded,
+        reason: v.reason,
+        createdByUserId: session.user.id,
+        approverUserId: approverId,
+      })
+      .returning();
+
+    // Insert per-item lines
+    await tx.insert(refundEventItems).values(
+      computation.perItem.map((p) => ({
+        refundEventId: evt.id,
+        transactionItemId: p.transactionItemId,
+        quantityRefunded: p.quantityRefunded,
+        amountRefunded: p.amountRefunded,
+      })),
+    );
+
+    // Bump per-item cumulative
+    for (const p of computation.perItem) {
+      await tx
+        .update(transactionItemsSchema)
+        .set({
+          refundedQuantity: sql`${transactionItemsSchema.refundedQuantity} + ${p.quantityRefunded}`,
+          refundedAmount: sql`${transactionItemsSchema.refundedAmount} + ${p.amountRefunded}`,
+        })
+        .where(eq(transactionItemsSchema.id, p.transactionItemId));
+    }
+
+    // Bump transaction cumulative + flip status
+    const updateSet: Record<string, unknown> = {
+      refundedAmount: newCumulative,
+      updatedAt: new Date(),
+    };
+    if (nextStatus === "refunded") {
+      // Final closure — also fill the legacy parent fields for the existing
+      // refundTransaction-style flow, so reports that rely on these still
+      // work. Status flip will hide the trx from "paid" filters.
+      updateSet.status = "refunded";
+      updateSet.refundedAt = new Date();
+      updateSet.refundedBy = session.user.id;
+      updateSet.refundedApprover = approverId;
+      updateSet.refundReason = `Partial refund cumulative — last reason: ${v.reason}`;
+    } else {
+      updateSet.status = "partially_refunded";
+    }
+
+    const [updated] = await tx
+      .update(transactions)
+      .set(updateSet)
+      .where(eq(transactions.id, v.transactionId))
+      .returning();
+
+    // Cash expense entry mirroring the partial refund amount
+    await tx.insert(expenses).values({
+      outletId: current.outletId,
+      expenseDate: todayDate,
+      categoryId: refundCat.id,
+      description: `Refund parsial TRX ${current.transactionNumber}: ${v.reason}`,
+      amount: computation.totalRefunded,
+      paymentMethod: "cash",
+      refundedTransactionId: current.id,
+      createdBy: session.user.id,
+    });
+
+    return { transaction: updated, eventId: evt.id };
+  });
+
+  await logAudit({
+    eventType: "transaction.refund.partial",
+    userId: session.user.id,
+    approverId,
+    entityType: "transaction",
+    entityId: result.transaction.id,
+    payload: {
+      summary: `Refund parsial TRX ${result.transaction.transactionNumber} Rp${computation.totalRefunded.toLocaleString("id-ID")} (${v.reason})`,
+      context: {
+        transactionNumber: result.transaction.transactionNumber,
+        eventId: result.eventId,
+        totalRefunded: computation.totalRefunded,
+        cumulativeRefunded: newCumulative,
+        transactionTotal: result.transaction.total,
+        nextStatus,
+        items: computation.perItem,
+        reason: v.reason,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  });
+
+  return ok({ transaction: result.transaction, eventId: result.eventId });
 }
 
 // ---------- markServed ----------

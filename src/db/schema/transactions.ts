@@ -53,10 +53,18 @@ export const transactions = pgTable(
     cogs: bigint("cogs", { mode: "number" }),
 
     status: text("status", {
-      enum: ["paid", "voided", "refunded", "open"],
+      enum: ["paid", "voided", "refunded", "open", "partially_refunded"],
     })
       .notNull()
       .default("paid"),
+
+    /** Cumulative rupiah refunded across full + partial refund events.
+     * For a fully-refunded trx, equals `total`. For partially-refunded,
+     * equals sum of refund_event.total_refunded. Computed server-side
+     * inside the same DB tx as the refund event insert. */
+    refundedAmount: bigint("refunded_amount", { mode: "number" })
+      .notNull()
+      .default(0),
 
     voidedAt: timestamp("voided_at", { withTimezone: true }),
     voidedBy: uuid("voided_by").references(() => users.id),
@@ -141,6 +149,14 @@ export const transactionItems = pgTable(
     note: text("note"),
     openPriceNote: text("open_price_note"),
 
+    /** Cumulative quantity refunded across one or more partial refund
+     * events. Cannot exceed `quantity`. Updated by refundTransactionPartial. */
+    refundedQuantity: integer("refunded_quantity").notNull().default(0),
+    /** Pro-rata rupiah refunded for this item. Sum across all events. */
+    refundedAmount: bigint("refunded_amount", { mode: "number" })
+      .notNull()
+      .default(0),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -159,6 +175,14 @@ export const transactionItems = pgTable(
     check(
       "ck_transaction_items_cogs_nonneg",
       sql`${t.cogs} IS NULL OR ${t.cogs} >= 0`,
+    ),
+    check(
+      "ck_transaction_items_refunded_qty_bound",
+      sql`${t.refundedQuantity} >= 0 AND ${t.refundedQuantity} <= ${t.quantity}`,
+    ),
+    check(
+      "ck_transaction_items_refunded_amount_nonneg",
+      sql`${t.refundedAmount} >= 0`,
     ),
   ],
 );

@@ -15,7 +15,12 @@ export type Variant = "hot" | "iced";
 export type DiscountType = "percent" | "fixed";
 export type PaymentMethod = "cash" | "qris" | "card_bca";
 export type OrderType = "dine_in" | "takeaway";
-export type TransactionStatus = "paid" | "voided" | "refunded" | "open";
+export type TransactionStatus =
+  | "paid"
+  | "voided"
+  | "refunded"
+  | "open"
+  | "partially_refunded";
 
 /** Loyalty member snapshot embedded in transaction queries for receipt
  * rendering + history modals. Populated via LEFT JOIN customers in
@@ -132,6 +137,21 @@ export interface VoidTransactionInput {
 
 export interface RefundTransactionInput {
   transactionId: string;
+  reason: string;
+  approverToken?: string;
+  approvalCode?: string;
+}
+
+/** Per-item line for a partial refund request. */
+export interface RefundTransactionPartialItem {
+  transactionItemId: string;
+  /** Number of units to refund this round; must be in (0, item.quantity - item.refundedQuantity]. */
+  quantity: number;
+}
+
+export interface RefundTransactionPartialInput {
+  transactionId: string;
+  items: RefundTransactionPartialItem[];
   reason: string;
   approverToken?: string;
   approvalCode?: string;

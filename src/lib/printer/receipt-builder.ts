@@ -73,7 +73,7 @@ export interface ReceiptData {
   paymentMethod: "cash" | "qris" | "card_bca";
   cashReceived: number | null;
   cashChange: number | null;
-  status: "paid" | "voided" | "refunded" | "open";
+  status: "paid" | "voided" | "refunded" | "open" | "partially_refunded";
   footerText: string | null;
   /** Optional 1-3 lines printed above the outlet name (promo banners). */
   headerLines?: string[];
@@ -124,7 +124,11 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
     parts.push(align("center"));
     parts.push(bold(true));
     const banner =
-      d.status === "open" ? "BELUM LUNAS" : d.status.toUpperCase();
+      d.status === "open"
+        ? "BELUM LUNAS"
+        : d.status === "partially_refunded"
+          ? "REFUND PARSIAL"
+          : d.status.toUpperCase();
     parts.push(text(`*** ${banner} ***\n`));
     parts.push(bold(false));
     parts.push(align("left"));

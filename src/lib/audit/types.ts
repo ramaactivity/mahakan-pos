@@ -10,6 +10,7 @@ export const AUDIT_EVENT_TYPES = [
   // Transactions
   "transaction.void",
   "transaction.refund",
+  "transaction.refund.partial",
   "transaction.discount.applied",
   "transaction.compliment.applied",
   "transaction.open_bill.create",

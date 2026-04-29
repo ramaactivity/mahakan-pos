@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, gte, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   expenseCategories,
@@ -39,6 +39,7 @@ export async function fetchDailySalesReport(
       id: transactions.id,
       status: transactions.status,
       total: transactions.total,
+      refundedAmount: transactions.refundedAmount,
       paymentMethod: transactions.paymentMethod,
       createdAt: transactions.createdAt,
     })
@@ -51,11 +52,17 @@ export async function fetchDailySalesReport(
       ),
     );
 
-  const paid = trxs.filter((t) => t.status === "paid");
+  // Net-sale rows: paid + partially_refunded both count as revenue
+  // (with refundedAmount subtracted from total to get net per trx).
+  const paid = trxs.filter(
+    (t) => t.status === "paid" || t.status === "partially_refunded",
+  );
   const voided = trxs.filter((t) => t.status === "voided");
   const refunded = trxs.filter((t) => t.status === "refunded");
 
-  const revenue = paid.reduce((s, t) => s + t.total, 0);
+  const netTotal = (t: { total: number; refundedAmount: number }) =>
+    t.total - t.refundedAmount;
+  const revenue = paid.reduce((s, t) => s + netTotal(t), 0);
   const averageTicket =
     paid.length > 0 ? Math.round(revenue / paid.length) : 0;
 
@@ -66,7 +73,7 @@ export async function fetchDailySalesReport(
     return {
       method: method as PaymentMethod,
       count: rows.length,
-      amount: rows.reduce((s, t) => s + t.total, 0),
+      amount: rows.reduce((s, t) => s + netTotal(t), 0),
     };
   });
 
@@ -173,7 +180,7 @@ export async function fetchItemPerformance(
     .where(
       and(
         eq(transactions.outletId, outletId),
-        eq(transactions.status, "paid"),
+        inArray(transactions.status, ["paid", "partially_refunded"]),
         gte(transactions.createdAt, fromUtc),
         lt(transactions.createdAt, toUtc),
       ),
@@ -240,14 +247,16 @@ export async function fetchPnlReport(
 
   const [revRow] = await db
     .select({
-      revenue: sql<number>`coalesce(sum(${transactions.total}), 0)::bigint`,
+      // Net revenue: total - refunded_amount, so partial refunds are
+      // automatically subtracted at the SQL aggregation level.
+      revenue: sql<number>`coalesce(sum(${transactions.total} - ${transactions.refundedAmount}), 0)::bigint`,
       cogs: sql<number>`coalesce(sum(${transactions.cogs}), 0)::bigint`,
     })
     .from(transactions)
     .where(
       and(
         eq(transactions.outletId, outletId),
-        eq(transactions.status, "paid"),
+        inArray(transactions.status, ["paid", "partially_refunded"]),
         gte(transactions.createdAt, fromUtc),
         lt(transactions.createdAt, toUtc),
       ),
@@ -333,6 +342,7 @@ export async function fetchSalesRangeReport(
       id: transactions.id,
       status: transactions.status,
       total: transactions.total,
+      refundedAmount: transactions.refundedAmount,
       paymentMethod: transactions.paymentMethod,
       createdAt: transactions.createdAt,
     })
@@ -345,11 +355,15 @@ export async function fetchSalesRangeReport(
       ),
     );
 
-  const paid = trxs.filter((t) => t.status === "paid");
+  const paid = trxs.filter(
+    (t) => t.status === "paid" || t.status === "partially_refunded",
+  );
   const voided = trxs.filter((t) => t.status === "voided");
   const refunded = trxs.filter((t) => t.status === "refunded");
 
-  const revenue = paid.reduce((s, t) => s + t.total, 0);
+  const netTotal = (t: { total: number; refundedAmount: number }) =>
+    t.total - t.refundedAmount;
+  const revenue = paid.reduce((s, t) => s + netTotal(t), 0);
   const averageTicket =
     paid.length > 0 ? Math.round(revenue / paid.length) : 0;
 
@@ -360,7 +374,7 @@ export async function fetchSalesRangeReport(
     return {
       method: method as PaymentMethod,
       count: rows.length,
-      amount: rows.reduce((s, t) => s + t.total, 0),
+      amount: rows.reduce((s, t) => s + netTotal(t), 0),
     };
   });
 
@@ -373,7 +387,7 @@ export async function fetchSalesRangeReport(
   for (const t of paid) {
     const key = wibDateKey(t.createdAt);
     const cur = dayBuckets.get(key) ?? { revenue: 0, transactionCount: 0 };
-    cur.revenue += t.total;
+    cur.revenue += netTotal(t);
     cur.transactionCount += 1;
     dayBuckets.set(key, cur);
   }
@@ -454,7 +468,7 @@ export async function fetchSalesRangeReport(
     .where(
       and(
         eq(transactions.outletId, outletId),
-        eq(transactions.status, "paid"),
+        inArray(transactions.status, ["paid", "partially_refunded"]),
         gte(transactions.createdAt, priorFromUtc),
         lt(transactions.createdAt, priorToUtc),
       ),

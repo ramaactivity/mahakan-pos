@@ -19,7 +19,9 @@ import {
   logTransactionReprint,
   voidTransaction,
   refundTransaction,
+  refundTransactionPartial,
   markServed,
+  type RefundTransactionPartialItem,
   type TransactionWithItems,
 } from "@/features/transactions";
 import { useSession } from "@/features/auth/SessionProvider";
@@ -93,11 +95,18 @@ export function HistoryDetailModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /** When refund mode is partial, this holds per-item refund quantities.
+   * Keyed by transaction_item.id. Empty map = full refund. */
+  const [partialMode, setPartialMode] = useState(false);
+  const [partialQty, setPartialQty] = useState<Record<string, number>>({});
+
   const [approverOpen, setApproverOpen] = useState(false);
   const [codeModalOpen, setCodeModalOpen] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<{
     actionType: ActionType;
     finalReason: string;
+    /** When set, this is a partial refund — pass these items to server. */
+    partialItems?: RefundTransactionPartialItem[];
   } | null>(null);
 
   useEffect(() => {
@@ -108,6 +117,8 @@ export function HistoryDetailModal({
       setReason("");
       setCustomReason("");
       setError(null);
+      setPartialMode(false);
+      setPartialQty({});
       return;
     }
     let cancelled = false;
@@ -131,7 +142,9 @@ export function HistoryDetailModal({
   const isSameDay = trx ? toJakartaDateOnly(trx.createdAt) === today : false;
   const canVoid = trx?.status === "paid";
   const canRefund =
-    trx?.status === "paid" && trx.paymentMethod === "cash" && isSameDay;
+    (trx?.status === "paid" || trx?.status === "partially_refunded") &&
+    trx.paymentMethod === "cash" &&
+    isSameDay;
 
   const reasonList = actionModal === "void" ? VOID_REASONS : REFUND_REASONS;
   const finalReason = reason === "Lainnya" ? customReason.trim() : reason;
@@ -142,6 +155,7 @@ export function HistoryDetailModal({
     approver?:
       | { kind: "pin"; approverId: string; token: string }
       | { kind: "code"; code: string },
+    partialItems?: RefundTransactionPartialItem[],
   ) {
     if (!trx) return;
     setSubmitting(true);
@@ -164,9 +178,26 @@ export function HistoryDetailModal({
         setSubmitting(false);
         return;
       }
-      // void returns plain Transaction; merge to keep items array on display
       setTrx({ ...trx, ...res.data });
       toast.success("Transaksi di-void");
+    } else if (partialItems && partialItems.length > 0) {
+      const res = await refundTransactionPartial({
+        transactionId: trx.id,
+        items: partialItems,
+        reason: reasonText,
+        ...authPayload,
+      });
+      if (!isOk(res)) {
+        setError(res.error.message);
+        setSubmitting(false);
+        return;
+      }
+      setTrx({ ...trx, ...res.data.transaction });
+      const refundedAmount =
+        res.data.transaction.refundedAmount - (trx.refundedAmount ?? 0);
+      toast.success(
+        `Refund parsial ${formatRupiah(refundedAmount)} — sisa transaksi ${formatRupiah(res.data.transaction.total - res.data.transaction.refundedAmount)}`,
+      );
     } else {
       const res = await refundTransaction({
         transactionId: trx.id,
@@ -187,6 +218,8 @@ export function HistoryDetailModal({
     setActionModal(null);
     setReason("");
     setCustomReason("");
+    setPartialMode(false);
+    setPartialQty({});
     setSubmitting(false);
     onChanged();
   }
@@ -197,14 +230,35 @@ export function HistoryDetailModal({
       setError("Alasan wajib diisi");
       return;
     }
-    // Outlet flag picks PIN-mode (legacy ApproverOverrideModal, Owner+Manager)
-    // or code-mode (Owner-only via emailed 6-digit). Default "pin" so existing
-    // field-test path is preserved until Owner flips to code via Settings.
+
+    // Build partial items list if in partial refund mode
+    let partialItems: RefundTransactionPartialItem[] | undefined;
+    if (actionModal === "refund" && partialMode && trx) {
+      partialItems = trx.items
+        .map((it) => {
+          const qty = partialQty[it.id] ?? 0;
+          return qty > 0
+            ? { transactionItemId: it.id, quantity: qty }
+            : null;
+        })
+        .filter(
+          (x): x is RefundTransactionPartialItem => x !== null,
+        );
+      if (partialItems.length === 0) {
+        setError("Pilih minimal 1 item dengan qty > 0");
+        return;
+      }
+    }
+
     const mode =
       actionModal === "void"
         ? approvalModes.voidMode
         : approvalModes.refundMode;
-    setPendingApproval({ actionType: actionModal, finalReason });
+    setPendingApproval({
+      actionType: actionModal,
+      finalReason,
+      partialItems,
+    });
     setActionModal(null);
     if (mode === "code") {
       setCodeModalOpen(true);
@@ -219,6 +273,7 @@ export function HistoryDetailModal({
       pendingApproval.actionType,
       pendingApproval.finalReason,
       { kind: "pin", approverId: result.approverId, token: result.token },
+      pendingApproval.partialItems,
     );
     setApproverOpen(false);
     setPendingApproval(null);
@@ -230,6 +285,7 @@ export function HistoryDetailModal({
       pendingApproval.actionType,
       pendingApproval.finalReason,
       { kind: "code", code },
+      pendingApproval.partialItems,
     );
     setCodeModalOpen(false);
     setPendingApproval(null);
@@ -443,6 +499,119 @@ export function HistoryDetailModal({
         }
       >
         <div className="space-y-3">
+          {actionModal === "refund" && trx ? (
+            <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-medium text-neutral-700">
+                  Mode Refund
+                </span>
+                <div className="flex gap-1 rounded-md bg-white p-0.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPartialMode(false);
+                      setPartialQty({});
+                    }}
+                    className={`rounded px-3 py-1 transition-colors ${
+                      !partialMode
+                        ? "bg-mahakan-green-700 text-white"
+                        : "text-neutral-600 hover:bg-neutral-100"
+                    }`}
+                  >
+                    Penuh
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPartialMode(true)}
+                    className={`rounded px-3 py-1 transition-colors ${
+                      partialMode
+                        ? "bg-mahakan-green-700 text-white"
+                        : "text-neutral-600 hover:bg-neutral-100"
+                    }`}
+                  >
+                    Per Item
+                  </button>
+                </div>
+              </div>
+              {partialMode ? (
+                <div className="space-y-2">
+                  {trx.items.map((it) => {
+                    const remaining = it.quantity - it.refundedQuantity;
+                    const selected = partialQty[it.id] ?? 0;
+                    const disabled = remaining <= 0;
+                    const perUnitNet = it.quantity > 0 ? Math.floor((it.subtotal - (it.refundedAmount ?? 0)) / Math.max(remaining, 1)) : 0;
+                    return (
+                      <div
+                        key={it.id}
+                        className={`flex items-center justify-between gap-2 rounded-md border bg-white p-2 ${
+                          disabled ? "opacity-50" : ""
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-neutral-900">
+                            {it.itemName}
+                            {it.variant ? (
+                              <span className="ml-1 text-xs text-neutral-500">
+                                ({it.variant === "hot" ? "Hot" : "Iced"})
+                              </span>
+                            ) : null}
+                          </p>
+                          <p className="text-xs text-neutral-500">
+                            Qty {it.quantity}
+                            {it.refundedQuantity > 0
+                              ? ` · ${it.refundedQuantity} sudah di-refund`
+                              : ""}
+                            {" · "}
+                            {formatRupiah(perUnitNet)}/unit
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={disabled || selected === 0}
+                            onClick={() =>
+                              setPartialQty((q) => ({
+                                ...q,
+                                [it.id]: Math.max((q[it.id] ?? 0) - 1, 0),
+                              }))
+                            }
+                            className="size-7 rounded-md border border-neutral-300 text-sm font-bold disabled:opacity-30"
+                          >
+                            −
+                          </button>
+                          <span className="w-6 text-center font-mono text-sm">
+                            {selected}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={disabled || selected >= remaining}
+                            onClick={() =>
+                              setPartialQty((q) => ({
+                                ...q,
+                                [it.id]: Math.min(
+                                  (q[it.id] ?? 0) + 1,
+                                  remaining,
+                                ),
+                              }))
+                            }
+                            className="size-7 rounded-md border border-neutral-300 text-sm font-bold disabled:opacity-30"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <p className="text-xs text-neutral-500">
+                    Refund per item — pilih qty per item. Server hitung pro-rata
+                    rupiah berdasarkan share + diskon. Stock tidak otomatis
+                    di-restore (full refund saja).
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="grid grid-cols-2 gap-2">
             {reasonList.map((r) => (
               <button

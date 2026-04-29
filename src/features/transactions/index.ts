@@ -10,6 +10,8 @@ export type {
   Paginated,
   PaymentMethod,
   RefundTransactionInput,
+  RefundTransactionPartialInput,
+  RefundTransactionPartialItem,
   SaveOpenBillInput,
   Transaction,
   TransactionItem,
@@ -30,6 +32,7 @@ export {
   logTransactionReprint,
   markServed,
   refundTransaction,
+  refundTransactionPartial,
   saveAsOpenBill,
   voidTransaction,
 } from "./actions";
