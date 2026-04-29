@@ -4,17 +4,18 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 — **M26 (Admin UI overhaul) + M27 (Galih operational feature set) LANDED** (sesi 12-13 selesai 2026-04-28). Off the original Phase 2 Roadmap (Tier 1.3 Loyalty deferred); pivot driven by Galih hardware-test feedback + Owner UX requests.
-**Active Milestone (sesi 14):** **FIELD VALIDATE** sesi 12-13 features (Galih + staff test compliment, open bill, receipt editor, PIN guards, menu sort/layout). Lihat `docs/99-HANDOVER-SESSION-13.md` untuk boot prompt + direction options A/B/C/D.
-**Local HEAD:** `3105302` — synced with `origin/release/phase-1`, all deployed.
+**Phase:** Phase 2 — **M28 Galih quick-wins bundle LANDED** (sesi 14 selesai 2026-04-29) on top of sesi 12-13 (M26+M27). Off the original Phase 2 Roadmap (Tier 1.3 Loyalty still deferred); Owner picked direction C (continued Galih asks) over field-validate (A) at sesi 14 boot.
+**Active Milestone (sesi 15):** **FIELD VALIDATE** sesi 12-14 features (still pending dari sesi 13 boot prompt direction A — recommended next). Customer name field + history split-print + reprint audit awaiting hardware test; sesi 13 features juga belum field-tested.
+**Local HEAD:** `a170b56` — synced with `origin/release/phase-1`, all deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `3105302` local + remote, last big deploy via `dpl_3usMA2yTtfR11zoRnqLVzxBWCbto`)
-**Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44+ for sesi 12-13 drift)
+**Branch:** `release/phase-1` (HEAD `a170b56` local + remote, deployed 2026-04-29 sesi 14)
+**Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
 **Phase 2 Tier 1.2 plan (M23.2):** `~/.claude/plans/halo-gua-mau-lanjut-gleaming-fern.md` (cascade engine implementation)
 **Sesi 12-13 close plan:** `~/.claude/plans/halo-gua-mau-lanjut-nested-riddle.md` (M26 + M27 + handover)
+**Sesi 14 plan:** `~/.claude/plans/halo-gua-mau-lanjut-streamed-goose.md` (M28 quick-wins bundle)
 
 ---
 
@@ -118,6 +119,14 @@ User complaint sesi 12-13: COGS Calculator + Recipe modal overflow di tablet, ba
 - [x] **M27.6** — Menu sort 6 modes + PIN-required void/refund (all roles). **Sort** ([MenuSortSelect](src/features/pos/components/MenuSortSelect.tsx) + `applyMenuSort`): Default / Nama A-Z / Nama Z-A / Termurah / Termahal / Signature dulu (open-price items sort to end on price-asc), localStorage persisted. **PIN guard**: void/refund actions di [transactions/actions.ts](src/features/transactions/actions.ts) sekarang require approverToken untuk SEMUA role (sebelumnya Owner/Manager skip). Owner self-approve via own PIN. HistoryDetailModal `onSubmitAction` always opens ApproverOverrideModal regardless of `isStaff` _(done 2026-04-28 sesi 13, commit `e8be08c`)_
 - [x] **M27.7** — Compliment feature ([ComplimentModal](src/features/pos/components/ComplimentModal.tsx)). Galih ask: tombol gratis 100% transaksi sebagai goodwill (VIP/karyawan/service recovery/test menu/tamu owner/lainnya). Implementation: 100% discount via `discount = { type: "fixed", value: subtotal }` + reason prefix `"Compliment: "`. Audit event `transaction.compliment.applied` (separate dari `transaction.discount.applied`) — registered di [audit/types.ts](src/lib/audit/types.ts) AUDIT_EVENT_TYPES. createTransaction emits compliment event when reason matches `^Compliment:`. ALWAYS requires approver PIN regardless of role (deliberate two-step + clean approver record). Cart panel: 2-col row "Diskon | Compliment" (warning amber) above full-width Bayar button _(done 2026-04-28 sesi 13, commit `0496faa`)_
 - [x] **M27.8** — Open Bill workflow. Galih ask: customer order tapi belum bayar → save bill → kembali nanti → bayar + struk auto-cetak. **Schema**: `transactions.status` enum extended ke `["paid", "voided", "refunded", "open"]` (no DB migration karena Drizzle text+enum compile-time only; existing `ck_transactions_cash_fields` constraint satisfied via placeholder `paymentMethod="cash"` + `cashReceived=0`). **Actions** ([transactions/actions.ts](src/features/transactions/actions.ts)): `saveAsOpenBill` wraps createTransaction with placeholder cash fields then mutates row to `status="open"`; `closeOpenBill(trxId, paymentMethod, cashReceived)` validates + transitions to paid. Stock deducted at SAVE (kitchen prep timing accurate). Audit events `transaction.open_bill.create` + `transaction.open_bill.close`. **UI**: New "Bill Aktif" tab (FileText icon, antara Kasir & Pesanan) + [OpenBillPanel](src/features/pos/components/OpenBillPanel.tsx) KDS-style listing dengan stale warning >2h via `useBillAge` hook + [CloseOpenBillModal](src/features/pos/components/CloseOpenBillModal.tsx) payment picker + auto-print struk via `printTickets(["customer"])` on close. Receipt-builder ReceiptData status type extended; `*** BELUM LUNAS ***` banner kalau status="open". Cart panel: "Simpan sebagai Open Bill" button antara Diskon/Compliment row dan Bayar button _(done 2026-04-28 sesi 13, commit `3105302`)_
+
+#### M28 — Galih Quick-Wins Bundle (sesi 14, 4 items unified into single commit)
+
+Owner picked direction C (continued Galih asks) over field-validate (A) at sesi 14 boot. 9 items grouped into bundles; Owner picked **Quick-wins** (4 small items, similar pattern, 1 sesi). Single commit `a170b56` deployed 2026-04-29.
+
+- [x] **M28.1+M28.2** — Customer name field di transaction (#1 + #4 unified). Single nullable `transactions.customer_name` TEXT column subsumes both customer-name (#1) and bill-label/customer-hint open-bill (#4) use cases (D51). Migration `0004_demonic_wasp.sql` (additive, deploy-safe). Threading: NewOrderModal input → Draft.customerName → CreateTransactionInput / SaveOpenBillInput → DB. Zod nullish + transform "" to null. Display surfaces: NewOrderModal "Nama Customer (opsional)" input, CartPanel header subline, PaidPanel summary "Nama" line, OpenBillPanel BillCard appended `· <name>`, HistoryDetailModal description appended. Receipt struk renders `Nama : <label>` line after Kasir, truncated 25 chars; prep ticket prints customer name beneath the pager block (size 1,2 emphasis) so kitchen/bar can call out by name when pager is misplaced (D52) _(done 2026-04-29 sesi 14, commit `a170b56`)_
+- [x] **M28.3** — HistoryDetailModal split print buttons (#7). Replaced single "Cetak Ulang" button with `<PrintStationButtons>` component (4-button reusable: Customer / Dapur / Bar / Semua) — same UX as PaidPanel + OrderQueuePanel. ReceiptConfig prop threaded from PosShell → HistoryDetailModal so reprints match the live struk format including edited header / WiFi / footer. Drop legacy `handleReprint` + `reprinting` state _(done 2026-04-29 sesi 14, same commit `a170b56`)_
+- [x] **M28.4** — Audit reprint events (#9). New audit event `transaction.reprint` registered di AUDIT_EVENT_TYPES (auto-appears di AuditLogSection filter "Transaksi" group via existing `startsWith("transaction.")` derivation). New server action `logTransactionReprint(transactionId, sections)` di [transactions/actions.ts](src/features/transactions/actions.ts) (no permission gate — D54: any role yang bisa view trx bisa reprint, audit = passive observation). Emit ONLY dari HistoryDetailModal (post-paid scenarios) via PrintStationButtons new optional `onAfterPrint` callback (D53: signal-to-noise — PaidPanel in-flow + OrderQueuePanel prep-ticket prints stay un-audited). Fire-and-forget: kasir not blocked by audit RPC _(done 2026-04-29 sesi 14, same commit `a170b56`)_
 
 ---
 
@@ -492,14 +501,50 @@ D44 customer-only auto-print, D45 compliment via reason prefix (no schema), D46 
 5. M24 ulang: hardware kitchen+bar split print after Q4 deploy (BLE buffer overflow likely fixed via customer-only auto-print)
 
 **Items NOT YET BUILT (sesi 14+ candidates)** dari Galih invitation "jika ada fitur lain boleh juga ditambahkan":
-- Customer name field di transaction (helpful saat call out by name vs pager)
+- ~~Customer name field di transaction~~ — DONE M28.1 sesi 14
 - Sort/filter di Reports views (currently DateRangePicker only; could add category filter, sort by metric in tables)
 - Quick-favorites bar in POS (pin frequent items)
-- Bill_label / customer hint di open bill (currently using pager)
+- ~~Bill_label / customer hint di open bill~~ — DONE M28.2 sesi 14 (unified dengan M28.1)
 - Receipt logo print (currently text-only header)
 - Edit open bill items (currently locked once saved)
-- HistoryDetailModal split print buttons (currently single Cetak Ulang)
-- Audit reprint events
+- ~~HistoryDetailModal split print buttons~~ — DONE M28.3 sesi 14
+- ~~Audit reprint events~~ — DONE M28.4 sesi 14
 - Multi-printer routing (separate physical printers untuk dapur vs bar)
 
 Handover for sesi 14: `docs/99-HANDOVER-SESSION-13.md`. Phase 2 roadmap update: `docs/99-PHASE-2-ROADMAP.md` §11 + decisions D44+.
+
+---
+
+### 2026-04-29 (Session 14 — M28 Galih quick-wins bundle)
+
+Owner picked **direction C** (continued Galih asks) over field-validate (A) at sesi 14 boot. 9 candidate items split into 4 bundles; Owner picked **Quick-wins (4 items)** — small, similar pattern, 1 sesi feasible. All 4 features delivered as single commit `a170b56`.
+
+**Wave 1 — Schema + types + actions:**
+Drizzle migration `0004_demonic_wasp.sql` adds `transactions.customer_name TEXT NULL`. Threaded through `CreateTransactionInput` + `SaveOpenBillInput` (optional via `customerName?: string | null`), zod schema accepts nullish + trims-then-null on empty. `createTransaction` + `saveAsOpenBill` insert customerName.
+
+**Wave 2 — Audit + reprint action:**
+Registered `transaction.reprint` audit event. New server action `logTransactionReprint(trxId, sections)` — no permission gate (D54), passive observation via audit log. Auto-appears in AuditLogSection "Transaksi" group filter via existing `startsWith("transaction.")` derivation.
+
+**Wave 3 — Receipt + ticket builders:**
+`ReceiptData` + `PrepTicketData` extended with optional `customerName`. Customer struk: `Nama : <label>` line after Kasir, ASCII-truncated 25 chars. Prep ticket: customer name shown beneath pager block, size(1,2) emphasis. Build threading via `print-transaction.ts` `buildCustomerBytes` + `buildPrepBytes`. 5 new printer + ticket-builder unit tests (323→328).
+
+**Wave 4 — POS UI:**
+`Draft.customerName: string | null` di types + cartStore (with `setCustomerName` mutator + `startDraft(pager, type, customerName?)`). NewOrderModal extra "Nama Customer (opsional)" input field (maxLength 60, hint "mis. Andi / Meja 5 / Gojek"). CartPanel header subline shows name. PaidPanel summary `Nama` row. OpenBillPanel BillCard appends `· <name>` to time-line. HistoryDetailModal: replaced "Cetak Ulang" button with `<PrintStationButtons>` (4-button), receiptConfig prop threaded from PosShell, customerName appended to modal description. PrintStationButtons grew optional `onAfterPrint(key, sections)` callback used by HistoryDetailModal to fire `logTransactionReprint`.
+
+**Decisions D51-D55 locked** (see `docs/99-PHASE-2-ROADMAP.md` §10):
+D51 single column subsumes #1 + #4 (no separate bill_label), D52 prep ticket also prints customer name (kitchen call-out), D53 reprint audit only from HistoryDetailModal (signal-to-noise), D54 no PIN gate on reprint (passive observation), D55 migrate-first deploy-second untuk additive col + new TS schema reference.
+
+**State akhir sesi 14:**
+- Branch `release/phase-1` HEAD `a170b56`, synced dengan remote, deployed 2026-04-29 (Vercel deploy `mahakan-g8tysjnk6-...`)
+- typecheck + lint clean; **328/328 tests** (was 323; +5 customer name unit tests)
+- 11 routes build via webpack + Serwist
+- DB Neon: `customer_name` column live (NULL untuk all existing transactions)
+- Production stable, awaiting Galih + staff field-validate
+
+**Pending field-validate (sesi 15 priority — sama seperti sesi 13 boot prompt):**
+1. M28.1+M28.2 customer name end-to-end: NewOrderModal input → cart panel display → struk customer + prep ticket include nama → OpenBillPanel display → HistoryDetailModal display
+2. M28.3 HistoryDetailModal split print: 4 button replace single Cetak Ulang, all sections work
+3. M28.4 audit reprint: tap reprint at any section di HistoryDetailModal → entry baru di Audit Log filter "transaction.reprint"
+4. Sesi 12-13 features juga belum field-tested (compliment, open bill, PIN void/refund, M24 hardware re-test, queue, owner CRUD, fullscreen+workspace, layout+sort)
+
+Handover for sesi 15: `docs/99-HANDOVER-SESSION-14.md`. Phase 2 roadmap §10 decisions D44-D55, §11 sesi 12-13 drift recap.

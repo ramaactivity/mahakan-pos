@@ -232,6 +232,11 @@ Saat ini production = release/phase-1 langsung. Phase 2 mungkin butuh staging br
 | **D48** | `settings.receipt.update` permission opened ke `["owner", "manager"]`. Brand-level fields tetap owner-only | Galih (manager) operasional day-to-day; brand stays Owner | 2026-04-28 |
 | **D49** | Per-device localStorage untuk POS layout + sort + fullscreen state (bukan per-user di DB) | Tablets shared between staff; consistency > personalization | 2026-04-28 |
 | **D50** | Drift dari original Phase 2 Roadmap intentional. Sesi 12-13 prioritize operational pain points (Galih) over Tier 1.3 Loyalty. Re-prioritize di sesi 14 setelah field-validate | Galih + Owner pain emerged real-time saat M24 hardware test; Loyalty masih design-stage | 2026-04-28 |
+| **D51** | Single nullable `transactions.customer_name` column subsumes both #1 (customer name) and #4 (bill_label / customer hint open bill). Bukan 2 column terpisah. Galih bisa tulis nama orang, "Meja 5", "Gojek", apapun | Trade-off: complexity vs flexibility. Galih's intent overlap — same field different angles | 2026-04-29 |
+| **D52** | Customer name printed on customer struk + ALSO on kitchen/bar prep tickets (size 1,2 emphasis di bawah pager) | Dapur bisa call out by name kalau pager hilang/lupa | 2026-04-29 |
+| **D53** | Audit `transaction.reprint` emit HANYA dari HistoryDetailModal split print (post-paid scenarios). Bukan dari PaidPanel (in-flow expected) atau OrderQueuePanel (kitchen prep tickets, irrelevant) | Signal-to-noise — Galih's concern likely abuse detection on historical reprints, not in-flow ops | 2026-04-29 |
+| **D54** | No PIN gate on reprint. Any role yang bisa view transaction bisa reprint. Audit log = passive observation only | Reprint adalah read-only ops; PIN guard adds friction tanpa security value. Future: tambah kalau Owner request abuse prevention setelah field test | 2026-04-29 |
+| **D55** | Sesi 14 migration order: migrate FIRST, deploy SECOND (kebalikan dari migration-ordering-rule untuk DROP/ALTER) | Pure additive nullable column AND new TS schema requires column to exist. Old code (pre-deploy) doesn't reference column → migrate-first window aman | 2026-04-29 |
 
 Decisions baru selama Phase 2 ditambahkan di sini saat pengambilan keputusan.
 
