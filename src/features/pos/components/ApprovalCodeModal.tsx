@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import { Mail, Send, ShieldCheck } from "lucide-react";
 import { Button, Input, Modal, toast } from "@/components/ui";
-import {
-  isOk,
-  requestApprovalCode,
-  type ApprovalActionType,
-} from "@/features/approval-codes";
+// Import directly from action file (NOT the barrel) — the barrel
+// re-exports types alongside actions, which can confuse webpack into
+// including server-only deps (nodemailer/resend/bcryptjs) in the client
+// bundle and crashing PosShell on mount.
+import { requestApprovalCode } from "@/features/approval-codes/actions";
+import { isOk, type ApprovalActionType } from "@/features/approval-codes/types";
 import { formatRupiah } from "@/lib/format";
 
 interface ApprovalCodeModalProps {

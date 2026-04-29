@@ -13,12 +13,13 @@ import {
   Skeleton,
   toast,
 } from "@/components/ui";
+// Direct imports (not via barrel) so client bundle doesn't see server-only
+// deps from actions.ts → @/lib/email/send.
 import {
-  isOk,
   listApprovalCodes,
   revokeApprovalCode,
-  type ApprovalCode,
-} from "@/features/approval-codes";
+} from "@/features/approval-codes/actions";
+import { isOk, type ApprovalCode } from "@/features/approval-codes/types";
 
 const ACTION_LABEL: Record<string, string> = {
   "pos.transaction.void": "Void",
