@@ -16,6 +16,7 @@ import {
   toast,
 } from "@/components/ui";
 import { useSession } from "@/features/auth/SessionProvider";
+import { cn } from "@/lib/utils";
 
 export default function LoginPage() {
   return (
@@ -74,8 +75,13 @@ function LoginContent() {
   }
 
   return (
-    <Card className={shake ? "animate-shake" : undefined}>
-      <CardHeader>
+    <Card
+      className={cn(
+        "p-3 sm:p-4 md:p-6",
+        shake && "animate-shake",
+      )}
+    >
+      <CardHeader className="mb-2 sm:mb-3 md:mb-4">
         <CardTitle>Masuk — Back Office</CardTitle>
         <CardDescription>
           Login dengan email dan password untuk akses dashboard, laporan, dan
@@ -83,7 +89,7 @@ function LoginContent() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={onSubmit} className="space-y-4">
+        <form onSubmit={onSubmit} className="space-y-3 sm:space-y-4">
           <Input
             label="Email"
             type="email"
@@ -115,7 +121,7 @@ function LoginContent() {
             {submitting ? "Memproses…" : "Masuk"}
           </Button>
         </form>
-        <div className="mt-6 border-t border-neutral-200 pt-4 text-center text-sm text-neutral-500">
+        <div className="mt-3 border-t border-neutral-200 pt-3 text-center text-xs text-neutral-500 sm:mt-4 sm:pt-4 sm:text-sm md:mt-6">
           Mau langsung ke kasir?{" "}
           <Link
             href="/pin"

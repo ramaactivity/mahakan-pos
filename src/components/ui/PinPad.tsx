@@ -49,7 +49,7 @@ export function PinPad({
 
   return (
     <div
-      className={cn("grid grid-cols-3 gap-3", className)}
+      className={cn("grid grid-cols-3 gap-2 sm:gap-3", className)}
       role="group"
       aria-label="Keypad PIN"
     >
@@ -97,7 +97,7 @@ function PinKey({
       onClick={onPress}
       disabled={disabled}
       className={cn(
-        "flex aspect-square items-center justify-center rounded-xl text-2xl font-medium transition-all",
+        "flex h-12 sm:h-14 md:h-16 items-center justify-center rounded-xl text-xl sm:text-2xl font-medium transition-all",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700 focus-visible:ring-offset-2",
         "active:scale-95 disabled:cursor-not-allowed disabled:opacity-50",
         variant === "digit"

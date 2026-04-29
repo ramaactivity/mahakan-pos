@@ -33,7 +33,7 @@ export function StaffAvatarGrid({
     <div
       role="radiogroup"
       aria-label="Pilih user"
-      className={cn("grid grid-cols-3 gap-3", className)}
+      className={cn("grid grid-cols-3 gap-2 sm:gap-3", className)}
     >
       {users.map((u) => {
         const isSelected = u.id === selectedId;
@@ -45,7 +45,7 @@ export function StaffAvatarGrid({
             aria-checked={isSelected}
             onClick={() => onSelect(u.id)}
             className={cn(
-              "flex flex-col items-center gap-2 rounded-xl border p-3 transition-all",
+              "flex flex-col items-center gap-1.5 rounded-xl border p-2 transition-all sm:gap-2 sm:p-3",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700 focus-visible:ring-offset-2",
               "active:scale-95",
               isSelected
@@ -55,7 +55,7 @@ export function StaffAvatarGrid({
           >
             <div
               className={cn(
-                "flex size-14 items-center justify-center rounded-full text-lg font-bold",
+                "flex size-10 sm:size-12 md:size-14 items-center justify-center rounded-full text-base sm:text-lg font-bold",
                 isSelected
                   ? "bg-mahakan-green-700 text-white"
                   : "bg-mahakan-green-100 text-mahakan-green-800",

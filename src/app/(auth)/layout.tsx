@@ -3,17 +3,17 @@ import type { ReactNode } from "react";
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-neutral-50 px-4 py-8">
-      <div className="mb-8 flex flex-col items-center">
+    <div className="flex min-h-screen max-h-screen flex-col items-center justify-center overflow-hidden bg-neutral-50 px-4 py-3 sm:py-6 md:py-8">
+      <div className="mb-3 flex flex-col items-center sm:mb-5 md:mb-8">
         <Image
           src="/assets/logo/Logo_Mahakan_Putih.png"
           alt="Mahakan Coffee & Space"
           width={120}
           height={170}
           priority
-          className="mix-blend-difference"
+          className="mix-blend-difference h-16 w-auto sm:h-20 md:h-28"
         />
-        <p className="mt-3 text-sm text-neutral-500">
+        <p className="mt-2 text-xs text-neutral-500 sm:mt-3 sm:text-sm">
           Mahakan Coffee &amp; Space — POS
         </p>
       </div>
