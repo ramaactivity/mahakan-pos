@@ -73,6 +73,8 @@ export function ApprovalCodesPanel() {
     ok: boolean;
     error?: string;
     errorCode?: string;
+    gmailUser?: string | null;
+    hasAppPassword?: boolean;
   } | null>(null);
   const [diagnosing, setDiagnosing] = useState(false);
   const [sendingTest, setSendingTest] = useState(false);
@@ -203,7 +205,27 @@ export function ApprovalCodesPanel() {
             </div>
           </div>
           {diagnostic ? (
-            <div className="text-xs">
+            <div className="space-y-2 text-xs">
+              {diagnostic.gmailUser ? (
+                <div className="flex items-start gap-2 rounded-md bg-white/60 px-2 py-1.5">
+                  <Mail
+                    className="mt-0.5 size-3.5 shrink-0 text-neutral-500"
+                    aria-hidden
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] uppercase tracking-wide text-neutral-500">
+                      GMAIL_USER (akun yang authenticate)
+                    </p>
+                    <p className="break-all font-mono text-xs font-medium text-neutral-900">
+                      {diagnostic.gmailUser}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-neutral-500">
+                      App Password harus generate dari akun INI persis. Mismatch
+                      = AUTH_FAILED.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
               {diagnostic.ok ? (
                 <div className="flex items-start gap-2 text-mahakan-green-900">
                   <CheckCircle2
@@ -232,13 +254,32 @@ export function ApprovalCodesPanel() {
                       </p>
                     ) : null}
                     <p className="mt-2 text-neutral-700">
-                      {diagnostic.errorCode === "AUTH_FAILED"
-                        ? "Cek GMAIL_APP_PASSWORD di Vercel env. Re-generate App Password kalau perlu (myaccount.google.com/apppasswords)."
-                        : diagnostic.errorCode === "CONNECTION_TIMEOUT"
-                          ? "Vercel function timeout sebelum SMTP handshake. Coba ulang sekali — biasanya cold start. Persistent → cek firewall."
-                          : diagnostic.errorCode === "RATE_LIMITED"
-                            ? "Gmail rate-limit account. Tunggu 1-2 jam atau reset App Password."
-                            : "Cek Vercel deployment logs untuk stack trace lengkap."}
+                      {diagnostic.errorCode === "AUTH_FAILED" ? (
+                        <>
+                          <strong>3 hal yang harus dicek:</strong>
+                          <br />
+                          1. App Password di-generate dari akun{" "}
+                          <span className="font-mono">
+                            {diagnostic.gmailUser ?? "GMAIL_USER"}
+                          </span>{" "}
+                          (BUKAN dari akun lain).
+                          <br />
+                          2. App Password di Vercel env benar — re-paste 16-char
+                          yang ke-copy waktu generate (kalau gak yakin,
+                          re-generate baru di myaccount.google.com/apppasswords
+                          dan paste ulang).
+                          <br />
+                          3. <strong>Setelah update env, redeploy</strong>{" "}
+                          (Vercel Dashboard → Deployments → ... → Redeploy)
+                          supaya value baru kepake.
+                        </>
+                      ) : diagnostic.errorCode === "CONNECTION_TIMEOUT" ? (
+                        "Vercel function timeout sebelum SMTP handshake. Coba ulang sekali — biasanya cold start. Persistent → cek firewall."
+                      ) : diagnostic.errorCode === "RATE_LIMITED" ? (
+                        "Gmail rate-limit account. Tunggu 1-2 jam atau reset App Password."
+                      ) : (
+                        "Cek Vercel deployment logs untuk stack trace lengkap."
+                      )}
                     </p>
                   </div>
                 </div>

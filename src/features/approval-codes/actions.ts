@@ -7,7 +7,7 @@ import { approvalCodes, outlets, transactions, users } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
-import { sendEmail } from "@/lib/email/send";
+import { sendEmail, getProviderConfigSnapshot } from "@/lib/email/send";
 import { buildApprovalCodeEmail } from "@/lib/email/templates/approval-code";
 import {
   fail,
@@ -299,6 +299,11 @@ export async function verifyEmailConfig(): Promise<
     ok: boolean;
     error?: string;
     errorCode?: string;
+    /** Configured GMAIL_USER value — Owner cross-checks this matches
+     * the account that generated the App Password. AUTH_FAILED almost
+     * always = mismatch between this and the App Password's source. */
+    gmailUser?: string | null;
+    hasAppPassword?: boolean;
   }>
 > {
   const session = await requireSession();
@@ -306,12 +311,15 @@ export async function verifyEmailConfig(): Promise<
     return fail("FORBIDDEN", "Owner-only");
   }
   const { verifyEmailProvider } = await import("@/lib/email/send");
+  const snapshot = getProviderConfigSnapshot();
   const r = await verifyEmailProvider();
   return ok({
     provider: r.provider,
     ok: r.ok,
     error: r.error,
     errorCode: r.errorCode,
+    gmailUser: snapshot.gmailUser,
+    hasAppPassword: snapshot.hasAppPassword,
   });
 }
 

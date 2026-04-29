@@ -128,6 +128,24 @@ export interface SendResult {
     | "UNKNOWN";
 }
 
+/** Owner-facing config snapshot — used by diagnostic panel to verify
+ * that GMAIL_USER matches the account that generated the App Password.
+ * Returns the email FULL (not masked) since this is Owner-only and
+ * cross-checking the email is exactly the use case. */
+export function getProviderConfigSnapshot(): {
+  provider: Provider;
+  gmailUser: string | null;
+  hasAppPassword: boolean;
+  hasResendKey: boolean;
+} {
+  return {
+    provider: activeProvider(),
+    gmailUser: GMAIL_USER ?? null,
+    hasAppPassword: Boolean(GMAIL_APP_PASSWORD),
+    hasResendKey: Boolean(RESEND_API_KEY),
+  };
+}
+
 /** Map a raw provider error to a stable code for UI / audit consumers. */
 function classifyError(rawMessage: string): SendResult["errorCode"] {
   const lower = rawMessage.toLowerCase();
