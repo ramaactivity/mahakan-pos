@@ -4,13 +4,14 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 — **Sesi 15 admin polish + POS quick-favorites deployed 2026-04-29**. 2 commits orthogonal: D bundle (CustomerDetailModal + Top Member report + ItemPerformance polish) + C bundle (quick-favorites bar). Field-test Galih + staff continues in parallel.
-**Active Milestone (sesi 15+):** **FIELD VALIDATE** sesi 12-14 features. Galih + staff field-test compliment, open bill (now editable), receipt editor, PIN guards, menu sort/layout, customer name, history split print, reprint audit, **loyalty member registration + auto-earn**, **+ new sesi 15 quick-favorites** + admin Member edit modal + Top Member report + Items report category filter/CSV.
-**Local HEAD:** `3ebfb52` — synced with `origin/release/phase-1`, all deployed.
+**Phase:** Phase 2 — **Sesi B opening triple-deploy 2026-04-29**: M29.7 Redemption + Audit/Movements CSV export + B-1 sold-out POS settings card all live. Migration 0006 (loyalty_points_redeemed col) applied to Neon prod. Field-test Galih + staff continues in parallel including new redemption + sold-out paths.
+**Active Milestone (sesi B-2+):** Continue B-bundle per `~/.claude/plans/compiled-hugging-marble.md` — next B-2 = Owner-only approval code via email (Resend SDK + 6-digit code + transaction-bound). Then B-3 partial refund, B-4 HR master+docs+notes+schedule templates, B-5 attendance kiosk with selfie, B-6 schedule polish + payroll data view.
+**Local HEAD:** `1660340` — synced with `origin/release/phase-1`, all deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `3ebfb52` local + remote, deployed 2026-04-29 sesi 15 dpl `EviYNH7XdnBkjZXNBBpcQz6ybeJW`)
+**Branch:** `release/phase-1` (HEAD `1660340` local + remote, deployed 2026-04-29 sesi B opening dpl `9wz1tXHuiQWr3ZnZFMvKFzDwu46x`)
+**Sesi B plan:** `~/.claude/plans/compiled-hugging-marble.md` (6 sub-bundles B-1 through B-6, ~6.5 sesi total)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift; M29 Loyalty landed)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
 **Phase 2 Tier 1.2 plan (M23.2):** `~/.claude/plans/halo-gua-mau-lanjut-gleaming-fern.md` (cascade engine implementation)
@@ -144,6 +145,16 @@ Original Phase 2 roadmap §3.2. Jumped from Tier 1.3 design-stage to live produc
 - [x] **M29.4** — POS UI: NewOrderModal "Nomor HP Member (opsional)" input above existing customer name field. Debounced `lookupCustomerByPhone` fires at 6+ digits → surfaces "✓ Member: <name> · <X> poin" hint atau "Member baru — auto daftar saat bayar". Auto-fills name from member record kalau name field kosong. Draft.customerPhone added; threaded through PosShell to all transaction payloads. CartPanel header: customer name + phone subline shown when set _(done 2026-04-29 sesi 14, same commit `960f4b0`)_
 - [x] **M29.5** — Receipt loyalty info. ReceiptData extended dengan memberPhone + memberTotalPoints + pointsEarned. buildReceipt prints "MEMBER" centered + phone + "Poin diperoleh: +N" + "Saldo poin: <total>" block above the existing footer when sale has loyalty data. TransactionWithItems extended dengan optional `member: { id, name, phone, totalPoints }`; queries.ts fetchTransactionById LEFT JOIN customers when customerId set. print-transaction.buildCustomerBytes threads via trx.member _(done 2026-04-29 sesi 14, same commit `960f4b0`)_
 - [x] **M29.6** — Admin Customers section. New "Member" sidebar item (Heart icon) between Inventory dan Staff. CustomersSection: stat cards (total / poin beredar / lifetime spend) + search bar (name atau phone) + sortable table (nama / HP / poin badge / lifetime spend / diupdate). Owner+Manager only via customer.view permission _(done 2026-04-29 sesi 14, same commit `960f4b0`)_
+
+#### Sesi B Opening — M29.7 Redemption + Admin CSV Export + B-1 Sold-Out POS (2026-04-29)
+
+End-of-sesi 15 close-out followed by Owner pivot ke broader B-bundle (refund partial + Owner-code approval + HR module ~6.5 sesi total per [compiled-hugging-marble.md](~/.claude/plans/compiled-hugging-marble.md)). Triple-deploy `dpl_9wz1tXHuiQWr3ZnZFMvKFzDwu46x` ships:
+
+- [x] **M29.7 Loyalty Redemption Flow** — schema `loyalty_points_redeemed` int (additive, migration 0006 applied to Neon prod sebelum deploy per D55). Pure helpers `computeRedemptionAmount` + `clampRedemption` (13 vitest cases). Server: `bumpCustomerRedeemInTx` atomic decrement (throws `INSUFFICIENT_POINTS_RACE` rolling back the entire sale on race), `createTransaction` validates redemption (customerId + balance + discountAmount match + reason starts "Tukar Poin:"), audit `transaction.points.redeemed`. Receipt: discount line relabel "Tukar Poin (-N)" + MEMBER block adds redeem line. POS UI: `Draft.loyaltyPointsRedeemed` + cartStore `applyRedemption` (XOR vs manual discount/compliment) + `RedeemPointsModal` (max preset, clamp, 10/25/50/Max presets) + Cart "Tukar Poin Member" button (gated by `customerPhone` set). Out of scope: open-bill close redemption, edit-bill redemption, void/refund reversal of points _(done 2026-04-29 sesi B opening, commit `d90c51e`)_
+- [x] **Admin CSV export** — Audit Log + Stock Movements export buttons reuse papaparse `downloadCsv`. Bumped `fetchAuditLogs` cap 200→5000 + `fetchMovements` upper cap 5000 untuk export use case (paginated viewer tetap 50). Toast warning kalau hasil >5000 (export di-cap, persempit range). Stock Movements CSV mengikuti permission `inventory.cost.view` untuk Nilai column _(done 2026-04-29 sesi B opening, commit `3f715ce`)_
+- [x] **B-1 Sold-out POS settings card** (Galih ask) — Surface existing `toggleSoldOut` action di POS Pengaturan tab. Same RBAC server-side (`pos.menu.mark_sold_out` semua roles + `pos.menu.mark_available` owner+manager only). New [MenuStatusCard.tsx](src/features/pos/components/MenuStatusCard.tsx): grouped-by-category, search box, collapse per category, optimistic update + rollback, custom switch UI dengan pending-pulse state. PosSettingsPanel takes new menuItems+categories+onItemUpdated props; lifted state from PosShell so Kasir tab grid auto-syncs immediately on Pengaturan toggle _(done 2026-04-29 sesi B opening, commit `1660340`)_
+
+Verify post-deploy: HTTP 200 di `/`, `/login`, `/pin`, `/pos`. typecheck + lint clean, 348/348 vitest, 11 routes build. Field-test Galih + staff continues — additional surfaces sekarang termasuk redemption flow + sold-out toggle di Pengaturan.
 
 #### Sesi 15 — Admin polish + POS quick-favorites (C+D bundle, 2026-04-29)
 
