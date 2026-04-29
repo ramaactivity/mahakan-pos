@@ -12,7 +12,10 @@ import {
   toast,
 } from "@/components/ui";
 import { isOk, toggleSoldOut, type Category, type MenuItem } from "@/features/menu";
-import { hasPermission, type Role } from "@/lib/auth";
+// IMPORTANT: import from rbac directly, NOT from "@/lib/auth" barrel.
+// The barrel runs NextAuth(authConfig) at module load → pulls @/db
+// → DATABASE_URL throw in browser. See docs/CLIENT-IMPORT-RULES.md.
+import { hasPermission, type Role } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
