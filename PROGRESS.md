@@ -4,14 +4,14 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 — **Sesi B-2 deployed 2026-04-29**: Owner-only approval code via email (Resend SDK) untuk void/refund. Migration 0007 (approval_codes table) applied to Neon prod. Feature-flag-gated (default `pin` mode preserves field-test); Owner flips to `code` mode di Settings → Tunables. Compliment unchanged.
-**Active Milestone (sesi B-3+):** B-3 partial / per-item refund (status enum extend + transaction_items refund cols + new refund_events tables). Then B-4 HR master+docs+notes+schedule templates, B-5 attendance kiosk with selfie, B-6 schedule polish + payroll data view.
-**Local HEAD:** `7772c7e` — synced with `origin/release/phase-1`, all deployed.
+**Phase:** Phase 2 — **Sesi B-3 deployed 2026-04-29**: partial / per-item refund + immutable refund_events log. Migration 0008 applied. Plus mid-sesi POS-broken hotfix (MenuStatusCard auth-barrel pulled @/db into client bundle); fixed + added `import "server-only"` guard to @/db so future leaks fail loud at build.
+**Active Milestone (sesi B-4+):** B-4 HR Phase 1 — employee master extension + documents (Vercel Blob) + notes journal + shift_templates + staff_schedules tables. Then B-5 attendance kiosk with selfie, B-6 schedule polish + payroll data view.
+**Local HEAD:** `9cc4abf` — synced with `origin/release/phase-1`, all deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `7772c7e` local + remote, deployed 2026-04-29 sesi B-2 dpl `7iqJvX2dRmLdeod9qDt7uZ8peVES`)
-**Sesi B plan:** `~/.claude/plans/compiled-hugging-marble.md` (6 sub-bundles B-1 through B-6, ~6.5 sesi total; B-1 + B-2 done, B-3 next)
+**Branch:** `release/phase-1` (HEAD `9cc4abf` local + remote, deployed 2026-04-29 sesi B-3 dpl `ad3j6nrat`)
+**Sesi B plan:** `~/.claude/plans/compiled-hugging-marble.md` (6 sub-bundles B-1 through B-6, ~6.5 sesi total; B-1 + B-2 + B-3 done, B-4 HR next)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift; M29 Loyalty landed)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
 **Phase 2 Tier 1.2 plan (M23.2):** `~/.claude/plans/halo-gua-mau-lanjut-gleaming-fern.md` (cascade engine implementation)
