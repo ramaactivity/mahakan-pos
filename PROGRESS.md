@@ -4,14 +4,14 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 — **M28 Galih quick-wins bundle LANDED** (sesi 14 selesai 2026-04-29) on top of sesi 12-13 (M26+M27). Off the original Phase 2 Roadmap (Tier 1.3 Loyalty still deferred); Owner picked direction C (continued Galih asks) over field-validate (A) at sesi 14 boot.
-**Active Milestone (sesi 15):** **FIELD VALIDATE** sesi 12-14 features (still pending dari sesi 13 boot prompt direction A — recommended next). Customer name field + history split-print + reprint audit awaiting hardware test; sesi 13 features juga belum field-tested.
-**Local HEAD:** `a170b56` — synced with `origin/release/phase-1`, all deployed.
+**Phase:** Phase 2 — **Sesi 14 multi-cycle PUSH selesai 2026-04-29**. M28 (Galih quick-wins, customer name etc) + M28.5 (Edit open bill) + Tech debt (proxy rename + receipt cleanup) + **M29 Tier 1.3 Loyalty** all landed in 4 commits across 3 deploy cycles.
+**Active Milestone (sesi 15):** **FIELD VALIDATE** sesi 12-14 features. Galih + staff field-test compliment, open bill (now editable), receipt editor, PIN guards, menu sort/layout, customer name, history split print, reprint audit, **loyalty member registration + auto-earn**. Customer testing in progress per Owner (sesi 14 close).
+**Local HEAD:** `960f4b0` — synced with `origin/release/phase-1`, all deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `a170b56` local + remote, deployed 2026-04-29 sesi 14)
-**Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift)
+**Branch:** `release/phase-1` (HEAD `960f4b0` local + remote, deployed 2026-04-29 sesi 14 multi-cycle)
+**Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift; M29 Loyalty landed)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
 **Phase 2 Tier 1.2 plan (M23.2):** `~/.claude/plans/halo-gua-mau-lanjut-gleaming-fern.md` (cascade engine implementation)
 **Sesi 12-13 close plan:** `~/.claude/plans/halo-gua-mau-lanjut-nested-riddle.md` (M26 + M27 + handover)
@@ -127,6 +127,23 @@ Owner picked direction C (continued Galih asks) over field-validate (A) at sesi 
 - [x] **M28.1+M28.2** — Customer name field di transaction (#1 + #4 unified). Single nullable `transactions.customer_name` TEXT column subsumes both customer-name (#1) and bill-label/customer-hint open-bill (#4) use cases (D51). Migration `0004_demonic_wasp.sql` (additive, deploy-safe). Threading: NewOrderModal input → Draft.customerName → CreateTransactionInput / SaveOpenBillInput → DB. Zod nullish + transform "" to null. Display surfaces: NewOrderModal "Nama Customer (opsional)" input, CartPanel header subline, PaidPanel summary "Nama" line, OpenBillPanel BillCard appended `· <name>`, HistoryDetailModal description appended. Receipt struk renders `Nama : <label>` line after Kasir, truncated 25 chars; prep ticket prints customer name beneath the pager block (size 1,2 emphasis) so kitchen/bar can call out by name when pager is misplaced (D52) _(done 2026-04-29 sesi 14, commit `a170b56`)_
 - [x] **M28.3** — HistoryDetailModal split print buttons (#7). Replaced single "Cetak Ulang" button with `<PrintStationButtons>` component (4-button reusable: Customer / Dapur / Bar / Semua) — same UX as PaidPanel + OrderQueuePanel. ReceiptConfig prop threaded from PosShell → HistoryDetailModal so reprints match the live struk format including edited header / WiFi / footer. Drop legacy `handleReprint` + `reprinting` state _(done 2026-04-29 sesi 14, same commit `a170b56`)_
 - [x] **M28.4** — Audit reprint events (#9). New audit event `transaction.reprint` registered di AUDIT_EVENT_TYPES (auto-appears di AuditLogSection filter "Transaksi" group via existing `startsWith("transaction.")` derivation). New server action `logTransactionReprint(transactionId, sections)` di [transactions/actions.ts](src/features/transactions/actions.ts) (no permission gate — D54: any role yang bisa view trx bisa reprint, audit = passive observation). Emit ONLY dari HistoryDetailModal (post-paid scenarios) via PrintStationButtons new optional `onAfterPrint` callback (D53: signal-to-noise — PaidPanel in-flow + OrderQueuePanel prep-ticket prints stay un-audited). Fire-and-forget: kasir not blocked by audit RPC _(done 2026-04-29 sesi 14, same commit `a170b56`)_
+- [x] **M28.5** — Edit open bill items workflow (Galih ask #6). Galih's M27.8 open bill locked items once saved; this unlocks via clone-into-draft pattern. New server action `editOpenBill` di [transactions/actions.ts](src/features/transactions/actions.ts) restores stock from old items (kind=`edit_restore`, new TS-only enum value), atomically deletes + re-inserts items, recomputes totals, fires audit event `transaction.open_bill.edit`. UI: OpenBillPanel BillCard tambah "Edit" button → `loadOpenBillIntoDraft` clones bill into fresh Draft with `editingBillId` set → kasir uses normal cart UI → "Update Bill" button replaces "Simpan Open Bill + Bayar" pair when `editingBillId` set → save calls `editOpenBill` instead of `saveAsOpenBill`. `restoreStockForTransaction` signature extended dengan `edit_restore` kind option (TS-only, no DB CHECK constraint). MovementsList admin filter mapping diupdate _(done 2026-04-29 sesi 14, commit `f9fcdf0`)_
+
+#### Tech Debt Sweep (sesi 14 cycle 2)
+
+- [x] **TD-1** — `src/middleware.ts` → `src/proxy.ts` rename (Next 16 deprecation). File handler signature + config matcher unchanged; Next 16 picks up either name but `proxy.ts` is canonical going forward. Comment di [auth/config.ts](src/lib/auth/config.ts) diupdate _(done 2026-04-29 sesi 14, commit `59a2203`)_
+- [x] **TD-2** — Drop `DEFAULT_RECEIPT_CONFIG` hardcoded outlet info dari [print-transaction.ts](src/lib/printer/print-transaction.ts). Holdover dari M16 sebelum outlet fetch + receipt editor shipped. `printTickets` signature now requires non-null `config: ReceiptConfig` (was `Partial + optional`). All call sites (PosShell auto-print, CloseOpenBillModal auto-print, PrintStationButtons split prints) thread outlet-derived config from PosShell mount; null-guard dengan toast / silent skip kalau belum loaded. `printTransactionReceipt` deprecated wrapper deleted (no callers). `DEFAULT_FOOTER_TEXT` kept for `outletToReceiptConfig` fallback _(done 2026-04-29 sesi 14, same commit `59a2203`)_
+
+#### M29 — Tier 1.3 Loyalty + Customer DB (sesi 14 cycle 3)
+
+Original Phase 2 roadmap §3.2. Jumped from Tier 1.3 design-stage to live production in 1 sesi as a continuation push after Galih quick-wins + tech debt.
+
+- [x] **M29.1** — Schema customers table + transactions FK migration `0005_melted_spitfire.sql` (additive: CREATE TABLE customers + ADD CONSTRAINT transactions_customer_id_customers_id_fk). Phone is natural key (digits-only normalized, unique per outlet active rows), with totalPoints + totalSpent denormalized for fast POS member-lookup card. Migration applied to Neon prod 2026-04-29 BEFORE code deploy per D55 _(done 2026-04-29 sesi 14, commit `960f4b0`)_
+- [x] **M29.2** — Customer feature module di [src/features/customers/](src/features/customers/): types.ts (pure helpers `computePointsEarned` + `normalisePhone` + `POINTS_PER_RUPIAH = 1/1000` constant + `ApiResult` helpers), queries.ts (server-only fetch by id/phone, list with search, top, stats), actions.ts (`listCustomers`, `getCustomer`, `lookupCustomerByPhone`, `findOrCreateCustomer` idempotent, `updateCustomer`, `bumpCustomerEarnInTx`, `earnPointsForTransaction` idempotent guard on status=paid + customerId set + loyaltyPointsEarned=null). 4 new RBAC perms (customer.lookup all roles, customer.create all roles idempotent, customer.view + customer.update owner+manager). 3 new audit events (customer.create, customer.update, transaction.points.earned) + new entity type "customer" _(done 2026-04-29 sesi 14, same commit `960f4b0`)_
+- [x] **M29.3** — Wired createTransaction + saveAsOpenBill + closeOpenBill + editOpenBill earn flow. CreateTransactionInput / SaveOpenBillInput / EditOpenBillInput accept optional `customerPhone` (max 30 char, normalised server-side). createTransaction body: resolves customer via findOrCreateCustomer (best-effort; failure doesn't block sale), sets transactions.customerId + customerName snapshot. New `opts.skipEarn` flag (default false). saveAsOpenBill calls createTransaction with skipEarn=true so placeholder paid → open transition doesn't earn prematurely. closeOpenBill fires `earnPointsForTransaction` at end (best-effort, fire-and-forget). editOpenBill re-resolves customerId (empty phone preserves linkage — kasir can't accidentally un-link) _(done 2026-04-29 sesi 14, same commit `960f4b0`)_
+- [x] **M29.4** — POS UI: NewOrderModal "Nomor HP Member (opsional)" input above existing customer name field. Debounced `lookupCustomerByPhone` fires at 6+ digits → surfaces "✓ Member: <name> · <X> poin" hint atau "Member baru — auto daftar saat bayar". Auto-fills name from member record kalau name field kosong. Draft.customerPhone added; threaded through PosShell to all transaction payloads. CartPanel header: customer name + phone subline shown when set _(done 2026-04-29 sesi 14, same commit `960f4b0`)_
+- [x] **M29.5** — Receipt loyalty info. ReceiptData extended dengan memberPhone + memberTotalPoints + pointsEarned. buildReceipt prints "MEMBER" centered + phone + "Poin diperoleh: +N" + "Saldo poin: <total>" block above the existing footer when sale has loyalty data. TransactionWithItems extended dengan optional `member: { id, name, phone, totalPoints }`; queries.ts fetchTransactionById LEFT JOIN customers when customerId set. print-transaction.buildCustomerBytes threads via trx.member _(done 2026-04-29 sesi 14, same commit `960f4b0`)_
+- [x] **M29.6** — Admin Customers section. New "Member" sidebar item (Heart icon) between Inventory dan Staff. CustomersSection: stat cards (total / poin beredar / lifetime spend) + search bar (name atau phone) + sortable table (nama / HP / poin badge / lifetime spend / diupdate). Owner+Manager only via customer.view permission _(done 2026-04-29 sesi 14, same commit `960f4b0`)_
 
 ---
 
@@ -548,3 +565,47 @@ D51 single column subsumes #1 + #4 (no separate bill_label), D52 prep ticket als
 4. Sesi 12-13 features juga belum field-tested (compliment, open bill, PIN void/refund, M24 hardware re-test, queue, owner CRUD, fullscreen+workspace, layout+sort)
 
 Handover for sesi 15: `docs/99-HANDOVER-SESSION-14.md`. Phase 2 roadmap §10 decisions D44-D55, §11 sesi 12-13 drift recap.
+
+---
+
+### 2026-04-29 (Session 14 cont. — Multi-cycle production push)
+
+After sesi 14 close-out (M28 customer name etc), Owner kicked an extended autonomous push: continue Galih asks tersisa → tech debt → Tier 1.3 Loyalty, each ending in commit + push + Vercel prod deploy. 4 commits across 3 cycles in one continuous run.
+
+**Cycle 1 — M28.5 Edit open bill items** (commit `f9fcdf0`):
+Galih's open bill workflow (M27.8) locked items once saved. New `editOpenBill` server action restores stock (kind=edit_restore, new TS-only enum) → deletes old items+modifiers → re-inserts new → applies new flow. UI: "Edit" button on OpenBillPanel BillCard clones bill into Draft via new `loadOpenBillIntoDraft` cartStore mutator. Cart panel swaps "Simpan + Bayar" pair with single "Update Bill" button when `editingBillId` set. Bakmie data fix deferred to Owner via Admin UI (data integrity needs human judgment); stock-take + threshold deferred to Owner via existing Admin UI / CSV importer.
+
+**Cycle 2 — Tech debt sweep** (commit `59a2203`):
+1. `src/middleware.ts` → `src/proxy.ts` rename (Next 16 deprecation).
+2. Drop `DEFAULT_RECEIPT_CONFIG` hardcoded outlet info from print-transaction.ts. printTickets signature now requires non-null `config: ReceiptConfig`. Call sites null-guard before invoking. printTransactionReceipt deprecated wrapper deleted.
+
+**Cycle 3 — M29 Tier 1.3 Loyalty + Customer DB** (commit `960f4b0`, schema migration `0005_melted_spitfire.sql`):
+- New customers table (phone unique per outlet active, totalPoints + totalSpent denormalized, soft-delete, audit cols). transactions.customer_id wired to FK customers.id.
+- Customer feature module (types pure helpers + ApiResult, queries, actions: lookup/findOrCreate/list/stats/earn).
+- Earn flow: Rp 1000 = 1 pt. createTransaction resolves customer via findOrCreateCustomer + sets customerId. opts.skipEarn flag for saveAsOpenBill internal call. closeOpenBill fires earn at close. editOpenBill re-resolves linkage. Idempotent earn guard on status=paid + customerId + loyaltyPointsEarned=null.
+- POS UI: NewOrderModal phone input above customer name, debounced lookup, auto-fills name from member record. Draft.customerPhone threaded. CartPanel header shows member info.
+- Receipt: MEMBER block prints phone + points earned + total balance when sale linked. ReceiptData + ReceiptItem types extended; fetchTransactionById JOINs customers.
+- Admin: new "Member" sidebar item (Heart icon) between Inventory + Staff. CustomersSection: stat cards + search + sortable table. Owner+Manager only.
+- 4 RBAC perms (customer.lookup/create/view/update). 3 audit events (customer.create, customer.update, transaction.points.earned).
+- 9 new unit tests (customers/types pure helpers).
+
+**State akhir cycle push 2026-04-29:**
+- Branch `release/phase-1` HEAD `960f4b0`, 4 prod deploys ready: `mahakan-g8tysjnk6` (M28) → `mahakan-4tv5gpja1` (M28.5 edit bill) → `mahakan-7zzsx9nw7` (tech debt) → `mahakan-6jnxh6vw2` (Loyalty M29).
+- typecheck + lint clean; **337/337 tests** (was 328 + 9 customer tests).
+- DB Neon: `customer_name` column (sesi 14 morning) + `customers` table (sesi 14 cycle 3) live.
+- Production stable, Galih + staff field-test in progress per Owner.
+
+**Items still NOT YET BUILT (sesi 15+ candidates):**
+- Loyalty redemption flow (1pt = Rp 1000 discount) — designed schema + backend hooks, UI/redemption logic deferred
+- Edit customer detail page in admin (currently list-only)
+- Top customers report
+- Customer detail / edit modal
+- Sort/filter di Reports views
+- Quick-favorites bar di POS
+- Receipt logo print (large)
+- Multi-printer routing (large)
+
+**Carry-over Owner action items (independent dari sesi 14):**
+1. 🔴 HIGH Bakmie "Ayam Sambal Matah" rename via Admin UI — STILL pending; investigation showed recipe `46792d0b...` mis-attached to Bakmie menu_item, ingredients are Ricebowl. Recommend: Owner moves recipe to Ricebowl entry via Admin → Inventory → Resep tab edit, or rename Bakmie entry + re-import file 04+05 (Sesi 11 D2 plan).
+2. 🟡 First stock-take 160 ingredients (initial_stock=0 saat ini) — gunakan Admin → Inventory → Bahan tab → tap each ingredient → "Adjust Stock" untuk set count. Per ingredient.
+3. 🟡 Reorder threshold per ingredient — bisa via Admin UI yang sama, atau re-export dengan `npm run inventory:export` + edit `reorder_threshold` column di 01-ingredients.csv + re-import dengan `npm run inventory:import -- --apply` (existing M23.4 importer mendukung UPDATE pada threshold).
