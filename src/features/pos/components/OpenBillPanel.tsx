@@ -38,6 +38,9 @@ interface OpenBillPanelProps {
   /** Triggered when kasir taps Edit on a bill — parent should clone the
    * detail into a Draft and route to the cart panel for editing. */
   onEditBill: (trx: TransactionWithItems) => void;
+  /** Reports the current open-bills count up to the parent so the left-nav
+   * tab can render a badge without duplicating the fetch. */
+  onCountChange?: (count: number) => void;
 }
 
 const STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -56,6 +59,7 @@ export function OpenBillPanel({
   refreshKey,
   onOpenSettings,
   onEditBill,
+  onCountChange,
 }: OpenBillPanelProps) {
   const [bills, setBills] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,6 +89,7 @@ export function OpenBillPanel({
             new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
         );
         setBills(sorted);
+        onCountChange?.(sorted.length);
       }
       setLoading(false);
     }
@@ -92,7 +97,7 @@ export function OpenBillPanel({
     return () => {
       cancelled = true;
     };
-  }, [refreshKey, tick]);
+  }, [refreshKey, tick, onCountChange]);
 
   // Auto-refresh every 30s — multi-cashier sync (another kasir may close
   // a bill from a parallel device).

@@ -76,6 +76,7 @@ import {
 import {
   createTransaction,
   editOpenBill,
+  listTransactions,
   markServed,
   saveAsOpenBill,
   type PaymentMethod,
@@ -92,7 +93,7 @@ import {
 } from "@/lib/printer/print-transaction";
 import type { Discount } from "@/lib/money";
 import { formatRupiah } from "@/lib/format";
-import { formatIndonesianDateTime } from "@/lib/date";
+import { formatIndonesianDateTime, toJakartaDateOnly } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
 type RightPanelState =
@@ -112,6 +113,7 @@ export function PosShell() {
 
   const [tab, setTab] = useState<PosTab>("cashier");
   const [rightPanel, setRightPanel] = useState<RightPanelState>({ kind: "idle" });
+  const [openBillsCount, setOpenBillsCount] = useState(0);
 
   // Cart store
   const draftsRecord = useCartStore((s) => s.drafts);
@@ -231,6 +233,29 @@ export function PosShell() {
       cancelled = true;
     };
   }, [session]);
+
+  // Open-bills count for left-nav badge — refetched on every mount + when
+  // historyRefreshKey bumps (cart save, payment, void/refund). Keeps badge
+  // accurate even when user has never opened the Bill Aktif tab.
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    async function loadCount() {
+      const today = toJakartaDateOnly(new Date());
+      const res = await listTransactions({
+        from: `${today}T00:00:00.000Z`,
+        to: `${today}T23:59:59.999Z`,
+        status: "open",
+        limit: 100,
+      });
+      if (cancelled) return;
+      if (isOk(res)) setOpenBillsCount(res.data.items.length);
+    }
+    void loadCount();
+    return () => {
+      cancelled = true;
+    };
+  }, [session, historyRefreshKey]);
 
   useEffect(() => {
     if (!session) return;
@@ -737,6 +762,7 @@ export function PosShell() {
         onTabChange={setTab}
         onLogout={handleLogout}
         cashierBadge={drafts.length}
+        openBillsBadge={openBillsCount}
       />
 
       {/* MIDDLE COLUMN — content per tab */}
@@ -774,6 +800,7 @@ export function PosShell() {
               setTab("cashier");
               setRightPanel({ kind: "cart", draftId: id });
             }}
+            onCountChange={setOpenBillsCount}
           />
         ) : tab === "queue" ? (
           <OrderQueuePanel
