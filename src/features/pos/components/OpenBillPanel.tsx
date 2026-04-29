@@ -246,6 +246,11 @@ function BillCard({ summary, detail, nowTick, onPay }: BillCardProps) {
               <p className="text-xs text-neutral-500">
                 {formatIndonesianTime(summary.createdAt)} ·{" "}
                 {summary.orderType === "dine_in" ? "Dine-in" : "Takeaway"}
+                {summary.customerName ? (
+                  <span className="ml-1 font-medium text-neutral-800">
+                    · {summary.customerName}
+                  </span>
+                ) : null}
               </p>
               {detail ? (
                 <p className="mt-1 text-xs text-neutral-700 line-clamp-1">

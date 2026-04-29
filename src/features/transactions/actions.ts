@@ -220,6 +220,7 @@ export async function createTransaction(
           transactionNumber,
           pagerNumber: v.pagerNumber,
           orderType: v.orderType,
+          customerName: v.customerName ?? null,
           subtotal: validation.recomputedSubtotal,
           discountType: v.discountType,
           discountValue: v.discountValue,
@@ -681,6 +682,44 @@ export async function markServed(
   return ok(row);
 }
 
+// ---------- logTransactionReprint ----------
+
+/**
+ * Emit a `transaction.reprint` audit event. Called by HistoryDetailModal
+ * after a successful split-print on a historical transaction. No permission
+ * gate — any role that can view the transaction may reprint; audit log is
+ * passive observation for abuse detection (Galih ask #9).
+ */
+export async function logTransactionReprint(
+  transactionId: string,
+  sections: ReadonlyArray<"customer" | "kitchen" | "bar">,
+): Promise<ApiResult<void>> {
+  const session = await requireSession();
+  const trx = await fetchTransactionById(transactionId);
+  if (!trx) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+
+  await logAudit({
+    eventType: "transaction.reprint",
+    userId: session.user.id,
+    entityType: "transaction",
+    entityId: trx.id,
+    payload: {
+      summary: `Cetak ulang TRX ${trx.transactionNumber} (${sections.join(", ")})`,
+      context: {
+        transactionNumber: trx.transactionNumber,
+        sections: [...sections],
+        status: trx.status,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  });
+
+  return ok(undefined);
+}
+
 // ---------- Open Bills (saveAsOpenBill + closeOpenBill) ----------
 
 /**
@@ -707,6 +746,7 @@ export async function saveAsOpenBill(
     cashierId: input.cashierId,
     pagerNumber: input.pagerNumber,
     orderType: input.orderType,
+    customerName: input.customerName,
     items: input.items,
     subtotal: input.subtotal,
     discountType: input.discountType,

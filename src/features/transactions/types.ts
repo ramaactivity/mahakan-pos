@@ -79,6 +79,9 @@ export interface CreateTransactionInput {
   cashierId: string;
   pagerNumber: number;
   orderType: OrderType;
+  /** Optional free-form label — customer name, "Meja 5", "Gojek", etc.
+   * Helps kasir + dapur call out by name instead of pager number. */
+  customerName?: string | null;
   items: CreateTransactionItemInput[];
   /** Client-claimed; server recomputes and rejects mismatch. */
   subtotal: number;
@@ -119,6 +122,7 @@ export interface SaveOpenBillInput {
   cashierId: string;
   pagerNumber: number;
   orderType: OrderType;
+  customerName?: string | null;
   items: CreateTransactionItemInput[];
   subtotal: number;
   discountType: DiscountType | null;

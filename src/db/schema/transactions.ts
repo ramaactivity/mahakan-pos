@@ -71,6 +71,8 @@ export const transactions = pgTable(
 
     servedAt: timestamp("served_at", { withTimezone: true }),
 
+    customerName: text("customer_name"),
+
     customerId: uuid("customer_id"),
     loyaltyPointsEarned: integer("loyalty_points_earned"),
 

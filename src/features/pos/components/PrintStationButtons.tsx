@@ -24,6 +24,9 @@ interface PrintStationButtonsProps {
   size?: "sm" | "md";
   /** Layout — "row" = 4 buttons in a row; "grid" = 2x2 on mobile, row on lg. */
   layout?: "row" | "grid";
+  /** Called after a successful print, with the section key + sections. Used
+   * by HistoryDetailModal to emit `transaction.reprint` audit events. */
+  onAfterPrint?: (key: SectionKey, sections: TicketSection[]) => void;
   className?: string;
 }
 
@@ -50,6 +53,7 @@ export function PrintStationButtons({
   onOpenSettings,
   size = "sm",
   layout = "grid",
+  onAfterPrint,
   className,
 }: PrintStationButtonsProps) {
   const [activeSection, setActiveSection] = useState<SectionKey | null>(null);
@@ -66,6 +70,7 @@ export function PrintStationButtons({
     );
     setActiveSection(null);
     if (outcome.ok) {
+      onAfterPrint?.(key, sections);
       toast.success(`${SECTION_LABEL[key]} dicetak`);
       return;
     }

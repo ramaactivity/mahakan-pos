@@ -25,6 +25,7 @@ export {
   createTransaction,
   getTransaction,
   listTransactions,
+  logTransactionReprint,
   markServed,
   refundTransaction,
   saveAsOpenBill,

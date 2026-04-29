@@ -51,6 +51,8 @@ export interface ReceiptData {
   orderType: "dine_in" | "takeaway";
   createdAt: Date | string;
   cashierName: string;
+  /** Optional free-form label — customer name, "Meja 5", "Gojek". */
+  customerName?: string | null;
   items: ReceiptItem[];
   subtotal: number;
   discountAmount: number;
@@ -128,6 +130,9 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
     ),
   );
   parts.push(text(`Kasir: ${d.cashierName}\n`));
+  if (d.customerName && d.customerName.trim().length > 0) {
+    parts.push(text(`Nama : ${truncate(d.customerName.trim(), 25)}\n`));
+  }
   parts.push(divider("-", COLS));
 
   // Items — bold name on own line, mods/notes indented with "- ", price line

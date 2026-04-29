@@ -36,6 +36,9 @@ export interface PrepTicketData {
   orderType: "dine_in" | "takeaway";
   createdAt: Date | string;
   cashierName: string;
+  /** Optional free-form label — customer name, "Meja 5", "Gojek". Printed
+   * prominently so prep staff can call out by name when pager is misplaced. */
+  customerName?: string | null;
   items: PrepTicketItem[];
 }
 
@@ -86,6 +89,12 @@ export function buildPrepTicket(
       }\n`,
     ),
   );
+  // Customer name (if any) under the pager line, same emphasis size so
+  // staff see it at a glance when calling out the order.
+  if (d.customerName && d.customerName.trim().length > 0) {
+    const trimmed = d.customerName.trim();
+    parts.push(text(`${trimmed.length > 16 ? trimmed.slice(0, 16) : trimmed}\n`));
+  }
   parts.push(sizeReset());
 
   parts.push(align("left"));

@@ -454,6 +454,7 @@ export function PosShell() {
       cashierId: session.user.id,
       pagerNumber: activeDraft.pagerNumber,
       orderType: activeDraft.orderType,
+      customerName: activeDraft.customerName,
       items: activeDraft.items.map((item) => ({
         menuItemId: item.menuItemId,
         variant: item.variant,
@@ -507,6 +508,7 @@ export function PosShell() {
       cashierId: session!.user.id,
       pagerNumber: activeDraft.pagerNumber,
       orderType: activeDraft.orderType,
+      customerName: activeDraft.customerName,
       items: activeDraft.items.map((item) => ({
         menuItemId: item.menuItemId,
         variant: item.variant,
@@ -820,6 +822,7 @@ export function PosShell() {
         trxId={historyDetailId}
         viewerRole={session.user.role}
         viewerUserId={session.user.id}
+        receiptConfig={receiptConfig}
         onClose={() => setHistoryDetailId(null)}
         onChanged={() => setHistoryRefreshKey((k) => k + 1)}
         onOpenSettings={() => setTab("settings")}
@@ -1064,10 +1067,17 @@ function CartPanelImpl({
           >
             <ArrowLeft className="size-4" aria-hidden />
           </button>
-          <h2 className="flex items-center gap-2 text-base font-semibold text-neutral-900 min-w-0">
-            <ShoppingCart className="size-5 shrink-0" aria-hidden />
-            <span className="truncate">Order Aktif</span>
-          </h2>
+          <div className="min-w-0">
+            <h2 className="flex items-center gap-2 text-base font-semibold text-neutral-900">
+              <ShoppingCart className="size-5 shrink-0" aria-hidden />
+              <span className="truncate">Order Aktif</span>
+            </h2>
+            {draft.customerName ? (
+              <p className="ml-7 truncate text-xs font-medium text-neutral-700">
+                {draft.customerName}
+              </p>
+            ) : null}
+          </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <Badge variant="signature">
@@ -1382,6 +1392,9 @@ function PaidPanel({
             right={trx.orderType === "dine_in" ? "Dine-in" : "Takeaway"}
           />
           <Line left="Pager" right={String(trx.pagerNumber)} />
+          {trx.customerName ? (
+            <Line left="Nama" right={trx.customerName} />
+          ) : null}
           <Line left="Waktu" right={formatIndonesianDateTime(trx.createdAt)} />
           <div className="my-2 border-t border-dashed border-neutral-300" />
           <div className="space-y-1">

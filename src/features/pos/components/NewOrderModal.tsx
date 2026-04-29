@@ -17,6 +17,7 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
   const startDraft = useCartStore((s) => s.startDraft);
 
   const [pager, setPager] = useState("");
+  const [customerName, setCustomerName] = useState("");
   const [orderType, setOrderType] = useState<OrderType>("takeaway");
   const [error, setError] = useState<string | null>(null);
 
@@ -27,10 +28,12 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
     const active = useCartStore.getState().drafts;
     const used = Object.values(active).map((d) => d.pagerNumber);
     const next = used.length === 0 ? 1 : Math.min(99, Math.max(...used) + 1);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    /* eslint-disable react-hooks/set-state-in-effect */
     setPager(String(next));
+    setCustomerName("");
     setOrderType("takeaway");
     setError(null);
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [open]);
 
   function onSubmit() {
@@ -39,7 +42,7 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
       setError("Pager harus angka 1-99");
       return;
     }
-    const id = startDraft(num, orderType);
+    const id = startDraft(num, orderType, customerName || null);
     onCreated(id);
   }
 
@@ -73,6 +76,15 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
           }}
           placeholder="1-99"
           autoFocus
+        />
+        <Input
+          label="Nama Customer (opsional)"
+          type="text"
+          value={customerName}
+          onChange={(e) => setCustomerName(e.target.value.slice(0, 60))}
+          placeholder="mis. Andi / Meja 5 / Gojek"
+          maxLength={60}
+          hint="Bantu kasir + dapur call out by name. Boleh diisi label apa saja."
         />
         <div className="space-y-1.5">
           <span className="block text-sm font-medium text-neutral-900">

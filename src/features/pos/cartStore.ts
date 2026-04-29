@@ -58,9 +58,14 @@ interface CartStore {
   drafts: Record<string, Draft>;
 
   // Lifecycle
-  startDraft: (pagerNumber: number, orderType: OrderType) => string;
+  startDraft: (
+    pagerNumber: number,
+    orderType: OrderType,
+    customerName?: string | null,
+  ) => string;
   loadDraftFromTransaction: () => never; // placeholder for future re-edit
   removeDraft: (draftId: string) => void;
+  setCustomerName: (draftId: string, customerName: string | null) => void;
 
   // Items
   addItem: (
@@ -98,13 +103,15 @@ interface CartStore {
 export const useCartStore = create<CartStore>((set, get) => ({
   drafts: {},
 
-  startDraft: (pagerNumber, orderType) => {
+  startDraft: (pagerNumber, orderType, customerName) => {
     const id = genDraftId();
     const now = new Date().toISOString();
+    const trimmed = customerName?.trim();
     const draft: Draft = {
       id,
       pagerNumber,
       orderType,
+      customerName: trimmed && trimmed.length > 0 ? trimmed : null,
       items: [],
       discount: null,
       discountReason: null,
@@ -125,6 +132,22 @@ export const useCartStore = create<CartStore>((set, get) => ({
       const next = { ...state.drafts };
       delete next[draftId];
       return { drafts: next };
+    }),
+
+  setCustomerName: (draftId, customerName) =>
+    set((state) => {
+      const draft = state.drafts[draftId];
+      if (!draft) return state;
+      const trimmed = customerName?.trim();
+      return {
+        drafts: {
+          ...state.drafts,
+          [draftId]: {
+            ...draft,
+            customerName: trimmed && trimmed.length > 0 ? trimmed : null,
+          },
+        },
+      };
     }),
 
   addItem: (draftId, item) =>

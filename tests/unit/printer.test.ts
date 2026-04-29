@@ -261,6 +261,29 @@ describe("buildReceipt", () => {
     const t = decode(buildReceipt(sample({ footerText: null })));
     expect(t).not.toContain("Terima kasih");
   });
+
+  it("renders customer name when provided", () => {
+    const t = decode(buildReceipt(sample({ customerName: "Andi" })));
+    expect(t).toContain("Nama : Andi");
+  });
+
+  it("omits customer name line when null/undefined/empty", () => {
+    expect(decode(buildReceipt(sample()))).not.toContain("Nama :");
+    expect(decode(buildReceipt(sample({ customerName: null })))).not.toContain(
+      "Nama :",
+    );
+    expect(decode(buildReceipt(sample({ customerName: "   " })))).not.toContain(
+      "Nama :",
+    );
+  });
+
+  it("truncates very long customer name with .. ellipsis", () => {
+    const long = "A very long customer label that exceeds twenty-five chars";
+    const t = decode(buildReceipt(sample({ customerName: long })));
+    const match = t.match(/Nama : (.+)/);
+    expect(match?.[1].length).toBeLessThanOrEqual(25);
+    expect(match?.[1]).toContain("..");
+  });
 });
 
 function decode(bytes: Uint8Array): string {

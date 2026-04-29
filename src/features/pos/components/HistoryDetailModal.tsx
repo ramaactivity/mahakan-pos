@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Ban, CheckCircle2, Printer, RotateCcw } from "lucide-react";
+import { Ban, CheckCircle2, RotateCcw } from "lucide-react";
 import {
   Badge,
   Button,
@@ -11,16 +11,21 @@ import {
   toast,
 } from "@/components/ui";
 import { ApproverOverrideModal } from "./ApproverOverrideModal";
+import { PrintStationButtons } from "./PrintStationButtons";
 import {
   isOk,
   getTransaction,
+  logTransactionReprint,
   voidTransaction,
   refundTransaction,
   markServed,
   type TransactionWithItems,
 } from "@/features/transactions";
 import { useSession } from "@/features/auth/SessionProvider";
-import { printTransactionReceipt } from "@/lib/printer/print-transaction";
+import type {
+  ReceiptConfig,
+  TicketSection,
+} from "@/lib/printer/print-transaction";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime, toJakartaDateOnly } from "@/lib/date";
 import type { Role } from "@/lib/auth";
@@ -46,6 +51,9 @@ interface HistoryDetailModalProps {
   /** Active session role to scope which actions need PIN approval. */
   viewerRole: Role;
   viewerUserId: string;
+  /** Outlet-driven receipt config (header/wifi/footer) — propagated from
+   * PosShell so reprints match the auto-print format on payment. */
+  receiptConfig: ReceiptConfig | null;
   onClose: () => void;
   /** Called when transaction state changes (void/refund/serve) — parent should refresh list. */
   onChanged: () => void;
@@ -57,6 +65,7 @@ export function HistoryDetailModal({
   open,
   trxId,
   viewerRole,
+  receiptConfig,
   onClose,
   onChanged,
   onOpenSettings,
@@ -64,32 +73,13 @@ export function HistoryDetailModal({
   const { session } = useSession();
   const [trx, setTrx] = useState<TransactionWithItems | null>(null);
   const [loading, setLoading] = useState(true);
-  const [reprinting, setReprinting] = useState(false);
 
-  async function handleReprint() {
-    if (!trx || reprinting) return;
-    setReprinting(true);
-    const outcome = await printTransactionReceipt(
-      trx,
-      session?.user.name ?? "Kasir",
-    );
-    setReprinting(false);
-    if (outcome.ok) {
-      toast.success("Struk dicetak ulang");
-    } else if (outcome.reason === "not_paired") {
-      toast.error("Printer belum di-pair", {
-        description: "Pasangkan printer di tab Pengaturan dulu.",
-        action: {
-          label: "Buka",
-          onClick: () => {
-            onClose();
-            onOpenSettings();
-          },
-        },
-      });
-    } else {
-      toast.error(outcome.message);
-    }
+  function handleReprintLogged(_key: string, sections: TicketSection[]) {
+    if (!trx) return;
+    // Fire-and-forget — audit log shouldn't block kasir from continuing.
+    void logTransactionReprint(trx.id, sections).catch((e) => {
+      console.error("[reprint audit]", e);
+    });
   }
 
   const [actionModal, setActionModal] = useState<ActionType | null>(null);
@@ -222,7 +212,7 @@ export function HistoryDetailModal({
           trx
             ? `Pager ${trx.pagerNumber} · ${
                 trx.orderType === "dine_in" ? "Dine-in" : "Takeaway"
-              } · ${formatIndonesianDateTime(trx.createdAt)}`
+              }${trx.customerName ? ` · ${trx.customerName}` : ""} · ${formatIndonesianDateTime(trx.createdAt)}`
             : undefined
         }
         size="lg"
@@ -323,15 +313,25 @@ export function HistoryDetailModal({
               ) : null}
             </div>
 
-            <div className="flex flex-wrap gap-2 border-t border-neutral-200 pt-3">
-              <Button
-                variant="outline"
+            <div className="space-y-2 border-t border-neutral-200 pt-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+                Cetak Ulang
+              </p>
+              <PrintStationButtons
+                trx={trx}
+                cashierName={session?.user.name ?? "Kasir"}
+                receiptConfig={receiptConfig}
+                onOpenSettings={() => {
+                  onClose();
+                  onOpenSettings();
+                }}
+                onAfterPrint={handleReprintLogged}
                 size="sm"
-                loading={reprinting}
-                onClick={handleReprint}
-              >
-                <Printer className="size-4" aria-hidden /> Cetak Ulang
-              </Button>
+                layout="row"
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2 border-t border-neutral-200 pt-3">
               {trx.servedAt === null && trx.status === "paid" ? (
                 <Button
                   size="sm"

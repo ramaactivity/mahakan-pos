@@ -26,6 +26,12 @@ export const createTransactionSchema = z.object({
   cashierId: z.uuid(),
   pagerNumber: z.number().int().min(1).max(99),
   orderType: z.enum(["dine_in", "takeaway"]),
+  customerName: z
+    .string()
+    .trim()
+    .max(60)
+    .nullish()
+    .transform((s) => (s && s.length > 0 ? s : null)),
   items: z.array(itemSchema).min(1).max(50),
   subtotal: moneySchema,
   discountType: z.enum(["percent", "fixed"]).nullable(),

@@ -179,4 +179,24 @@ describe("buildPrepTicket", () => {
     const decoded = new TextDecoder("utf-8").decode(buildPrepTicket(d, "kitchen")!);
     expect(decoded).toContain("Total 2 item");
   });
+
+  it("renders customer name beneath pager when provided", () => {
+    const d: PrepTicketData = {
+      ...data([item({ name: "Ayam", categoryName: "Ricebowl" })]),
+      customerName: "Pak Andi",
+    };
+    const decoded = new TextDecoder("utf-8").decode(
+      buildPrepTicket(d, "kitchen")!,
+    );
+    expect(decoded).toContain("Pak Andi");
+  });
+
+  it("omits customer name line when null/undefined/empty on prep ticket", () => {
+    const d = data([item({ name: "Ayam", categoryName: "Ricebowl" })]);
+    const decoded = new TextDecoder("utf-8").decode(
+      buildPrepTicket(d, "kitchen")!,
+    );
+    // baseline data() does not set customerName; ensure no leftover label sneaks in.
+    expect(decoded).not.toMatch(/Pak/);
+  });
 });

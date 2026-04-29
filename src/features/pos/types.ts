@@ -39,6 +39,8 @@ export interface Draft {
   id: string;
   pagerNumber: number;
   orderType: OrderType;
+  /** Optional free-form label — customer name, "Meja 5", "Gojek". */
+  customerName: string | null;
   items: CartLineItem[];
   discount: Discount | null;
   discountReason: string | null;

@@ -81,6 +81,7 @@ function buildCustomerBytes(
     orderType: trx.orderType,
     createdAt: trx.createdAt,
     cashierName,
+    customerName: trx.customerName,
     items: trx.items.map((item) => ({
       name: item.itemName,
       variant: item.variant,
@@ -124,6 +125,7 @@ function buildPrepBytes(
       orderType: trx.orderType,
       createdAt: trx.createdAt,
       cashierName,
+      customerName: trx.customerName,
       items: trx.items.map((item) => ({
         name: item.itemName,
         variant: item.variant,
