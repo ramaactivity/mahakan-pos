@@ -10,7 +10,6 @@ import { formatIndonesianDateTime } from "@/lib/date";
 import {
   align,
   bold,
-  centerLine,
   concat,
   cut,
   divider,
@@ -94,7 +93,7 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
     parts.push(align("center"));
     for (const line of d.headerLines) {
       const trimmed = line.trim();
-      if (trimmed.length > 0) parts.push(centerLine(trimmed, COLS));
+      if (trimmed.length > 0) parts.push(text(`${trimmed}\n`));
     }
     parts.push(text("\n"));
   }
@@ -109,10 +108,10 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   parts.push(bold(false));
   if (d.outletAddress) {
     for (const line of wrapAddress(d.outletAddress)) {
-      parts.push(centerLine(line, COLS));
+      parts.push(text(`${line}\n`));
     }
   }
-  if (d.outletPhone) parts.push(centerLine(d.outletPhone, COLS));
+  if (d.outletPhone) parts.push(text(`${d.outletPhone}\n`));
 
   parts.push(align("left"));
   parts.push(divider("=", COLS));
@@ -149,6 +148,7 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   if (d.customerName && d.customerName.trim().length > 0) {
     parts.push(text(`Nama : ${truncate(d.customerName.trim(), 25)}\n`));
   }
+  parts.push(text("\n"));
   parts.push(divider("-", COLS));
 
   // Items — bold name on own line, mods/notes indented with "- ", price line
@@ -232,7 +232,7 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
     parts.push(text("MEMBER\n"));
     parts.push(bold(false));
     if (d.memberPhone && d.memberPhone.trim().length > 0) {
-      parts.push(centerLine(d.memberPhone, COLS));
+      parts.push(text(`${d.memberPhone}\n`));
     }
     parts.push(align("left"));
     if (d.pointsRedeemed && d.pointsRedeemed > 0) {
@@ -257,20 +257,20 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
     parts.push(divider("=", COLS));
     parts.push(align("center"));
     if (hasFooterText) {
-      parts.push(centerLine(d.footerText!, COLS));
+      parts.push(text(`${d.footerText!}\n`));
     }
     if (hasWifi) {
       parts.push(text("\n"));
-      parts.push(centerLine("WiFi", COLS));
-      parts.push(centerLine(`SSID: ${d.wifiSsid}`, COLS));
+      parts.push(text("WiFi\n"));
+      parts.push(text(`SSID: ${d.wifiSsid}\n`));
       if (d.wifiPassword && d.wifiPassword.trim().length > 0) {
-        parts.push(centerLine(`Password: ${d.wifiPassword}`, COLS));
+        parts.push(text(`Password: ${d.wifiPassword}\n`));
       }
     }
     if (extraLines.length > 0) {
       parts.push(text("\n"));
       for (const line of extraLines) {
-        parts.push(centerLine(line.trim(), COLS));
+        parts.push(text(`${line.trim()}\n`));
       }
     }
     parts.push(align("left"));
