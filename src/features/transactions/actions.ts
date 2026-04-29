@@ -28,6 +28,113 @@ import {
   findOrCreateCustomer,
 } from "@/features/customers";
 import {
+  consumeApprovalCode,
+  isOk as isApprovalOk,
+  type ApprovalActionType,
+} from "@/features/approval-codes";
+import { isNull } from "drizzle-orm";
+import { outlets, users } from "@/db/schema";
+import { asc } from "drizzle-orm";
+
+/**
+ * Determine which approval mode applies for void/refund at this outlet.
+ * Default "pin" so legacy ApproverOverrideModal stays the field-test path.
+ * Owner flips to "code" via outlet settings when ready.
+ */
+async function resolveApprovalMode(
+  outletId: string,
+  kind: "void" | "refund",
+): Promise<"pin" | "code"> {
+  const [outlet] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, outletId))
+    .limit(1);
+  const approval = (outlet?.settings as
+    | { approval?: { voidMode?: "pin" | "code"; refundMode?: "pin" | "code" } }
+    | null)?.approval;
+  const mode =
+    kind === "void" ? approval?.voidMode : approval?.refundMode;
+  return mode === "code" ? "code" : "pin";
+}
+
+/**
+ * Resolve the active Owner user-id for code-mode approver attribution.
+ * The Owner is who issued the email and forwarded the code; staff just
+ * relays it. Returns null if no active Owner found (shouldn't happen).
+ */
+async function resolveActiveOwnerId(outletId: string): Promise<string | null> {
+  const [owner] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(
+      and(
+        eq(users.outletId, outletId),
+        eq(users.role, "owner"),
+        eq(users.status, "active"),
+        isNull(users.deletedAt),
+      ),
+    )
+    .orderBy(asc(users.createdAt))
+    .limit(1);
+  return owner?.id ?? null;
+}
+
+/**
+ * Authorize a void/refund based on outlet's approval mode. Returns the
+ * `approverId` to record on the transaction + ok flag, or fails the
+ * current action with a typed result.
+ */
+async function authorizeVoidRefund(
+  outletId: string,
+  transactionId: string,
+  actionType: ApprovalActionType,
+  v: { approverToken?: string; approvalCode?: string },
+): Promise<
+  | { ok: true; approverId: string | null }
+  | { ok: false; code: string; message: string }
+> {
+  const kind = actionType === "pos.transaction.void" ? "void" : "refund";
+  const mode = await resolveApprovalMode(outletId, kind);
+  if (mode === "code") {
+    if (!v.approvalCode) {
+      return {
+        ok: false,
+        code: "APPROVAL_CODE_REQUIRED",
+        message: `${kind === "void" ? "Void" : "Refund"} butuh kode approval dari Owner`,
+      };
+    }
+    const res = await consumeApprovalCode(transactionId, actionType, v.approvalCode);
+    if (!isApprovalOk(res)) {
+      return { ok: false, code: res.error.code, message: res.error.message };
+    }
+    const ownerId = await resolveActiveOwnerId(outletId);
+    return { ok: true, approverId: ownerId };
+  }
+  // Legacy pin mode
+  if (!v.approverToken) {
+    return {
+      ok: false,
+      code: "APPROVER_REQUIRED",
+      message: `${kind === "void" ? "Void" : "Refund"} butuh PIN approver`,
+    };
+  }
+  try {
+    const consumed = await consumeApproverToken(
+      v.approverToken,
+      actionType,
+      transactionId,
+    );
+    return { ok: true, approverId: consumed.approverId };
+  } catch (e) {
+    return {
+      ok: false,
+      code: "APPROVER_TOKEN_INVALID",
+      message: e instanceof Error ? e.message : "Token gagal",
+    };
+  }
+}
+import {
   fetchTransactionByClientRefId,
   fetchTransactionById,
   fetchTransactions,
@@ -542,30 +649,23 @@ export async function voidTransaction(
   }
   const v = parsed.data;
 
-  // Authorization: ALL roles require an approver PIN. Owner/Manager can
-  // approve their own action (self-approval) — but the deliberate two-step
-  // ritual reduces accidental void clicks and gives audit log a clean
-  // approver record per Galih's request.
-  if (!hasPermission(session.user.role, "pos.transaction.void")) {
-    return fail("FORBIDDEN", "Tidak punya hak void");
+  // Authorization: outlet flag picks PIN-mode (legacy ApproverOverrideModal,
+  // Owner+Manager) or code-mode (Owner-only via emailed 6-digit). Anyone with
+  // request perm can call; the helper returns approverId or a failure.
+  // RBAC pre-check: in PIN mode, current pos.transaction.void perm gates;
+  // in code mode, the .request perm gates initiation (already enforced when
+  // requestApprovalCode was called). Either path produces a valid token/code
+  // pre-call here; we just need the user to have *some* role.
+  const auth_ = await authorizeVoidRefund(
+    session.user.outletId,
+    v.transactionId,
+    "pos.transaction.void",
+    v,
+  );
+  if (!auth_.ok) {
+    return fail(auth_.code, auth_.message);
   }
-  if (!v.approverToken) {
-    return fail("APPROVER_REQUIRED", "Void butuh PIN approver");
-  }
-  let approverId: string | null = null;
-  try {
-    const consumed = await consumeApproverToken(
-      v.approverToken,
-      "pos.transaction.void",
-      v.transactionId,
-    );
-    approverId = consumed.approverId;
-  } catch (e) {
-    return fail(
-      "APPROVER_TOKEN_INVALID",
-      e instanceof Error ? e.message : "Token gagal",
-    );
-  }
+  const approverId = auth_.approverId;
 
   const [current] = await db
     .select()
@@ -654,29 +754,17 @@ export async function refundTransaction(
   }
   const v = parsed.data;
 
-  // ALL roles require approver PIN — same rationale as void (deliberate
-  // two-step + clean audit trail per Galih's request). Owner/Manager can
-  // self-approve.
-  if (!hasPermission(session.user.role, "pos.transaction.refund")) {
-    return fail("FORBIDDEN", "Tidak punya hak refund");
+  // Authorization: outlet flag picks PIN-mode or code-mode. See helper.
+  const auth_ = await authorizeVoidRefund(
+    session.user.outletId,
+    v.transactionId,
+    "pos.transaction.refund",
+    v,
+  );
+  if (!auth_.ok) {
+    return fail(auth_.code, auth_.message);
   }
-  if (!v.approverToken) {
-    return fail("APPROVER_REQUIRED", "Refund butuh PIN approver");
-  }
-  let approverId: string | null = null;
-  try {
-    const consumed = await consumeApproverToken(
-      v.approverToken,
-      "pos.transaction.refund",
-      v.transactionId,
-    );
-    approverId = consumed.approverId;
-  } catch (e) {
-    return fail(
-      "APPROVER_TOKEN_INVALID",
-      e instanceof Error ? e.message : "Token gagal",
-    );
-  }
+  const approverId = auth_.approverId;
 
   const [current] = await db
     .select()

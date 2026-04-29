@@ -154,6 +154,10 @@ export function PosShell() {
   // Outlet receipt config — fetched once at mount; threaded to all print
   // call sites so footer/header/wifi edits at admin Settings take effect
   // without a tab reload.
+  const [approvalModes, setApprovalModes] = useState<{
+    voidMode: "pin" | "code";
+    refundMode: "pin" | "code";
+  }>({ voidMode: "pin", refundMode: "pin" });
   const [receiptConfig, setReceiptConfig] = useState<ReceiptConfig | null>(
     null,
   );
@@ -236,6 +240,11 @@ export function PosShell() {
       if (cancelled) return;
       if (res.success === true) {
         setReceiptConfig(outletToReceiptConfig(res.data));
+        const approval = res.data.settings?.approval;
+        setApprovalModes({
+          voidMode: approval?.voidMode === "code" ? "code" : "pin",
+          refundMode: approval?.refundMode === "code" ? "code" : "pin",
+        });
       }
     }
     void loadOutlet();
@@ -967,6 +976,7 @@ export function PosShell() {
         viewerRole={session.user.role}
         viewerUserId={session.user.id}
         receiptConfig={receiptConfig}
+        approvalModes={approvalModes}
         onClose={() => setHistoryDetailId(null)}
         onChanged={() => setHistoryRefreshKey((k) => k + 1)}
         onOpenSettings={() => setTab("settings")}

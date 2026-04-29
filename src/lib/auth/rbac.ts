@@ -88,6 +88,7 @@ export const permissions = {
   "settings.receipt.update": ["owner", "manager"],
   "settings.thresholds.update": ["owner"],
   "settings.features.update": ["owner"],
+  "settings.approval.update": ["owner"],
 
   // Inventory (Phase 2 Tier 1.1)
   "inventory.ingredient.view": ["owner", "manager"],
@@ -117,6 +118,22 @@ export const permissions = {
   "customer.view": ["owner", "manager"],
   "customer.create": ["owner", "manager", "staff"],
   "customer.update": ["owner", "manager"],
+
+  // Sesi B-2 — Owner-only approval code mechanism for void/refund.
+  // *.request perms let any role INITIATE the request (which generates
+  // + emails the code). The void/refund authorization itself is owner-only
+  // when outlet's voidMode/refundMode = "code"; with the legacy "pin" mode,
+  // the existing pos.transaction.* perms apply. Action layer reads the
+  // outlet flag and chooses which path to enforce.
+  "pos.transaction.void.request": ["owner", "manager", "staff"],
+  "pos.transaction.refund.request": ["owner", "manager", "staff"],
+  /** Code-mode void authorization. Owner-only when flag is "code". */
+  "pos.transaction.void.code": ["owner"],
+  /** Code-mode refund authorization. Owner-only when flag is "code". */
+  "pos.transaction.refund.code": ["owner"],
+  /** View + revoke active approval codes (admin panel). */
+  "approval_code.view": ["owner"],
+  "approval_code.revoke": ["owner"],
 } as const satisfies Record<string, ReadonlyArray<Role>>;
 
 export type Permission = keyof typeof permissions;

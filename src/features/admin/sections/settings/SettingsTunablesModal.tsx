@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button, Input, Modal, toast } from "@/components/ui";
 import {
   isOk,
+  updateApproval,
   updateFeatures,
   updateReceiptSettings,
   updateThresholds,
@@ -29,11 +30,19 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     showQrRating: outlet.settings?.receipt?.showQrRating ?? false,
     variance: outlet.settings?.thresholds?.shiftVarianceAlert ?? 10_000,
     showHpp: outlet.settings?.features?.showHppToStaff ?? false,
-  };
+    voidMode: outlet.settings?.approval?.voidMode === "code" ? "code" : "pin",
+    refundMode: outlet.settings?.approval?.refundMode === "code" ? "code" : "pin",
+    notifyEmail: outlet.settings?.approval?.notifyEmail ?? "",
+  } as const;
   const [footer, setFooter] = useState(initial.footerText);
   const [showQr, setShowQr] = useState(initial.showQrRating);
   const [variance, setVariance] = useState(String(initial.variance));
   const [showHpp, setShowHpp] = useState(initial.showHpp);
+  const [voidCodeMode, setVoidCodeMode] = useState(initial.voidMode === "code");
+  const [refundCodeMode, setRefundCodeMode] = useState(
+    initial.refundMode === "code",
+  );
+  const [notifyEmail, setNotifyEmail] = useState(initial.notifyEmail);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,6 +53,9 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setShowQr(initial.showQrRating);
     setVariance(String(initial.variance));
     setShowHpp(initial.showHpp);
+    setVoidCodeMode(initial.voidMode === "code");
+    setRefundCodeMode(initial.refundMode === "code");
+    setNotifyEmail(initial.notifyEmail);
     setError(null);
     setSubmitting(false);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -106,6 +118,27 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
         return;
       }
       last = r3.data;
+    }
+
+    const wantVoidMode = voidCodeMode ? "code" : "pin";
+    const wantRefundMode = refundCodeMode ? "code" : "pin";
+    const wantNotifyEmail = notifyEmail.trim();
+    if (
+      wantVoidMode !== initial.voidMode ||
+      wantRefundMode !== initial.refundMode ||
+      wantNotifyEmail !== initial.notifyEmail
+    ) {
+      const r4 = await updateApproval({
+        voidMode: wantVoidMode,
+        refundMode: wantRefundMode,
+        notifyEmail: wantNotifyEmail || undefined,
+      });
+      if (!isOk(r4)) {
+        setError(r4.error.message);
+        setSubmitting(false);
+        return;
+      }
+      last = r4.data;
     }
 
     if (last) {
@@ -184,6 +217,48 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
             checked={showHpp}
             onChange={setShowHpp}
           />
+        </section>
+
+        <section>
+          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-mahakan-green-900">
+            Approval Void / Refund
+          </h3>
+          <p className="mb-2 text-xs text-neutral-500">
+            Mode <strong>PIN</strong>: Manager / Owner approve via PIN di tablet
+            kasir (legacy). Mode <strong>Kode Email</strong>: kode 6-digit
+            single-use dikirim ke email Owner, Owner forward via WA — fraud
+            harder, butuh email connectivity.
+          </p>
+          <div className="space-y-2">
+            <ToggleRow
+              label="Void pakai Kode Email (Owner-only)"
+              hint={
+                voidCodeMode
+                  ? "Aktif — kasir minta kode dari Owner via email."
+                  : "PIN mode — Manager / Owner approve langsung di tablet."
+              }
+              checked={voidCodeMode}
+              onChange={setVoidCodeMode}
+            />
+            <ToggleRow
+              label="Refund pakai Kode Email (Owner-only)"
+              hint={
+                refundCodeMode
+                  ? "Aktif — kasir minta kode dari Owner via email."
+                  : "PIN mode — Manager / Owner approve langsung di tablet."
+              }
+              checked={refundCodeMode}
+              onChange={setRefundCodeMode}
+            />
+            <Input
+              label="Email override (opsional)"
+              type="email"
+              value={notifyEmail}
+              onChange={(e) => setNotifyEmail(e.target.value)}
+              placeholder="ex: approval@mahakancoffee.id"
+              hint="Default: email Owner pertama yang aktif. Isi kalau approval mau dikirim ke email khusus."
+            />
+          </div>
         </section>
 
         {error ? (

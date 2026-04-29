@@ -11,6 +11,7 @@ import {
   toast,
 } from "@/components/ui";
 import { ApproverOverrideModal } from "./ApproverOverrideModal";
+import { ApprovalCodeModal } from "./ApprovalCodeModal";
 import { PrintStationButtons } from "./PrintStationButtons";
 import {
   isOk,
@@ -54,6 +55,9 @@ interface HistoryDetailModalProps {
   /** Outlet-driven receipt config (header/wifi/footer) — propagated from
    * PosShell so reprints match the auto-print format on payment. */
   receiptConfig: ReceiptConfig | null;
+  /** Outlet flag — picks between legacy PIN approval modal vs new
+   * Owner-only email-code modal. Default "pin" preserves field-test path. */
+  approvalModes: { voidMode: "pin" | "code"; refundMode: "pin" | "code" };
   onClose: () => void;
   /** Called when transaction state changes (void/refund/serve) — parent should refresh list. */
   onChanged: () => void;
@@ -66,6 +70,7 @@ export function HistoryDetailModal({
   trxId,
   viewerRole,
   receiptConfig,
+  approvalModes,
   onClose,
   onChanged,
   onOpenSettings,
@@ -89,6 +94,7 @@ export function HistoryDetailModal({
   const [error, setError] = useState<string | null>(null);
 
   const [approverOpen, setApproverOpen] = useState(false);
+  const [codeModalOpen, setCodeModalOpen] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<{
     actionType: ActionType;
     finalReason: string;
@@ -133,17 +139,25 @@ export function HistoryDetailModal({
   async function performAction(
     actionType: ActionType,
     reasonText: string,
-    approver?: { approverId: string; token: string },
+    approver?:
+      | { kind: "pin"; approverId: string; token: string }
+      | { kind: "code"; code: string },
   ) {
     if (!trx) return;
     setSubmitting(true);
     setError(null);
 
+    const authPayload = approver
+      ? approver.kind === "pin"
+        ? { approverToken: approver.token }
+        : { approvalCode: approver.code }
+      : {};
+
     if (actionType === "void") {
       const res = await voidTransaction({
         transactionId: trx.id,
         reason: reasonText,
-        approverToken: approver?.token,
+        ...authPayload,
       });
       if (!isOk(res)) {
         setError(res.error.message);
@@ -157,7 +171,7 @@ export function HistoryDetailModal({
       const res = await refundTransaction({
         transactionId: trx.id,
         reason: reasonText,
-        approverToken: approver?.token,
+        ...authPayload,
       });
       if (!isOk(res)) {
         setError(res.error.message);
@@ -183,12 +197,20 @@ export function HistoryDetailModal({
       setError("Alasan wajib diisi");
       return;
     }
-    // PIN required for ALL roles (per Galih's request) — even Owner/Manager
-    // self-approve via own PIN. Eliminates accidental void/refund + gives
-    // audit log a deterministic approver record.
+    // Outlet flag picks PIN-mode (legacy ApproverOverrideModal, Owner+Manager)
+    // or code-mode (Owner-only via emailed 6-digit). Default "pin" so existing
+    // field-test path is preserved until Owner flips to code via Settings.
+    const mode =
+      actionModal === "void"
+        ? approvalModes.voidMode
+        : approvalModes.refundMode;
     setPendingApproval({ actionType: actionModal, finalReason });
     setActionModal(null);
-    setApproverOpen(true);
+    if (mode === "code") {
+      setCodeModalOpen(true);
+    } else {
+      setApproverOpen(true);
+    }
   }
 
   function onApproverVerified(result: { approverId: string; token: string }) {
@@ -196,9 +218,20 @@ export function HistoryDetailModal({
     void performAction(
       pendingApproval.actionType,
       pendingApproval.finalReason,
-      result,
+      { kind: "pin", approverId: result.approverId, token: result.token },
     );
     setApproverOpen(false);
+    setPendingApproval(null);
+  }
+
+  function onCodeApproved(code: string) {
+    if (!pendingApproval) return;
+    void performAction(
+      pendingApproval.actionType,
+      pendingApproval.finalReason,
+      { kind: "code", code },
+    );
+    setCodeModalOpen(false);
     setPendingApproval(null);
   }
 
@@ -465,6 +498,26 @@ export function HistoryDetailModal({
         }}
         onVerified={onApproverVerified}
       />
+
+      {trx ? (
+        <ApprovalCodeModal
+          open={codeModalOpen && pendingApproval !== null}
+          actionType={
+            pendingApproval?.actionType === "void"
+              ? "pos.transaction.void"
+              : "pos.transaction.refund"
+          }
+          transactionId={trx.id}
+          transactionNumber={trx.transactionNumber}
+          transactionTotal={trx.total}
+          reason={pendingApproval?.finalReason ?? ""}
+          onClose={() => {
+            setCodeModalOpen(false);
+            setPendingApproval(null);
+          }}
+          onApproved={onCodeApproved}
+        />
+      ) : null}
     </>
   );
 }

@@ -25,6 +25,7 @@ import { BusinessInfoModal } from "./settings/BusinessInfoModal";
 import { OperationalHoursModal } from "./settings/OperationalHoursModal";
 import { ReceiptEditorModal } from "./settings/ReceiptEditorModal";
 import { SettingsTunablesModal } from "./settings/SettingsTunablesModal";
+import { ApprovalCodesPanel } from "./settings/ApprovalCodesPanel";
 
 type OperationalHours = NonNullable<Outlet["operationalHours"]>;
 
@@ -313,6 +314,8 @@ export function SettingsSection() {
           </dl>
         </CardContent>
       </Card>
+
+      {isOwner ? <ApprovalCodesPanel /> : null}
 
       <BusinessInfoModal
         open={edit === "business"}

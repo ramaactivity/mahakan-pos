@@ -61,13 +61,26 @@ export const createTransactionSchema = z.object({
 export const voidTransactionSchema = z.object({
   transactionId: z.uuid(),
   reason: z.string().trim().min(3).max(200),
+  /** Legacy "pin" mode — PIN-derived JWT from /api/v1/auth/verify-approver. */
   approverToken: z.string().optional(),
+  /** New "code" mode — 6-digit Owner-issued code (B-2). Server picks the
+   * mode based on outlet.settings.approval.voidMode. */
+  approvalCode: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/)
+    .optional(),
 });
 
 export const refundTransactionSchema = z.object({
   transactionId: z.uuid(),
   reason: z.string().trim().min(3).max(200),
   approverToken: z.string().optional(),
+  approvalCode: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/)
+    .optional(),
 });
 
 export const editOpenBillSchema = z.object({

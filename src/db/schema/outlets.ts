@@ -37,6 +37,18 @@ export type OutletSettings = {
   thresholds?: {
     shiftVarianceAlert?: number;
   };
+  approval?: {
+    /** void/refund approval source. "pin" = legacy ApproverOverrideModal
+     * (Owner+Manager PIN); "code" = new email-delivered Owner-only 6-digit
+     * code via ApprovalCodeModal. Default "pin" so existing field-test
+     * isn't disrupted. Owner flips to "code" after team training. */
+    voidMode?: "pin" | "code";
+    refundMode?: "pin" | "code";
+    /** Override target — defaults to first active Owner's email. Useful
+     * when Owner uses different email for approvals (e.g. dedicated
+     * inbox) without changing their login email. */
+    notifyEmail?: string;
+  };
 };
 
 export const outlets = pgTable("outlets", {

@@ -223,9 +223,23 @@ const featuresSchema = z.object({
   multiOutletEnabled: z.boolean().optional(),
 });
 
+const approvalSchema = z.object({
+  voidMode: z.enum(["pin", "code"]).optional(),
+  refundMode: z.enum(["pin", "code"]).optional(),
+  notifyEmail: z
+    .string()
+    .trim()
+    .max(120)
+    .optional()
+    .refine(
+      (s) => !s || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s),
+      "Email tidak valid",
+    ),
+});
+
 async function updateSettingsSection(
   perm: Permission,
-  section: "receipt" | "thresholds" | "features",
+  section: "receipt" | "thresholds" | "features" | "approval",
   patch: Partial<OutletSettings[keyof OutletSettings]>,
 ): Promise<ApiResult<Outlet>> {
   let session;
@@ -309,6 +323,20 @@ export async function updateFeatures(
   return updateSettingsSection(
     "settings.features.update",
     "features",
+    parsed.data,
+  );
+}
+
+export async function updateApproval(
+  input: z.input<typeof approvalSchema>,
+): Promise<ApiResult<Outlet>> {
+  const parsed = approvalSchema.safeParse(input);
+  if (!parsed.success) {
+    return err("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "");
+  }
+  return updateSettingsSection(
+    "settings.approval.update",
+    "approval",
     parsed.data,
   );
 }

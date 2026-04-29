@@ -124,14 +124,17 @@ export interface CreateTransactionInput {
 export interface VoidTransactionInput {
   transactionId: string;
   reason: string;
-  /** Required for Staff. Validated against pos.transaction.void permission. */
+  /** Legacy "pin" mode — JWT from /api/v1/auth/verify-approver. */
   approverToken?: string;
+  /** New "code" mode (B-2) — 6-digit Owner-issued approval code. */
+  approvalCode?: string;
 }
 
 export interface RefundTransactionInput {
   transactionId: string;
   reason: string;
   approverToken?: string;
+  approvalCode?: string;
 }
 
 /**

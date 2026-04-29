@@ -65,6 +65,12 @@ export const AUDIT_EVENT_TYPES = [
   "customer.update",
   "transaction.points.earned",
   "transaction.points.redeemed",
+  // Sesi B-2 — Owner-only approval code (void/refund).
+  "approval_code.generate",
+  "approval_code.consume",
+  "approval_code.failed_attempt",
+  "approval_code.revoked",
+  "approval_code.email_failed",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -85,7 +91,8 @@ export type AuditEntityType =
   | "inventory_movement"
   | "preparation"
   | "import_run"
-  | "customer";
+  | "customer"
+  | "approval_code";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */
