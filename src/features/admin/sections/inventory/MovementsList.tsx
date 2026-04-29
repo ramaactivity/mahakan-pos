@@ -35,6 +35,7 @@ const KIND_LABELS: Record<MovementKind, string> = {
   waste: "Waste",
   refund_restore: "Refund (kembali)",
   void_restore: "Void (kembali)",
+  edit_restore: "Edit bill (kembali)",
 };
 
 const KIND_TONES: Record<
@@ -48,6 +49,7 @@ const KIND_TONES: Record<
   waste: "danger",
   refund_restore: "info",
   void_restore: "info",
+  edit_restore: "info",
 };
 
 const KIND_OPTIONS: Array<{ value: MovementKind | "all"; label: string }> = [

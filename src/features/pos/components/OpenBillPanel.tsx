@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Transaction as TrxType } from "@/features/transactions";
-import { AlertTriangle, ClipboardList, FileText, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  ClipboardList,
+  FileText,
+  Pencil,
+  RefreshCw,
+} from "lucide-react";
 import {
   Badge,
   Button,
@@ -29,6 +35,9 @@ interface OpenBillPanelProps {
   /** Bumped when other panels (history void/refund) commit. */
   refreshKey: number;
   onOpenSettings: () => void;
+  /** Triggered when kasir taps Edit on a bill — parent should clone the
+   * detail into a Draft and route to the cart panel for editing. */
+  onEditBill: (trx: TransactionWithItems) => void;
 }
 
 const STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -46,6 +55,7 @@ export function OpenBillPanel({
   receiptConfig,
   refreshKey,
   onOpenSettings,
+  onEditBill,
 }: OpenBillPanelProps) {
   const [bills, setBills] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -185,6 +195,9 @@ export function OpenBillPanel({
                 onPay={() =>
                   details[b.id] ? setClosingBill(details[b.id]) : null
                 }
+                onEdit={() =>
+                  details[b.id] ? onEditBill(details[b.id]) : null
+                }
               />
             ))}
           </ul>
@@ -210,9 +223,10 @@ interface BillCardProps {
   /** Bumped from parent's auto-refresh tick — used to invalidate age calc. */
   nowTick: number;
   onPay: () => void;
+  onEdit: () => void;
 }
 
-function BillCard({ summary, detail, nowTick, onPay }: BillCardProps) {
+function BillCard({ summary, detail, nowTick, onPay, onEdit }: BillCardProps) {
   const { ageMinutes, isStale } = useBillAge(summary.createdAt, nowTick);
 
   const itemSummary =
@@ -267,7 +281,15 @@ function BillCard({ summary, detail, nowTick, onPay }: BillCardProps) {
           </div>
         </header>
 
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          <Button
+            size="md"
+            variant="outline"
+            onClick={onEdit}
+            disabled={!detail}
+          >
+            <Pencil className="size-4" aria-hidden /> Edit
+          </Button>
           <Button
             size="md"
             onClick={onPay}

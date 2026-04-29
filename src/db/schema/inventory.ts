@@ -186,6 +186,7 @@ export const inventoryMovements = pgTable(
         "waste",
         "refund_restore",
         "void_restore",
+        "edit_restore",
       ],
     }).notNull(),
     qtyDelta: bigint("qty_delta", { mode: "number" }).notNull(),

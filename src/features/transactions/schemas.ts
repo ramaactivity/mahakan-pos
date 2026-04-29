@@ -56,3 +56,22 @@ export const refundTransactionSchema = z.object({
   reason: z.string().trim().min(3).max(200),
   approverToken: z.string().optional(),
 });
+
+export const editOpenBillSchema = z.object({
+  transactionId: z.uuid(),
+  customerName: z
+    .string()
+    .trim()
+    .max(60)
+    .nullish()
+    .transform((s) => (s && s.length > 0 ? s : null)),
+  items: z.array(itemSchema).min(1).max(50),
+  subtotal: moneySchema,
+  discountType: z.enum(["percent", "fixed"]).nullable(),
+  discountValue: moneySchema.nullable(),
+  discountAmount: moneySchema,
+  discountReason: z.string().max(120).nullable(),
+  total: moneySchema,
+  /** For Staff-initiated discount on edit: token from /api/v1/auth/verify-approver. */
+  discountApproverToken: z.string().optional(),
+});

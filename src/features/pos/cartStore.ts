@@ -7,7 +7,10 @@ import {
   computeTotal,
   type Discount,
 } from "@/lib/money";
-import type { OrderType } from "@/features/transactions";
+import type {
+  OrderType,
+  TransactionWithItems,
+} from "@/features/transactions";
 import type { CartLineItem, CartLineItemModifier, Draft } from "./types";
 
 function genCartItemId(): string {
@@ -63,7 +66,10 @@ interface CartStore {
     orderType: OrderType,
     customerName?: string | null,
   ) => string;
-  loadDraftFromTransaction: () => never; // placeholder for future re-edit
+  /** Materialize an existing open bill into a fresh Draft so kasir can
+   * edit items via the normal cart UI. Sets `editingBillId` — PosShell
+   * routes save through editOpenBill. */
+  loadOpenBillIntoDraft: (trx: TransactionWithItems) => string;
   removeDraft: (draftId: string) => void;
   setCustomerName: (draftId: string, customerName: string | null) => void;
 
@@ -117,14 +123,56 @@ export const useCartStore = create<CartStore>((set, get) => ({
       discountReason: null,
       discountApproverId: null,
       discountApproverToken: null,
+      editingBillId: null,
       createdAt: now,
     };
     set((state) => ({ drafts: { ...state.drafts, [id]: draft } }));
     return id;
   },
 
-  loadDraftFromTransaction: () => {
-    throw new Error("Not implemented in M5 — Phase 2 feature");
+  loadOpenBillIntoDraft: (trx) => {
+    const id = genDraftId();
+    const now = new Date().toISOString();
+    const draft: Draft = {
+      id,
+      pagerNumber: trx.pagerNumber,
+      orderType: trx.orderType,
+      customerName: trx.customerName ?? null,
+      items: trx.items.map((it) => ({
+        cartItemId: genCartItemId(),
+        menuItemId: it.menuItemId,
+        name: it.itemName,
+        categoryName: it.itemCategoryName,
+        variant: it.variant,
+        unitPrice: it.unitPrice,
+        quantity: it.quantity,
+        modifiers: it.modifiers.map((m) => ({
+          modifierSlug: m.modifierSlug,
+          // We lost the original modifier label list at sale time; use slug
+          // as fallback so UI can still render. Re-edit re-builds via
+          // ItemModifierModal where labels come from menu data.
+          label: m.modifierSlug,
+          selectedValue: m.selectedValue,
+          selectedLabel: m.selectedValue,
+          priceDelta: m.priceDelta,
+        })),
+        modifiersPriceDelta: it.modifiersPriceDelta,
+        subtotal: it.subtotal,
+        note: it.note,
+        openPriceNote: it.openPriceNote,
+      })),
+      discount:
+        trx.discountType && trx.discountValue !== null
+          ? { type: trx.discountType, value: trx.discountValue }
+          : null,
+      discountReason: trx.discountReason,
+      discountApproverId: trx.discountApprover ?? null,
+      discountApproverToken: null, // approver token is single-use; re-approve on save if discount changes
+      editingBillId: trx.id,
+      createdAt: now,
+    };
+    set((state) => ({ drafts: { ...state.drafts, [id]: draft } }));
+    return id;
   },
 
   removeDraft: (draftId) =>

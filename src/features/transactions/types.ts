@@ -142,3 +142,21 @@ export interface CloseOpenBillInput {
   paymentMethod: PaymentMethod;
   cashReceived: number | null;
 }
+
+/**
+ * Edit an open bill — replace items + recompute totals. Stock is restored
+ * for the old items, then deducted again for the new items. Status remains
+ * "open"; payment fields untouched.
+ */
+export interface EditOpenBillInput {
+  transactionId: string;
+  customerName?: string | null;
+  items: CreateTransactionItemInput[];
+  subtotal: number;
+  discountType: DiscountType | null;
+  discountValue: number | null;
+  discountAmount: number;
+  discountReason: string | null;
+  total: number;
+  discountApproverToken?: string;
+}

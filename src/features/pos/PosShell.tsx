@@ -70,6 +70,7 @@ import {
 } from "@/features/menu";
 import {
   createTransaction,
+  editOpenBill,
   markServed,
   saveAsOpenBill,
   type PaymentMethod,
@@ -138,6 +139,7 @@ export function PosShell() {
   const updateNote = useCartStore((s) => s.updateNote);
   const setDiscount = useCartStore((s) => s.setDiscount);
   const removeDraft = useCartStore((s) => s.removeDraft);
+  const loadOpenBillIntoDraft = useCartStore((s) => s.loadOpenBillIntoDraft);
 
   // Shift
   const [shift, setShift] = useState<Shift | null>(null);
@@ -448,6 +450,52 @@ export function PosShell() {
     if (activeDraft.items.length === 0) return;
     setPaymentSubmitting(true);
     setPaymentError(null);
+
+    const itemsPayload = activeDraft.items.map((item) => ({
+      menuItemId: item.menuItemId,
+      variant: item.variant,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      modifiersPriceDelta: item.modifiersPriceDelta,
+      subtotal: item.subtotal,
+      note: item.note,
+      openPriceNote: item.openPriceNote,
+      modifiers: item.modifiers.map((m) => ({
+        modifierSlug: m.modifierSlug,
+        selectedValue: m.selectedValue,
+        priceDelta: m.priceDelta,
+      })),
+    }));
+
+    if (activeDraft.editingBillId) {
+      // EDIT path — replace items on existing open bill.
+      const res = await editOpenBill({
+        transactionId: activeDraft.editingBillId,
+        customerName: activeDraft.customerName,
+        items: itemsPayload,
+        subtotal,
+        discountType: activeDraft.discount?.type ?? null,
+        discountValue: activeDraft.discount?.value ?? null,
+        discountAmount,
+        discountReason: activeDraft.discountReason,
+        total,
+        discountApproverToken:
+          activeDraft.discountApproverToken ?? undefined,
+      });
+      setPaymentSubmitting(false);
+      if (!res.success) {
+        setPaymentError(res.error.message);
+        toast.error(res.error.message);
+        return;
+      }
+      toast.success(`Open bill ${res.data.transactionNumber} di-update.`);
+      removeDraft(activeDraft.id);
+      setRightPanel({ kind: "idle" });
+      setHistoryRefreshKey((k) => k + 1);
+      return;
+    }
+
+    // CREATE path — fresh open bill.
     const payload = {
       clientRefId: crypto.randomUUID(),
       shiftId: shift.id,
@@ -455,21 +503,7 @@ export function PosShell() {
       pagerNumber: activeDraft.pagerNumber,
       orderType: activeDraft.orderType,
       customerName: activeDraft.customerName,
-      items: activeDraft.items.map((item) => ({
-        menuItemId: item.menuItemId,
-        variant: item.variant,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        modifiersPriceDelta: item.modifiersPriceDelta,
-        subtotal: item.subtotal,
-        note: item.note,
-        openPriceNote: item.openPriceNote,
-        modifiers: item.modifiers.map((m) => ({
-          modifierSlug: m.modifierSlug,
-          selectedValue: m.selectedValue,
-          priceDelta: m.priceDelta,
-        })),
-      })),
+      items: itemsPayload,
       subtotal,
       discountType: activeDraft.discount?.type ?? null,
       discountValue: activeDraft.discount?.value ?? null,
@@ -641,6 +675,11 @@ export function PosShell() {
             receiptConfig={receiptConfig}
             refreshKey={historyRefreshKey}
             onOpenSettings={() => setTab("settings")}
+            onEditBill={(trx) => {
+              const id = loadOpenBillIntoDraft(trx);
+              setTab("cashier");
+              setRightPanel({ kind: "cart", draftId: id });
+            }}
           />
         ) : tab === "queue" ? (
           <OrderQueuePanel
@@ -1157,22 +1196,35 @@ function CartPanelImpl({
             <Gift className="size-4" aria-hidden /> Compliment
           </Button>
         </div>
-        <Button
-          variant="outline"
-          onClick={onSaveAsOpenBill}
-          disabled={draft.items.length === 0}
-          fullWidth
-        >
-          <FileText className="size-4" aria-hidden /> Simpan sebagai Open Bill
-        </Button>
-        <Button
-          size="lg"
-          onClick={onProceedToPayment}
-          disabled={draft.items.length === 0}
-          fullWidth
-        >
-          Bayar
-        </Button>
+        {draft.editingBillId ? (
+          <Button
+            size="lg"
+            onClick={onSaveAsOpenBill}
+            disabled={draft.items.length === 0}
+            fullWidth
+          >
+            <FileText className="size-4" aria-hidden /> Update Bill
+          </Button>
+        ) : (
+          <>
+            <Button
+              variant="outline"
+              onClick={onSaveAsOpenBill}
+              disabled={draft.items.length === 0}
+              fullWidth
+            >
+              <FileText className="size-4" aria-hidden /> Simpan sebagai Open Bill
+            </Button>
+            <Button
+              size="lg"
+              onClick={onProceedToPayment}
+              disabled={draft.items.length === 0}
+              fullWidth
+            >
+              Bayar
+            </Button>
+          </>
+        )}
       </footer>
     </>
   );

@@ -29,6 +29,7 @@ import {
 } from "./queries";
 import {
   createTransactionSchema,
+  editOpenBillSchema,
   refundTransactionSchema,
   voidTransactionSchema,
 } from "./schemas";
@@ -46,6 +47,7 @@ import {
   type ApiResult,
   type CloseOpenBillInput,
   type CreateTransactionInput,
+  type EditOpenBillInput,
   type Paginated,
   type RefundTransactionInput,
   type SaveOpenBillInput,
@@ -680,6 +682,283 @@ export async function markServed(
     .returning();
   if (!row) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
   return ok(row);
+}
+
+// ---------- editOpenBill ----------
+
+/**
+ * Replace items + recompute totals on an existing open bill. Status remains
+ * "open"; payment fields untouched. Stock for old items is restored
+ * (kind=edit_restore movements), then re-deducted for the new items via the
+ * normal flow.
+ *
+ * Used when kasir notices a typo or customer changes mind before paying.
+ * Galih ask #6 — fixes the "items locked once saved" friction.
+ */
+export async function editOpenBill(
+  input: EditOpenBillInput,
+): Promise<ApiResult<TransactionWithItems>> {
+  const session = await requireSession();
+
+  const parsed = editOpenBillSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  const current = await fetchTransactionById(v.transactionId);
+  if (!current) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+  if (current.status !== "open") {
+    return fail(
+      "BUSINESS_RULE_VIOLATION",
+      `Hanya open bill yang bisa di-edit (status saat ini: ${current.status})`,
+    );
+  }
+
+  // Approver token consumption — Staff initiating discount on edit needs PIN.
+  let discountApproverId: string | null = null;
+  if (v.discountAmount > 0 && session.user.role === "staff") {
+    if (!v.discountApproverToken) {
+      return fail(
+        "APPROVER_REQUIRED",
+        "Staff butuh approver untuk apply discount",
+      );
+    }
+    try {
+      const consumed = await consumeApproverToken(
+        v.discountApproverToken,
+        "pos.discount.apply",
+        null,
+      );
+      discountApproverId = consumed.approverId;
+    } catch (e) {
+      return fail(
+        "APPROVER_TOKEN_INVALID",
+        e instanceof Error ? e.message : "Token gagal",
+      );
+    }
+  }
+  if (v.discountAmount > 0 && session.user.role !== "staff") {
+    if (!hasPermission(session.user.role, "pos.discount.apply")) {
+      return fail("FORBIDDEN", "Tidak punya hak apply discount");
+    }
+  }
+
+  // Fetch all referenced menu items
+  const menuItemIds = Array.from(new Set(v.items.map((i) => i.menuItemId)));
+  const menuRows: MenuItem[] = await db
+    .select()
+    .from(menuItems)
+    .where(inArray(menuItems.id, menuItemIds));
+  if (menuRows.length !== menuItemIds.length) {
+    return fail("MENU_ITEM_NOT_FOUND", "Beberapa item tidak ditemukan");
+  }
+
+  // Reuse validateCreateTransaction by synthesising payment fields with
+  // placeholder cash values that satisfy the cash-validation branch.
+  const synthetic: CreateTransactionInput = {
+    shiftId: current.shiftId,
+    cashierId: session.user.id,
+    pagerNumber: current.pagerNumber,
+    orderType: current.orderType,
+    customerName: v.customerName,
+    items: v.items,
+    subtotal: v.subtotal,
+    discountType: v.discountType,
+    discountValue: v.discountValue,
+    discountAmount: v.discountAmount,
+    discountReason: v.discountReason,
+    total: v.total,
+    paymentMethod: "cash",
+    cashReceived: v.total,
+    cashChange: 0,
+  };
+  const validation = validateCreateTransaction(synthetic, menuRows);
+  if (!validation.ok) {
+    return fail(validation.code, validation.message);
+  }
+
+  const categoryNameByMenuId = new Map<string, string>();
+  {
+    const catIds = Array.from(new Set(menuRows.map((m) => m.categoryId)));
+    const cats = await db
+      .select({ id: sql<string>`id`, name: sql<string>`name` })
+      .from(sql`categories`)
+      .where(sql`id in ${catIds}`);
+    for (const c of cats) categoryNameByMenuId.set(c.id, c.name);
+  }
+  const menuById = new Map(menuRows.map((m) => [m.id, m]));
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      // Step 1: restore stock for the existing items (mirrors void semantics
+      // but uses kind=edit_restore so movement history is filterable).
+      await restoreStockForTransaction(
+        tx,
+        session.user.outletId,
+        session.user.id,
+        v.transactionId,
+        "edit_restore",
+      );
+
+      // Step 2: delete existing modifiers + items. Modifiers FK has no
+      // ON DELETE CASCADE so we have to drop them first.
+      const existingItemRows = await tx
+        .select({ id: transactionItems.id })
+        .from(transactionItems)
+        .where(eq(transactionItems.transactionId, v.transactionId));
+      const existingItemIds = existingItemRows.map((r) => r.id);
+      if (existingItemIds.length > 0) {
+        await tx
+          .delete(transactionItemModifiers)
+          .where(
+            inArray(transactionItemModifiers.transactionItemId, existingItemIds),
+          );
+        await tx
+          .delete(transactionItems)
+          .where(eq(transactionItems.transactionId, v.transactionId));
+      }
+
+      // Step 3: insert new items.
+      const itemsInserted = await tx
+        .insert(transactionItems)
+        .values(
+          v.items.map((it) => {
+            const menu = menuById.get(it.menuItemId)!;
+            return {
+              transactionId: v.transactionId,
+              menuItemId: it.menuItemId,
+              itemName: menu.name,
+              itemCategoryName:
+                categoryNameByMenuId.get(menu.categoryId) ?? "",
+              variant: it.variant,
+              unitPrice: it.unitPrice,
+              quantity: it.quantity,
+              modifiersPriceDelta: it.modifiersPriceDelta,
+              subtotal: it.subtotal,
+              note: it.note,
+              openPriceNote: it.openPriceNote,
+            };
+          }),
+        )
+        .returning();
+
+      // Step 4: compute new flow + apply deductions.
+      const flow = await computeStockFlowForOrder(
+        tx,
+        session.user.outletId,
+        v.items.map((it, idx) => ({
+          transactionItemId: itemsInserted[idx].id,
+          menuItemId: it.menuItemId,
+          variant: it.variant,
+          quantity: it.quantity,
+        })),
+      );
+
+      const hasAnyCogs = flow.itemsWithoutRecipe.length < v.items.length;
+
+      // Step 5: patch transaction header.
+      await tx
+        .update(transactions)
+        .set({
+          subtotal: validation.recomputedSubtotal,
+          discountType: v.discountType,
+          discountValue: v.discountValue,
+          discountAmount: validation.recomputedDiscountAmount,
+          discountReason: v.discountReason,
+          total: validation.recomputedTotal,
+          customerName: v.customerName ?? null,
+          cogs: hasAnyCogs ? flow.totalCogs : null,
+          ...(discountApproverId
+            ? { discountApprover: discountApproverId }
+            : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(transactions.id, v.transactionId));
+
+      for (const ti of itemsInserted) {
+        const cogsForItem = flow.itemCogsByTrxItemId.get(ti.id);
+        if (cogsForItem !== undefined && cogsForItem > 0) {
+          await tx
+            .update(transactionItems)
+            .set({ cogs: cogsForItem })
+            .where(eq(transactionItems.id, ti.id));
+        }
+      }
+
+      await applyStockDeductions(
+        tx,
+        session.user.outletId,
+        session.user.id,
+        v.transactionId,
+        flow,
+      );
+
+      const modRows: Array<typeof transactionItemModifiers.$inferInsert> = [];
+      v.items.forEach((it, idx) => {
+        const itemId = itemsInserted[idx].id;
+        for (const mod of it.modifiers) {
+          modRows.push({
+            transactionItemId: itemId,
+            modifierSlug: mod.modifierSlug,
+            selectedValue: mod.selectedValue,
+            priceDelta: mod.priceDelta,
+          });
+        }
+      });
+      if (modRows.length > 0) {
+        await tx.insert(transactionItemModifiers).values(modRows);
+      }
+
+      return {
+        deductedIngredientIds: Array.from(flow.deductionsByIngredient.keys()),
+      };
+    });
+
+    if (result.deductedIngredientIds.length > 0) {
+      reevaluateSoldOutForIngredients(result.deductedIngredientIds).catch(
+        (e) => console.error("[sold-out re-eval edit]", e),
+      );
+    }
+
+    await logAudit({
+      eventType: "transaction.open_bill.edit",
+      userId: session.user.id,
+      approverId: discountApproverId,
+      entityType: "transaction",
+      entityId: v.transactionId,
+      payload: {
+        summary: `Edit open bill ${current.transactionNumber} — ${v.items.length} item, total Rp${validation.recomputedTotal.toLocaleString("id-ID")}`,
+        before: {
+          itemCount: current.items.length,
+          total: current.total,
+          customerName: current.customerName,
+        },
+        after: {
+          itemCount: v.items.length,
+          total: validation.recomputedTotal,
+          customerName: v.customerName ?? null,
+        },
+        context: {
+          transactionNumber: current.transactionNumber,
+        },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    });
+
+    const refreshed = await fetchTransactionById(v.transactionId);
+    return refreshed
+      ? ok(refreshed)
+      : fail("DB_ERROR", "Gagal fetch transaksi setelah edit");
+  } catch (e) {
+    return fail("DB_ERROR", e instanceof Error ? e.message : "Database error");
+  }
 }
 
 // ---------- logTransactionReprint ----------

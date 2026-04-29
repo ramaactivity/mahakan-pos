@@ -5,6 +5,7 @@ export type {
   CreateTransactionItemInput,
   CreateTransactionItemModifierInput,
   DiscountType,
+  EditOpenBillInput,
   OrderType,
   Paginated,
   PaymentMethod,
@@ -23,6 +24,7 @@ export { isOk } from "./types";
 export {
   closeOpenBill,
   createTransaction,
+  editOpenBill,
   getTransaction,
   listTransactions,
   logTransactionReprint,

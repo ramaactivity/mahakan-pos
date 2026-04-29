@@ -260,7 +260,7 @@ export async function restoreStockForTransaction(
   outletId: string,
   userId: string,
   transactionId: string,
-  kind: "void_restore" | "refund_restore",
+  kind: "void_restore" | "refund_restore" | "edit_restore",
 ): Promise<string[]> {
   const sourceMovements = await tx
     .select()
@@ -293,7 +293,9 @@ export async function restoreStockForTransaction(
   const reason =
     kind === "void_restore"
       ? "Auto-restore void incl. waste buffer"
-      : "Auto-restore refund incl. waste buffer";
+      : kind === "refund_restore"
+        ? "Auto-restore refund incl. waste buffer"
+        : "Auto-restore for open bill edit incl. waste buffer";
 
   const affected: string[] = [];
   for (const [ingredientId, { totalQty, unitCost }] of restoreByIngredient) {

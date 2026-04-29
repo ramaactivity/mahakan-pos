@@ -47,6 +47,10 @@ export interface Draft {
   /** For Staff-initiated discount: approver who PIN-verified. */
   discountApproverId: string | null;
   discountApproverToken: string | null;
+  /** Set when this draft is editing an existing open bill. UI swaps the
+   * "Simpan sebagai Open Bill" + "Bayar" buttons with a single "Update Bill"
+   * action and routes save through `editOpenBill` instead of `saveAsOpenBill`. */
+  editingBillId: string | null;
   createdAt: string;
 }
 
