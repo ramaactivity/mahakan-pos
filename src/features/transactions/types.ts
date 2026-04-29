@@ -93,7 +93,7 @@ export interface CreateTransactionInput {
   clientRefId?: string;
   shiftId: string;
   cashierId: string;
-  pagerNumber: number;
+  pagerNumber: number | null;
   orderType: OrderType;
   /** Optional free-form label — customer name, "Meja 5", "Gojek", etc.
    * Helps kasir + dapur call out by name instead of pager number. Also
@@ -104,6 +104,9 @@ export interface CreateTransactionInput {
    * supplied + valid (>=6 digits), server finds-or-creates a customer and
    * earns points on the sale total. */
   customerPhone?: string | null;
+  /** Optional bill-level note (catatan khusus pesanan). Max 200 chars,
+   * trimmed; empty string normalized to null server-side. */
+  note?: string | null;
   items: CreateTransactionItemInput[];
   /** Client-claimed; server recomputes and rejects mismatch. */
   subtotal: number;
@@ -167,10 +170,11 @@ export interface SaveOpenBillInput {
   clientRefId?: string;
   shiftId: string;
   cashierId: string;
-  pagerNumber: number;
+  pagerNumber: number | null;
   orderType: OrderType;
   customerName?: string | null;
   customerPhone?: string | null;
+  note?: string | null;
   items: CreateTransactionItemInput[];
   subtotal: number;
   discountType: DiscountType | null;
@@ -200,6 +204,7 @@ export interface EditOpenBillInput {
   transactionId: string;
   customerName?: string | null;
   customerPhone?: string | null;
+  note?: string | null;
   items: CreateTransactionItemInput[];
   subtotal: number;
   discountType: DiscountType | null;

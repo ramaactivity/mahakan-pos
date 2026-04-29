@@ -22,7 +22,7 @@ interface CloseOpenBillModalProps {
   cashierName: string;
   receiptConfig: ReceiptConfig | null;
   onClose: () => void;
-  onClosed: () => void;
+  onClosed: (closedTrx: TransactionWithItems) => void;
   onOpenSettings: () => void;
 }
 
@@ -96,7 +96,7 @@ export function CloseOpenBillModal({
       );
     }
     setSubmitting(false);
-    onClosed();
+    onClosed(res.data);
   }
 
   return (
@@ -104,7 +104,7 @@ export function CloseOpenBillModal({
       open={open}
       onClose={onClose}
       title={`Bayar Open Bill — ${bill.transactionNumber}`}
-      description={`Pager ${bill.pagerNumber} · ${bill.items.length} item · ${formatRupiah(bill.total)}`}
+      description={`${bill.pagerNumber !== null ? `Pager ${bill.pagerNumber} · ` : ""}${bill.items.length} item · ${formatRupiah(bill.total)}`}
       size="md"
       footer={
         <>

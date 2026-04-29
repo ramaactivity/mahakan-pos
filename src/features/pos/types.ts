@@ -37,7 +37,7 @@ export interface CartLineItem {
 
 export interface Draft {
   id: string;
-  pagerNumber: number;
+  pagerNumber: number | null;
   orderType: OrderType;
   /** Optional free-form label — customer name, "Meja 5", "Gojek". When
    * customerPhone is also set, this becomes the loyalty record name. */
@@ -45,6 +45,9 @@ export interface Draft {
   /** Optional digits-only phone — present means kasir wants to attach the
    * sale to a loyalty member. Server find-or-creates customer by phone. */
   customerPhone: string | null;
+  /** Optional bill-level note (catatan khusus pesanan). Trimmed + capped
+   * server-side at 200 chars. Distinct from per-line `CartLineItem.note`. */
+  billNote: string | null;
   items: CartLineItem[];
   discount: Discount | null;
   discountReason: string | null;

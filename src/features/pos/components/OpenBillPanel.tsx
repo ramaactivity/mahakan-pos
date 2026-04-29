@@ -41,6 +41,9 @@ interface OpenBillPanelProps {
   /** Reports the current open-bills count up to the parent so the left-nav
    * tab can render a badge without duplicating the fetch. */
   onCountChange?: (count: number) => void;
+  /** Triggered when an open bill was just paid — parent surfaces the
+   * post-action print confirm modal (item #17). */
+  onBillPaid?: (closedTrx: TransactionWithItems) => void;
 }
 
 const STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -60,6 +63,7 @@ export function OpenBillPanel({
   onOpenSettings,
   onEditBill,
   onCountChange,
+  onBillPaid,
 }: OpenBillPanelProps) {
   const [bills, setBills] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -133,9 +137,10 @@ export function OpenBillPanel({
     [bills],
   );
 
-  function handleBillClosed() {
+  function handleBillClosed(closedTrx: TransactionWithItems) {
     setClosingBill(null);
     setTick((t) => t + 1);
+    onBillPaid?.(closedTrx);
   }
 
   return (
@@ -246,7 +251,7 @@ function BillCard({ summary, detail, nowTick, onPay, onEdit }: BillCardProps) {
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3">
             <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-mahakan-green-100 text-lg font-bold text-mahakan-green-900">
-              {summary.pagerNumber}
+              {summary.pagerNumber !== null ? summary.pagerNumber : "—"}
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2">

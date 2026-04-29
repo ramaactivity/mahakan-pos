@@ -62,17 +62,20 @@ interface CartStore {
 
   // Lifecycle
   startDraft: (
-    pagerNumber: number,
+    pagerNumber: number | null,
     orderType: OrderType,
     customerName?: string | null,
     customerPhone?: string | null,
   ) => string;
+  setPagerNumber: (draftId: string, pagerNumber: number | null) => void;
+  setOrderType: (draftId: string, orderType: OrderType) => void;
   /** Materialize an existing open bill into a fresh Draft so kasir can
    * edit items via the normal cart UI. Sets `editingBillId` — PosShell
    * routes save through editOpenBill. */
   loadOpenBillIntoDraft: (trx: TransactionWithItems) => string;
   removeDraft: (draftId: string) => void;
   setCustomerName: (draftId: string, customerName: string | null) => void;
+  setBillNote: (draftId: string, billNote: string | null) => void;
 
   // Items
   addItem: (
@@ -127,6 +130,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
       customerName: trimmedName && trimmedName.length > 0 ? trimmedName : null,
       customerPhone:
         trimmedPhone && trimmedPhone.length >= 6 ? trimmedPhone : null,
+      billNote: null,
       items: [],
       discount: null,
       discountReason: null,
@@ -152,6 +156,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
       // customers.id linkage. The edit-flow doesn't auto-populate phone —
       // kasir re-types if they want to confirm/change member linkage.
       customerPhone: null,
+      billNote: trx.note ?? null,
       items: trx.items.map((it) => ({
         cartItemId: genCartItemId(),
         menuItemId: it.menuItemId,
@@ -208,6 +213,46 @@ export const useCartStore = create<CartStore>((set, get) => ({
           [draftId]: {
             ...draft,
             customerName: trimmed && trimmed.length > 0 ? trimmed : null,
+          },
+        },
+      };
+    }),
+
+  setPagerNumber: (draftId, pagerNumber) =>
+    set((state) => {
+      const draft = state.drafts[draftId];
+      if (!draft) return state;
+      return {
+        drafts: {
+          ...state.drafts,
+          [draftId]: { ...draft, pagerNumber },
+        },
+      };
+    }),
+
+  setOrderType: (draftId, orderType) =>
+    set((state) => {
+      const draft = state.drafts[draftId];
+      if (!draft) return state;
+      return {
+        drafts: {
+          ...state.drafts,
+          [draftId]: { ...draft, orderType },
+        },
+      };
+    }),
+
+  setBillNote: (draftId, billNote) =>
+    set((state) => {
+      const draft = state.drafts[draftId];
+      if (!draft) return state;
+      const trimmed = billNote?.trim();
+      return {
+        drafts: {
+          ...state.drafts,
+          [draftId]: {
+            ...draft,
+            billNote: trimmed && trimmed.length > 0 ? trimmed.slice(0, 200) : null,
           },
         },
       };

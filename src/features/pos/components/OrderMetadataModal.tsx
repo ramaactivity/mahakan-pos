@@ -1,59 +1,71 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button, Input, Modal } from "@/components/ui";
-import { useCartStore } from "@/features/pos/cartStore";
-import type { OrderType } from "@/features/transactions";
 import {
   isOk,
   lookupCustomerByPhone,
   type Customer,
 } from "@/features/customers";
-import { cn } from "@/lib/utils";
 
-interface NewOrderModalProps {
+interface OrderMetadataModalProps {
   open: boolean;
+  /** Pre-fill from current draft. */
+  initialPager: number | null;
+  initialCustomerName: string | null;
+  initialCustomerPhone: string | null;
+  /** "save_bill" requires customerName so kasir can locate the bill later
+   * via Bill Aktif. "pay" allows blank (e.g. Gojek pickup, walk-in). */
+  mode: "pay" | "save_bill";
   onClose: () => void;
-  /** Called with the new draft id after creation. Caller navigates. */
-  onCreated: (draftId: string) => void;
+  onSubmit: (values: {
+    pagerNumber: number | null;
+    customerName: string | null;
+    customerPhone: string | null;
+  }) => void;
 }
 
-export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) {
-  const startDraft = useCartStore((s) => s.startDraft);
-
-  const [pager, setPager] = useState("");
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
+/**
+ * Cashier-flow reorder (Galih ask #4): instead of prompting pager + name
+ * upfront via NewOrderModal, items go in first then this modal collects
+ * metadata at Bayar / Simpan Bill. Pager is fully optional. Customer
+ * name is required only when saving as open bill (so the bill is
+ * findable in Bill Aktif tab) — kasir can still pay walk-in customers
+ * without a name.
+ */
+export function OrderMetadataModal({
+  open,
+  initialPager,
+  initialCustomerName,
+  initialCustomerPhone,
+  mode,
+  onClose,
+  onSubmit,
+}: OrderMetadataModalProps) {
+  const [pager, setPager] = useState(
+    initialPager !== null ? String(initialPager) : "",
+  );
+  const [customerName, setCustomerName] = useState(initialCustomerName ?? "");
+  const [customerPhone, setCustomerPhone] = useState(
+    initialCustomerPhone ?? "",
+  );
   const [memberMatch, setMemberMatch] = useState<Customer | null>(null);
   const [memberLookupLoading, setMemberLookupLoading] = useState(false);
-  const [orderType, setOrderType] = useState<OrderType>("takeaway");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
-    // S4: auto-suggest pager = max(active drafts pager) + 1, capped at 99,
-    // fallback 1 when no drafts.
-    const active = useCartStore.getState().drafts;
-    const used = Object.values(active)
-      .map((d) => d.pagerNumber)
-      .filter((n): n is number => n !== null);
-    const next = used.length === 0 ? 1 : Math.min(99, Math.max(...used) + 1);
     /* eslint-disable react-hooks/set-state-in-effect */
-    setPager(String(next));
-    setCustomerName("");
-    setCustomerPhone("");
+    setPager(initialPager !== null ? String(initialPager) : "");
+    setCustomerName(initialCustomerName ?? "");
+    setCustomerPhone(initialCustomerPhone ?? "");
     setMemberMatch(null);
     setMemberLookupLoading(false);
-    setOrderType("takeaway");
     setError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [open]);
+  }, [open, initialPager, initialCustomerName, initialCustomerPhone]);
 
-  // Debounced phone → member lookup. When a valid digits-only phone is
-  // typed (>= 6 digits), query the server for an existing customer record
-  // and surface name + balance so kasir can confirm before checkout.
-  // Sync the ref inside an effect (rules-of-react require ref writes to
-  // happen outside render).
+  // Debounced phone → member lookup, mirrors NewOrderModal logic.
   const customerNameRef = useRef(customerName);
   useEffect(() => {
     customerNameRef.current = customerName;
@@ -61,8 +73,6 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
   useEffect(() => {
     const phone = customerPhone.replace(/[^\d]/g, "");
     if (phone.length < 6) {
-      // Defer state resets to next tick so the rule
-      // react-hooks/set-state-in-effect doesn't flag us.
       const t = setTimeout(() => {
         setMemberMatch(null);
         setMemberLookupLoading(false);
@@ -91,42 +101,65 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
     };
   }, [customerPhone]);
 
-  function onSubmit() {
-    const num = parseInt(pager, 10);
-    if (!Number.isFinite(num) || num < 1 || num > 99) {
-      setError("Pager harus angka 1-99");
+  function handleSubmit(e?: FormEvent) {
+    e?.preventDefault();
+    setError(null);
+
+    let pagerNumber: number | null = null;
+    if (pager.trim().length > 0) {
+      const num = parseInt(pager, 10);
+      if (!Number.isFinite(num) || num < 1 || num > 99) {
+        setError("Pager harus angka 1-99 atau kosongkan");
+        return;
+      }
+      pagerNumber = num;
+    }
+
+    const trimmedName = customerName.trim();
+    if (mode === "save_bill" && trimmedName.length === 0) {
+      setError(
+        "Nama / label customer wajib diisi untuk Simpan Bill — biar bisa di-find lagi.",
+      );
       return;
     }
-    const id = startDraft(
-      num,
-      orderType,
-      customerName || null,
-      customerPhone || null,
-    );
-    onCreated(id);
+
+    const phone = customerPhone.replace(/[^\d]/g, "");
+    onSubmit({
+      pagerNumber,
+      customerName: trimmedName.length > 0 ? trimmedName : null,
+      customerPhone: phone.length >= 6 ? phone : null,
+    });
   }
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="Order Baru"
-      description="Masukin pager + tipe order. Multi-draft didukung."
+      title={mode === "pay" ? "Konfirmasi Order" : "Simpan Bill"}
+      description={
+        mode === "pay"
+          ? "Pager + nama customer opsional. Boleh langsung Lanjut Bayar."
+          : "Customer name wajib biar bill ke-find di tab Bill Aktif."
+      }
       size="md"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Batal
           </Button>
-          <Button onClick={onSubmit} size="lg">
-            Mulai Order
+          <Button onClick={() => handleSubmit()} size="lg">
+            {mode === "pay" ? "Lanjut Bayar" : "Simpan"}
           </Button>
         </>
       }
     >
-      <div className="space-y-4">
+      <form
+        onSubmit={handleSubmit}
+        className="space-y-4"
+        aria-label="Form metadata order"
+      >
         <Input
-          label="Nomor Pager"
+          label="Nomor Pager (opsional)"
           type="text"
           inputMode="numeric"
           value={pager}
@@ -134,8 +167,9 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
             setPager(e.target.value.replace(/[^\d]/g, "").slice(0, 2));
             setError(null);
           }}
-          placeholder="1-99"
+          placeholder="1-99 atau kosongkan"
           autoFocus
+          hint="Kosongkan kalau pesanan Gojek / takeaway tanpa pager."
         />
         <Input
           label="Nomor HP Member (opsional)"
@@ -158,54 +192,29 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
           }
         />
         <Input
-          label="Nama Customer (opsional)"
+          label={
+            mode === "save_bill"
+              ? "Nama Customer (wajib)"
+              : "Nama Customer (opsional)"
+          }
           type="text"
           value={customerName}
           onChange={(e) => setCustomerName(e.target.value.slice(0, 60))}
           placeholder="mis. Andi / Meja 5 / Gojek"
           maxLength={60}
+          required={mode === "save_bill"}
           hint={
             memberMatch
               ? "Auto-isi dari member. Edit di sini = update nama member."
               : "Bantu kasir + dapur call out by name. Boleh label apa saja."
           }
         />
-        <div className="space-y-1.5">
-          <span className="block text-sm font-medium text-neutral-900">
-            Tipe Order
-          </span>
-          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Tipe order">
-            {(
-              [
-                { value: "takeaway", label: "Takeaway" },
-                { value: "dine_in", label: "Dine-in" },
-              ] as const
-            ).map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                role="radio"
-                aria-checked={orderType === opt.value}
-                onClick={() => setOrderType(opt.value)}
-                className={cn(
-                  "rounded-md border py-3 text-sm font-medium transition-all",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
-                  orderType === opt.value
-                    ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
-                    : "border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-100",
-                )}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
         {error ? (
           <p role="alert" className="text-sm font-medium text-danger-500">
             {error}
           </p>
         ) : null}
-      </div>
+      </form>
     </Modal>
   );
 }

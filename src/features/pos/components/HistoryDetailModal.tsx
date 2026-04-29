@@ -299,7 +299,7 @@ export function HistoryDetailModal({
         title={trx?.transactionNumber ?? "Memuat…"}
         description={
           trx
-            ? `Pager ${trx.pagerNumber} · ${
+            ? `${trx.pagerNumber !== null ? `Pager ${trx.pagerNumber} · ` : ""}${
                 trx.orderType === "dine_in" ? "Dine-in" : "Takeaway"
               }${trx.customerName ? ` · ${trx.customerName}` : ""} · ${formatIndonesianDateTime(trx.createdAt)}`
             : undefined
@@ -360,6 +360,15 @@ export function HistoryDetailModal({
                 </div>
               ))}
             </div>
+
+            {trx.note ? (
+              <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-3 py-2 text-xs italic text-neutral-700">
+                <span className="font-medium not-italic text-neutral-900">
+                  Catatan:
+                </span>{" "}
+                {trx.note}
+              </div>
+            ) : null}
 
             <div className="space-y-1 text-sm">
               <Row label="Subtotal" value={formatRupiah(trx.subtotal)} muted />

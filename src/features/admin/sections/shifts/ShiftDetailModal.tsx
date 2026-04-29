@@ -180,7 +180,7 @@ export function ShiftDetailModal({
                         {trx.transactionNumber}
                       </td>
                       <td className="px-3 py-2 text-center text-xs">
-                        {trx.pagerNumber}
+                        {trx.pagerNumber ?? "—"}
                       </td>
                       <td className="px-3 py-2 text-xs">
                         {trx.paymentMethod === "cash"

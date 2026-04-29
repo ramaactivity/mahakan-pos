@@ -55,6 +55,8 @@ import {
 import { MenuTile } from "@/features/pos/components/MenuTile";
 import { NewOrderModal } from "@/features/pos/components/NewOrderModal";
 import { OpenBillPanel } from "@/features/pos/components/OpenBillPanel";
+import { OrderMetadataModal } from "@/features/pos/components/OrderMetadataModal";
+import { PostActionPrintModal } from "@/features/pos/components/PostActionPrintModal";
 import { OpenPriceModal } from "@/features/pos/components/OpenPriceModal";
 import { OpenShiftModal } from "@/features/pos/components/OpenShiftModal";
 import { OrderQueuePanel } from "@/features/pos/components/OrderQueuePanel";
@@ -114,6 +116,13 @@ export function PosShell() {
   const [tab, setTab] = useState<PosTab>("cashier");
   const [rightPanel, setRightPanel] = useState<RightPanelState>({ kind: "idle" });
   const [openBillsCount, setOpenBillsCount] = useState(0);
+  const [printConfirm, setPrintConfirm] = useState<{
+    trx: TransactionWithItems;
+    title: string;
+  } | null>(null);
+  const [metadataModal, setMetadataModal] = useState<
+    "pay" | "save_bill" | null
+  >(null);
 
   // Cart store
   const draftsRecord = useCartStore((s) => s.drafts);
@@ -148,6 +157,9 @@ export function PosShell() {
   const applyRedemption = useCartStore((s) => s.applyRedemption);
   const removeDraft = useCartStore((s) => s.removeDraft);
   const loadOpenBillIntoDraft = useCartStore((s) => s.loadOpenBillIntoDraft);
+  const setBillNote = useCartStore((s) => s.setBillNote);
+  const startDraft = useCartStore((s) => s.startDraft);
+  const setPagerNumber = useCartStore((s) => s.setPagerNumber);
 
   // Shift
   const [shift, setShift] = useState<Shift | null>(null);
@@ -407,10 +419,13 @@ export function PosShell() {
       return;
     }
     if (rightPanel.kind === "idle") {
-      // S1: cache the tapped item; handleNewOrderCreated will dispatch it
-      // after draft is ready. Saves the user from re-tapping.
-      setPendingTapItem(item);
-      setNewOrderOpen(true);
+      // C-2 #4 cashier flow reorder: items first, metadata at Bayar.
+      // Auto-create a fresh draft (no pager, dine-in default, no name)
+      // and dispatch the tapped item immediately so kasir lands in cart.
+      const draftId = startDraft(null, "dine_in", null, null);
+      setRightPanel({ kind: "cart", draftId });
+      setTab("cashier");
+      dispatchItem(draftId, item);
       return;
     }
     if (rightPanel.kind !== "cart") {
@@ -546,6 +561,13 @@ export function PosShell() {
 
   function handleProceedToPayment() {
     if (!activeDraft || activeDraft.items.length === 0) return;
+    // C-2 #4: gate behind metadata modal — pager + name optional but
+    // surfaced before payment so kasir always has a chance to fill them.
+    setMetadataModal("pay");
+  }
+
+  function continueToPayment() {
+    if (!activeDraft || activeDraft.items.length === 0) return;
     setCashInput("");
     setPaymentMethod("cash");
     setPaymentError(null);
@@ -553,6 +575,22 @@ export function PosShell() {
   }
 
   async function handleSaveAsOpenBill() {
+    if (!activeDraft || !shift || !session) return;
+    if (activeDraft.items.length === 0) return;
+    // C-2 #4: for CREATE path, require customerName before commit so
+    // kasir can find the bill in Bill Aktif. EDIT path skips the modal
+    // since metadata was set when the bill was first created.
+    if (
+      !activeDraft.editingBillId &&
+      (!activeDraft.customerName || activeDraft.customerName.length === 0)
+    ) {
+      setMetadataModal("save_bill");
+      return;
+    }
+    await commitSaveAsOpenBill();
+  }
+
+  async function commitSaveAsOpenBill() {
     if (!activeDraft || !shift || !session) return;
     if (activeDraft.items.length === 0) return;
     setPaymentSubmitting(true);
@@ -580,6 +618,7 @@ export function PosShell() {
         transactionId: activeDraft.editingBillId,
         customerName: activeDraft.customerName,
         customerPhone: activeDraft.customerPhone,
+        note: activeDraft.billNote,
         items: itemsPayload,
         subtotal,
         discountType: activeDraft.discount?.type ?? null,
@@ -600,6 +639,7 @@ export function PosShell() {
       removeDraft(activeDraft.id);
       setRightPanel({ kind: "idle" });
       setHistoryRefreshKey((k) => k + 1);
+      setPrintConfirm({ trx: res.data, title: "Bill di-update" });
       return;
     }
 
@@ -611,7 +651,8 @@ export function PosShell() {
       pagerNumber: activeDraft.pagerNumber,
       orderType: activeDraft.orderType,
       customerName: activeDraft.customerName,
-        customerPhone: activeDraft.customerPhone,
+      customerPhone: activeDraft.customerPhone,
+      note: activeDraft.billNote,
       items: itemsPayload,
       subtotal,
       discountType: activeDraft.discount?.type ?? null,
@@ -634,6 +675,7 @@ export function PosShell() {
     removeDraft(activeDraft.id);
     setRightPanel({ kind: "idle" });
     setHistoryRefreshKey((k) => k + 1);
+    setPrintConfirm({ trx: res.data, title: "Bill disimpan" });
   }
 
   async function handleProcessPayment() {
@@ -652,7 +694,8 @@ export function PosShell() {
       pagerNumber: activeDraft.pagerNumber,
       orderType: activeDraft.orderType,
       customerName: activeDraft.customerName,
-        customerPhone: activeDraft.customerPhone,
+      customerPhone: activeDraft.customerPhone,
+      note: activeDraft.billNote,
       items: activeDraft.items.map((item) => ({
         menuItemId: item.menuItemId,
         variant: item.variant,
@@ -801,6 +844,9 @@ export function PosShell() {
               setRightPanel({ kind: "cart", draftId: id });
             }}
             onCountChange={setOpenBillsCount}
+            onBillPaid={(trx) =>
+              setPrintConfirm({ trx, title: "Pembayaran sukses" })
+            }
           />
         ) : tab === "queue" ? (
           <OrderQueuePanel
@@ -865,6 +911,7 @@ export function PosShell() {
             onProceedToPayment={handleProceedToPayment}
             onCancel={handleCancelOrder}
             onSwitchDraft={() => setRightPanel({ kind: "idle" })}
+            onSetBillNote={(note) => setBillNote(activeDraft.id, note)}
           />
         ) : rightPanel.kind === "paying" && activeDraft ? (
           <PayingPanel
@@ -977,6 +1024,14 @@ export function PosShell() {
       <OpenShiftModal
         open={openShiftOpen}
         userId={session.user.id}
+        menuItems={menuItems}
+        categories={categories}
+        role={session.user.role}
+        onItemUpdated={(next) =>
+          setMenuItems((items) =>
+            items.map((it) => (it.id === next.id ? next : it)),
+          )
+        }
         onClose={() => setOpenShiftOpen(false)}
         onOpened={async () => {
           setOpenShiftOpen(false);
@@ -1008,6 +1063,54 @@ export function PosShell() {
         onChanged={() => setHistoryRefreshKey((k) => k + 1)}
         onOpenSettings={() => setTab("settings")}
       />
+
+      <PostActionPrintModal
+        open={printConfirm !== null}
+        trx={printConfirm?.trx ?? null}
+        cashierName={session.user.name ?? "Kasir"}
+        receiptConfig={receiptConfig}
+        title={printConfirm?.title ?? "Cetak struk?"}
+        onClose={() => setPrintConfirm(null)}
+        onOpenSettings={() => setTab("settings")}
+      />
+
+      {activeDraft && metadataModal !== null ? (
+        <OrderMetadataModal
+          open
+          mode={metadataModal}
+          initialPager={activeDraft.pagerNumber}
+          initialCustomerName={activeDraft.customerName}
+          initialCustomerPhone={activeDraft.customerPhone}
+          onClose={() => setMetadataModal(null)}
+          onSubmit={(values) => {
+            const mode = metadataModal;
+            setMetadataModal(null);
+            // Persist the metadata into the draft, then continue the
+            // gated flow (payment screen or commit-open-bill).
+            const draftId = activeDraft.id;
+            setPagerNumber(draftId, values.pagerNumber);
+            useCartStore.setState((s) => {
+              const d = s.drafts[draftId];
+              if (!d) return s;
+              return {
+                drafts: {
+                  ...s.drafts,
+                  [draftId]: {
+                    ...d,
+                    customerName: values.customerName,
+                    customerPhone: values.customerPhone,
+                  },
+                },
+              };
+            });
+            if (mode === "pay") {
+              continueToPayment();
+            } else {
+              void commitSaveAsOpenBill();
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1202,7 +1305,9 @@ function IdlePanel({
               >
                 <div>
                   <p className="font-mono text-sm font-bold text-neutral-900">
-                    Pager {draft.pagerNumber}
+                    {draft.pagerNumber !== null
+                      ? `Pager ${draft.pagerNumber}`
+                      : draft.customerName ?? "Order baru"}
                   </p>
                   <p className="text-xs text-neutral-500">
                     {draft.orderType === "dine_in" ? "Dine-in" : "Takeaway"} ·{" "}
@@ -1245,6 +1350,7 @@ interface CartPanelProps extends CartPanelPropsExtra {
   onProceedToPayment: () => void;
   onCancel: () => void;
   onSwitchDraft: () => void;
+  onSetBillNote: (note: string | null) => void;
 }
 
 function CartPanel(props: CartPanelProps) {
@@ -1267,7 +1373,11 @@ function CartPanelImpl({
   onProceedToPayment,
   onCancel,
   onSwitchDraft,
+  onSetBillNote,
 }: CartPanelProps) {
+  const [billNoteOpen, setBillNoteOpen] = useState(
+    Boolean(draft.billNote && draft.billNote.length > 0),
+  );
   return (
     <>
       <header className="flex items-center justify-between border-b border-neutral-200 p-4">
@@ -1298,9 +1408,11 @@ function CartPanelImpl({
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          <Badge variant="signature">
-            P<span className="font-mono">{draft.pagerNumber}</span>
-          </Badge>
+          {draft.pagerNumber !== null ? (
+            <Badge variant="signature">
+              P<span className="font-mono">{draft.pagerNumber}</span>
+            </Badge>
+          ) : null}
           <Badge variant="neutral">
             {draft.orderType === "dine_in" ? "DI" : "TA"}
           </Badge>
@@ -1343,6 +1455,37 @@ function CartPanelImpl({
       </div>
 
       <footer className="border-t border-neutral-200 bg-neutral-50 p-4 space-y-3">
+        <div>
+          <button
+            type="button"
+            onClick={() => setBillNoteOpen((v) => !v)}
+            className="flex w-full items-center justify-between rounded-md border border-dashed border-neutral-300 bg-white px-3 py-2 text-left text-xs text-neutral-600 hover:border-neutral-400"
+          >
+            <span className="flex items-center gap-2">
+              <FileText className="size-3.5" aria-hidden />
+              {draft.billNote && draft.billNote.length > 0
+                ? "Catatan Bill"
+                : "Tambah Catatan Bill"}
+            </span>
+            <span className="text-neutral-400">
+              {billNoteOpen ? "Tutup" : draft.billNote ? "Edit" : "+"}
+            </span>
+          </button>
+          {billNoteOpen ? (
+            <textarea
+              value={draft.billNote ?? ""}
+              onChange={(e) => onSetBillNote(e.target.value)}
+              maxLength={200}
+              rows={2}
+              placeholder="Misal: pesanan tanpa gula, antar ke meja 5..."
+              className="mt-2 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+            />
+          ) : draft.billNote ? (
+            <p className="mt-1 px-1 text-xs italic text-neutral-600 line-clamp-2">
+              {draft.billNote}
+            </p>
+          ) : null}
+        </div>
         <Row label="Subtotal" value={formatRupiah(subtotal)} muted />
         {draft.discount ? (
           <Row
@@ -1471,9 +1614,11 @@ function PayingPanel({
         >
           <ArrowLeft className="size-4" aria-hidden /> Cart
         </button>
-        <Badge variant="signature">
-          Pager <span className="font-mono">{draft.pagerNumber}</span>
-        </Badge>
+        {draft.pagerNumber !== null ? (
+          <Badge variant="signature">
+            Pager <span className="font-mono">{draft.pagerNumber}</span>
+          </Badge>
+        ) : null}
       </header>
 
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
@@ -1642,7 +1787,9 @@ function PaidPanel({
             left={trx.transactionNumber}
             right={trx.orderType === "dine_in" ? "Dine-in" : "Takeaway"}
           />
-          <Line left="Pager" right={String(trx.pagerNumber)} />
+          {trx.pagerNumber !== null ? (
+            <Line left="Pager" right={String(trx.pagerNumber)} />
+          ) : null}
           {trx.customerName ? (
             <Line left="Nama" right={trx.customerName} />
           ) : null}

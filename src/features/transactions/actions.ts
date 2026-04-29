@@ -187,6 +187,16 @@ async function requireSession() {
   return session;
 }
 
+const BILL_NOTE_MAX = 200;
+
+/** Trim + cap + normalize empty to null. Server boundary for `transactions.note`. */
+function normalizeBillNote(input: string | null | undefined): string | null {
+  if (input === undefined || input === null) return null;
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return null;
+  return trimmed.slice(0, BILL_NOTE_MAX);
+}
+
 // ---------- Reads ----------
 
 export async function listTransactions(
@@ -406,6 +416,7 @@ export async function createTransaction(
           pagerNumber: v.pagerNumber,
           orderType: v.orderType,
           customerName: customerNameSnapshot,
+          note: normalizeBillNote(v.note),
           customerId,
           loyaltyPointsRedeemed: redeemPoints > 0 ? redeemPoints : null,
           subtotal: validation.recomputedSubtotal,
@@ -1379,6 +1390,7 @@ export async function editOpenBill(
           discountReason: v.discountReason,
           total: validation.recomputedTotal,
           customerName: customerNameSnapshot,
+          note: normalizeBillNote(v.note),
           customerId,
           cogs: hasAnyCogs ? flow.totalCogs : null,
           ...(discountApproverId
@@ -1536,6 +1548,7 @@ export async function saveAsOpenBill(
     orderType: input.orderType,
     customerName: input.customerName,
     customerPhone: input.customerPhone,
+    note: input.note,
     items: input.items,
     subtotal: input.subtotal,
     discountType: input.discountType,

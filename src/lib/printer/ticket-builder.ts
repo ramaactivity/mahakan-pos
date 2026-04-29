@@ -32,13 +32,16 @@ export interface PrepTicketItem {
 
 export interface PrepTicketData {
   transactionNumber: string;
-  pagerNumber: number;
+  pagerNumber: number | null;
   orderType: "dine_in" | "takeaway";
   createdAt: Date | string;
   cashierName: string;
   /** Optional free-form label — customer name, "Meja 5", "Gojek". Printed
    * prominently so prep staff can call out by name when pager is misplaced. */
   customerName?: string | null;
+  /** Optional bill-level note (e.g. "tanpa gula", "kurang pedas") echoed
+   * to prep stations so kitchen/bar see special instructions. */
+  note?: string | null;
   items: PrepTicketItem[];
 }
 
@@ -84,7 +87,7 @@ export function buildPrepTicket(
   parts.push(size(1, 2));
   parts.push(
     text(
-      `Pager ${d.pagerNumber} | ${
+      `${d.pagerNumber !== null ? `Pager ${d.pagerNumber} | ` : ""}${
         d.orderType === "dine_in" ? "Dine-in" : "Takeaway"
       }\n`,
     ),
@@ -104,6 +107,11 @@ export function buildPrepTicket(
   parts.push(text(`No   : ${d.transactionNumber}\n`));
   parts.push(text(`Tgl  : ${formatIndonesianDateTime(d.createdAt)}\n`));
   parts.push(text(`Kasir: ${d.cashierName}\n`));
+  if (d.note && d.note.trim().length > 0) {
+    parts.push(bold(true));
+    parts.push(text(`Catatan: ${d.note.trim().slice(0, 60)}\n`));
+    parts.push(bold(false));
+  }
   parts.push(divider("-", COLS));
 
   // Items — emphasized item lines, quiet "- "-prefixed sub-lines.

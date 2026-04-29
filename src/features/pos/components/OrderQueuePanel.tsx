@@ -288,7 +288,7 @@ function OrderCard({
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3">
             <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-mahakan-green-100 text-lg font-bold text-mahakan-green-900">
-              {summary.pagerNumber}
+              {summary.pagerNumber !== null ? summary.pagerNumber : "—"}
             </div>
             <div>
               <div className="flex items-center gap-2">

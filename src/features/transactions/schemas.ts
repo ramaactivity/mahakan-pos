@@ -24,7 +24,7 @@ export const createTransactionSchema = z.object({
   clientRefId: z.uuid().optional(),
   shiftId: z.uuid(),
   cashierId: z.uuid(),
-  pagerNumber: z.number().int().min(1).max(99),
+  pagerNumber: z.number().int().min(1).max(99).nullable(),
   orderType: z.enum(["dine_in", "takeaway"]),
   customerName: z
     .string()
@@ -36,6 +36,12 @@ export const createTransactionSchema = z.object({
     .string()
     .trim()
     .max(30)
+    .nullish()
+    .transform((s) => (s && s.length > 0 ? s : null)),
+  note: z
+    .string()
+    .trim()
+    .max(200)
     .nullish()
     .transform((s) => (s && s.length > 0 ? s : null)),
   items: z.array(itemSchema).min(1).max(50),
@@ -115,6 +121,12 @@ export const editOpenBillSchema = z.object({
     .string()
     .trim()
     .max(30)
+    .nullish()
+    .transform((s) => (s && s.length > 0 ? s : null)),
+  note: z
+    .string()
+    .trim()
+    .max(200)
     .nullish()
     .transform((s) => (s && s.length > 0 ? s : null)),
   items: z.array(itemSchema).min(1).max(50),

@@ -46,12 +46,14 @@ export interface ReceiptData {
   outletAddress: string | null;
   outletPhone: string | null;
   transactionNumber: string;
-  pagerNumber: number;
+  pagerNumber: number | null;
   orderType: "dine_in" | "takeaway";
   createdAt: Date | string;
   cashierName: string;
   /** Optional free-form label — customer name, "Meja 5", "Gojek". */
   customerName?: string | null;
+  /** Optional bill-level note printed in a dedicated block before items. */
+  note?: string | null;
   /** Optional loyalty member phone (digits-only). When set together with
    * loyalty fields, the receipt prints a "Member" footer block. */
   memberPhone?: string | null;
@@ -139,7 +141,7 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   parts.push(text(`Tgl  : ${formatIndonesianDateTime(d.createdAt)}\n`));
   parts.push(
     text(
-      `Pager ${d.pagerNumber} | ${
+      `${d.pagerNumber !== null ? `Pager ${d.pagerNumber} | ` : ""}${
         d.orderType === "dine_in" ? "Dine-in" : "Takeaway"
       }\n`,
     ),
@@ -147,6 +149,12 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   parts.push(text(`Kasir: ${d.cashierName}\n`));
   if (d.customerName && d.customerName.trim().length > 0) {
     parts.push(text(`Nama : ${truncate(d.customerName.trim(), 25)}\n`));
+  }
+  if (d.note && d.note.trim().length > 0) {
+    parts.push(text("Catatan:\n"));
+    for (const line of wrapNote(d.note.trim(), COLS - 2)) {
+      parts.push(text(`  ${line}\n`));
+    }
   }
   parts.push(text("\n"));
   parts.push(divider("-", COLS));
@@ -297,4 +305,24 @@ function wrapAddress(addr: string): string[] {
 
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 2)}..` : s;
+}
+
+function wrapNote(note: string, width: number): string[] {
+  // Wrap on word boundaries; falls back to hard cut for ultra-long tokens.
+  const words = note.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let line = "";
+  for (const w of words) {
+    const piece = w.length > width ? w.slice(0, width) : w;
+    if (line.length === 0) {
+      line = piece;
+    } else if (line.length + 1 + piece.length <= width) {
+      line += ` ${piece}`;
+    } else {
+      out.push(line);
+      line = piece;
+    }
+  }
+  if (line.length > 0) out.push(line);
+  return out;
 }

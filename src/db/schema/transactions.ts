@@ -32,7 +32,12 @@ export const transactions = pgTable(
     clientRefId: uuid("client_ref_id").unique(),
     transactionNumber: text("transaction_number").notNull().unique(),
 
-    pagerNumber: integer("pager_number").notNull(),
+    /** Optional pager number 1..99. Null when kasir hasn't assigned one
+     * (e.g. takeaway via Gojek doesn't need physical pager). Migration
+     * 0010 (sesi C-2) relaxed the NOT NULL + check constraint to support
+     * the cashier flow reorder (Galih ask #4) — items first, pager
+     * prompted at Bayar/Simpan Bill. */
+    pagerNumber: integer("pager_number"),
     orderType: text("order_type", { enum: ["dine_in", "takeaway"] }).notNull(),
 
     subtotal: bigint("subtotal", { mode: "number" }).notNull(),
@@ -82,6 +87,11 @@ export const transactions = pgTable(
 
     customerName: text("customer_name"),
 
+    /** Free-form bill-level note (catatan khusus pesanan). Optional, max
+     * 200 chars (enforced server-side). Per-line item notes live on
+     * `transaction_items.note` separately. */
+    note: text("note"),
+
     customerId: uuid("customer_id").references(() => customers.id),
     loyaltyPointsEarned: integer("loyalty_points_earned"),
     loyaltyPointsRedeemed: integer("loyalty_points_redeemed"),
@@ -100,7 +110,7 @@ export const transactions = pgTable(
     index("idx_transactions_payment_method").on(t.paymentMethod),
     check(
       "ck_transactions_pager_range",
-      sql`${t.pagerNumber} BETWEEN 1 AND 99`,
+      sql`${t.pagerNumber} IS NULL OR ${t.pagerNumber} BETWEEN 1 AND 99`,
     ),
     check(
       "ck_transactions_money_nonneg",

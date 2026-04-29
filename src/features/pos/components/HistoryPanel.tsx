@@ -98,7 +98,7 @@ export function HistoryPanel({
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <span className="rounded-full bg-neutral-100 px-3 py-1 font-mono text-xs font-bold text-neutral-700">
-                    P{trx.pagerNumber}
+                    {trx.pagerNumber !== null ? `P${trx.pagerNumber}` : "—"}
                   </span>
                   <div className="min-w-0">
                     <p className="font-mono text-sm font-medium text-neutral-900 truncate">
