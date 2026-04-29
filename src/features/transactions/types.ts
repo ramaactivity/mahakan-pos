@@ -17,8 +17,19 @@ export type PaymentMethod = "cash" | "qris" | "card_bca";
 export type OrderType = "dine_in" | "takeaway";
 export type TransactionStatus = "paid" | "voided" | "refunded" | "open";
 
+/** Loyalty member snapshot embedded in transaction queries for receipt
+ * rendering + history modals. Populated via LEFT JOIN customers in
+ * fetchTransactionById; null when transaction has no linked member. */
+export interface TransactionMemberInfo {
+  id: string;
+  name: string;
+  phone: string;
+  totalPoints: number;
+}
+
 export interface TransactionWithItems extends Transaction {
   items: Array<TransactionItem & { modifiers: TransactionItemModifier[] }>;
+  member?: TransactionMemberInfo | null;
 }
 
 export type ApiResult<T> =
@@ -80,8 +91,14 @@ export interface CreateTransactionInput {
   pagerNumber: number;
   orderType: OrderType;
   /** Optional free-form label — customer name, "Meja 5", "Gojek", etc.
-   * Helps kasir + dapur call out by name instead of pager number. */
+   * Helps kasir + dapur call out by name instead of pager number. Also
+   * supplies the name for loyalty record creation when customerPhone is
+   * provided and the customer doesn't yet exist. */
   customerName?: string | null;
+  /** Optional phone (digits-only or formatted) for loyalty linkage. When
+   * supplied + valid (>=6 digits), server finds-or-creates a customer and
+   * earns points on the sale total. */
+  customerPhone?: string | null;
   items: CreateTransactionItemInput[];
   /** Client-claimed; server recomputes and rejects mismatch. */
   subtotal: number;
@@ -123,6 +140,7 @@ export interface SaveOpenBillInput {
   pagerNumber: number;
   orderType: OrderType;
   customerName?: string | null;
+  customerPhone?: string | null;
   items: CreateTransactionItemInput[];
   subtotal: number;
   discountType: DiscountType | null;
@@ -151,6 +169,7 @@ export interface CloseOpenBillInput {
 export interface EditOpenBillInput {
   transactionId: string;
   customerName?: string | null;
+  customerPhone?: string | null;
   items: CreateTransactionItemInput[];
   subtotal: number;
   discountType: DiscountType | null;

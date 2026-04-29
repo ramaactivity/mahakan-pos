@@ -22,6 +22,10 @@ import {
   restoreStockForTransaction,
 } from "@/features/inventory/transaction-flow";
 import {
+  earnPointsForTransaction,
+  findOrCreateCustomer,
+} from "@/features/customers";
+import {
   fetchTransactionByClientRefId,
   fetchTransactionById,
   fetchTransactions,
@@ -85,6 +89,7 @@ export async function getTransaction(
 
 export async function createTransaction(
   input: CreateTransactionInput,
+  opts: { skipEarn?: boolean } = {},
 ): Promise<ApiResult<TransactionWithItems>> {
   const session = await requireSession();
 
@@ -183,6 +188,29 @@ export async function createTransaction(
   }
   const menuById = new Map(menuRows.map((m) => [m.id, m]));
 
+  // Resolve loyalty customer if a phone was provided. find-or-create — name
+  // defaults to customerName (or "Member <phone>" fallback). Failure here
+  // shouldn't block the sale; we proceed with no customer linkage.
+  let customerId: string | null = null;
+  let customerNameSnapshot = v.customerName ?? null;
+  if (v.customerPhone) {
+    const customerRes = await findOrCreateCustomer({
+      phone: v.customerPhone,
+      name: v.customerName ?? `Member ${v.customerPhone}`,
+    });
+    if (customerRes.success) {
+      customerId = customerRes.data.id;
+      // Use the canonical customer name from the loyalty record so the struk
+      // and history reflect the registered name (kasir's free-text label
+      // takes priority though if explicitly typed).
+      if (!customerNameSnapshot) {
+        customerNameSnapshot = customerRes.data.name;
+      }
+    }
+    // If find-or-create failed (e.g. invalid phone), silently continue
+    // without loyalty linkage — sale must not block on this.
+  }
+
   // Atomic insert: advisory lock + sequence + insert in single transaction
   const ymd = todayWibYmd();
   const dayStart = startOfWibDayUtc();
@@ -222,7 +250,8 @@ export async function createTransaction(
           transactionNumber,
           pagerNumber: v.pagerNumber,
           orderType: v.orderType,
-          customerName: v.customerName ?? null,
+          customerName: customerNameSnapshot,
+          customerId,
           subtotal: validation.recomputedSubtotal,
           discountType: v.discountType,
           discountValue: v.discountValue,
@@ -372,6 +401,15 @@ export async function createTransaction(
           actorRole: session.user.role,
         },
       });
+    }
+
+    // Loyalty earn — best-effort, fired after the sale tx commits. Skipped
+    // when called from saveAsOpenBill (status will be flipped to "open"
+    // before the bill is paid; closeOpenBill fires earn later).
+    if (!opts.skipEarn && customerId !== null) {
+      earnPointsForTransaction(result.trx.id).catch((e) =>
+        console.error("[loyalty earn]", e),
+      );
     }
 
     return ok({
@@ -792,6 +830,25 @@ export async function editOpenBill(
   }
   const menuById = new Map(menuRows.map((m) => [m.id, m]));
 
+  // Re-resolve loyalty linkage on edit. New phone → relink to that member.
+  // Empty phone → preserve existing linkage (kasir can't accidentally
+  // un-link by leaving the field blank). To explicitly remove a member
+  // the Owner uses Admin → Customers.
+  let customerId: string | null = current.customerId;
+  let customerNameSnapshot = v.customerName ?? current.customerName;
+  if (v.customerPhone) {
+    const customerRes = await findOrCreateCustomer({
+      phone: v.customerPhone,
+      name: v.customerName ?? `Member ${v.customerPhone}`,
+    });
+    if (customerRes.success) {
+      customerId = customerRes.data.id;
+      if (!v.customerName) {
+        customerNameSnapshot = customerRes.data.name;
+      }
+    }
+  }
+
   try {
     const result = await db.transaction(async (tx) => {
       // Step 1: restore stock for the existing items (mirrors void semantics
@@ -870,7 +927,8 @@ export async function editOpenBill(
           discountAmount: validation.recomputedDiscountAmount,
           discountReason: v.discountReason,
           total: validation.recomputedTotal,
-          customerName: v.customerName ?? null,
+          customerName: customerNameSnapshot,
+          customerId,
           cogs: hasAnyCogs ? flow.totalCogs : null,
           ...(discountApproverId
             ? { discountApprover: discountApproverId }
@@ -1026,6 +1084,7 @@ export async function saveAsOpenBill(
     pagerNumber: input.pagerNumber,
     orderType: input.orderType,
     customerName: input.customerName,
+    customerPhone: input.customerPhone,
     items: input.items,
     subtotal: input.subtotal,
     discountType: input.discountType,
@@ -1038,7 +1097,9 @@ export async function saveAsOpenBill(
     cashChange: 0,
     discountApproverToken: input.discountApproverToken,
   };
-  const created = await createTransaction(placeholder);
+  // Skip earn here — bill not yet paid. closeOpenBill fires earn when the
+  // bill actually transitions to status="paid".
+  const created = await createTransaction(placeholder, { skipEarn: true });
   if (!isOk(created)) return created;
 
   // Step 2: flip to open status + reset payment fields. cashReceived stays
@@ -1151,6 +1212,13 @@ export async function closeOpenBill(
       actorRole: session.user.role,
     },
   });
+
+  // Loyalty earn at close — first time the bill becomes "paid".
+  if (current.customerId !== null) {
+    earnPointsForTransaction(input.transactionId).catch((e) =>
+      console.error("[loyalty earn close]", e),
+    );
+  }
 
   const refreshed = await fetchTransactionById(input.transactionId);
   return refreshed

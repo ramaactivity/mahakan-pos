@@ -472,6 +472,7 @@ export function PosShell() {
       const res = await editOpenBill({
         transactionId: activeDraft.editingBillId,
         customerName: activeDraft.customerName,
+        customerPhone: activeDraft.customerPhone,
         items: itemsPayload,
         subtotal,
         discountType: activeDraft.discount?.type ?? null,
@@ -503,6 +504,7 @@ export function PosShell() {
       pagerNumber: activeDraft.pagerNumber,
       orderType: activeDraft.orderType,
       customerName: activeDraft.customerName,
+        customerPhone: activeDraft.customerPhone,
       items: itemsPayload,
       subtotal,
       discountType: activeDraft.discount?.type ?? null,
@@ -543,6 +545,7 @@ export function PosShell() {
       pagerNumber: activeDraft.pagerNumber,
       orderType: activeDraft.orderType,
       customerName: activeDraft.customerName,
+        customerPhone: activeDraft.customerPhone,
       items: activeDraft.items.map((item) => ({
         menuItemId: item.menuItemId,
         variant: item.variant,
@@ -1114,9 +1117,14 @@ function CartPanelImpl({
               <ShoppingCart className="size-5 shrink-0" aria-hidden />
               <span className="truncate">Order Aktif</span>
             </h2>
-            {draft.customerName ? (
+            {draft.customerName || draft.customerPhone ? (
               <p className="ml-7 truncate text-xs font-medium text-neutral-700">
-                {draft.customerName}
+                {draft.customerName ?? draft.customerPhone}
+                {draft.customerPhone ? (
+                  <span className="ml-1 text-neutral-500">
+                    · {draft.customerPhone}
+                  </span>
+                ) : null}
               </p>
             ) : null}
           </div>

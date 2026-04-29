@@ -13,6 +13,7 @@ import { outlets } from "./outlets";
 import { users } from "./users";
 import { shifts } from "./shifts";
 import { menuItems } from "./menu";
+import { customers } from "./customers";
 
 export const transactions = pgTable(
   "transactions",
@@ -73,7 +74,7 @@ export const transactions = pgTable(
 
     customerName: text("customer_name"),
 
-    customerId: uuid("customer_id"),
+    customerId: uuid("customer_id").references(() => customers.id),
     loyaltyPointsEarned: integer("loyalty_points_earned"),
 
     createdAt: timestamp("created_at", { withTimezone: true })

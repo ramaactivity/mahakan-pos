@@ -60,6 +60,10 @@ export const AUDIT_EVENT_TYPES = [
   "inventory.preparation.recompute",
   "inventory.cost.cascade",
   "inventory.import.run",
+  // Customers / Loyalty — Phase 2 Tier 1.3 (M29)
+  "customer.create",
+  "customer.update",
+  "transaction.points.earned",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -79,7 +83,8 @@ export type AuditEntityType =
   | "recipe"
   | "inventory_movement"
   | "preparation"
-  | "import_run";
+  | "import_run"
+  | "customer";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

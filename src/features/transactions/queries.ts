@@ -2,6 +2,7 @@ import "server-only";
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  customers,
   transactionItems,
   transactionItemModifiers,
   transactions,
@@ -59,7 +60,8 @@ export async function fetchTransactions(
   };
 }
 
-/** Fetch a transaction with items + modifiers joined. */
+/** Fetch a transaction with items + modifiers joined, plus loyalty member
+ * info if the trx is linked to a customer (left join). */
 export async function fetchTransactionById(
   id: string,
 ): Promise<TransactionWithItems | null> {
@@ -86,12 +88,28 @@ export async function fetchTransactionById(
         )
     : [];
 
+  let member: TransactionWithItems["member"] = null;
+  if (trx.customerId) {
+    const [c] = await db
+      .select({
+        id: customers.id,
+        name: customers.name,
+        phone: customers.phone,
+        totalPoints: customers.totalPoints,
+      })
+      .from(customers)
+      .where(eq(customers.id, trx.customerId))
+      .limit(1);
+    member = c ?? null;
+  }
+
   return {
     ...trx,
     items: items.map((it) => ({
       ...it,
       modifiers: allMods.filter((m) => m.transactionItemId === it.id),
     })),
+    member,
   };
 }
 

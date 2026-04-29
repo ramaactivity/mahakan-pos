@@ -7,3 +7,4 @@ export * from "./expenses";
 export * from "./audit";
 export * from "./approver-tokens";
 export * from "./inventory";
+export * from "./customers";

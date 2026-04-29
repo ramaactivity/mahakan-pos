@@ -32,6 +32,12 @@ export const createTransactionSchema = z.object({
     .max(60)
     .nullish()
     .transform((s) => (s && s.length > 0 ? s : null)),
+  customerPhone: z
+    .string()
+    .trim()
+    .max(30)
+    .nullish()
+    .transform((s) => (s && s.length > 0 ? s : null)),
   items: z.array(itemSchema).min(1).max(50),
   subtotal: moneySchema,
   discountType: z.enum(["percent", "fixed"]).nullable(),
@@ -63,6 +69,12 @@ export const editOpenBillSchema = z.object({
     .string()
     .trim()
     .max(60)
+    .nullish()
+    .transform((s) => (s && s.length > 0 ? s : null)),
+  customerPhone: z
+    .string()
+    .trim()
+    .max(30)
     .nullish()
     .transform((s) => (s && s.length > 0 ? s : null)),
   items: z.array(itemSchema).min(1).max(50),

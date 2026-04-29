@@ -53,6 +53,14 @@ export interface ReceiptData {
   cashierName: string;
   /** Optional free-form label — customer name, "Meja 5", "Gojek". */
   customerName?: string | null;
+  /** Optional loyalty member phone (digits-only). When set together with
+   * loyalty fields, the receipt prints a "Member" footer block. */
+  memberPhone?: string | null;
+  /** Optional loyalty member's current points balance AFTER this sale's
+   * earn was applied. Receipt shows "Saldo: <X> poin". */
+  memberTotalPoints?: number | null;
+  /** Optional points earned on this transaction. Shows "+<N> poin". */
+  pointsEarned?: number | null;
   items: ReceiptItem[];
   subtotal: number;
   discountAmount: number;
@@ -194,6 +202,30 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
     parts.push(text("BAYAR : KARTU BCA\n"));
   }
   parts.push(bold(false));
+
+  // Loyalty block — printed before the regular footer when the sale was
+  // attached to a member. Shows phone + points earned + total balance.
+  const hasMember =
+    Boolean(d.memberPhone && d.memberPhone.trim().length > 0) ||
+    Boolean(d.pointsEarned && d.pointsEarned > 0);
+
+  if (hasMember) {
+    parts.push(divider("-", COLS));
+    parts.push(align("center"));
+    parts.push(bold(true));
+    parts.push(text("MEMBER\n"));
+    parts.push(bold(false));
+    if (d.memberPhone && d.memberPhone.trim().length > 0) {
+      parts.push(centerLine(d.memberPhone, COLS));
+    }
+    parts.push(align("left"));
+    if (d.pointsEarned && d.pointsEarned > 0) {
+      parts.push(dualLine("Poin diperoleh", `+${d.pointsEarned}`, COLS));
+    }
+    if (d.memberTotalPoints !== null && d.memberTotalPoints !== undefined) {
+      parts.push(dualLine("Saldo poin", String(d.memberTotalPoints), COLS));
+    }
+  }
 
   // Footer block — divider, footer text, optional WiFi info, optional extra
   // free-form lines. Skip whole block if nothing to print.

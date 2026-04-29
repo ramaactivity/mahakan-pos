@@ -65,6 +65,7 @@ interface CartStore {
     pagerNumber: number,
     orderType: OrderType,
     customerName?: string | null,
+    customerPhone?: string | null,
   ) => string;
   /** Materialize an existing open bill into a fresh Draft so kasir can
    * edit items via the normal cart UI. Sets `editingBillId` — PosShell
@@ -109,15 +110,18 @@ interface CartStore {
 export const useCartStore = create<CartStore>((set, get) => ({
   drafts: {},
 
-  startDraft: (pagerNumber, orderType, customerName) => {
+  startDraft: (pagerNumber, orderType, customerName, customerPhone) => {
     const id = genDraftId();
     const now = new Date().toISOString();
-    const trimmed = customerName?.trim();
+    const trimmedName = customerName?.trim();
+    const trimmedPhone = customerPhone?.replace(/[^\d]/g, "");
     const draft: Draft = {
       id,
       pagerNumber,
       orderType,
-      customerName: trimmed && trimmed.length > 0 ? trimmed : null,
+      customerName: trimmedName && trimmedName.length > 0 ? trimmedName : null,
+      customerPhone:
+        trimmedPhone && trimmedPhone.length >= 6 ? trimmedPhone : null,
       items: [],
       discount: null,
       discountReason: null,
@@ -138,6 +142,10 @@ export const useCartStore = create<CartStore>((set, get) => ({
       pagerNumber: trx.pagerNumber,
       orderType: trx.orderType,
       customerName: trx.customerName ?? null,
+      // We don't have phone on the transaction row directly, only via
+      // customers.id linkage. The edit-flow doesn't auto-populate phone —
+      // kasir re-types if they want to confirm/change member linkage.
+      customerPhone: null,
       items: trx.items.map((it) => ({
         cartItemId: genCartItemId(),
         menuItemId: it.menuItemId,

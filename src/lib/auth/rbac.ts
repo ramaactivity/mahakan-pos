@@ -109,6 +109,14 @@ export const permissions = {
   "inventory.preparation.create": ["owner", "manager"],
   "inventory.preparation.update": ["owner", "manager"],
   "inventory.preparation.delete": ["owner"],
+
+  // Phase 2 Tier 1.3 (M29) — Customers / Loyalty.
+  // Lookup is open to all roles so kasir can pull member info at checkout;
+  // edit + admin list scoped to owner+manager.
+  "customer.lookup": ["owner", "manager", "staff"],
+  "customer.view": ["owner", "manager"],
+  "customer.create": ["owner", "manager", "staff"],
+  "customer.update": ["owner", "manager"],
 } as const satisfies Record<string, ReadonlyArray<Role>>;
 
 export type Permission = keyof typeof permissions;

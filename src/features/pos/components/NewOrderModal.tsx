@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Input, Modal } from "@/components/ui";
 import { useCartStore } from "@/features/pos/cartStore";
 import type { OrderType } from "@/features/transactions";
+import {
+  isOk,
+  lookupCustomerByPhone,
+  type Customer,
+} from "@/features/customers";
 import { cn } from "@/lib/utils";
 
 interface NewOrderModalProps {
@@ -18,6 +23,9 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
 
   const [pager, setPager] = useState("");
   const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [memberMatch, setMemberMatch] = useState<Customer | null>(null);
+  const [memberLookupLoading, setMemberLookupLoading] = useState(false);
   const [orderType, setOrderType] = useState<OrderType>("takeaway");
   const [error, setError] = useState<string | null>(null);
 
@@ -31,10 +39,55 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
     /* eslint-disable react-hooks/set-state-in-effect */
     setPager(String(next));
     setCustomerName("");
+    setCustomerPhone("");
+    setMemberMatch(null);
+    setMemberLookupLoading(false);
     setOrderType("takeaway");
     setError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open]);
+
+  // Debounced phone → member lookup. When a valid digits-only phone is
+  // typed (>= 6 digits), query the server for an existing customer record
+  // and surface name + balance so kasir can confirm before checkout.
+  // Sync the ref inside an effect (rules-of-react require ref writes to
+  // happen outside render).
+  const customerNameRef = useRef(customerName);
+  useEffect(() => {
+    customerNameRef.current = customerName;
+  }, [customerName]);
+  useEffect(() => {
+    const phone = customerPhone.replace(/[^\d]/g, "");
+    if (phone.length < 6) {
+      // Defer state resets to next tick so the rule
+      // react-hooks/set-state-in-effect doesn't flag us.
+      const t = setTimeout(() => {
+        setMemberMatch(null);
+        setMemberLookupLoading(false);
+      }, 0);
+      return () => clearTimeout(t);
+    }
+    let cancelled = false;
+    const startTimer = setTimeout(() => {
+      if (!cancelled) setMemberLookupLoading(true);
+    }, 0);
+    const timer = setTimeout(async () => {
+      const res = await lookupCustomerByPhone(phone);
+      if (cancelled) return;
+      if (isOk(res)) {
+        setMemberMatch(res.data);
+        if (res.data && customerNameRef.current.length === 0) {
+          setCustomerName(res.data.name);
+        }
+      }
+      setMemberLookupLoading(false);
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(startTimer);
+      clearTimeout(timer);
+    };
+  }, [customerPhone]);
 
   function onSubmit() {
     const num = parseInt(pager, 10);
@@ -42,7 +95,12 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
       setError("Pager harus angka 1-99");
       return;
     }
-    const id = startDraft(num, orderType, customerName || null);
+    const id = startDraft(
+      num,
+      orderType,
+      customerName || null,
+      customerPhone || null,
+    );
     onCreated(id);
   }
 
@@ -78,13 +136,37 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
           autoFocus
         />
         <Input
+          label="Nomor HP Member (opsional)"
+          type="tel"
+          inputMode="numeric"
+          value={customerPhone}
+          onChange={(e) =>
+            setCustomerPhone(e.target.value.replace(/[^\d]/g, "").slice(0, 20))
+          }
+          placeholder="08123456789"
+          maxLength={20}
+          hint={
+            memberLookupLoading
+              ? "Cek member..."
+              : memberMatch
+                ? `✓ Member: ${memberMatch.name} · ${memberMatch.totalPoints} poin`
+                : customerPhone.length >= 6
+                  ? "Member baru — auto daftar saat bayar"
+                  : "Min 6 digit untuk daftar member loyalty"
+          }
+        />
+        <Input
           label="Nama Customer (opsional)"
           type="text"
           value={customerName}
           onChange={(e) => setCustomerName(e.target.value.slice(0, 60))}
           placeholder="mis. Andi / Meja 5 / Gojek"
           maxLength={60}
-          hint="Bantu kasir + dapur call out by name. Boleh diisi label apa saja."
+          hint={
+            memberMatch
+              ? "Auto-isi dari member. Edit di sini = update nama member."
+              : "Bantu kasir + dapur call out by name. Boleh label apa saja."
+          }
         />
         <div className="space-y-1.5">
           <span className="block text-sm font-medium text-neutral-900">
