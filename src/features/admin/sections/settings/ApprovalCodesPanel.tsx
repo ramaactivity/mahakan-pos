@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Mail,
+  RefreshCw,
+  Send,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldX,
+} from "lucide-react";
 import {
   Badge,
   Button,
@@ -18,6 +27,8 @@ import {
 import {
   listApprovalCodes,
   revokeApprovalCode,
+  sendTestEmail,
+  verifyEmailConfig,
 } from "@/features/approval-codes/actions";
 import { isOk, type ApprovalCode } from "@/features/approval-codes/types";
 
@@ -57,6 +68,14 @@ export function ApprovalCodesPanel() {
   const [rows, setRows] = useState<ApprovalCode[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [diagnostic, setDiagnostic] = useState<{
+    provider: string;
+    ok: boolean;
+    error?: string;
+    errorCode?: string;
+  } | null>(null);
+  const [diagnosing, setDiagnosing] = useState(false);
+  const [sendingTest, setSendingTest] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -86,6 +105,44 @@ export function ApprovalCodesPanel() {
     }
     return { active, consumed, expired, revoked };
   }, [rows]);
+
+  async function runDiagnostic() {
+    setDiagnosing(true);
+    const r = await verifyEmailConfig();
+    setDiagnosing(false);
+    if (!isOk(r)) {
+      toast.error(r.error.message);
+      setDiagnostic(null);
+      return;
+    }
+    setDiagnostic(r.data);
+    if (r.data.ok) {
+      toast.success(`Email config OK — provider: ${r.data.provider}`);
+    } else {
+      toast.error(`Email config bermasalah — ${r.data.errorCode ?? r.data.error}`);
+    }
+  }
+
+  async function handleSendTest() {
+    setSendingTest(true);
+    const r = await sendTestEmail();
+    setSendingTest(false);
+    if (!isOk(r)) {
+      toast.error(r.error.message);
+      return;
+    }
+    if (r.data.mode === "sent") {
+      toast.success(
+        `Test email terkirim ke ${r.data.targetMasked} (${r.data.provider})`,
+      );
+    } else if (r.data.mode === "logged") {
+      toast.info("Dev mode — cek server console");
+    } else {
+      toast.error(
+        `Gagal kirim: ${r.data.errorCode ?? "UNKNOWN"} — ${r.data.error ?? ""}`,
+      );
+    }
+  }
 
   async function handleRevoke(id: string) {
     if (revokingId) return;
@@ -120,6 +177,82 @@ export function ApprovalCodesPanel() {
         </div>
       </CardHeader>
       <CardContent>
+        <div className="mb-4 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-neutral-700">
+              <Mail className="size-4" aria-hidden /> Diagnostic Email
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void runDiagnostic()}
+                disabled={diagnosing}
+              >
+                {diagnosing ? "Mengecek..." : "Cek Konfigurasi"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleSendTest()}
+                disabled={sendingTest}
+              >
+                <Send className="size-3.5" />
+                {sendingTest ? "Mengirim..." : "Kirim Test Email"}
+              </Button>
+            </div>
+          </div>
+          {diagnostic ? (
+            <div className="text-xs">
+              {diagnostic.ok ? (
+                <div className="flex items-start gap-2 text-mahakan-green-900">
+                  <CheckCircle2
+                    className="mt-0.5 size-4 shrink-0"
+                    aria-hidden
+                  />
+                  <span>
+                    Provider <strong>{diagnostic.provider}</strong> aktif dan
+                    auth valid. Approval code akan terkirim normal.
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2 text-danger-500">
+                  <AlertTriangle
+                    className="mt-0.5 size-4 shrink-0"
+                    aria-hidden
+                  />
+                  <div className="min-w-0">
+                    <p className="font-medium">
+                      Provider <strong>{diagnostic.provider}</strong> bermasalah
+                      ({diagnostic.errorCode ?? "UNKNOWN"})
+                    </p>
+                    {diagnostic.error ? (
+                      <p className="mt-1 break-words font-mono text-[10px] text-neutral-600">
+                        {diagnostic.error}
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-neutral-700">
+                      {diagnostic.errorCode === "AUTH_FAILED"
+                        ? "Cek GMAIL_APP_PASSWORD di Vercel env. Re-generate App Password kalau perlu (myaccount.google.com/apppasswords)."
+                        : diagnostic.errorCode === "CONNECTION_TIMEOUT"
+                          ? "Vercel function timeout sebelum SMTP handshake. Coba ulang sekali — biasanya cold start. Persistent → cek firewall."
+                          : diagnostic.errorCode === "RATE_LIMITED"
+                            ? "Gmail rate-limit account. Tunggu 1-2 jam atau reset App Password."
+                            : "Cek Vercel deployment logs untuk stack trace lengkap."}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-[11px] text-neutral-500">
+              Tap &ldquo;Cek Konfigurasi&rdquo; untuk verifikasi auth tanpa kirim
+              email, atau &ldquo;Kirim Test Email&rdquo; untuk email beneran ke
+              email Owner.
+            </p>
+          )}
+        </div>
+
         <div className="mb-3 flex flex-wrap gap-2 text-xs">
           <Badge variant="success">Aktif: {stats.active}</Badge>
           <Badge variant="info">Consumed: {stats.consumed}</Badge>

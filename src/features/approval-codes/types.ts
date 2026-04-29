@@ -23,6 +23,18 @@ export interface RequestApprovalCodeResult {
   emailMode: "sent" | "logged" | "failed";
   /** Email destination (display only — masked in UI for privacy). */
   ownerEmailMasked: string;
+  /** When emailMode === "failed", the human-readable reason. UI surfaces
+   * this so kasir/Owner can self-diagnose (e.g. "Invalid login = App
+   * Password salah"). */
+  emailError?: string;
+  /** Stable error classifier code — UI can branch on this for friendly
+   * Indonesian hints. */
+  emailErrorCode?:
+    | "AUTH_FAILED"
+    | "CONNECTION_TIMEOUT"
+    | "RATE_LIMITED"
+    | "INVALID_RECIPIENT"
+    | "UNKNOWN";
 }
 
 export type ApiResult<T> =

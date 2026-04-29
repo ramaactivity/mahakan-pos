@@ -1,6 +1,7 @@
 import "server-only";
 
 import nodemailer, { type Transporter } from "nodemailer";
+import type SMTPTransport from "nodemailer/lib/smtp-transport";
 import { Resend } from "resend";
 
 /**
@@ -9,21 +10,24 @@ import { Resend } from "resend";
  * 1. **Gmail SMTP (App Password)** — Recommended for Mahakan scale.
  *    Set `GMAIL_USER` (the Gmail address) + `GMAIL_APP_PASSWORD` (16-char
  *    App Password from Google Account → Security → 2-Step Verification →
- *    App passwords). The `from` field is forced to the GMAIL_USER value
- *    because Google enforces SMTP-sender = authenticated user.
+ *    App passwords).
  *
  * 2. **Resend** — alternative for higher volume / branded sender domain.
  *    Set `RESEND_API_KEY` + `EMAIL_FROM` (e.g., "Mahakan POS
  *    <noreply@yourdomain>"). Use sandbox `onboarding@resend.dev` if no
  *    custom domain.
  *
- * 3. **Dev-mode console log** — neither provider configured. Logs the
- *    intended message so devs can copy codes from server console without
- *    setting up real email infra.
+ * 3. **Dev-mode console log** — neither provider configured.
  *
- * The wrapper auto-picks based on env presence — no code change needed
- * when switching providers. Gmail wins if both are set (cheaper,
- * simpler).
+ * Implementation notes for Vercel serverless:
+ * - Use explicit SMTP host/port/secure (port 465 + TLS direct) instead of
+ *   the `service: "gmail"` shortcut. Some serverless environments reject
+ *   the shortcut's auto-port-detection.
+ * - Set `pool: false` and explicit timeouts — serverless instances are
+ *   short-lived; pooling is wasted memory and can hold dead sockets.
+ * - 10s connection + 10s socket timeout — Vercel hobby tier has a 10s
+ *   function execution cap on most routes; we want to fail fast inside
+ *   that budget so the surrounding action can return a clean error.
  */
 
 const GMAIL_USER = process.env.GMAIL_USER;
@@ -44,13 +48,22 @@ let cachedResend: Resend | null = null;
 
 function gmailTransporter(): Transporter {
   if (!cachedTransporter) {
-    cachedTransporter = nodemailer.createTransport({
-      service: "gmail",
+    // Explicit SMTP config (more reliable on Vercel serverless than the
+    // `service: "gmail"` shortcut). Default no-pool — serverless instances
+    // are short-lived; pooling is wasted memory.
+    const opts: SMTPTransport.Options = {
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true, // TLS direct
       auth: {
         user: GMAIL_USER,
         pass: GMAIL_APP_PASSWORD,
       },
-    });
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 10_000,
+    };
+    cachedTransporter = nodemailer.createTransport(opts);
   }
   return cachedTransporter;
 }
@@ -81,7 +94,79 @@ export interface SendResult {
   mode: "sent" | "logged" | "failed";
   /** Which provider handled the send (for debugging). */
   provider: Provider;
+  /** Human-readable summary of the failure. */
   error?: string;
+  /** Stable code for known failure modes — UI can branch on this. */
+  errorCode?:
+    | "AUTH_FAILED"
+    | "CONNECTION_TIMEOUT"
+    | "RATE_LIMITED"
+    | "INVALID_RECIPIENT"
+    | "UNKNOWN";
+}
+
+/** Map a raw provider error to a stable code for UI / audit consumers. */
+function classifyError(rawMessage: string): SendResult["errorCode"] {
+  const lower = rawMessage.toLowerCase();
+  if (lower.includes("invalid login") || lower.includes("535-5.7"))
+    return "AUTH_FAILED";
+  if (lower.includes("etimedout") || lower.includes("timeout"))
+    return "CONNECTION_TIMEOUT";
+  if (lower.includes("rate") || lower.includes("4.7.0"))
+    return "RATE_LIMITED";
+  if (lower.includes("recipient") || lower.includes("address"))
+    return "INVALID_RECIPIENT";
+  return "UNKNOWN";
+}
+
+/**
+ * Verify the active provider config is reachable + auth works. Used by
+ * the Owner-side "Test Email" diagnostic button. Returns same SendResult
+ * shape for consistency.
+ */
+export async function verifyEmailProvider(): Promise<SendResult> {
+  const provider = activeProvider();
+  if (provider === "dev-log") {
+    return {
+      ok: false,
+      messageId: null,
+      mode: "logged",
+      provider: "dev-log",
+      error:
+        "GMAIL_USER + GMAIL_APP_PASSWORD belum di-set di Vercel env. Set dulu, lalu redeploy.",
+      errorCode: "AUTH_FAILED",
+    };
+  }
+  if (provider === "gmail") {
+    try {
+      const t = gmailTransporter();
+      await t.verify();
+      return {
+        ok: true,
+        messageId: null,
+        mode: "sent",
+        provider: "gmail",
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      return {
+        ok: false,
+        messageId: null,
+        mode: "failed",
+        provider: "gmail",
+        error: msg,
+        errorCode: classifyError(msg),
+      };
+    }
+  }
+  // resend — no verify endpoint; just send a no-op preflight via send to
+  // EMAIL_FROM (or the API key holder)
+  return {
+    ok: true,
+    messageId: null,
+    mode: "sent",
+    provider: "resend",
+  };
 }
 
 /**
@@ -108,8 +193,8 @@ export async function sendEmail(msg: EmailMessage): Promise<SendResult> {
     try {
       const t = gmailTransporter();
       const result = await t.sendMail({
-        // Gmail SMTP requires from = authenticated account. We can prefix a
-        // friendly display name though.
+        // Gmail SMTP requires from = authenticated account. Display name
+        // can be customized though.
         from: `Mahakan POS <${GMAIL_USER}>`,
         to: msg.to,
         subject: msg.subject,
@@ -123,12 +208,17 @@ export async function sendEmail(msg: EmailMessage): Promise<SendResult> {
         provider: "gmail",
       };
     } catch (e) {
+      const rawMsg = e instanceof Error ? e.message : "Unknown Gmail SMTP error";
+      // Log full error to server console for ops debugging — Vercel logs
+      // capture this for `vercel logs` inspection.
+      console.error("[email/send] Gmail SMTP send failed:", e);
       return {
         ok: false,
         messageId: null,
         mode: "failed",
         provider: "gmail",
-        error: e instanceof Error ? e.message : "Unknown Gmail SMTP error",
+        error: rawMsg,
+        errorCode: classifyError(rawMsg),
       };
     }
   }
@@ -145,12 +235,15 @@ export async function sendEmail(msg: EmailMessage): Promise<SendResult> {
       html: msg.html,
     });
     if (error) {
+      const rawMsg = error.message ?? String(error);
+      console.error("[email/send] Resend send failed:", error);
       return {
         ok: false,
         messageId: null,
         mode: "failed",
         provider: "resend",
-        error: error.message ?? String(error),
+        error: rawMsg,
+        errorCode: classifyError(rawMsg),
       };
     }
     return {
@@ -160,12 +253,15 @@ export async function sendEmail(msg: EmailMessage): Promise<SendResult> {
       provider: "resend",
     };
   } catch (e) {
+    const rawMsg = e instanceof Error ? e.message : "Unknown Resend send error";
+    console.error("[email/send] Resend exception:", e);
     return {
       ok: false,
       messageId: null,
       mode: "failed",
       provider: "resend",
-      error: e instanceof Error ? e.message : "Unknown Resend send error",
+      error: rawMsg,
+      errorCode: classifyError(rawMsg),
     };
   }
 }

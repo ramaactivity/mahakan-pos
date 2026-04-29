@@ -231,6 +231,72 @@ export async function requestApprovalCode(
     expiresAt: expiresAt.toISOString(),
     emailMode: sendResult.mode,
     ownerEmailMasked: maskEmail(target.email),
+    emailError: sendResult.mode === "failed" ? sendResult.error : undefined,
+    emailErrorCode:
+      sendResult.mode === "failed" ? sendResult.errorCode : undefined,
+  });
+}
+
+/**
+ * Owner-facing diagnostic — verifies the email provider config + auth.
+ * No real email sent. Returns the same SendResult shape so admin UI can
+ * show provider + status + error code if config is broken.
+ */
+export async function verifyEmailConfig(): Promise<
+  ApiResult<{
+    provider: "gmail" | "resend" | "dev-log";
+    ok: boolean;
+    error?: string;
+    errorCode?: string;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "approval_code.view")) {
+    return fail("FORBIDDEN", "Owner-only");
+  }
+  const { verifyEmailProvider } = await import("@/lib/email/send");
+  const r = await verifyEmailProvider();
+  return ok({
+    provider: r.provider,
+    ok: r.ok,
+    error: r.error,
+    errorCode: r.errorCode,
+  });
+}
+
+/**
+ * Send a real test email to the configured Owner address. Use sparingly
+ * — counts against Gmail's daily quota. Returns the SendResult shape.
+ */
+export async function sendTestEmail(): Promise<
+  ApiResult<{
+    provider: "gmail" | "resend" | "dev-log";
+    mode: "sent" | "logged" | "failed";
+    targetMasked: string;
+    error?: string;
+    errorCode?: string;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "approval_code.view")) {
+    return fail("FORBIDDEN", "Owner-only");
+  }
+  const target = await resolveApprovalEmail(session.user.outletId);
+  if (!target) {
+    return fail("NO_OWNER_EMAIL", "Email Owner belum diset");
+  }
+  const result = await sendEmail({
+    to: target.email,
+    subject: "[Mahakan POS] Test Email",
+    text: `Halo ${target.owner?.name ?? "Owner"},\n\nIni test email dari Mahakan POS untuk verifikasi setup approval-code.\n\nKalau email ini sampai, berarti Gmail SMTP / Resend sudah benar.\n\nWaktu test: ${new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB\n\n— Mahakan POS`,
+    html: `<p>Halo <strong>${target.owner?.name ?? "Owner"}</strong>,</p><p>Ini test email dari Mahakan POS untuk verifikasi setup approval-code.</p><p>Kalau email ini sampai, berarti Gmail SMTP / Resend sudah benar.</p><p>Waktu test: ${new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB</p><p>— Mahakan POS</p>`,
+  });
+  return ok({
+    provider: result.provider,
+    mode: result.mode,
+    targetMasked: maskEmail(target.email),
+    error: result.error,
+    errorCode: result.errorCode,
   });
 }
 

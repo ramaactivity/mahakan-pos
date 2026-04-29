@@ -18,4 +18,6 @@ export {
   listApprovalCodes,
   requestApprovalCode,
   revokeApprovalCode,
+  sendTestEmail,
+  verifyEmailConfig,
 } from "./actions";

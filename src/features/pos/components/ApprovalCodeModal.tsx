@@ -39,6 +39,10 @@ export function ApprovalCodeModal({
   const [emailMasked, setEmailMasked] = useState<string>("");
   const [codeFirstTwo, setCodeFirstTwo] = useState<string>("");
   const [emailMode, setEmailMode] = useState<"sent" | "logged" | "failed">("sent");
+  const [emailErrorDetail, setEmailErrorDetail] = useState<{
+    message?: string;
+    code?: string;
+  } | null>(null);
   const [code, setCode] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +57,7 @@ export function ApprovalCodeModal({
     setRequesting(false);
     setEmailMasked("");
     setCodeFirstTwo("");
+    setEmailErrorDetail(null);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open]);
 
@@ -73,6 +78,11 @@ export function ApprovalCodeModal({
     setEmailMasked(res.data.ownerEmailMasked);
     setCodeFirstTwo(res.data.codeFirstTwo);
     setEmailMode(res.data.emailMode);
+    setEmailErrorDetail(
+      res.data.emailMode === "failed"
+        ? { message: res.data.emailError, code: res.data.emailErrorCode }
+        : null,
+    );
     setStep("input");
     if (res.data.emailMode === "sent") {
       toast.success(`Kode dikirim ke email Owner (${res.data.ownerEmailMasked})`);
@@ -80,7 +90,7 @@ export function ApprovalCodeModal({
       toast.info("Dev mode — kode di-log ke server console");
     } else {
       toast.warning(
-        "Email gagal kirim — minta Owner cek admin Approval Codes panel atau coba lagi",
+        "Email gagal kirim — Owner bisa cek code di Admin → Pengaturan → Approval Codes",
       );
     }
   }
@@ -172,8 +182,20 @@ export function ApprovalCodeModal({
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="rounded-md border border-mahakan-green-200 bg-mahakan-green-50/40 p-3 text-sm">
-            <p className="flex items-center gap-2 font-medium text-mahakan-green-900">
+          <div
+            className={`rounded-md border p-3 text-sm ${
+              emailMode === "failed"
+                ? "border-warning-500/40 bg-warning-100/40"
+                : "border-mahakan-green-200 bg-mahakan-green-50/40"
+            }`}
+          >
+            <p
+              className={`flex items-center gap-2 font-medium ${
+                emailMode === "failed"
+                  ? "text-warning-700"
+                  : "text-mahakan-green-900"
+              }`}
+            >
               <Mail className="size-4" aria-hidden /> Kode dikirim ({emailMode})
             </p>
             <p className="mt-1 text-xs text-neutral-700">
@@ -189,6 +211,27 @@ export function ApprovalCodeModal({
                 </>
               ) : null}
             </p>
+            {emailMode === "failed" && emailErrorDetail ? (
+              <div className="mt-2 rounded-md border border-warning-500/30 bg-white/80 p-2 text-[11px] text-warning-700">
+                <p className="font-medium">
+                  Email TIDAK terkirim ({emailErrorDetail.code ?? "UNKNOWN"})
+                </p>
+                <p className="mt-0.5 text-neutral-700">
+                  {emailErrorDetail.code === "AUTH_FAILED"
+                    ? "Cek GMAIL_APP_PASSWORD di Vercel env. Owner re-generate App Password kalau perlu."
+                    : emailErrorDetail.code === "CONNECTION_TIMEOUT"
+                      ? "Vercel timeout SMTP handshake. Tap 'Minta kode baru' di bawah untuk retry."
+                      : emailErrorDetail.code === "RATE_LIMITED"
+                        ? "Gmail rate-limit. Tunggu beberapa menit atau hubungi Owner langsung."
+                        : "Hubungi Owner langsung untuk dapat kode dari Admin → Pengaturan → Approval Codes."}
+                </p>
+                {emailErrorDetail.message ? (
+                  <p className="mt-1 break-words font-mono text-[10px] text-neutral-500">
+                    {emailErrorDetail.message}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <Input
             label="Masukkan kode 6 digit dari Owner"
