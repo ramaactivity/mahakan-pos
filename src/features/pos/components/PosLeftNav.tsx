@@ -1,11 +1,14 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   ClipboardList,
   FileText,
   History,
   LayoutGrid,
   LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
   Settings,
   Wallet,
   type LucideIcon,
@@ -41,6 +44,36 @@ const TABS: Array<{ key: PosTab; label: string; Icon: LucideIcon }> = [
   { key: "settings", label: "Pengaturan", Icon: Settings },
 ];
 
+const COLLAPSED_STORAGE_KEY = "mahakan-pos.sidebar-collapsed-v1";
+
+/** Per-device persisted preference. Default expanded so labels are readable. */
+function useSidebarCollapsed(): [boolean, (next: boolean) => void] {
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(COLLAPSED_STORAGE_KEY);
+      if (stored === "1") {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setCollapsed(true);
+      }
+    } catch {
+      // localStorage might be blocked; default to expanded
+    }
+  }, []);
+
+  function update(next: boolean) {
+    setCollapsed(next);
+    try {
+      localStorage.setItem(COLLAPSED_STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }
+
+  return [collapsed, update];
+}
+
 export function PosLeftNav({
   activeTab,
   onTabChange,
@@ -49,13 +82,30 @@ export function PosLeftNav({
   queueBadge,
   openBillsBadge,
 }: PosLeftNavProps) {
+  const [collapsed, setCollapsed] = useSidebarCollapsed();
+  const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
   return (
     <nav
       aria-label="Navigasi POS"
-      className="flex w-20 shrink-0 flex-col items-center justify-between border-r border-neutral-200 bg-white py-4 lg:w-24"
+      className={cn(
+        "flex shrink-0 flex-col items-center justify-between border-r border-neutral-200 bg-white py-3 transition-[width] duration-200",
+        collapsed ? "w-20 lg:w-24" : "w-32 lg:w-36",
+      )}
     >
-      <div className="flex flex-col items-center gap-2">
-        <div className="mb-3 flex size-10 items-center justify-center rounded-lg bg-mahakan-green-700 text-white text-xs font-bold">
+      <div className="flex w-full flex-col items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setCollapsed(!collapsed)}
+          aria-label={collapsed ? "Perlebar menu" : "Persempit menu"}
+          title={collapsed ? "Perlebar menu" : "Persempit menu"}
+          className={cn(
+            "flex size-8 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700 focus-visible:ring-offset-2",
+          )}
+        >
+          <ToggleIcon className="size-4" aria-hidden />
+        </button>
+        <div className="mb-2 flex size-10 items-center justify-center rounded-lg bg-mahakan-green-700 text-white text-xs font-bold">
           MK
         </div>
         {TABS.map((tab) => {
@@ -75,11 +125,18 @@ export function PosLeftNav({
               active={activeTab === tab.key}
               onClick={() => onTabChange(tab.key)}
               badge={badge}
+              collapsed={collapsed}
             />
           );
         })}
       </div>
-      <NavButton label="Keluar" Icon={LogOut} active={false} onClick={onLogout} />
+      <NavButton
+        label="Keluar"
+        Icon={LogOut}
+        active={false}
+        onClick={onLogout}
+        collapsed={collapsed}
+      />
     </nav>
   );
 }
@@ -90,31 +147,44 @@ function NavButton({
   active,
   onClick,
   badge,
+  collapsed,
 }: {
   label: string;
   Icon: LucideIcon;
   active: boolean;
   onClick: () => void;
   badge?: number;
+  collapsed: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label={label}
+      title={collapsed ? label : undefined}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "relative flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-medium uppercase tracking-wider transition-all",
+        "relative flex flex-col items-center justify-center gap-1 rounded-xl text-[11px] font-medium uppercase tracking-wider transition-all",
+        collapsed ? "h-16 w-16" : "h-16 w-28",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700 focus-visible:ring-offset-2",
         active
           ? "bg-mahakan-green-100 text-mahakan-green-900"
           : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900",
       )}
     >
-      <Icon className="size-5" aria-hidden />
-      <span>{label}</span>
+      <Icon className="size-5 shrink-0" aria-hidden />
+      {collapsed ? (
+        <span className="sr-only">{label}</span>
+      ) : (
+        <span className="max-w-full truncate px-1">{label}</span>
+      )}
       {badge !== undefined && badge > 0 ? (
-        <span className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-full bg-mahakan-green-700 text-[10px] font-bold text-white">
+        <span
+          className={cn(
+            "absolute flex size-5 items-center justify-center rounded-full bg-mahakan-green-700 text-[10px] font-bold text-white",
+            collapsed ? "right-1 top-1" : "right-2 top-1",
+          )}
+        >
           {badge > 9 ? "9+" : badge}
         </span>
       ) : null}
