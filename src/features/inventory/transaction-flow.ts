@@ -199,25 +199,24 @@ export async function applyStockDeductions(
     ...flow.wasteByIngredient.keys(),
   ]);
 
+  // Galih ask #8: collect updates + insert rows up-front, then fire
+  // ingredient updates in parallel + a single bulk insert for movements
+  // — much fewer round-trip stalls inside the sale tx.
+  const stockUpdates: Array<{ id: string; total: number }> = [];
+  const movementRows: Array<typeof inventoryMovements.$inferInsert> = [];
+
   for (const ingredientId of allIds) {
     const lean = flow.deductionsByIngredient.get(ingredientId) ?? 0;
     const waste = flow.wasteByIngredient.get(ingredientId) ?? 0;
     const total = lean + waste;
     if (total === 0) continue;
 
-    await tx
-      .update(ingredients)
-      .set({
-        currentStock: sql`${ingredients.currentStock} - ${total}`,
-        updatedAt: new Date(),
-        updatedBy: userId,
-      })
-      .where(eq(ingredients.id, ingredientId));
+    stockUpdates.push({ id: ingredientId, total });
 
     const unitCost = flow.ingredientCostSnapshot.get(ingredientId) ?? null;
 
     if (lean > 0) {
-      await tx.insert(inventoryMovements).values({
+      movementRows.push({
         outletId,
         ingredientId,
         kind: "sale_deduct",
@@ -231,7 +230,7 @@ export async function applyStockDeductions(
     }
 
     if (waste > 0) {
-      await tx.insert(inventoryMovements).values({
+      movementRows.push({
         outletId,
         ingredientId,
         kind: "waste",
@@ -243,6 +242,26 @@ export async function applyStockDeductions(
         createdBy: userId,
       });
     }
+  }
+
+  if (stockUpdates.length > 0) {
+    const now = new Date();
+    await Promise.all(
+      stockUpdates.map((u) =>
+        tx
+          .update(ingredients)
+          .set({
+            currentStock: sql`${ingredients.currentStock} - ${u.total}`,
+            updatedAt: now,
+            updatedBy: userId,
+          })
+          .where(eq(ingredients.id, u.id)),
+      ),
+    );
+  }
+
+  if (movementRows.length > 0) {
+    await tx.insert(inventoryMovements).values(movementRows);
   }
 }
 

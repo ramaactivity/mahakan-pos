@@ -1728,6 +1728,14 @@ function PayingPanel({
       </div>
 
       <footer className="border-t border-neutral-200 p-4 space-y-2 bg-white">
+        {submitting ? (
+          <p
+            className="text-center text-xs text-neutral-600"
+            aria-live="polite"
+          >
+            Memvalidasi stok &amp; mencatat transaksi…
+          </p>
+        ) : null}
         <Button
           size="xl"
           onClick={onSubmit}
