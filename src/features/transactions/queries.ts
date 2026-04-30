@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   customers,
@@ -111,6 +111,80 @@ export async function fetchTransactionById(
     })),
     member,
   };
+}
+
+/**
+ * Batch-fetch full TransactionWithItems for an array of trx ids in 4
+ * round-trips total (trxns + items + modifiers + customers) instead of
+ * N sequential calls to fetchTransactionById. Critical for OpenBillPanel
+ * where kasir might have 10+ open bills and previous N+1 made the panel
+ * slow (Galih ask #7).
+ */
+export async function fetchTransactionsByIds(
+  ids: string[],
+): Promise<TransactionWithItems[]> {
+  if (ids.length === 0) return [];
+
+  const trxRows = await db
+    .select()
+    .from(transactions)
+    .where(inArray(transactions.id, ids));
+  if (trxRows.length === 0) return [];
+
+  const itemRows = await db
+    .select()
+    .from(transactionItems)
+    .where(inArray(transactionItems.transactionId, ids))
+    .orderBy(transactionItems.createdAt);
+
+  const itemIds = itemRows.map((i) => i.id);
+  const modRows = itemIds.length
+    ? await db
+        .select()
+        .from(transactionItemModifiers)
+        .where(inArray(transactionItemModifiers.transactionItemId, itemIds))
+    : [];
+
+  const customerIds = trxRows
+    .map((t) => t.customerId)
+    .filter((c): c is string => c !== null);
+  const memberRows = customerIds.length
+    ? await db
+        .select({
+          id: customers.id,
+          name: customers.name,
+          phone: customers.phone,
+          totalPoints: customers.totalPoints,
+        })
+        .from(customers)
+        .where(inArray(customers.id, customerIds))
+    : [];
+
+  const memberById = new Map(memberRows.map((m) => [m.id, m]));
+  const itemsByTrxId = new Map<string, typeof itemRows>();
+  for (const it of itemRows) {
+    const arr = itemsByTrxId.get(it.transactionId) ?? [];
+    arr.push(it);
+    itemsByTrxId.set(it.transactionId, arr);
+  }
+  const modsByItemId = new Map<string, typeof modRows>();
+  for (const m of modRows) {
+    const arr = modsByItemId.get(m.transactionItemId) ?? [];
+    arr.push(m);
+    modsByItemId.set(m.transactionItemId, arr);
+  }
+
+  return trxRows.map((trx) => {
+    const itsForTrx = itemsByTrxId.get(trx.id) ?? [];
+    return {
+      ...trx,
+      items: itsForTrx.map((it) => ({
+        ...it,
+        modifiers: modsByItemId.get(it.id) ?? [],
+      })),
+      member: trx.customerId ? (memberById.get(trx.customerId) ?? null) : null,
+    };
+  });
 }
 
 /** Find existing transaction by clientRefId for idempotency check. */

@@ -28,6 +28,7 @@ export {
   createTransaction,
   editOpenBill,
   getTransaction,
+  getTransactionsByIds,
   listTransactions,
   logTransactionReprint,
   markServed,

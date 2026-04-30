@@ -138,6 +138,7 @@ import {
   fetchTransactionByClientRefId,
   fetchTransactionById,
   fetchTransactions,
+  fetchTransactionsByIds,
   type ListTransactionsOptions,
 } from "./queries";
 import {
@@ -213,6 +214,16 @@ export async function getTransaction(
   const row = await fetchTransactionById(id);
   if (!row) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
   return ok(row);
+}
+
+/** Batch read for OpenBillPanel: 4 queries total instead of N×3-4 sequential.
+ * Galih ask #7 — addresses "loading open bill lama". */
+export async function getTransactionsByIds(
+  ids: string[],
+): Promise<ApiResult<TransactionWithItems[]>> {
+  await requireSession();
+  if (ids.length === 0) return ok([]);
+  return ok(await fetchTransactionsByIds(ids));
 }
 
 // ---------- createTransaction ----------
@@ -491,15 +502,24 @@ export async function createTransaction(
           .where(eq(transactions.id, insertedTrx.id));
       }
 
-      // Patch each transaction_item.cogs that has a resolved recipe
-      for (const ti of itemsInserted) {
-        const cogsForItem = flow.itemCogsByTrxItemId.get(ti.id);
-        if (cogsForItem !== undefined && cogsForItem > 0) {
-          await tx
-            .update(transactionItems)
-            .set({ cogs: cogsForItem })
-            .where(eq(transactionItems.id, ti.id));
-        }
+      // Patch each transaction_item.cogs that has a resolved recipe.
+      // Galih ask #8: paralel via Promise.all so N items aren't sequential
+      // round-trips inside the tx (was a noticeable chunk of payment latency).
+      const cogsPatches = itemsInserted
+        .map((ti) => ({ id: ti.id, cogs: flow.itemCogsByTrxItemId.get(ti.id) }))
+        .filter(
+          (p): p is { id: string; cogs: number } =>
+            p.cogs !== undefined && p.cogs > 0,
+        );
+      if (cogsPatches.length > 0) {
+        await Promise.all(
+          cogsPatches.map((p) =>
+            tx
+              .update(transactionItems)
+              .set({ cogs: p.cogs })
+              .where(eq(transactionItems.id, p.id)),
+          ),
+        );
       }
 
       // Apply ingredient deductions + insert sale_deduct movements
@@ -549,13 +569,16 @@ export async function createTransaction(
       );
     }
 
+    // Galih ask #8: audit logs run best-effort post-commit so the
+    // server response isn't gated on extra DB round-trips. Both events
+    // are advisory (reports + compliance) and tolerant to brief delay.
     if (validation.recomputedDiscountAmount > 0) {
       // Compliment is implemented as a 100% discount with reason prefixed
       // "Compliment: ". Audit event differentiated so reports + compliance
       // can filter complimented transactions distinctly from regular promo
       // discounts.
       const isCompliment = (v.discountReason ?? "").startsWith("Compliment:");
-      await logAudit({
+      logAudit({
         eventType: isCompliment
           ? "transaction.compliment.applied"
           : "transaction.discount.applied",
@@ -582,14 +605,14 @@ export async function createTransaction(
           outletId: session.user.outletId,
           actorRole: session.user.role,
         },
-      });
+      }).catch((e) => console.error("[audit discount]", e));
     }
 
     // Loyalty redemption audit — emitted after the sale tx commits since
     // the deduction was atomic with the insert. Records the count of
     // points spent + new member balance for compliance/abuse monitoring.
     if (redeemPoints > 0 && result.memberAfterRedeem) {
-      await logAudit({
+      logAudit({
         eventType: "transaction.points.redeemed",
         userId: session.user.id,
         entityType: "transaction",
@@ -609,7 +632,7 @@ export async function createTransaction(
           outletId: session.user.outletId,
           actorRole: session.user.role,
         },
-      });
+      }).catch((e) => console.error("[audit redeem]", e));
     }
 
     // Loyalty earn — best-effort, fired after the sale tx commits. Skipped
