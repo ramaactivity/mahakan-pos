@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
-import Link from "next/link";
 import {
   Button,
   Card,
@@ -114,16 +113,18 @@ export default function PinLoginPage() {
   return (
     <Card
       className={cn(
-        "p-3 sm:p-4 md:p-6",
+        "p-4 sm:p-5",
         shake && "animate-shake",
       )}
     >
-      <CardHeader className="mb-2 sm:mb-3 md:mb-4">
-        <CardTitle>Masuk — Staff</CardTitle>
-        <CardDescription>
+      <CardHeader className="mb-3 sm:mb-4">
+        <CardTitle className="text-lg sm:text-xl">
+          {selectedUser ? `Halo, ${selectedUser.name}` : "Login Kasir"}
+        </CardTitle>
+        <CardDescription className="text-sm">
           {selectedUser
-            ? `Masukkan PIN untuk ${selectedUser.name}`
-            : "Pilih nama kamu lalu masukkan PIN"}
+            ? "Masukkan PIN 4–6 digit untuk masuk POS"
+            : "Pilih nama Anda untuk lanjut input PIN"}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -200,15 +201,6 @@ export default function PinLoginPage() {
             </div>
           </div>
         )}
-        <div className="mt-3 border-t border-neutral-200 pt-3 text-center text-xs text-neutral-500 sm:mt-4 sm:pt-4 sm:text-sm md:mt-6">
-          Mau ke Back Office?{" "}
-          <Link
-            href="/login"
-            className="font-medium text-mahakan-green-700 hover:underline"
-          >
-            Login dengan email
-          </Link>
-        </div>
       </CardContent>
     </Card>
   );
