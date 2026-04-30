@@ -52,6 +52,14 @@ export type OutletSettings = {
      * first active Owner's user.email. */
     notifyEmails?: string[];
   };
+  /** HR attendance config (Sesi D). Read by attendance/actions.ts when
+   * computing late_minutes — clock_in events within `lateGraceMinutes`
+   * of schedule start aren't flagged late. */
+  attendance?: {
+    /** Minutes after schedule start_time before late detection trips.
+     * Default 5 if unset. Range 0..60. */
+    lateGraceMinutes?: number;
+  };
 };
 
 export const outlets = pgTable("outlets", {

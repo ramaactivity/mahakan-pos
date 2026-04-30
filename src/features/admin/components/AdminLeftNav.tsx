@@ -31,6 +31,7 @@ export type AdminSection =
   | "attendance"
   | "schedules"
   | "payroll"
+  | "hr_reports"
   | "shifts"
   | "cash"
   | "reports"
@@ -63,6 +64,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "attendance", label: "Absensi", Icon: Clock },
   { key: "schedules", label: "Jadwal", Icon: CalendarDays },
   { key: "payroll", label: "Payroll", Icon: DollarSign },
+  { key: "hr_reports", label: "Laporan HR", Icon: BarChart3 },
   { key: "shifts", label: "Shifts", Icon: Receipt },
   { key: "cash", label: "Kas", Icon: Wallet },
   { key: "reports", label: "Laporan", Icon: BarChart3 },

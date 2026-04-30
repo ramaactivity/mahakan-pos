@@ -9,12 +9,14 @@ import {
   List,
   LogIn,
   LogOut,
+  Settings as SettingsIcon,
 } from "lucide-react";
 import {
   Badge,
   Button,
   Card,
   CardContent,
+  Input,
   Modal,
   Skeleton,
   toast,
@@ -28,6 +30,11 @@ import {
   type AttendanceRecordWithEmployee,
   type EmployeeAttendanceTodayStatus,
 } from "@/features/attendance";
+import {
+  getOwnOutlet,
+  isOk as outletIsOk,
+  updateAttendanceSettings,
+} from "@/features/outlets";
 import { todayWibIso } from "@/features/cash/helpers";
 import { formatIndonesianTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
@@ -53,6 +60,45 @@ export function AttendanceSection() {
   const [today, setToday] = useState<EmployeeAttendanceTodayStatus[]>([]);
   const [loadingToday, setLoadingToday] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [lateGrace, setLateGrace] = useState<string>("5");
+  const [lateGraceLoaded, setLateGraceLoaded] = useState(false);
+  const [savingGrace, setSavingGrace] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await getOwnOutlet();
+      if (cancelled) return;
+      if (outletIsOk(res)) {
+        const value = res.data.settings?.attendance?.lateGraceMinutes;
+        if (typeof value === "number") setLateGrace(String(value));
+        setLateGraceLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSaveGrace() {
+    const minutes = parseInt(lateGrace, 10);
+    if (!Number.isFinite(minutes) || minutes < 0 || minutes > 60) {
+      toast.error("Grace harus 0-60 menit");
+      return;
+    }
+    setSavingGrace(true);
+    const res = await updateAttendanceSettings({
+      lateGraceMinutes: minutes,
+    });
+    setSavingGrace(false);
+    if (!outletIsOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(`Late grace di-set ${minutes} menit`);
+    setSettingsOpen(false);
+  }
 
   // List mode state
   const [listDate, setListDate] = useState<string>(() => todayWibIso());
@@ -195,8 +241,55 @@ export function AttendanceSection() {
           >
             <List className="size-4" aria-hidden /> List
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => setSettingsOpen(true)}
+            disabled={!lateGraceLoaded}
+            aria-label="Pengaturan absensi"
+          >
+            <SettingsIcon className="size-4" aria-hidden />
+          </Button>
         </div>
       </header>
+
+      <Modal
+        open={settingsOpen}
+        onClose={() => (savingGrace ? null : setSettingsOpen(false))}
+        title="Pengaturan Absensi"
+        description="Toleransi keterlambatan menit. Default 5 menit."
+        size="md"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setSettingsOpen(false)}
+              disabled={savingGrace}
+            >
+              Batal
+            </Button>
+            <Button onClick={handleSaveGrace} loading={savingGrace} size="lg">
+              Simpan
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Input
+            label="Late Grace (menit)"
+            type="number"
+            min="0"
+            max="60"
+            value={lateGrace}
+            onChange={(e) => setLateGrace(e.target.value)}
+            hint="Karyawan clock-in dalam grace ini gak ditandai telat. Range 0-60."
+            disabled={savingGrace}
+          />
+          <p className="rounded-md bg-mahakan-green-50 p-3 text-xs text-mahakan-green-900">
+            Contoh: jadwal 09:00 + grace 5m → clock-in 09:03 = NOT late;
+            clock-in 09:08 = LATE (3m).
+          </p>
+        </div>
+      </Modal>
 
       {mode === "kiosk" ? (
         <>

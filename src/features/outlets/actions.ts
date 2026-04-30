@@ -223,6 +223,10 @@ const featuresSchema = z.object({
   multiOutletEnabled: z.boolean().optional(),
 });
 
+const attendanceSettingsSchema = z.object({
+  lateGraceMinutes: z.number().int().min(0).max(60),
+});
+
 const approvalSchema = z.object({
   voidMode: z.enum(["pin", "code"]).optional(),
   refundMode: z.enum(["pin", "code"]).optional(),
@@ -255,7 +259,7 @@ const approvalSchema = z.object({
 
 async function updateSettingsSection(
   perm: Permission,
-  section: "receipt" | "thresholds" | "features" | "approval",
+  section: "receipt" | "thresholds" | "features" | "approval" | "attendance",
   patch: Partial<OutletSettings[keyof OutletSettings]>,
 ): Promise<ApiResult<Outlet>> {
   let session;
@@ -353,6 +357,20 @@ export async function updateApproval(
   return updateSettingsSection(
     "settings.approval.update",
     "approval",
+    parsed.data,
+  );
+}
+
+export async function updateAttendanceSettings(
+  input: z.input<typeof attendanceSettingsSchema>,
+): Promise<ApiResult<Outlet>> {
+  const parsed = attendanceSettingsSchema.safeParse(input);
+  if (!parsed.success) {
+    return err("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "");
+  }
+  return updateSettingsSection(
+    "schedule.update",
+    "attendance",
     parsed.data,
   );
 }

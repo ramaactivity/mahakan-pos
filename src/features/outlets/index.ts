@@ -3,6 +3,7 @@ export { isOk } from "./types";
 export {
   getOwnOutlet,
   updateApproval,
+  updateAttendanceSettings,
   updateBusinessInfo,
   updateOperationalHours,
   updateReceiptSettings,

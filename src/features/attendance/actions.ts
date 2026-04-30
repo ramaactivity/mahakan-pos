@@ -2,16 +2,29 @@
 
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { attendanceRecords, employees } from "@/db/schema";
+import { attendanceRecords, employees, outlets } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { todayWibIso } from "@/features/cash/helpers";
 import { fetchScheduleByEmployeeAndDate } from "@/features/schedules/queries";
 
-/** Minutes of grace before late detection trips (Sesi C-8). Hardcoded
- * until per-outlet setting lands. */
-const LATE_GRACE_MINUTES = 5;
+/** Default minutes of grace before late detection trips. Per-outlet
+ * override at outlet.settings.attendance.lateGraceMinutes (Sesi D). */
+const DEFAULT_LATE_GRACE_MINUTES = 5;
+
+async function resolveLateGraceMinutes(outletId: string): Promise<number> {
+  const [row] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, outletId))
+    .limit(1);
+  const configured = row?.settings?.attendance?.lateGraceMinutes;
+  if (typeof configured === "number" && configured >= 0 && configured <= 60) {
+    return configured;
+  }
+  return DEFAULT_LATE_GRACE_MINUTES;
+}
 
 /** Convert a Date timestamp + WIB date string into "minutes past
  * 00:00 in WIB". Used to compare clock event vs schedule HH:MM:SS. */
@@ -149,10 +162,11 @@ export async function clockIn(
   let lateMinutes: number | null = null;
   const now = new Date();
   if (schedule && !schedule.dayOff && schedule.startTime) {
+    const grace = await resolveLateGraceMinutes(session.user.outletId);
     const scheduledStart = timeStringToMinutes(schedule.startTime);
     const actualStart = minutesIntoWibDay(now);
     const diff = actualStart - scheduledStart;
-    if (diff > LATE_GRACE_MINUTES) {
+    if (diff > grace) {
       isLate = "yes";
       lateMinutes = diff;
     } else {
