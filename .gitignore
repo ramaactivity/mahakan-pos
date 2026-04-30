@@ -62,6 +62,12 @@ next-env.d.ts
 # AI agent artifacts
 .agents/
 .cursor/
+.claude/
+
+# Owner local scratchpad (never commit)
+/note
+/note.md
+/notes
 
 # DB backups (created by scripts/backup-db.sh)
 /backups/
