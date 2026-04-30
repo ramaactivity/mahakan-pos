@@ -1,25 +1,39 @@
 "use client";
 
 /**
- * Single-date picker — react-day-picker calendar inside a Radix Popover with
- * month + year dropdowns, manual text input (DD/MM/YYYY), and Today button.
+ * Single-date picker — react-day-picker calendar inside a Radix Popover.
+ *
+ * Uses CUSTOM month + year popover-list selectors (NEVER native browser
+ * dropdowns) per Owner standard. Manual DD/MM/YYYY typing supported, plus
+ * "Hari Ini" + "Hapus" footer.
  *
  * Stores value as ISO date string ("YYYY-MM-DD") to match existing date-input
- * call sites, so migration is drop-in.
+ * call sites.
  */
 
 import * as Popover from "@radix-ui/react-popover";
-import { Calendar as CalendarIcon, X } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import {
+  Calendar as CalendarIcon,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  X,
+} from "lucide-react";
+import { useId, useMemo, useRef, useState } from "react";
 import { DayPicker } from "react-day-picker";
 import { id as localeId } from "date-fns/locale";
 import {
+  addMonths,
   addYears,
   format,
   isValid,
   parse,
   parseISO,
+  setMonth,
+  setYear,
   startOfMonth,
+  subMonths,
   subYears,
 } from "date-fns";
 import "react-day-picker/dist/style.css";
@@ -48,6 +62,21 @@ interface DatePickerProps {
   yearRange?: { fromYearsBack: number; toYearsForward: number };
   className?: string;
 }
+
+const MONTH_LABELS = [
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
+];
 
 function isoToDate(iso: string | null): Date | undefined {
   if (!iso) return undefined;
@@ -106,25 +135,30 @@ export function DatePicker({
   const reactId = useId();
   const triggerId = `datepicker-${reactId}`;
   const [open, setOpen] = useState(false);
-  // Override typed-text only while user is actively editing the manual input.
-  // null = derive display from `value`. string = user is typing (don't sync from prop).
   const [typedOverride, setTypedOverride] = useState<string | null>(null);
   const [typedError, setTypedError] = useState<string | null>(null);
+  // Controlled month for DayPicker — also drives custom month/year selectors.
+  const [displayMonth, setDisplayMonth] = useState<Date>(() => {
+    const v = isoToDate(value);
+    return v ?? startOfMonth(new Date());
+  });
 
   const selectedDate = isoToDate(value);
   const minD = isoToDate(minDate ?? null);
   const maxD = isoToDate(maxDate ?? null);
 
-  // Year range for the dropdown caption — bounded by min/max if provided.
-  const { startMonth, endMonth } = useMemo(() => {
+  const { startMonth, endMonth, yearList } = useMemo(() => {
     const today = new Date();
     const defaultStart = startOfMonth(subYears(today, yearRange.fromYearsBack));
     const defaultEnd = startOfMonth(addYears(today, yearRange.toYearsForward));
-    return {
-      startMonth:
-        minD && minD > defaultStart ? startOfMonth(minD) : defaultStart,
-      endMonth: maxD && maxD < defaultEnd ? startOfMonth(maxD) : defaultEnd,
-    };
+    const sm =
+      minD && minD > defaultStart ? startOfMonth(minD) : defaultStart;
+    const em = maxD && maxD < defaultEnd ? startOfMonth(maxD) : defaultEnd;
+    const startYear = sm.getFullYear();
+    const endYear = em.getFullYear();
+    const years: number[] = [];
+    for (let y = endYear; y >= startYear; y--) years.push(y);
+    return { startMonth: sm, endMonth: em, yearList: years };
   }, [minD, maxD, yearRange.fromYearsBack, yearRange.toYearsForward]);
 
   const typed =
@@ -136,10 +170,14 @@ export function DatePicker({
 
   function handleOpenChange(next: boolean) {
     setOpen(next);
-    // Reset typed-override when closing — next open derives from current value.
     if (!next) {
       setTypedOverride(null);
       setTypedError(null);
+    } else {
+      // Reset display month to the selected value (or today) when opening.
+      setDisplayMonth(
+        startOfMonth(isoToDate(value) ?? new Date()),
+      );
     }
   }
 
@@ -162,6 +200,8 @@ export function DatePicker({
         return;
       }
       onChange(iso);
+      const parsed = isoToDate(iso);
+      if (parsed) setDisplayMonth(startOfMonth(parsed));
     } else if (formatted.length === 0) {
       onChange(null);
     }
@@ -175,6 +215,12 @@ export function DatePicker({
     if (maxDate && iso > maxDate) return;
     onChange(iso);
     handleOpenChange(false);
+  }
+
+  function navMonth(delta: number) {
+    setDisplayMonth((m) =>
+      delta > 0 ? addMonths(m, delta) : subMonths(m, -delta),
+    );
   }
 
   const describedBy = error
@@ -250,8 +296,10 @@ export function DatePicker({
         <Popover.Portal>
           <Popover.Content
             align="start"
-            sideOffset={4}
-            className="z-[60] w-[20rem] rounded-md border border-neutral-200 bg-white p-3 shadow-lg"
+            sideOffset={6}
+            collisionPadding={12}
+            avoidCollisions
+            className="z-[60] w-[19.5rem] rounded-lg border border-neutral-200 bg-white p-3 shadow-xl"
           >
             {/* Manual text input */}
             <div className="mb-2 space-y-1">
@@ -279,16 +327,47 @@ export function DatePicker({
               )}
             </div>
 
+            {/* Custom month + year nav (NO native dropdowns) */}
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => navMonth(-1)}
+                aria-label="Bulan sebelumnya"
+                className="rounded-md p-1.5 text-neutral-600 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+              >
+                <ChevronLeft className="size-4" aria-hidden />
+              </button>
+              <div className="flex flex-1 items-center justify-center gap-1.5">
+                <MonthDropdown
+                  value={displayMonth.getMonth()}
+                  onChange={(m) => setDisplayMonth((d) => setMonth(d, m))}
+                />
+                <YearDropdown
+                  value={displayMonth.getFullYear()}
+                  years={yearList}
+                  onChange={(y) => setDisplayMonth((d) => setYear(d, y))}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => navMonth(1)}
+                aria-label="Bulan berikutnya"
+                className="rounded-md p-1.5 text-neutral-600 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+              >
+                <ChevronRight className="size-4" aria-hidden />
+              </button>
+            </div>
+
             <DayPicker
               mode="single"
               locale={localeId}
               selected={selectedDate}
-              defaultMonth={selectedDate ?? new Date()}
+              month={displayMonth}
+              onMonthChange={setDisplayMonth}
               onSelect={(d) => {
                 onChange(dateToIso(d));
-                if (d) setOpen(false);
+                if (d) handleOpenChange(false);
               }}
-              captionLayout="dropdown"
               startMonth={startMonth}
               endMonth={endMonth}
               disabled={[
@@ -297,26 +376,19 @@ export function DatePicker({
               ]}
               showOutsideDays
               classNames={{
-                months: "flex gap-3",
-                month: "space-y-2",
-                month_caption: "flex items-center justify-center gap-2 px-1 py-1",
+                months: "flex",
+                month: "space-y-2 w-full",
+                month_caption: "hidden",
                 caption_label: "hidden",
-                dropdowns: "flex items-center gap-2",
-                dropdown:
-                  "rounded-md border border-neutral-200 bg-white px-2 py-1 text-sm font-medium text-neutral-900 hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
-                dropdown_root: "relative",
-                nav: "flex items-center justify-between mb-1",
-                button_previous:
-                  "rounded-md p-1.5 hover:bg-neutral-100 text-neutral-600 inline-flex items-center justify-center",
-                button_next:
-                  "rounded-md p-1.5 hover:bg-neutral-100 text-neutral-600 inline-flex items-center justify-center",
+                nav: "hidden",
                 month_grid: "border-collapse w-full",
-                weekdays: "flex",
-                weekday: "w-9 text-center text-[11px] font-medium text-neutral-500",
+                weekdays: "flex w-full",
+                weekday:
+                  "flex-1 text-center text-[11px] font-medium text-neutral-500 py-1",
                 week: "flex w-full",
-                day: "size-9 p-0 text-center text-sm",
+                day: "flex-1 p-0 text-center text-sm",
                 day_button:
-                  "size-9 rounded-md text-neutral-900 hover:bg-mahakan-green-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                  "size-9 mx-auto flex items-center justify-center rounded-md text-neutral-900 hover:bg-mahakan-green-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
                 today: "font-semibold text-mahakan-green-700",
                 selected:
                   "[&_button]:bg-mahakan-green-700 [&_button]:text-white [&_button]:hover:bg-mahakan-green-800",
@@ -365,5 +437,119 @@ export function DatePicker({
         </p>
       ) : null}
     </div>
+  );
+}
+
+interface MonthDropdownProps {
+  value: number;
+  onChange: (m: number) => void;
+}
+
+function MonthDropdown({ value, onChange }: MonthDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const listRef = useRef<HTMLUListElement>(null);
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-sm font-medium text-neutral-900 hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+          aria-label={`Bulan ${MONTH_LABELS[value]}`}
+        >
+          {MONTH_LABELS[value]}
+          <ChevronDown className="size-3.5 text-neutral-500" aria-hidden />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="center"
+          sideOffset={4}
+          collisionPadding={12}
+          className="z-[70] max-h-64 w-32 overflow-auto rounded-md border border-neutral-200 bg-white py-1 shadow-lg"
+        >
+          <ul ref={listRef} role="listbox" aria-label="Pilih bulan">
+            {MONTH_LABELS.map((label, idx) => (
+              <li key={label} role="option" aria-selected={idx === value}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(idx);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-mahakan-green-100 focus:outline-none focus-visible:bg-mahakan-green-100",
+                    idx === value
+                      ? "bg-mahakan-green-50 font-semibold text-mahakan-green-900"
+                      : "text-neutral-900",
+                  )}
+                >
+                  <span>{label}</span>
+                  {idx === value ? (
+                    <Check className="size-3.5 text-mahakan-green-700" aria-hidden />
+                  ) : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
+interface YearDropdownProps {
+  value: number;
+  years: number[];
+  onChange: (y: number) => void;
+}
+
+function YearDropdown({ value, years, onChange }: YearDropdownProps) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-sm font-medium text-neutral-900 hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+          aria-label={`Tahun ${value}`}
+        >
+          {value}
+          <ChevronDown className="size-3.5 text-neutral-500" aria-hidden />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="center"
+          sideOffset={4}
+          collisionPadding={12}
+          className="z-[70] max-h-64 w-24 overflow-auto rounded-md border border-neutral-200 bg-white py-1 shadow-lg"
+        >
+          <ul role="listbox" aria-label="Pilih tahun">
+            {years.map((y) => (
+              <li key={y} role="option" aria-selected={y === value}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(y);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between px-3 py-1.5 text-left text-sm font-mono tabular-nums hover:bg-mahakan-green-100 focus:outline-none focus-visible:bg-mahakan-green-100",
+                    y === value
+                      ? "bg-mahakan-green-50 font-semibold text-mahakan-green-900"
+                      : "text-neutral-900",
+                  )}
+                >
+                  <span>{y}</span>
+                  {y === value ? (
+                    <Check className="size-3.5 text-mahakan-green-700" aria-hidden />
+                  ) : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }

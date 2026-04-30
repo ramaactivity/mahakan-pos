@@ -9,17 +9,28 @@
  */
 
 import * as Popover from "@radix-ui/react-popover";
-import { Calendar as CalendarIcon, X } from "lucide-react";
-import { useId, useState } from "react";
+import {
+  Calendar as CalendarIcon,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  X,
+} from "lucide-react";
+import { useId, useMemo, useState } from "react";
 import { DayPicker, type DateRange } from "react-day-picker";
 import { id as localeId } from "date-fns/locale";
 import {
+  addMonths,
   addYears,
   endOfMonth,
   format,
   parseISO,
+  setMonth,
+  setYear,
   startOfMonth,
   subDays,
+  subMonths,
   subYears,
 } from "date-fns";
 import "react-day-picker/dist/style.css";
@@ -139,6 +150,31 @@ export function DateRangePicker({
   const reactId = useId();
   const triggerId = `daterange-${reactId}`;
   const [open, setOpen] = useState(false);
+  const [displayMonth, setDisplayMonth] = useState<Date>(() =>
+    startOfMonth(value.from ? parseISO(value.from) : new Date()),
+  );
+
+  const startMonth = useMemo(
+    () => startOfMonth(subYears(new Date(), 10)),
+    [],
+  );
+  const endMonth = useMemo(
+    () => startOfMonth(addYears(new Date(), 5)),
+    [],
+  );
+  const yearList = useMemo(() => {
+    const arr: number[] = [];
+    for (let y = endMonth.getFullYear(); y >= startMonth.getFullYear(); y--) {
+      arr.push(y);
+    }
+    return arr;
+  }, [startMonth, endMonth]);
+
+  function navMonth(delta: number) {
+    setDisplayMonth((m) =>
+      delta > 0 ? addMonths(m, delta) : subMonths(m, -delta),
+    );
+  }
 
   const range: DateRange | undefined =
     value.from || value.to
@@ -253,36 +289,58 @@ export function DateRangePicker({
               </div>
             ) : null}
             <div className="p-3">
+              {/* Custom month + year nav (NO native dropdowns) */}
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => navMonth(-1)}
+                  aria-label="Bulan sebelumnya"
+                  className="rounded-md p-1.5 text-neutral-600 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+                >
+                  <ChevronLeft className="size-4" aria-hidden />
+                </button>
+                <div className="flex flex-1 items-center justify-center gap-1.5">
+                  <RangeMonthDropdown
+                    value={displayMonth.getMonth()}
+                    onChange={(m) => setDisplayMonth((d) => setMonth(d, m))}
+                  />
+                  <RangeYearDropdown
+                    value={displayMonth.getFullYear()}
+                    years={yearList}
+                    onChange={(y) => setDisplayMonth((d) => setYear(d, y))}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navMonth(1)}
+                  aria-label="Bulan berikutnya"
+                  className="rounded-md p-1.5 text-neutral-600 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+                >
+                  <ChevronRight className="size-4" aria-hidden />
+                </button>
+              </div>
               <DayPicker
                 mode="range"
                 locale={localeId}
                 selected={range}
-                defaultMonth={range?.from ?? new Date()}
+                month={displayMonth}
+                onMonthChange={setDisplayMonth}
                 onSelect={(r) => {
                   onChange({
                     from: dateToIso(r?.from),
                     to: dateToIso(r?.to),
                   });
                 }}
-                captionLayout="dropdown"
-                startMonth={startOfMonth(subYears(new Date(), 10))}
-                endMonth={startOfMonth(addYears(new Date(), 5))}
+                startMonth={startMonth}
+                endMonth={endMonth}
                 numberOfMonths={2}
                 showOutsideDays
                 classNames={{
                   months: "flex gap-4",
                   month: "space-y-2",
-                  month_caption: "flex items-center justify-center gap-2 px-1 py-1",
+                  month_caption: "hidden",
                   caption_label: "hidden",
-                  dropdowns: "flex items-center gap-2",
-                  dropdown:
-                    "rounded-md border border-neutral-200 bg-white px-2 py-1 text-sm font-medium text-neutral-900 hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
-                  dropdown_root: "relative",
-                  nav: "flex items-center justify-between mb-1",
-                  button_previous:
-                    "rounded-md p-1.5 hover:bg-neutral-100 text-neutral-600 inline-flex items-center justify-center",
-                  button_next:
-                    "rounded-md p-1.5 hover:bg-neutral-100 text-neutral-600 inline-flex items-center justify-center",
+                  nav: "hidden",
                   month_grid: "border-collapse w-full",
                   weekdays: "flex",
                   weekday: "w-8 text-center text-[11px] font-medium text-neutral-500",
@@ -317,5 +375,142 @@ export function DateRangePicker({
         </p>
       ) : null}
     </div>
+  );
+}
+
+const MONTH_LABELS = [
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
+];
+
+function RangeMonthDropdown({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (m: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-sm font-medium text-neutral-900 hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+          aria-label={`Bulan ${MONTH_LABELS[value]}`}
+        >
+          {MONTH_LABELS[value]}
+          <ChevronDown className="size-3.5 text-neutral-500" aria-hidden />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="center"
+          sideOffset={4}
+          collisionPadding={12}
+          className="z-[70] max-h-64 w-32 overflow-auto rounded-md border border-neutral-200 bg-white py-1 shadow-lg"
+        >
+          <ul role="listbox" aria-label="Pilih bulan">
+            {MONTH_LABELS.map((label, idx) => (
+              <li key={label} role="option" aria-selected={idx === value}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(idx);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-mahakan-green-100 focus:outline-none focus-visible:bg-mahakan-green-100",
+                    idx === value
+                      ? "bg-mahakan-green-50 font-semibold text-mahakan-green-900"
+                      : "text-neutral-900",
+                  )}
+                >
+                  <span>{label}</span>
+                  {idx === value ? (
+                    <Check
+                      className="size-3.5 text-mahakan-green-700"
+                      aria-hidden
+                    />
+                  ) : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
+function RangeYearDropdown({
+  value,
+  years,
+  onChange,
+}: {
+  value: number;
+  years: number[];
+  onChange: (y: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-sm font-medium text-neutral-900 hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+          aria-label={`Tahun ${value}`}
+        >
+          {value}
+          <ChevronDown className="size-3.5 text-neutral-500" aria-hidden />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="center"
+          sideOffset={4}
+          collisionPadding={12}
+          className="z-[70] max-h-64 w-24 overflow-auto rounded-md border border-neutral-200 bg-white py-1 shadow-lg"
+        >
+          <ul role="listbox" aria-label="Pilih tahun">
+            {years.map((y) => (
+              <li key={y} role="option" aria-selected={y === value}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(y);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between px-3 py-1.5 text-left text-sm font-mono tabular-nums hover:bg-mahakan-green-100 focus:outline-none focus-visible:bg-mahakan-green-100",
+                    y === value
+                      ? "bg-mahakan-green-50 font-semibold text-mahakan-green-900"
+                      : "text-neutral-900",
+                  )}
+                >
+                  <span>{y}</span>
+                  {y === value ? (
+                    <Check
+                      className="size-3.5 text-mahakan-green-700"
+                      aria-hidden
+                    />
+                  ) : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
