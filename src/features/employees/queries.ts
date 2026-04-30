@@ -109,7 +109,9 @@ export async function fetchExpiringDocuments(
   outletId: string,
   daysAhead: number = 30,
 ): Promise<ExpiringDocument[]> {
-  const cutoffSql = sql`(CURRENT_DATE + (${daysAhead} || ' days')::interval)::date`;
+  // `date + integer` returns date in Postgres — cleaner than interval-cast
+  // and works directly with parameterized integer.
+  const days = Math.max(0, Math.floor(daysAhead));
   const rows = await db
     .select({
       doc: employeeDocuments,
@@ -130,7 +132,7 @@ export async function fetchExpiringDocuments(
       and(
         isNull(employeeDocuments.deletedAt),
         sql`${employeeDocuments.expiresAt} IS NOT NULL`,
-        sql`${employeeDocuments.expiresAt} <= ${cutoffSql}`,
+        sql`${employeeDocuments.expiresAt} <= (CURRENT_DATE + ${days}::int)`,
       ),
     )
     .orderBy(asc(employeeDocuments.expiresAt));

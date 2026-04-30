@@ -53,24 +53,41 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const [reportRes, attendanceRes, payrollRes, docsRes] = await Promise.all(
-        [
+      // allSettled so any single action failure doesn't deadlock the loader.
+      const [reportSettled, attendanceSettled, payrollSettled, docsSettled] =
+        await Promise.allSettled([
           getDailySalesReport(),
           getTodayAttendanceStatus(),
           listPayrollPeriods(),
           listExpiringDocuments(30),
-        ],
-      );
+        ]);
       if (cancelled) return;
-      if (isOk(reportRes)) setReport(reportRes.data);
-      if (attendanceRes.success) setAttendance(attendanceRes.data);
-      if (payrollRes.success) {
-        // Pick first non-paid period (already sorted desc by periodStart).
+      if (
+        reportSettled.status === "fulfilled" &&
+        isOk(reportSettled.value)
+      ) {
+        setReport(reportSettled.value.data);
+      }
+      if (
+        attendanceSettled.status === "fulfilled" &&
+        attendanceSettled.value.success
+      ) {
+        setAttendance(attendanceSettled.value.data);
+      }
+      if (
+        payrollSettled.status === "fulfilled" &&
+        payrollSettled.value.success
+      ) {
         const active =
-          payrollRes.data.find((p) => p.status !== "paid") ?? null;
+          payrollSettled.value.data.find((p) => p.status !== "paid") ?? null;
         setActivePeriod(active);
       }
-      if (docsRes.success) setExpiringDocs(docsRes.data);
+      if (
+        docsSettled.status === "fulfilled" &&
+        docsSettled.value.success
+      ) {
+        setExpiringDocs(docsSettled.value.data);
+      }
       setLoading(false);
     }
     void load();
