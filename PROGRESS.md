@@ -4,13 +4,13 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 — **Sesi C-2 CLOSE 2026-04-29**: 4-item flow & UX bundle deployed to production. Cashier flow reorder (#4 — items first, metadata at Bayar/Simpan Bill, pager nullable via migration 0010), per-bill notes (#5 — `transactions.note` via migration 0009, threaded through actions + receipt + prep tickets), post-action print confirm modal (#17 — 3 entry points), buka shift 2-step pre-check stok menu (#6). 1 bundle commit `a17221c`, 2 migrations applied to Neon, ~600 LOC, vitest 372/372 + build 11 routes + bundle leak scan empty.
-**Active Milestone (sesi C-3 next):** Open bill edit + reprint buttons (#9), loading open bill profiling (#7), loading payment confirm profiling (#8). HR module bumped to C-6..C-8.
-**Local HEAD:** `a17221c` — synced with `origin/release/phase-1`, all deployed.
+**Phase:** Phase 2 — **Sesi C-3 CLOSE 2026-04-30**: 3-item perf + UX bundle deployed. Open bill reprint buttons inline (#9 — Customer/Dapur/Bar/Semua via existing PrintStationButtons), loading open bill optimization (#7 — new fetchTransactionsByIds drops N×3-4 sequential queries to 4 round-trips), payment confirm latency reduction (#8 — Promise.all on per-item COGS UPDATE inside tx, batch INSERT for inventory_movements, non-blocking audit logs post-commit, perceived-loading text in PayingPanel). 3 commits, no schema, vitest 372/372 + build 11 routes + bundle leak scan empty.
+**Active Milestone (sesi C-4 next):** Cash management ops bundle — shift handover message (#10), tutup kasir extended (#11 — kas aktual + EDC + gofood/grab/shopee + petty cash), petty cash menu di POS (#12). HR module bumped to C-6..C-8.
+**Local HEAD:** `29a036b` — synced with `origin/release/phase-1`, all deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `a17221c` local + remote, latest deploy 2026-04-29 sesi C-2 flow + UX bundle, migrations 0009 + 0010 applied)
+**Branch:** `release/phase-1` (HEAD `29a036b` local + remote, latest deploy 2026-04-30 sesi C-3 perf + UX bundle)
 **Sesi C plan:** `~/.claude/plans/compiled-hugging-marble.md` (REWRITTEN as handover; 17 staff revisions sequenced as C-1..C-5, then HR C-6..C-8; ~11-12 sesi total)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift; M29 Loyalty landed)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
