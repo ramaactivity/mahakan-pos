@@ -135,6 +135,7 @@ async function authorizeVoidRefund(
   }
 }
 import {
+  fetchSplitBreakdown,
   fetchTransactionByClientRefId,
   fetchTransactionById,
   fetchTransactions,
@@ -142,6 +143,7 @@ import {
   type ListTransactionsOptions,
 } from "./queries";
 import {
+  addSplitPaymentSchema,
   createTransactionSchema,
   editOpenBillSchema,
   refundTransactionPartialSchema,
@@ -151,6 +153,8 @@ import {
 import {
   refundEventItems,
   refundEvents,
+  splitPaymentItems,
+  splitPayments,
   transactionItems as transactionItemsSchema,
 } from "@/db/schema";
 import {
@@ -169,6 +173,7 @@ import {
   ok,
   isOk,
   type ApiResult,
+  type AddSplitPaymentInput,
   type CloseOpenBillInput,
   type CreateTransactionInput,
   type EditOpenBillInput,
@@ -176,6 +181,7 @@ import {
   type RefundTransactionInput,
   type RefundTransactionPartialInput,
   type SaveOpenBillInput,
+  type SplitPaymentBreakdown,
   type Transaction,
   type TransactionWithItems,
   type VoidTransactionInput,
@@ -1711,4 +1717,209 @@ export async function closeOpenBill(
   return refreshed
     ? ok(refreshed)
     : fail("DB_ERROR", "Gagal fetch transaksi setelah close");
+}
+
+// ---------- Split Payment (C-5 #13) ----------
+
+/**
+ * Read-only breakdown of split payments on a transaction. Frontend uses
+ * this to render the BillCard progress badge + the per-menu split modal's
+ * "remaining unpaid items" section, and HistoryDetailModal's split list.
+ */
+export async function getSplitBreakdown(
+  transactionId: string,
+): Promise<ApiResult<SplitPaymentBreakdown>> {
+  await requireSession();
+  const trx = await fetchTransactionById(transactionId);
+  if (!trx) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+  return ok(await fetchSplitBreakdown(transactionId, trx.total));
+}
+
+/**
+ * Add one split-payment event to an open transaction. Validates amount
+ * does not exceed remaining + (for per_menu) per-item qty does not
+ * exceed unpaid qty. When the cumulative paid total reaches
+ * transactions.total, the transaction is flipped to status="paid" and
+ * payment_method="split" inside the same DB tx.
+ *
+ * Loyalty earn fires once on the FINAL split that closes the bill —
+ * mirrors closeOpenBill behavior so members get points exactly once.
+ */
+export async function addSplitPayment(
+  input: AddSplitPaymentInput,
+): Promise<ApiResult<TransactionWithItems>> {
+  const session = await requireSession();
+
+  if (!hasPermission(session.user.role, "pos.transaction.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak proses pembayaran");
+  }
+
+  const parsed = addSplitPaymentSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  const current = await fetchTransactionById(v.transactionId);
+  if (!current) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+  if (current.status !== "open") {
+    return fail(
+      "TRX_NOT_OPEN",
+      `Bill sudah tidak open (status ${current.status})`,
+    );
+  }
+
+  // Active shift for this user — needed for split_payments.shift_id and
+  // to ensure the split is attributable in the cash recap.
+  const activeShift = await db
+    .select({ id: sql<string>`id` })
+    .from(sql`shifts`)
+    .where(
+      sql`user_id = ${session.user.id} AND status = 'open' AND outlet_id = ${session.user.outletId}`,
+    )
+    .limit(1);
+  if (activeShift.length === 0) {
+    return fail("NO_ACTIVE_SHIFT", "Buka shift dulu sebelum proses pembayaran");
+  }
+  const shiftId = activeShift[0].id;
+
+  if (v.paymentMethod === "cash") {
+    if ((v.cashReceived ?? 0) < v.amount) {
+      return fail(
+        "VALIDATION_ERROR",
+        "cashReceived kurang dari amount",
+        "cashReceived",
+      );
+    }
+  }
+
+  // Compute current breakdown to validate amount + per-item qty.
+  const breakdown = await fetchSplitBreakdown(v.transactionId, current.total);
+  if (v.amount > breakdown.remainingAmount) {
+    return fail(
+      "AMOUNT_EXCEEDS_REMAINING",
+      `Nominal melebihi sisa bill (sisa Rp${breakdown.remainingAmount.toLocaleString("id-ID")})`,
+      "amount",
+    );
+  }
+
+  if (v.splitKind === "per_menu") {
+    // Per-item validation: each split item's quantity must be ≤ remaining
+    // unpaid quantity for that transaction_item.
+    const itemById = new Map(
+      current.items.map((it) => [it.id, it.quantity]),
+    );
+    for (const reqItem of v.items ?? []) {
+      const totalQty = itemById.get(reqItem.transactionItemId);
+      if (totalQty === undefined) {
+        return fail(
+          "ITEM_NOT_IN_TRX",
+          "Item tidak ada di transaksi ini",
+          "items",
+        );
+      }
+      const alreadyPaid =
+        breakdown.paidQuantityByTrxItemId[reqItem.transactionItemId] ?? 0;
+      const unpaid = totalQty - alreadyPaid;
+      if (reqItem.quantity > unpaid) {
+        return fail(
+          "ITEM_QTY_EXCEEDS",
+          `Qty melebihi sisa unpaid untuk satu item (sisa ${unpaid})`,
+          "items",
+        );
+      }
+    }
+  }
+
+  const cashChange =
+    v.paymentMethod === "cash" && v.cashReceived !== null
+      ? Math.max(0, v.cashReceived - v.amount)
+      : null;
+
+  try {
+    await db.transaction(async (tx) => {
+      const [splitRow] = await tx
+        .insert(splitPayments)
+        .values({
+          transactionId: v.transactionId,
+          outletId: session.user.outletId,
+          shiftId,
+          cashierId: session.user.id,
+          amount: v.amount,
+          paymentMethod: v.paymentMethod,
+          cashReceived: v.paymentMethod === "cash" ? v.cashReceived : null,
+          cashChange,
+          splitKind: v.splitKind,
+        })
+        .returning();
+
+      if (v.splitKind === "per_menu" && v.items && v.items.length > 0) {
+        await tx.insert(splitPaymentItems).values(
+          v.items.map((it) => ({
+            splitPaymentId: splitRow.id,
+            transactionItemId: it.transactionItemId,
+            quantity: it.quantity,
+          })),
+        );
+      }
+
+      const newTotalPaid = breakdown.totalPaid + v.amount;
+      if (newTotalPaid >= current.total) {
+        // Final split — close the bill.
+        await tx
+          .update(transactions)
+          .set({
+            status: "paid",
+            paymentMethod: "split",
+            cashReceived: null,
+            cashChange: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(transactions.id, v.transactionId));
+      }
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "DB error";
+    return fail("DB_ERROR", msg);
+  }
+
+  // Audit (best-effort, mirrors createTransaction pattern).
+  logAudit({
+    eventType: "transaction.split_payment.add",
+    userId: session.user.id,
+    entityType: "transaction",
+    entityId: v.transactionId,
+    payload: {
+      summary: `Split ${v.splitKind} Rp${v.amount.toLocaleString("id-ID")} via ${v.paymentMethod} pada ${current.transactionNumber}`,
+      context: {
+        transactionNumber: current.transactionNumber,
+        amount: v.amount,
+        paymentMethod: v.paymentMethod,
+        splitKind: v.splitKind,
+        itemsCount: v.items?.length ?? 0,
+        totalPaidAfter: breakdown.totalPaid + v.amount,
+        billTotal: current.total,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  }).catch((e) => console.error("[audit split]", e));
+
+  // Loyalty earn — only when this split closes the bill.
+  const newTotalPaid = breakdown.totalPaid + v.amount;
+  if (newTotalPaid >= current.total && current.customerId !== null) {
+    earnPointsForTransaction(v.transactionId).catch((e) =>
+      console.error("[loyalty earn split]", e),
+    );
+  }
+
+  const refreshed = await fetchTransactionById(v.transactionId);
+  return refreshed
+    ? ok(refreshed)
+    : fail("DB_ERROR", "Gagal fetch transaksi setelah split");
 }

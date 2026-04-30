@@ -9,6 +9,7 @@ import {
   Pencil,
   Printer,
   RefreshCw,
+  Split,
 } from "lucide-react";
 import {
   Badge,
@@ -18,6 +19,7 @@ import {
   Skeleton,
 } from "@/components/ui";
 import { PrintStationButtons } from "./PrintStationButtons";
+import { SplitPaymentModal } from "./SplitPaymentModal";
 import {
   getTransactionsByIds,
   isOk,
@@ -76,6 +78,8 @@ export function OpenBillPanel({
   const [closingBill, setClosingBill] = useState<TransactionWithItems | null>(
     null,
   );
+  const [splittingBill, setSplittingBill] =
+    useState<TransactionWithItems | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,6 +149,18 @@ export function OpenBillPanel({
     onBillPaid?.(closedTrx);
   }
 
+  function handleSplitAdded(updatedTrx: TransactionWithItems) {
+    // Force a refetch of the bill detail so the next render shows the new
+    // split row in breakdown. If the bill closed via this split, also
+    // bubble up the same way as a regular Bayar.
+    setDetails((prev) => ({ ...prev, [updatedTrx.id]: updatedTrx }));
+    setTick((t) => t + 1);
+    if (updatedTrx.status === "paid") {
+      setSplittingBill(null);
+      onBillPaid?.(updatedTrx);
+    }
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <header className="border-b border-neutral-200 bg-white p-4">
@@ -207,6 +223,9 @@ export function OpenBillPanel({
                 onPay={() =>
                   details[b.id] ? setClosingBill(details[b.id]) : null
                 }
+                onSplit={() =>
+                  details[b.id] ? setSplittingBill(details[b.id]) : null
+                }
                 onEdit={() =>
                   details[b.id] ? onEditBill(details[b.id]) : null
                 }
@@ -228,6 +247,16 @@ export function OpenBillPanel({
         onClosed={handleBillClosed}
         onOpenSettings={onOpenSettings}
       />
+
+      <SplitPaymentModal
+        open={splittingBill !== null}
+        bill={splittingBill}
+        cashierName={cashierName}
+        receiptConfig={receiptConfig}
+        onClose={() => setSplittingBill(null)}
+        onSplitAdded={handleSplitAdded}
+        onOpenSettings={onOpenSettings}
+      />
     </div>
   );
 }
@@ -238,6 +267,7 @@ interface BillCardProps {
   /** Bumped from parent's auto-refresh tick — used to invalidate age calc. */
   nowTick: number;
   onPay: () => void;
+  onSplit: () => void;
   onEdit: () => void;
   cashierName: string;
   receiptConfig: ReceiptConfig | null;
@@ -249,6 +279,7 @@ function BillCard({
   detail,
   nowTick,
   onPay,
+  onSplit,
   onEdit,
   cashierName,
   receiptConfig,
@@ -326,6 +357,14 @@ function BillCard({
             disabled={!detail}
           >
             <Pencil className="size-4" aria-hidden /> Edit
+          </Button>
+          <Button
+            size="md"
+            variant="outline"
+            onClick={onSplit}
+            disabled={!detail}
+          >
+            <Split className="size-4" aria-hidden /> Bayar Sebagian
           </Button>
           <Button
             size="md"

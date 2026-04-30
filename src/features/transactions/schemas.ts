@@ -109,6 +109,46 @@ export const refundTransactionPartialSchema = z.object({
     .optional(),
 });
 
+export const addSplitPaymentSchema = z
+  .object({
+    transactionId: z.uuid(),
+    amount: moneySchema,
+    paymentMethod: z.enum(["cash", "qris", "card_bca"]),
+    cashReceived: moneySchema.nullable(),
+    cashChange: moneySchema.nullable(),
+    splitKind: z.enum(["nominal", "per_menu"]),
+    items: z
+      .array(
+        z.object({
+          transactionItemId: z.uuid(),
+          quantity: z.number().int().min(1).max(99),
+        }),
+      )
+      .max(50)
+      .optional(),
+  })
+  .refine(
+    (v) =>
+      v.paymentMethod === "cash"
+        ? v.cashReceived !== null
+        : v.cashReceived === null && v.cashChange === null,
+    {
+      message:
+        "cashReceived wajib untuk cash, harus null untuk non-cash",
+      path: ["cashReceived"],
+    },
+  )
+  .refine(
+    (v) =>
+      v.splitKind === "per_menu"
+        ? Array.isArray(v.items) && v.items.length > 0
+        : v.items === undefined || v.items.length === 0,
+    {
+      message: "items wajib + non-empty untuk per_menu, harus kosong untuk nominal",
+      path: ["items"],
+    },
+  );
+
 export const editOpenBillSchema = z.object({
   transactionId: z.uuid(),
   customerName: z

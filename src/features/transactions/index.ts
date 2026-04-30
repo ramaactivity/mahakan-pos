@@ -1,4 +1,5 @@
 export type {
+  AddSplitPaymentInput,
   ApiResult,
   CloseOpenBillInput,
   CreateTransactionInput,
@@ -13,6 +14,12 @@ export type {
   RefundTransactionPartialInput,
   RefundTransactionPartialItem,
   SaveOpenBillInput,
+  SplitKind,
+  SplitPayment,
+  SplitPaymentBreakdown,
+  SplitPaymentItem,
+  SplitPaymentItemInput,
+  SplitPaymentWithItems,
   Transaction,
   TransactionItem,
   TransactionItemModifier,
@@ -24,9 +31,11 @@ export type {
 export { isOk } from "./types";
 
 export {
+  addSplitPayment,
   closeOpenBill,
   createTransaction,
   editOpenBill,
+  getSplitBreakdown,
   getTransaction,
   getTransactionsByIds,
   listTransactions,

@@ -1,18 +1,22 @@
 import "server-only";
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   customers,
+  splitPaymentItems,
+  splitPayments,
   transactionItems,
   transactionItemModifiers,
   transactions,
 } from "@/db/schema";
 import type {
   Paginated,
+  PaymentMethod,
+  SplitPaymentBreakdown,
+  SplitPaymentWithItems,
   Transaction,
   TransactionStatus,
   TransactionWithItems,
-  PaymentMethod,
 } from "./types";
 
 export interface ListTransactionsOptions {
@@ -185,6 +189,55 @@ export async function fetchTransactionsByIds(
       member: trx.customerId ? (memberById.get(trx.customerId) ?? null) : null,
     };
   });
+}
+
+/** Aggregate split-payment progress for one transaction. Returns the
+ * splits in chronological order, sum paid so far, remaining amount, and
+ * a per-trx-item map of quantities already accounted for via per_menu
+ * splits. C-5 #13. */
+export async function fetchSplitBreakdown(
+  transactionId: string,
+  transactionTotal: number,
+): Promise<SplitPaymentBreakdown> {
+  const splits = await db
+    .select()
+    .from(splitPayments)
+    .where(eq(splitPayments.transactionId, transactionId))
+    .orderBy(asc(splitPayments.createdAt));
+
+  const splitIds = splits.map((s) => s.id);
+  const itemRows = splitIds.length
+    ? await db
+        .select()
+        .from(splitPaymentItems)
+        .where(inArray(splitPaymentItems.splitPaymentId, splitIds))
+    : [];
+
+  const itemsBySplit = new Map<string, typeof itemRows>();
+  for (const r of itemRows) {
+    const arr = itemsBySplit.get(r.splitPaymentId) ?? [];
+    arr.push(r);
+    itemsBySplit.set(r.splitPaymentId, arr);
+  }
+
+  const splitsWithItems: SplitPaymentWithItems[] = splits.map((s) => ({
+    ...s,
+    items: itemsBySplit.get(s.id) ?? [],
+  }));
+
+  const totalPaid = splits.reduce((sum, s) => sum + s.amount, 0);
+  const paidQuantityByTrxItemId: Record<string, number> = {};
+  for (const r of itemRows) {
+    paidQuantityByTrxItemId[r.transactionItemId] =
+      (paidQuantityByTrxItemId[r.transactionItemId] ?? 0) + r.quantity;
+  }
+
+  return {
+    splits: splitsWithItems,
+    totalPaid,
+    remainingAmount: Math.max(0, transactionTotal - totalPaid),
+    paidQuantityByTrxItemId,
+  };
 }
 
 /** Find existing transaction by clientRefId for idempotency check. */

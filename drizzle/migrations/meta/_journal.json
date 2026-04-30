@@ -85,6 +85,13 @@
       "when": 1777518069089,
       "tag": "0011_curious_adam_warlock",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1777519094048,
+      "tag": "0012_chilly_lucky_pierre",
+      "breakpoints": true
     }
   ]
 }

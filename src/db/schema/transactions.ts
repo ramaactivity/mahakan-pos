@@ -50,7 +50,7 @@ export const transactions = pgTable(
     total: bigint("total", { mode: "number" }).notNull(),
 
     paymentMethod: text("payment_method", {
-      enum: ["cash", "qris", "card_bca"],
+      enum: ["cash", "qris", "card_bca", "split"],
     }).notNull(),
     cashReceived: bigint("cash_received", { mode: "number" }),
     cashChange: bigint("cash_change", { mode: "number" }),
@@ -123,7 +123,8 @@ export const transactions = pgTable(
     check(
       "ck_transactions_cash_fields",
       sql`(${t.paymentMethod} = 'cash' AND ${t.cashReceived} IS NOT NULL)
-        OR (${t.paymentMethod} <> 'cash' AND ${t.cashReceived} IS NULL AND ${t.cashChange} IS NULL)`,
+        OR (${t.paymentMethod} = 'split' AND ${t.cashReceived} IS NULL AND ${t.cashChange} IS NULL)
+        OR (${t.paymentMethod} NOT IN ('cash', 'split') AND ${t.cashReceived} IS NULL AND ${t.cashChange} IS NULL)`,
     ),
     check(
       "ck_transactions_cogs_nonneg",

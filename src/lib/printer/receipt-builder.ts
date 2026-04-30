@@ -71,7 +71,7 @@ export interface ReceiptData {
   discountAmount: number;
   discountReason: string | null;
   total: number;
-  paymentMethod: "cash" | "qris" | "card_bca";
+  paymentMethod: "cash" | "qris" | "card_bca" | "split";
   cashReceived: number | null;
   cashChange: number | null;
   status: "paid" | "voided" | "refunded" | "open" | "partially_refunded";
@@ -221,8 +221,12 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
     );
   } else if (d.paymentMethod === "qris") {
     parts.push(text("BAYAR : QRIS\n"));
-  } else {
+  } else if (d.paymentMethod === "card_bca") {
     parts.push(text("BAYAR : KARTU BCA\n"));
+  } else {
+    // split — final aggregate receipt notes that the bill was paid via
+    // multiple split events; per-split detail prints separately.
+    parts.push(text("BAYAR : SPLIT (multi-payer)\n"));
   }
   parts.push(bold(false));
 

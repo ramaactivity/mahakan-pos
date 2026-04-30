@@ -17,6 +17,7 @@ export const AUDIT_EVENT_TYPES = [
   "transaction.open_bill.close",
   "transaction.open_bill.edit",
   "transaction.reprint",
+  "transaction.split_payment.add",
   // Menu
   "menu.item.create",
   "menu.item.update",

@@ -15,6 +15,7 @@ import { ApprovalCodeModal } from "./ApprovalCodeModal";
 import { PrintStationButtons } from "./PrintStationButtons";
 import {
   isOk,
+  getSplitBreakdown,
   getTransaction,
   logTransactionReprint,
   voidTransaction,
@@ -22,6 +23,7 @@ import {
   refundTransactionPartial,
   markServed,
   type RefundTransactionPartialItem,
+  type SplitPaymentBreakdown,
   type TransactionWithItems,
 } from "@/features/transactions";
 import { useSession } from "@/features/auth/SessionProvider";
@@ -79,6 +81,8 @@ export function HistoryDetailModal({
 }: HistoryDetailModalProps) {
   const { session } = useSession();
   const [trx, setTrx] = useState<TransactionWithItems | null>(null);
+  const [splitBreakdown, setSplitBreakdown] =
+    useState<SplitPaymentBreakdown | null>(null);
   const [loading, setLoading] = useState(true);
 
   function handleReprintLogged(_key: string, sections: TicketSection[]) {
@@ -123,10 +127,24 @@ export function HistoryDetailModal({
     }
     let cancelled = false;
     setLoading(true);
+    setSplitBreakdown(null);
     async function load() {
       const res = await getTransaction(trxId!);
       if (cancelled) return;
-      if (isOk(res)) setTrx(res.data);
+      if (isOk(res)) {
+        setTrx(res.data);
+        // If the trx was settled via split, fetch the breakdown so the
+        // split list renders alongside totals. Same call serves any
+        // partially-paid open bill (rare in history but possible).
+        if (
+          res.data.paymentMethod === "split" ||
+          res.data.status === "open"
+        ) {
+          const splitRes = await getSplitBreakdown(trxId!);
+          if (cancelled) return;
+          if (isOk(splitRes)) setSplitBreakdown(splitRes.data);
+        }
+      }
       setLoading(false);
     }
     void load();
@@ -391,10 +409,48 @@ export function HistoryDetailModal({
                     ? `Tunai ${formatRupiah(trx.cashReceived ?? 0)} · kembali ${formatRupiah(trx.cashChange ?? 0)}`
                     : trx.paymentMethod === "qris"
                       ? "QRIS"
-                      : "Kartu BCA"
+                      : trx.paymentMethod === "card_bca"
+                        ? "Kartu BCA"
+                        : `Split (${splitBreakdown?.splits.length ?? 0}x)`
                 }
                 muted
               />
+              {splitBreakdown && splitBreakdown.splits.length > 0 ? (
+                <div className="mt-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs">
+                  <p className="mb-1 font-semibold text-neutral-900">
+                    Breakdown Split ({splitBreakdown.splits.length}x · paid{" "}
+                    {formatRupiah(splitBreakdown.totalPaid)})
+                  </p>
+                  <ul className="space-y-1 text-neutral-700">
+                    {splitBreakdown.splits.map((s, i) => (
+                      <li key={s.id} className="flex justify-between gap-2">
+                        <span className="truncate">
+                          #{i + 1} ·{" "}
+                          {s.paymentMethod === "cash"
+                            ? "Tunai"
+                            : s.paymentMethod === "qris"
+                              ? "QRIS"
+                              : "Kartu BCA"}
+                          {s.splitKind === "per_menu"
+                            ? ` · ${s.items.length} item`
+                            : " · nominal"}
+                          {" · "}
+                          {formatIndonesianDateTime(s.createdAt)}
+                        </span>
+                        <span className="font-mono font-semibold shrink-0">
+                          {formatRupiah(s.amount)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  {splitBreakdown.remainingAmount > 0 ? (
+                    <p className="mt-2 border-t border-neutral-200 pt-2 font-semibold text-warning-500">
+                      Sisa belum dibayar:{" "}
+                      {formatRupiah(splitBreakdown.remainingAmount)}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {trx.voidedAt ? (
                 <Row
                   label="Voided"

@@ -10,3 +10,4 @@ export * from "./inventory";
 export * from "./customers";
 export * from "./approval_codes";
 export * from "./refund_events";
+export * from "./split_payments";

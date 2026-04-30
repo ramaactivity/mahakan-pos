@@ -3,6 +3,8 @@ import type {
   transactions,
   transactionItems,
   transactionItemModifiers,
+  splitPayments,
+  splitPaymentItems,
 } from "@/db/schema";
 
 export type Transaction = InferSelectModel<typeof transactions>;
@@ -10,10 +12,45 @@ export type TransactionItem = InferSelectModel<typeof transactionItems>;
 export type TransactionItemModifier = InferSelectModel<
   typeof transactionItemModifiers
 >;
+export type SplitPayment = InferSelectModel<typeof splitPayments>;
+export type SplitPaymentItem = InferSelectModel<typeof splitPaymentItems>;
+export type SplitKind = "nominal" | "per_menu";
+
+/** A single split event with its per-menu detail rows joined in. */
+export interface SplitPaymentWithItems extends SplitPayment {
+  items: SplitPaymentItem[];
+}
+
+/** Aggregate split-payment summary for a transaction — drives BillCard
+ * progress badge + HistoryDetailModal breakdown. */
+export interface SplitPaymentBreakdown {
+  splits: SplitPaymentWithItems[];
+  totalPaid: number;
+  remainingAmount: number;
+  /** Map: transactionItemId → quantity already paid via per_menu splits.
+   * Used to compute remaining unpaid items when adding the next split. */
+  paidQuantityByTrxItemId: Record<string, number>;
+}
+
+export interface SplitPaymentItemInput {
+  transactionItemId: string;
+  quantity: number;
+}
+
+export interface AddSplitPaymentInput {
+  transactionId: string;
+  amount: number;
+  paymentMethod: Exclude<PaymentMethod, "split">;
+  cashReceived: number | null;
+  cashChange: number | null;
+  splitKind: SplitKind;
+  /** Required when splitKind = 'per_menu'; ignored otherwise. */
+  items?: SplitPaymentItemInput[];
+}
 
 export type Variant = "hot" | "iced";
 export type DiscountType = "percent" | "fixed";
-export type PaymentMethod = "cash" | "qris" | "card_bca";
+export type PaymentMethod = "cash" | "qris" | "card_bca" | "split";
 export type OrderType = "dine_in" | "takeaway";
 export type TransactionStatus =
   | "paid"
