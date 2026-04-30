@@ -8,6 +8,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Settings as SettingsIcon,
   Trash2,
 } from "lucide-react";
 import {
@@ -34,6 +35,11 @@ import {
   type PayrollPeriodWithStats,
   type PayrollStatus,
 } from "@/features/payroll";
+import {
+  getOwnOutlet,
+  isOk as outletIsOk,
+  updatePayrollSettings,
+} from "@/features/outlets";
 import type { Role } from "@/lib/auth";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
@@ -63,7 +69,60 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
   const [editingLine, setEditingLine] =
     useState<PayrollLineWithEmployee | null>(null);
 
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [latePerMin, setLatePerMin] = useState<string>("");
+  const [otPerMin, setOtPerMin] = useState<string>("");
+
   const canManage = viewerRole === "owner";
+
+  useEffect(() => {
+    if (!canManage) return;
+    let cancelled = false;
+    void (async () => {
+      const res = await getOwnOutlet();
+      if (cancelled) return;
+      if (outletIsOk(res)) {
+        const p = res.data.settings?.payroll ?? {};
+        setLatePerMin(p.latePerMinute != null ? String(p.latePerMinute) : "");
+        setOtPerMin(
+          p.overtimePerMinute != null ? String(p.overtimePerMinute) : "",
+        );
+        setSettingsLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage]);
+
+  async function handleSaveSettings() {
+    if (savingSettings) return;
+    const lateNum = latePerMin.trim() === "" ? 0 : parseInt(latePerMin, 10);
+    const otNum = otPerMin.trim() === "" ? 0 : parseInt(otPerMin, 10);
+    if (
+      !Number.isFinite(lateNum) ||
+      lateNum < 0 ||
+      !Number.isFinite(otNum) ||
+      otNum < 0
+    ) {
+      toast.error("Rate harus angka non-negatif");
+      return;
+    }
+    setSavingSettings(true);
+    const res = await updatePayrollSettings({
+      latePerMinute: lateNum,
+      overtimePerMinute: otNum,
+    });
+    setSavingSettings(false);
+    if (!outletIsOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success("Formula payroll disimpan");
+    setSettingsOpen(false);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -173,11 +232,86 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
           </div>
         </div>
         {canManage ? (
-          <Button onClick={() => setCreateOpen(true)} size="lg">
-            <Plus className="size-4" aria-hidden /> Periode Baru
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setSettingsOpen(true)}
+              disabled={!settingsLoaded}
+              aria-label="Pengaturan formula payroll"
+            >
+              <SettingsIcon className="size-4" aria-hidden /> Formula
+            </Button>
+            <Button onClick={() => setCreateOpen(true)} size="lg">
+              <Plus className="size-4" aria-hidden /> Periode Baru
+            </Button>
+          </div>
         ) : null}
       </header>
+
+      <Modal
+        open={settingsOpen}
+        onClose={() => (savingSettings ? null : setSettingsOpen(false))}
+        title="Formula Payroll"
+        description="Rate per menit untuk auto-fill saat Recompute. Kosongkan / 0 = tidak auto-fill (Owner input manual)."
+        size="md"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setSettingsOpen(false)}
+              disabled={savingSettings}
+            >
+              Batal
+            </Button>
+            <Button
+              onClick={handleSaveSettings}
+              loading={savingSettings}
+              size="lg"
+            >
+              Simpan
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Input
+            label="Late Deduction (Rp/menit)"
+            type="text"
+            inputMode="numeric"
+            value={latePerMin}
+            onChange={(e) =>
+              setLatePerMin(e.target.value.replace(/[^\d]/g, ""))
+            }
+            placeholder="0"
+            hint={
+              latePerMin && parseInt(latePerMin, 10) > 0
+                ? `Contoh: 30 menit telat → ${formatRupiah(parseInt(latePerMin, 10) * 30)}`
+                : "Default 0 = tidak auto-fill late_deduction"
+            }
+            disabled={savingSettings}
+          />
+          <Input
+            label="Overtime Pay (Rp/menit)"
+            type="text"
+            inputMode="numeric"
+            value={otPerMin}
+            onChange={(e) =>
+              setOtPerMin(e.target.value.replace(/[^\d]/g, ""))
+            }
+            placeholder="0"
+            hint={
+              otPerMin && parseInt(otPerMin, 10) > 0
+                ? `Contoh: 60 menit OT → ${formatRupiah(parseInt(otPerMin, 10) * 60)}`
+                : "Default 0 = tidak auto-fill overtime_pay"
+            }
+            disabled={savingSettings}
+          />
+          <p className="rounded-md bg-mahakan-green-50 p-3 text-xs text-mahakan-green-900">
+            Diaplikasikan saat klik &ldquo;Recompute&rdquo; di periode draft.
+            Owner masih bisa override per line lewat tombol pencil.
+          </p>
+        </div>
+      </Modal>
 
       <div className="grid gap-4 md:grid-cols-[280px_1fr]">
         <Card>

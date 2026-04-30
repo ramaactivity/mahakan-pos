@@ -227,6 +227,11 @@ const attendanceSettingsSchema = z.object({
   lateGraceMinutes: z.number().int().min(0).max(60),
 });
 
+const payrollSettingsSchema = z.object({
+  latePerMinute: z.number().int().min(0).max(99_999).optional(),
+  overtimePerMinute: z.number().int().min(0).max(99_999).optional(),
+});
+
 const approvalSchema = z.object({
   voidMode: z.enum(["pin", "code"]).optional(),
   refundMode: z.enum(["pin", "code"]).optional(),
@@ -259,7 +264,13 @@ const approvalSchema = z.object({
 
 async function updateSettingsSection(
   perm: Permission,
-  section: "receipt" | "thresholds" | "features" | "approval" | "attendance",
+  section:
+    | "receipt"
+    | "thresholds"
+    | "features"
+    | "approval"
+    | "attendance"
+    | "payroll",
   patch: Partial<OutletSettings[keyof OutletSettings]>,
 ): Promise<ApiResult<Outlet>> {
   let session;
@@ -371,6 +382,20 @@ export async function updateAttendanceSettings(
   return updateSettingsSection(
     "schedule.update",
     "attendance",
+    parsed.data,
+  );
+}
+
+export async function updatePayrollSettings(
+  input: z.input<typeof payrollSettingsSchema>,
+): Promise<ApiResult<Outlet>> {
+  const parsed = payrollSettingsSchema.safeParse(input);
+  if (!parsed.success) {
+    return err("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "");
+  }
+  return updateSettingsSection(
+    "payroll.manage",
+    "payroll",
     parsed.data,
   );
 }

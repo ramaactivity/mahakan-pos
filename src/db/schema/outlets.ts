@@ -60,6 +60,19 @@ export type OutletSettings = {
      * Default 5 if unset. Range 0..60. */
     lateGraceMinutes?: number;
   };
+  /** Payroll formula auto-fill (Sesi E). When set, computePayrollLines
+   * derives late_deduction + overtime_pay from these rates × the
+   * matching minute totals on each line. Owner can still override per
+   * line via UpdatePayrollLine. Both null/0 = no auto-fill (Owner
+   * computes manually). Rupiah-per-minute for granularity. */
+  payroll?: {
+    /** Rp per minute deducted for lateness. Example: Rp 200/m × 30m
+     * late = Rp 6,000 deduction. */
+    latePerMinute?: number;
+    /** Rp per minute paid for overtime. Example: Rp 300/m × 60m OT
+     * = Rp 18,000 OT pay. */
+    overtimePerMinute?: number;
+  };
 };
 
 export const outlets = pgTable("outlets", {

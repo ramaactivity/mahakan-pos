@@ -6,6 +6,7 @@ export {
   updateAttendanceSettings,
   updateBusinessInfo,
   updateOperationalHours,
+  updatePayrollSettings,
   updateReceiptSettings,
   updateThresholds,
   updateFeatures,

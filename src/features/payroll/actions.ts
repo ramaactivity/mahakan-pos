@@ -5,6 +5,7 @@ import { db } from "@/db";
 import {
   attendanceRecords,
   employees,
+  outlets,
   payrollLines,
   payrollPeriods,
 } from "@/db/schema";
@@ -217,6 +218,17 @@ export async function computePayrollLines(
     )
     .groupBy(attendanceRecords.employeeId);
 
+  // Outlet-level payroll formula rates (Sesi E). When set, Owner gets
+  // auto-fill on late_deduction + overtime_pay; otherwise stays 0.
+  const [outletRow] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  const latePerMinute = outletRow?.settings?.payroll?.latePerMinute ?? 0;
+  const overtimePerMinute =
+    outletRow?.settings?.payroll?.overtimePerMinute ?? 0;
+
   // All active employees (so we generate lines even for those with no
   // attendance in the period — Owner can adjust manually).
   const allEmployees = await db
@@ -245,11 +257,11 @@ export async function computePayrollLines(
       const baseSalary = emp.salaryAmount ?? 0;
       const totalLateMinutes = agg?.totalLateMinutes ?? 0;
       const totalOvertimeMinutes = agg?.totalOvertimeMinutes ?? 0;
-      // Naive defaults — Owner edits via UpdatePayrollLine if rule
-      // engine doesn't match. Late deduction = 0 (Owner usually
-      // applies own policy). Overtime pay = 0 (same).
-      const overtimePay = 0;
-      const lateDeduction = 0;
+      // Sesi E: auto-fill late_deduction + overtime_pay from outlet
+      // settings.payroll rates × minute totals. When rate is 0/unset,
+      // result is 0 — Owner can still override per line.
+      const overtimePay = totalOvertimeMinutes * overtimePerMinute;
+      const lateDeduction = totalLateMinutes * latePerMinute;
       const bonus = 0;
       const otherDeductions = 0;
       const { grossPay, netPay } = recomputeGrossNet({
