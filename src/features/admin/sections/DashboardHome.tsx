@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -11,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import {
+  Badge,
   Card,
   CardContent,
   CardDescription,
@@ -23,22 +25,44 @@ import {
   isOk,
   type DailySalesReport,
 } from "@/features/reports";
+import { getTodayAttendanceStatus } from "@/features/attendance/actions";
+import type { EmployeeAttendanceTodayStatus } from "@/features/attendance/types";
+import { listPayrollPeriods } from "@/features/payroll/actions";
+import type { PayrollPeriodWithStats } from "@/features/payroll/types";
 import { formatRupiah } from "@/lib/format";
+import type { AdminSection } from "@/features/admin/components/AdminLeftNav";
 
 interface DashboardHomeProps {
   user: { name: string };
+  onNavigate?: (section: AdminSection) => void;
 }
 
-export function DashboardHome({ user }: DashboardHomeProps) {
+export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
   const [report, setReport] = useState<DailySalesReport | null>(null);
+  const [attendance, setAttendance] = useState<
+    EmployeeAttendanceTodayStatus[] | null
+  >(null);
+  const [activePeriod, setActivePeriod] =
+    useState<PayrollPeriodWithStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const res = await getDailySalesReport();
+      const [reportRes, attendanceRes, payrollRes] = await Promise.all([
+        getDailySalesReport(),
+        getTodayAttendanceStatus(),
+        listPayrollPeriods(),
+      ]);
       if (cancelled) return;
-      if (isOk(res)) setReport(res.data);
+      if (isOk(reportRes)) setReport(reportRes.data);
+      if (attendanceRes.success) setAttendance(attendanceRes.data);
+      if (payrollRes.success) {
+        // Pick first non-paid period (already sorted desc by periodStart).
+        const active =
+          payrollRes.data.find((p) => p.status !== "paid") ?? null;
+        setActivePeriod(active);
+      }
       setLoading(false);
     }
     void load();
@@ -53,6 +77,10 @@ export function DashboardHome({ user }: DashboardHomeProps) {
         <div className="space-y-2">
           <Skeleton className="h-7 w-64" />
           <Skeleton className="h-4 w-48" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-28 w-full" />
         </div>
         <div className="grid gap-4 md:grid-cols-3">
           <Skeleton className="h-28 w-full" />
@@ -74,6 +102,15 @@ export function DashboardHome({ user }: DashboardHomeProps) {
 
   const { metrics, byPaymentMethod, hourlyDistribution, topItems } = report;
 
+  const totalEmployees = attendance?.length ?? 0;
+  const onFloor =
+    attendance?.filter((a) => a.openRecordId !== null).length ?? 0;
+  const done =
+    attendance?.filter(
+      (a) => a.openRecordId === null && a.hasClosedRecordToday,
+    ).length ?? 0;
+  const belum = Math.max(0, totalEmployees - onFloor - done);
+
   return (
     <div className="space-y-6 p-6">
       <header>
@@ -84,6 +121,28 @@ export function DashboardHome({ user }: DashboardHomeProps) {
           Ringkasan operasional hari ini · {report.date}
         </p>
       </header>
+
+      {/* HR widgets — Tim Hari Ini */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
+          Tim Hari Ini
+        </h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          <HrAttendanceCard
+            total={totalEmployees}
+            onFloor={onFloor}
+            done={done}
+            belum={belum}
+            onTap={
+              onNavigate ? () => onNavigate("attendance") : undefined
+            }
+          />
+          <HrPayrollCard
+            period={activePeriod}
+            onTap={onNavigate ? () => onNavigate("payroll") : undefined}
+          />
+        </div>
+      </section>
 
       {/* Stat cards */}
       <div className="grid gap-4 md:grid-cols-3">
@@ -268,6 +327,159 @@ function StatCard({
         {subtitle ? (
           <p className="mt-1 text-xs text-neutral-500">{subtitle}</p>
         ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function HrAttendanceCard({
+  total,
+  onFloor,
+  done,
+  belum,
+  onTap,
+}: {
+  total: number;
+  onFloor: number;
+  done: number;
+  belum: number;
+  onTap?: () => void;
+}) {
+  const interactive = Boolean(onTap);
+  const handleClick = () => onTap?.();
+  return (
+    <Card
+      variant={interactive ? "interactive" : "default"}
+      onClick={interactive ? handleClick : undefined}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleClick();
+              }
+            }
+          : undefined
+      }
+      aria-label={interactive ? "Buka tab Absensi" : undefined}
+    >
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardDescription>Absensi Hari Ini</CardDescription>
+          {interactive ? (
+            <ChevronRight className="size-4 text-neutral-400" aria-hidden />
+          ) : null}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {total === 0 ? (
+          <p className="text-sm text-neutral-500">
+            Belum ada karyawan terdaftar.
+          </p>
+        ) : (
+          <div className="grid grid-cols-3 gap-3">
+            <HrMetric label="On Floor" value={onFloor} tone="active" />
+            <HrMetric label="Selesai" value={done} tone="done" />
+            <HrMetric label="Belum" value={belum} tone="muted" />
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function HrMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "active" | "done" | "muted";
+}) {
+  const valueClass =
+    tone === "active"
+      ? "text-mahakan-green-700"
+      : tone === "done"
+        ? "text-success-500"
+        : "text-neutral-500";
+  return (
+    <div>
+      <p className={`font-mono text-2xl font-bold ${valueClass}`}>{value}</p>
+      <p className="mt-0.5 text-xs text-neutral-500">{label}</p>
+    </div>
+  );
+}
+
+function HrPayrollCard({
+  period,
+  onTap,
+}: {
+  period: PayrollPeriodWithStats | null;
+  onTap?: () => void;
+}) {
+  const interactive = Boolean(onTap);
+  const handleClick = () => onTap?.();
+  const statusBadge =
+    period?.status === "draft"
+      ? { variant: "warning" as const, label: "Draft" }
+      : period?.status === "finalized"
+        ? { variant: "info" as const, label: "Finalized" }
+        : null;
+  return (
+    <Card
+      variant={interactive ? "interactive" : "default"}
+      onClick={interactive ? handleClick : undefined}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleClick();
+              }
+            }
+          : undefined
+      }
+      aria-label={interactive ? "Buka tab Payroll" : undefined}
+    >
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardDescription>Periode Payroll Aktif</CardDescription>
+          {interactive ? (
+            <ChevronRight className="size-4 text-neutral-400" aria-hidden />
+          ) : null}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {!period ? (
+          <p className="text-sm text-neutral-500">
+            Belum ada periode aktif.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <p className="truncate text-sm font-semibold text-neutral-900">
+                {period.label}
+              </p>
+              {statusBadge ? (
+                <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+              ) : null}
+            </div>
+            <p className="text-xs text-neutral-500">
+              {period.periodStart} → {period.periodEnd}
+            </p>
+            <p className="font-mono text-lg font-bold text-neutral-900">
+              {formatRupiah(period.netPayTotal)}
+            </p>
+            <p className="text-xs text-neutral-500">
+              {period.lineCount} karyawan
+            </p>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

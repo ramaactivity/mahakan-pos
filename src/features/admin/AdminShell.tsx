@@ -42,7 +42,7 @@ export function AdminShell() {
       />
       <main className="flex-1 overflow-y-auto">
         {section === "dashboard" ? (
-          <DashboardHome user={session.user} />
+          <DashboardHome user={session.user} onNavigate={setSection} />
         ) : section === "menu" ? (
           <MenuSection />
         ) : section === "inventory" ? (
