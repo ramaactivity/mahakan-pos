@@ -106,6 +106,61 @@ export const employees = pgTable(
 );
 
 /**
+ * Per-employee career change log (sesi L). One row per promotion / role
+ * change / salary adjustment / employment-type change. Auto-recorded by
+ * `updateEmployee` action when relevant fields change; Owner can also
+ * manually add entries (e.g. backfill historical promotions).
+ *
+ * Append-only — never edit/delete history rows. Soft-delete only via
+ * deletedAt (rare, for accidental insert).
+ */
+export const employeeCareerHistory = pgTable(
+  "employee_career_history",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** Effective date — when this position/salary started. Defaults to
+     * change-detection time, but Owner can backfill for manual entries. */
+    effectiveDate: date("effective_date").notNull(),
+
+    // Snapshot of the role at this point in time
+    position: text("position"),
+    department: text("department"),
+    employmentType: text("employment_type", {
+      enum: ["full_time", "part_time", "contract", "freelance"],
+    }),
+    salaryAmount: bigint("salary_amount", { mode: "number" }),
+
+    /** Free-form note: "Promosi ke Head Bar", "Naik gaji performance review", etc. */
+    note: text("note"),
+    /** Source of the entry: 'auto' = system-detected change; 'manual' = Owner-entered. */
+    source: text("source", { enum: ["auto", "manual"] })
+      .notNull()
+      .default("auto"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+  },
+  (t) => [
+    index("idx_employee_career_history_employee").on(
+      t.employeeId,
+      t.effectiveDate,
+    ),
+    check(
+      "ck_employee_career_history_salary_nonneg",
+      sql`${t.salaryAmount} IS NULL OR ${t.salaryAmount} >= 0`,
+    ),
+  ],
+);
+
+/**
  * HR docs metadata. Phase 1 stores file_url as plain text — actual file
  * uploads (KTP scan, contracts) defer to a future sesi. Useful right
  * now for tracking expiry dates (KTP, BPJS, contracts) so Owner can

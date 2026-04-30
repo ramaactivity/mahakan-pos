@@ -265,9 +265,9 @@ export function EmployeesSection() {
                               {emp.employeeNumber}
                             </div>
                           ) : null}
-                          {emp.phone ? (
+                          {emp.hireDate ? (
                             <div className="text-xs text-neutral-500">
-                              {emp.phone}
+                              {compactTenure(emp.hireDate, emp.resignedAt)}
                             </div>
                           ) : null}
                         </td>
@@ -365,4 +365,35 @@ export function EmployeesSection() {
       />
     </div>
   );
+}
+
+/** Compact tenure label for list view: "1th 3bln" / "2bln" / "12 hari". */
+function compactTenure(
+  hireDateIso: string,
+  resignedAtIso: string | Date | null,
+): string {
+  let start: Date;
+  try {
+    start = new Date(hireDateIso);
+    if (Number.isNaN(start.getTime())) return "";
+  } catch {
+    return "";
+  }
+  const end =
+    resignedAtIso instanceof Date
+      ? resignedAtIso
+      : resignedAtIso
+        ? new Date(resignedAtIso)
+        : new Date();
+  const ms = end.getTime() - start.getTime();
+  if (ms < 0) return "";
+  const days = Math.floor(ms / (1000 * 60 * 60 * 24));
+  const years = Math.floor(days / 365);
+  const remDays = days - years * 365;
+  const months = Math.floor(remDays / 30);
+  if (years > 0) {
+    return months > 0 ? `${years}th ${months}bln` : `${years}th`;
+  }
+  if (months > 0) return `${months}bln`;
+  return `${days} hari`;
 }

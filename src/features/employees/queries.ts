@@ -1,9 +1,15 @@
 import "server-only";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { employeeDocuments, employees, users } from "@/db/schema";
+import {
+  employeeCareerHistory,
+  employeeDocuments,
+  employees,
+  users,
+} from "@/db/schema";
 import type {
   Employee,
+  EmployeeCareerHistoryEntry,
   EmployeeDocument,
   EmployeeStatus,
   EmployeeWithLink,
@@ -141,4 +147,23 @@ export async function fetchExpiringDocuments(
     employeeFullName: r.employeeFullName,
     employeeNickname: r.employeeNickname,
   }));
+}
+
+/** Career history entries for an employee, newest first. */
+export async function fetchEmployeeCareerHistory(
+  employeeId: string,
+): Promise<EmployeeCareerHistoryEntry[]> {
+  return db
+    .select()
+    .from(employeeCareerHistory)
+    .where(
+      and(
+        eq(employeeCareerHistory.employeeId, employeeId),
+        isNull(employeeCareerHistory.deletedAt),
+      ),
+    )
+    .orderBy(
+      desc(employeeCareerHistory.effectiveDate),
+      desc(employeeCareerHistory.createdAt),
+    );
 }

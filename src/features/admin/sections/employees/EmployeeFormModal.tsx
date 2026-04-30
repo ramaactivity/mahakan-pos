@@ -1,13 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Briefcase, CalendarClock, UserCircle2 } from "lucide-react";
 import {
+  differenceInDays,
+  differenceInMonths,
+  differenceInYears,
+  parseISO,
+} from "date-fns";
+import { id as localeId } from "date-fns/locale";
+import { format as formatDate } from "date-fns";
+import {
+  Badge,
   Button,
   Combobox,
   DatePicker,
   Input,
   Modal,
   Select,
+  Spinner,
   toast,
   type ComboboxOption,
   type SelectOption,
@@ -15,13 +26,17 @@ import {
 import {
   createEmployee,
   isOk,
+  listEmployeeCareerHistory,
   updateEmployee,
   type Employee,
+  type EmployeeCareerHistoryEntry,
+  type EmployeeStatus,
   type EmploymentType,
 } from "@/features/employees";
 import { listUsers, type PublicUser } from "@/features/users";
 import { isOk as usersIsOk } from "@/features/users";
 import { formatRupiah, parseRupiah } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 interface EmployeeFormModalProps {
   open: boolean;
@@ -37,6 +52,50 @@ const EMPLOYMENT_TYPES: Array<{ value: EmploymentType; label: string }> = [
   { value: "contract", label: "Kontrak" },
   { value: "freelance", label: "Freelance" },
 ];
+
+const STATUS_OPTIONS: Array<{
+  value: EmployeeStatus;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "active",
+    label: "Aktif",
+    description: "Karyawan aktif bekerja",
+  },
+  {
+    value: "on_leave",
+    label: "Cuti",
+    description: "Sedang cuti / izin panjang (tetap akan kembali)",
+  },
+  {
+    value: "resigned",
+    label: "Resign",
+    description: "Mengundurkan diri secara baik-baik",
+  },
+  {
+    value: "terminated",
+    label: "Terminated",
+    description: "Diberhentikan / kontrak berakhir",
+  },
+];
+
+const STATUS_BADGE: Record<
+  EmployeeStatus,
+  { variant: "success" | "warning" | "neutral" | "danger"; label: string }
+> = {
+  active: { variant: "success", label: "Aktif" },
+  on_leave: { variant: "warning", label: "Cuti" },
+  resigned: { variant: "neutral", label: "Resign" },
+  terminated: { variant: "danger", label: "Terminated" },
+};
+
+const EMPLOYMENT_TYPE_LABELS: Record<EmploymentType, string> = {
+  full_time: "Full-time",
+  part_time: "Part-time",
+  contract: "Kontrak",
+  freelance: "Freelance",
+};
 
 export function EmployeeFormModal({
   open,
@@ -59,7 +118,14 @@ export function EmployeeFormModal({
   const [salaryInput, setSalaryInput] = useState("");
   const [userId, setUserId] = useState("");
   const [notes, setNotes] = useState("");
+  const [status, setStatus] = useState<EmployeeStatus>("active");
+  const [resignedAt, setResignedAt] = useState("");
+  const [resignReason, setResignReason] = useState("");
   const [users, setUsers] = useState<PublicUser[]>([]);
+  const [careerHistory, setCareerHistory] = useState<
+    EmployeeCareerHistoryEntry[]
+  >([]);
+  const [careerLoading, setCareerLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,14 +151,42 @@ export function EmployeeFormModal({
     );
     setUserId(initial?.userId ?? "");
     setNotes(initial?.notes ?? "");
+    setStatus(initial?.status ?? "active");
+    setResignedAt(
+      initial?.resignedAt
+        ? new Date(initial.resignedAt).toISOString().slice(0, 10)
+        : "",
+    );
+    setResignReason(initial?.resignReason ?? "");
+    setCareerHistory([]);
     /* eslint-enable react-hooks/set-state-in-effect */
 
     let cancelled = false;
     void (async () => {
-      const res = await listUsers();
-      if (cancelled) return;
-      if (usersIsOk(res)) setUsers(res.data.items);
+      try {
+        const res = await listUsers();
+        if (cancelled) return;
+        if (usersIsOk(res)) setUsers(res.data.items);
+      } catch {
+        /* ignore */
+      }
     })();
+
+    // Load career history only when editing existing employee.
+    if (initial) {
+      setCareerLoading(true);
+      void (async () => {
+        try {
+          const res = await listEmployeeCareerHistory(initial.id);
+          if (cancelled) return;
+          if (isOk(res)) setCareerHistory(res.data);
+        } catch {
+          /* ignore */
+        } finally {
+          if (!cancelled) setCareerLoading(false);
+        }
+      })();
+    }
     return () => {
       cancelled = true;
     };
@@ -108,11 +202,22 @@ export function EmployeeFormModal({
     }
   }
 
+  const tenure = useMemo(() => {
+    if (!hireDate) return null;
+    return computeTenure(hireDate, status === "resigned" || status === "terminated" ? resignedAt : null);
+  }, [hireDate, status, resignedAt]);
+
+  const isResigned = status === "resigned" || status === "terminated";
+
   async function onSubmit() {
     if (submitting) return;
     setError(null);
     if (fullName.trim().length === 0) {
       setError("Nama wajib diisi");
+      return;
+    }
+    if (isResigned && resignReason.trim().length === 0) {
+      setError("Alasan resign / terminated wajib diisi");
       return;
     }
     setSubmitting(true);
@@ -136,7 +241,13 @@ export function EmployeeFormModal({
     };
 
     const res = initial
-      ? await updateEmployee({ id: initial.id, ...payload })
+      ? await updateEmployee({
+          id: initial.id,
+          ...payload,
+          status,
+          resignedAt: isResigned ? (resignedAt || new Date().toISOString().slice(0, 10)) : null,
+          resignReason: isResigned ? resignReason.trim() || null : null,
+        })
       : await createEmployee(payload);
 
     setSubmitting(false);
@@ -147,6 +258,8 @@ export function EmployeeFormModal({
     toast.success(initial ? "Karyawan disimpan" : "Karyawan ditambahkan");
     onSaved();
   }
+
+  const statusBadge = STATUS_BADGE[status];
 
   return (
     <Modal
@@ -167,6 +280,35 @@ export function EmployeeFormModal({
       }
     >
       <div className="space-y-4">
+        {/* Header summary card — only when editing existing employee */}
+        {initial && tenure ? (
+          <div className="grid gap-3 rounded-xl border border-mahakan-green-200 bg-mahakan-green-50/40 p-4 sm:grid-cols-3">
+            <SummaryStat
+              icon={<UserCircle2 className="size-4" aria-hidden />}
+              label="Status"
+              value={
+                <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+              }
+            />
+            <SummaryStat
+              icon={<CalendarClock className="size-4" aria-hidden />}
+              label="Tanggal Masuk"
+              value={formatIndonesianDate(hireDate)}
+              hint={tenure.untilLabel}
+            />
+            <SummaryStat
+              icon={<Briefcase className="size-4" aria-hidden />}
+              label="Lama Bekerja"
+              value={tenure.label}
+              hint={
+                position
+                  ? `Posisi: ${position}${department ? ` · ${department}` : ""}`
+                  : undefined
+              }
+            />
+          </div>
+        ) : null}
+
         <Section title="Identitas">
           <div className="grid grid-cols-2 gap-3">
             <Input
@@ -249,8 +391,13 @@ export function EmployeeFormModal({
               type="text"
               value={position}
               onChange={(e) => setPosition(e.target.value.slice(0, 80))}
-              placeholder="Mis. Kasir / Barista / Manager"
+              placeholder="Mis. Helper / Barista / Head Bar"
               disabled={submitting}
+              hint={
+                initial && initial.position && initial.position !== position.trim()
+                  ? `Sebelumnya: ${initial.position}`
+                  : undefined
+              }
             />
             <Input
               label="Departemen"
@@ -261,7 +408,7 @@ export function EmployeeFormModal({
               disabled={submitting}
             />
             <Select
-              label="Status Kepegawaian"
+              label="Tipe Kepegawaian"
               value={employmentType === "" ? undefined : employmentType}
               onValueChange={(v) =>
                 setEmploymentType(v === "" ? "" : (v as EmploymentType))
@@ -283,13 +430,159 @@ export function EmployeeFormModal({
               }
               hint={
                 parsedSalary !== null && parsedSalary > 0
-                  ? `Preview: ${formatRupiah(parsedSalary)}`
+                  ? `Preview: ${formatRupiah(parsedSalary)}${
+                      initial &&
+                      initial.salaryAmount !== null &&
+                      initial.salaryAmount !== parsedSalary
+                        ? ` · sebelumnya ${formatRupiah(initial.salaryAmount)}`
+                        : ""
+                    }`
                   : "Kosongkan kalau dibayar harian/freelance"
               }
               disabled={submitting}
             />
           </div>
         </Section>
+
+        {/* Status section — only meaningful for existing employees. For new
+            employees we always start as active. */}
+        {initial ? (
+          <Section title="Status & Lifecycle">
+            <div className="space-y-3">
+              <div
+                role="radiogroup"
+                aria-label="Status karyawan"
+                className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+              >
+                {STATUS_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={status === opt.value}
+                    onClick={() => setStatus(opt.value)}
+                    disabled={submitting}
+                    className={cn(
+                      "flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                      status === opt.value
+                        ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                        : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
+                    )}
+                  >
+                    <span className="text-sm font-semibold">{opt.label}</span>
+                    <span className="text-[11px] text-neutral-500">
+                      {opt.description}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {isResigned ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <DatePicker
+                    label="Tanggal Resign / Terminated"
+                    value={resignedAt || null}
+                    onChange={(v) => setResignedAt(v ?? "")}
+                    disabled={submitting}
+                    placeholder="Pilih tanggal akhir"
+                    minDate={hireDate || undefined}
+                  />
+                  <Input
+                    label={status === "resigned" ? "Alasan Resign *" : "Alasan Terminated *"}
+                    type="text"
+                    value={resignReason}
+                    onChange={(e) =>
+                      setResignReason(e.target.value.slice(0, 500))
+                    }
+                    placeholder={
+                      status === "resigned"
+                        ? "Mis. Pindah kota / lanjut kuliah"
+                        : "Mis. Kontrak berakhir / pelanggaran"
+                    }
+                    disabled={submitting}
+                    required
+                  />
+                </div>
+              ) : null}
+
+              {status === "on_leave" ? (
+                <p className="rounded-md border border-warning-500/30 bg-warning-100/30 px-3 py-2 text-xs text-warning-700">
+                  Karyawan tidak akan muncul di kiosk Absensi sampai status
+                  diubah kembali ke <strong>Aktif</strong>.
+                </p>
+              ) : null}
+            </div>
+          </Section>
+        ) : null}
+
+        {/* Career history — only when editing */}
+        {initial ? (
+          <Section title="Riwayat Karir">
+            <div className="space-y-2">
+              <p className="text-xs text-neutral-500">
+                Otomatis tercatat saat posisi / departemen / tipe / gaji
+                berubah. Sesi mendatang Owner bisa tambah entry manual.
+              </p>
+              {careerLoading ? (
+                <div className="flex h-16 items-center justify-center">
+                  <Spinner className="size-4 text-mahakan-green-700" />
+                </div>
+              ) : careerHistory.length === 0 ? (
+                <p className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-3 py-4 text-center text-xs italic text-neutral-500">
+                  Belum ada riwayat tercatat.
+                </p>
+              ) : (
+                <ol className="relative space-y-3 border-l border-mahakan-green-200 pl-5">
+                  {careerHistory.map((entry, idx) => (
+                    <li key={entry.id} className="relative">
+                      <span
+                        className={cn(
+                          "absolute -left-[1.45rem] top-1.5 size-3 rounded-full border-2 border-white shadow",
+                          idx === 0
+                            ? "bg-mahakan-green-700"
+                            : "bg-neutral-400",
+                        )}
+                        aria-hidden
+                      />
+                      <div className="rounded-md border border-neutral-200 bg-white p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold text-neutral-900">
+                            {entry.position ?? "—"}
+                          </span>
+                          {entry.department ? (
+                            <span className="text-xs text-neutral-500">
+                              · {entry.department}
+                            </span>
+                          ) : null}
+                          {entry.employmentType ? (
+                            <Badge variant="neutral">
+                              {EMPLOYMENT_TYPE_LABELS[entry.employmentType as EmploymentType]}
+                            </Badge>
+                          ) : null}
+                          {entry.source === "manual" ? (
+                            <Badge variant="info">Manual</Badge>
+                          ) : null}
+                        </div>
+                        <p className="mt-0.5 text-xs text-neutral-500">
+                          {formatIndonesianDate(entry.effectiveDate)}
+                          {entry.salaryAmount !== null
+                            ? ` · ${formatRupiah(entry.salaryAmount)}`
+                            : ""}
+                        </p>
+                        {entry.note ? (
+                          <p className="mt-1 text-xs italic text-neutral-600">
+                            {entry.note}
+                          </p>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          </Section>
+        ) : null}
 
         <Section title="Akun & Catatan">
           <div>
@@ -347,4 +640,82 @@ function Section({
       {children}
     </fieldset>
   );
+}
+
+function SummaryStat({
+  icon,
+  label,
+  value,
+  hint,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  hint?: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-neutral-500">
+        {icon}
+        {label}
+      </div>
+      <div className="mt-1 text-sm font-semibold text-neutral-900">{value}</div>
+      {hint ? (
+        <div className="mt-0.5 text-xs text-neutral-500">{hint}</div>
+      ) : null}
+    </div>
+  );
+}
+
+interface TenureResult {
+  /** "1 tahun 3 bulan" or "5 hari" */
+  label: string;
+  /** "sampai sekarang" or "sampai 12 Mei 2026" */
+  untilLabel: string;
+}
+
+function computeTenure(
+  hireDateIso: string,
+  resignedAtIso: string | null,
+): TenureResult | null {
+  let start: Date;
+  try {
+    start = parseISO(hireDateIso);
+  } catch {
+    return null;
+  }
+  const end = resignedAtIso ? parseISO(resignedAtIso) : new Date();
+  if (end < start) return null;
+
+  const years = differenceInYears(end, start);
+  const monthsTotal = differenceInMonths(end, start);
+  const months = monthsTotal - years * 12;
+  const days = differenceInDays(
+    end,
+    new Date(start.getFullYear() + years, start.getMonth() + months, start.getDate()),
+  );
+
+  let label: string;
+  if (years > 0) {
+    label = months > 0 ? `${years} tahun ${months} bulan` : `${years} tahun`;
+  } else if (monthsTotal > 0) {
+    label = days > 0 ? `${monthsTotal} bulan ${days} hari` : `${monthsTotal} bulan`;
+  } else {
+    label = `${differenceInDays(end, start)} hari`;
+  }
+
+  const untilLabel = resignedAtIso
+    ? `sampai ${formatIndonesianDate(resignedAtIso)}`
+    : "sampai sekarang";
+
+  return { label, untilLabel };
+}
+
+function formatIndonesianDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    return formatDate(parseISO(iso), "d MMM yyyy", { locale: localeId });
+  } catch {
+    return iso;
+  }
 }

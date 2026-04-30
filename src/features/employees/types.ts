@@ -1,8 +1,15 @@
 import type { InferSelectModel } from "drizzle-orm";
-import type { employees, employeeDocuments } from "@/db/schema";
+import type {
+  employeeCareerHistory,
+  employees,
+  employeeDocuments,
+} from "@/db/schema";
 
 export type Employee = InferSelectModel<typeof employees>;
 export type EmployeeDocument = InferSelectModel<typeof employeeDocuments>;
+export type EmployeeCareerHistoryEntry = InferSelectModel<
+  typeof employeeCareerHistory
+>;
 
 export type EmploymentType =
   | "full_time"
