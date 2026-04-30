@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { FileText, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { FileText, Plus, Trash2, Upload, X } from "lucide-react";
+import { upload } from "@vercel/blob/client";
 import {
   Badge,
   Button,
@@ -23,6 +24,10 @@ import {
   type EmployeeDocument,
 } from "@/features/employees";
 import { formatIndonesianDateTime } from "@/lib/date";
+import { differenceInCalendarDays, parseISO } from "date-fns";
+
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const ACCEPT_TYPES = "application/pdf,image/jpeg,image/png,image/webp";
 
 const DOC_TYPE_LABELS: Record<DocumentType, string> = {
   ktp: "KTP",
@@ -53,10 +58,14 @@ export function EmployeeDocsModal({
   const [docType, setDocType] = useState<DocumentType>("ktp");
   const [title, setTitle] = useState("");
   const [fileUrl, setFileUrl] = useState("");
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!open || !employee) return;
@@ -66,6 +75,9 @@ export function EmployeeDocsModal({
     setDocType("ktp");
     setTitle("");
     setFileUrl("");
+    setUploadedFileName(null);
+    setUploading(false);
+    setUploadError(null);
     setExpiresAt("");
     setNotes("");
     setError(null);
@@ -81,6 +93,49 @@ export function EmployeeDocsModal({
       cancelled = true;
     };
   }, [open, employee, refreshKey]);
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !employee) return;
+    setUploadError(null);
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setUploadError("Ukuran file melebihi 10 MB");
+      return;
+    }
+    setUploading(true);
+    try {
+      // Sanitize filename: keep extension, prefix with employee id + timestamp
+      // for uniqueness + traceability.
+      const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+      const safe = file.name
+        .replace(/\.[^/.]+$/, "")
+        .replace(/[^a-zA-Z0-9-_]/g, "_")
+        .slice(0, 60);
+      const path = `employee-docs/${employee.id}/${Date.now()}-${safe}.${ext}`;
+      const blob = await upload(path, file, {
+        access: "public",
+        handleUploadUrl: "/api/v1/employee-documents/upload",
+      });
+      setFileUrl(blob.url);
+      setUploadedFileName(file.name);
+      toast.success("File ter-upload");
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Upload gagal — coba lagi atau gunakan link manual";
+      setUploadError(msg);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function clearUpload() {
+    setFileUrl("");
+    setUploadedFileName(null);
+    setUploadError(null);
+  }
 
   async function handleAdd() {
     if (!employee) return;
@@ -107,6 +162,7 @@ export function EmployeeDocsModal({
     toast.success("Dokumen ditambahkan");
     setTitle("");
     setFileUrl("");
+    setUploadedFileName(null);
     setExpiresAt("");
     setNotes("");
     setRefreshKey((k) => k + 1);
@@ -130,7 +186,7 @@ export function EmployeeDocsModal({
       open={open}
       onClose={onClose}
       title={`Dokumen — ${employee.fullName}`}
-      description="Tracking metadata dokumen HR. Upload file akan ditambahkan di sesi berikutnya — sekarang isi link/url manual."
+      description="Upload kontrak, KTP, BPJS, dll. Maks 10 MB · PDF / JPG / PNG / WebP. Kalau sudah di Drive/cloud lain, paste link di kolom URL."
       size="lg"
       footer={
         <Button variant="ghost" onClick={onClose}>
@@ -165,14 +221,6 @@ export function EmployeeDocsModal({
               required
               disabled={submitting}
             />
-            <Input
-              label="Link / URL (opsional)"
-              type="url"
-              value={fileUrl}
-              onChange={(e) => setFileUrl(e.target.value.slice(0, 500))}
-              placeholder="https://..."
-              disabled={submitting}
-            />
             <DatePicker
               label="Berlaku Sampai (opsional)"
               value={expiresAt || null}
@@ -180,6 +228,72 @@ export function EmployeeDocsModal({
               disabled={submitting}
               placeholder="Pilih tanggal expiry"
             />
+          </div>
+
+          {/* File upload + URL fallback */}
+          <div className="mt-3 space-y-2">
+            <label className="block text-sm font-medium text-neutral-900">
+              File / Link (opsional)
+            </label>
+            {uploadedFileName ? (
+              <div className="flex items-center justify-between gap-2 rounded-md border border-mahakan-green-200 bg-mahakan-green-50 px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <FileText
+                    className="size-4 shrink-0 text-mahakan-green-700"
+                    aria-hidden
+                  />
+                  <span className="truncate text-sm text-mahakan-green-900">
+                    {uploadedFileName}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={clearUpload}
+                  disabled={submitting}
+                  aria-label="Batal upload"
+                  className="rounded-sm p-1 text-mahakan-green-700 hover:bg-mahakan-green-100"
+                >
+                  <X className="size-4" aria-hidden />
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={submitting || uploading}
+                    loading={uploading}
+                  >
+                    <Upload className="size-4" aria-hidden /> Upload File
+                  </Button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={ACCEPT_TYPES}
+                    className="hidden"
+                    onChange={handleFileChange}
+                  />
+                  <Input
+                    type="url"
+                    value={fileUrl}
+                    onChange={(e) => setFileUrl(e.target.value.slice(0, 500))}
+                    placeholder="atau paste URL: https://..."
+                    disabled={submitting || uploading}
+                    className="flex-1"
+                  />
+                </div>
+                <p className="text-xs text-neutral-500">
+                  Maks 10 MB · PDF, JPG, PNG, WebP
+                </p>
+              </>
+            )}
+            {uploadError ? (
+              <p role="alert" className="text-sm text-danger-500">
+                {uploadError}
+              </p>
+            ) : null}
           </div>
           <Input
             label="Catatan (opsional)"
@@ -235,9 +349,27 @@ export function EmployeeDocsModal({
                           {DOC_TYPE_LABELS[d.docType as DocumentType]}
                         </Badge>
                         {d.expiresAt ? (
-                          <Badge variant="warning">
-                            Exp {d.expiresAt}
-                          </Badge>
+                          (() => {
+                            const days = differenceInCalendarDays(
+                              parseISO(d.expiresAt),
+                              new Date(),
+                            );
+                            const variant: "danger" | "warning" | "success" =
+                              days < 0
+                                ? "danger"
+                                : days <= 30
+                                  ? "warning"
+                                  : "success";
+                            const stamp =
+                              days < 0
+                                ? `Expired ${Math.abs(days)}h lalu`
+                                : days === 0
+                                  ? "Expire hari ini"
+                                  : days <= 30
+                                    ? `Expire ${days}h lagi`
+                                    : `Exp ${d.expiresAt}`;
+                            return <Badge variant={variant}>{stamp}</Badge>;
+                          })()
                         ) : null}
                       </div>
                       {d.fileUrl ? (
