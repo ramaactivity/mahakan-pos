@@ -16,6 +16,7 @@ function line(over: Partial<Omit<CartLineItem, "cartItemId" | "subtotal">>): Omi
   return {
     menuItemId: over.menuItemId ?? "menu-1",
     name: over.name ?? "Iced Americano",
+    categoryId: over.categoryId ?? null,
     categoryName: over.categoryName ?? "Coffee Based",
     variant: over.variant ?? "iced",
     unitPrice: over.unitPrice ?? 16_000,

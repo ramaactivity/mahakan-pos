@@ -6,6 +6,8 @@ import {
   expenseCategories,
   expenses,
   menuItems,
+  promos,
+  promoUsages,
   shifts,
   transactionItemModifiers,
   transactionItems,
@@ -447,8 +449,30 @@ export async function createTransaction(
           cashChange: v.paymentMethod === "cash" ? v.cashChange : null,
           status: "paid",
           discountApprover: discountApproverId,
+          promoId: v.promoId ?? null,
         })
         .returning();
+
+      // Sesi K — when discount sourced from a master promo, record the
+      // usage + bump currentUses. Both inside the same DB tx so a rollback
+      // (e.g. stock failure later) also rolls back the usage row.
+      if (v.promoId && validation.recomputedDiscountAmount > 0) {
+        await tx.insert(promoUsages).values({
+          promoId: v.promoId,
+          transactionId: insertedTrx.id,
+          outletId: session.user.outletId,
+          discountAmount: validation.recomputedDiscountAmount,
+          appliedBy: session.user.id,
+          approverId: discountApproverId,
+        });
+        await tx
+          .update(promos)
+          .set({
+            currentUses: sql`${promos.currentUses} + 1`,
+            updatedAt: new Date(),
+          })
+          .where(eq(promos.id, v.promoId));
+      }
 
       // Loyalty redemption — decrement member balance atomically with the
       // sale. Helper throws INSUFFICIENT_POINTS_RACE if a concurrent
@@ -1422,12 +1446,57 @@ export async function editOpenBill(
           note: normalizeBillNote(v.note),
           customerId,
           cogs: hasAnyCogs ? flow.totalCogs : null,
+          promoId: v.promoId ?? null,
           ...(discountApproverId
             ? { discountApprover: discountApproverId }
             : {}),
           updatedAt: new Date(),
         })
         .where(eq(transactions.id, v.transactionId));
+
+      // Sesi K — promo usage tracking on edit. If the bill previously had
+      // a promo, we DO NOT decrement the previous promo's currentUses
+      // here (the open bill's original promo_usages row stays). When the
+      // promo changes mid-edit, we wipe any pre-existing usage for this
+      // transaction and re-record. This way currentUses stays accurate
+      // for paid bills (the path that matters for limits).
+      const existingUsages = await tx
+        .select({ id: promoUsages.id, promoId: promoUsages.promoId })
+        .from(promoUsages)
+        .where(eq(promoUsages.transactionId, v.transactionId));
+      // Decrement currentUses on any previously-recorded promos for this trx.
+      for (const u of existingUsages) {
+        await tx
+          .update(promos)
+          .set({
+            currentUses: sql`GREATEST(0, ${promos.currentUses} - 1)`,
+            updatedAt: new Date(),
+          })
+          .where(eq(promos.id, u.promoId));
+      }
+      if (existingUsages.length > 0) {
+        await tx
+          .delete(promoUsages)
+          .where(eq(promoUsages.transactionId, v.transactionId));
+      }
+      // Record the new usage if applicable.
+      if (v.promoId && validation.recomputedDiscountAmount > 0) {
+        await tx.insert(promoUsages).values({
+          promoId: v.promoId,
+          transactionId: v.transactionId,
+          outletId: session.user.outletId,
+          discountAmount: validation.recomputedDiscountAmount,
+          appliedBy: session.user.id,
+          approverId: discountApproverId,
+        });
+        await tx
+          .update(promos)
+          .set({
+            currentUses: sql`${promos.currentUses} + 1`,
+            updatedAt: new Date(),
+          })
+          .where(eq(promos.id, v.promoId));
+      }
 
       for (const ti of itemsInserted) {
         const cogsForItem = flow.itemCogsByTrxItemId.get(ti.id);
@@ -1589,6 +1658,7 @@ export async function saveAsOpenBill(
     cashReceived: input.total,
     cashChange: 0,
     discountApproverToken: input.discountApproverToken,
+    promoId: input.promoId ?? null,
   };
   // Skip earn here — bill not yet paid. closeOpenBill fires earn when the
   // bill actually transitions to status="paid".

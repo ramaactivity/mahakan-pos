@@ -132,6 +132,7 @@ export function ItemModifierModal({
     const line = buildLineItem({
       menuItemId: item.id,
       name: item.name,
+      categoryId: item.categoryId,
       categoryName,
       variant,
       unitPrice,

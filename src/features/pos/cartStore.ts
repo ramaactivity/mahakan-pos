@@ -97,6 +97,10 @@ interface CartStore {
     reason: string | null,
     approverId?: string,
     approverToken?: string,
+    /** Sesi K — when discount comes from a master promo, link the FK so the
+     * server can insert promo_usages + increment currentUses. Pass null
+     * for ad-hoc discount paths (compliment, redeem). */
+    promoId?: string | null,
   ) => void;
 
   /** Loyalty redemption — sets discount + reason atomically and tracks the
@@ -136,6 +140,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
       discountReason: null,
       discountApproverId: null,
       discountApproverToken: null,
+      promoId: null,
       editingBillId: null,
       loyaltyPointsRedeemed: null,
       createdAt: now,
@@ -161,6 +166,10 @@ export const useCartStore = create<CartStore>((set, get) => ({
         cartItemId: genCartItemId(),
         menuItemId: it.menuItemId,
         name: it.itemName,
+        // For loaded open bills, we don't carry categoryId on transaction
+        // items (DB stores category name only). Promo-category-scope on
+        // edit-bill flow ignores these lines (categoryId=null filtered out).
+        categoryId: null,
         categoryName: it.itemCategoryName,
         variant: it.variant,
         unitPrice: it.unitPrice,
@@ -187,6 +196,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
       discountReason: trx.discountReason,
       discountApproverId: trx.discountApprover ?? null,
       discountApproverToken: null, // approver token is single-use; re-approve on save if discount changes
+      promoId: trx.promoId ?? null,
       editingBillId: trx.id,
       loyaltyPointsRedeemed: null, // redemption is paid-flow only — edit-bill resets it
       createdAt: now,
@@ -355,14 +365,10 @@ export const useCartStore = create<CartStore>((set, get) => ({
       };
     }),
 
-  setDiscount: (draftId, discount, reason, approverId, approverToken) =>
+  setDiscount: (draftId, discount, reason, approverId, approverToken, promoId) =>
     set((state) => {
       const draft = state.drafts[draftId];
       if (!draft) return state;
-      // Manual discount/compliment clears any pre-existing redemption — XOR.
-      // Passing the redemption-shaped reason here also keeps the count if
-      // applyRedemption is the actual caller (it dispatches via setDiscount
-      // internally for shared persistence).
       const isRedemption = (reason ?? "").startsWith("Tukar Poin:");
       return {
         drafts: {
@@ -373,6 +379,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
             discountReason: reason,
             discountApproverId: approverId ?? null,
             discountApproverToken: approverToken ?? null,
+            promoId: promoId ?? null,
             loyaltyPointsRedeemed: isRedemption
               ? draft.loyaltyPointsRedeemed
               : null,
@@ -395,6 +402,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
               discountReason: null,
               discountApproverId: null,
               discountApproverToken: null,
+              promoId: null,
               loyaltyPointsRedeemed: null,
             },
           },
@@ -410,6 +418,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
             discountReason: `Tukar Poin: ${points} poin`,
             discountApproverId: null,
             discountApproverToken: null,
+            promoId: null,
             loyaltyPointsRedeemed: points,
           },
         },
@@ -444,6 +453,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
 export function buildLineItem(args: {
   menuItemId: string;
   name: string;
+  categoryId: string | null;
   categoryName: string;
   variant: CartLineItem["variant"];
   unitPrice: number;
@@ -459,6 +469,7 @@ export function buildLineItem(args: {
   return {
     menuItemId: args.menuItemId,
     name: args.name,
+    categoryId: args.categoryId,
     categoryName: args.categoryName,
     variant: args.variant,
     unitPrice: args.unitPrice,

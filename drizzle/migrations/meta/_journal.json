@@ -113,6 +113,13 @@
       "when": 1777523831260,
       "tag": "0015_premium_stryfe",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1777539640948,
+      "tag": "0016_dapper_thanos",
+      "breakpoints": true
     }
   ]
 }

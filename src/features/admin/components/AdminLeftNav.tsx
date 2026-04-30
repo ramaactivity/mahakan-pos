@@ -13,6 +13,7 @@ import {
   Package,
   ScrollText,
   Settings,
+  Sparkles,
   Users,
   Wallet,
   Receipt,
@@ -34,6 +35,7 @@ export type AdminSection =
   | "hr_reports"
   | "shifts"
   | "cash"
+  | "promos"
   | "reports"
   | "audit"
   | "settings";
@@ -67,6 +69,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "hr_reports", label: "Laporan HR", Icon: BarChart3 },
   { key: "shifts", label: "Shifts", Icon: Receipt },
   { key: "cash", label: "Kas", Icon: Wallet },
+  { key: "promos", label: "Promo", Icon: Sparkles },
   { key: "reports", label: "Laporan", Icon: BarChart3 },
   { key: "audit", label: "Audit Log", Icon: ScrollText, ownerOnly: true },
   { key: "settings", label: "Settings", Icon: Settings },

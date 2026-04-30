@@ -62,6 +62,8 @@ export const createTransactionSchema = z.object({
     .max(99_999)
     .nullish()
     .transform((n) => (typeof n === "number" && n > 0 ? n : null)),
+  /** Sesi K — FK to promos.id when discount sourced from a master promo. */
+  promoId: z.uuid().nullish(),
 });
 
 export const voidTransactionSchema = z.object({
@@ -178,4 +180,6 @@ export const editOpenBillSchema = z.object({
   total: moneySchema,
   /** For Staff-initiated discount on edit: token from /api/v1/auth/verify-approver. */
   discountApproverToken: z.string().optional(),
+  /** Sesi K — FK to promos.id when discount sourced from a master promo. */
+  promoId: z.uuid().nullish(),
 });

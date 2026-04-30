@@ -32,7 +32,8 @@ import { CartLineItem } from "@/features/pos/components/CartLineItem";
 import { CategoryTabs } from "@/features/pos/components/CategoryTabs";
 import { CloseShiftModal } from "@/features/pos/components/CloseShiftModal";
 import { ComplimentModal } from "@/features/pos/components/ComplimentModal";
-import { DiscountModal } from "@/features/pos/components/DiscountModal";
+import { PromoPickerModal } from "@/features/pos/components/PromoPickerModal";
+import type { Promo } from "@/features/promos";
 import { RedeemPointsModal } from "@/features/pos/components/RedeemPointsModal";
 import { lookupCustomerByPhone } from "@/features/customers";
 import { FavoritesBar } from "@/features/pos/components/FavoritesBar";
@@ -203,7 +204,7 @@ export function PosShell() {
     Record<string, Modifier[]>
   >({});
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
-  const [discountModalOpen, setDiscountModalOpen] = useState(false);
+  const [promoPickerOpen, setPromoPickerOpen] = useState(false);
   const [complimentModalOpen, setComplimentModalOpen] = useState(false);
   const [redeemModalOpen, setRedeemModalOpen] = useState(false);
   const [redeemMember, setRedeemMember] = useState<{
@@ -217,6 +218,8 @@ export function PosShell() {
   const [pendingDiscount, setPendingDiscount] = useState<{
     discount: Discount;
     reason: string;
+    /** Sesi K — set when discount sourced from a master promo (vs redeem/compliment). */
+    promoId: string | null;
   } | null>(null);
   const [openShiftOpen, setOpenShiftOpen] = useState(false);
   const [closeShiftOpen, setCloseShiftOpen] = useState(false);
@@ -396,6 +399,7 @@ export function PosShell() {
         buildLineItem({
           menuItemId: item.id,
           name: item.name,
+          categoryId: item.categoryId,
           categoryName,
           variant: null,
           unitPrice: item.priceFixed ?? 0,
@@ -448,16 +452,27 @@ export function PosShell() {
     }
   }
 
-  function handleDiscountSubmit(discount: Discount, reason: string) {
+  function handlePromoPick(promo: Promo, computedDiscount: number) {
     if (!activeDraftId || !session) return;
-    const role = session.user.role;
-    if (role === "owner" || role === "manager") {
-      setDiscount(activeDraftId, discount, reason, session.user.id);
-      toast.success("Diskon ditambahkan");
+    // Build discount object from the computed savings — store as fixed
+    // amount snapshot so the existing money math + receipt formatting
+    // continues to work unchanged.
+    const discount: Discount = { type: "fixed", value: computedDiscount };
+    const reason = `Promo: ${promo.name}`;
+    if (promo.requiresApproval) {
+      setPendingDiscount({ discount, reason, promoId: promo.id });
+      setApproverOpen(true);
       return;
     }
-    setPendingDiscount({ discount, reason });
-    setApproverOpen(true);
+    setDiscount(
+      activeDraftId,
+      discount,
+      reason,
+      session.user.id,
+      undefined,
+      promo.id,
+    );
+    toast.success(`Promo "${promo.name}" diaplikasikan`);
   }
 
   async function handleOpenRedeem() {
@@ -517,6 +532,7 @@ export function PosShell() {
     setPendingDiscount({
       discount: { type: "fixed", value: subtotal },
       reason,
+      promoId: null, // compliment is ad-hoc, not a master promo
     });
     setApproverOpen(true);
   }
@@ -530,6 +546,7 @@ export function PosShell() {
       pendingDiscount.reason,
       result.approverId,
       result.token,
+      pendingDiscount.promoId,
     );
     toast.success(
       isCompliment
@@ -628,6 +645,7 @@ export function PosShell() {
         total,
         discountApproverToken:
           activeDraft.discountApproverToken ?? undefined,
+        promoId: activeDraft.promoId,
       });
       setPaymentSubmitting(false);
       if (!res.success) {
@@ -661,6 +679,7 @@ export function PosShell() {
       discountReason: activeDraft.discountReason,
       total,
       discountApproverToken: activeDraft.discountApproverToken ?? undefined,
+      promoId: activeDraft.promoId,
     };
     const res = await saveAsOpenBill(payload);
     setPaymentSubmitting(false);
@@ -722,6 +741,7 @@ export function PosShell() {
       cashChange: paymentMethod === "cash" ? cashChange : null,
       discountApproverToken: activeDraft.discountApproverToken ?? undefined,
       loyaltyPointsRedeemed: activeDraft.loyaltyPointsRedeemed,
+      promoId: activeDraft.promoId,
     };
 
     // Offline path: queue locally, drop the draft, show offline-paid screen.
@@ -903,7 +923,7 @@ export function PosShell() {
             }
             onRemoveItem={(id) => removeItem(activeDraft.id, id)}
             onEditNote={(id) => setNoteEditingId(id)}
-            onOpenDiscount={() => setDiscountModalOpen(true)}
+            onOpenDiscount={() => setPromoPickerOpen(true)}
             onOpenCompliment={() => setComplimentModalOpen(true)}
             onOpenRedeem={handleOpenRedeem}
             redeemLoading={redeemLoading}
@@ -986,13 +1006,15 @@ export function PosShell() {
             updateNote(activeDraftId, noteEditingId, note);
         }}
       />
-      <DiscountModal
-        open={discountModalOpen}
+      <PromoPickerModal
+        open={promoPickerOpen}
         subtotal={subtotal}
-        initialDiscount={activeDraft?.discount ?? null}
-        initialReason={activeDraft?.discountReason ?? null}
-        onClose={() => setDiscountModalOpen(false)}
-        onApply={handleDiscountSubmit}
+        cartLines={activeDraft?.items ?? []}
+        orderType={activeDraft?.orderType ?? "dine_in"}
+        paymentMethod={paymentMethod}
+        appliedPromoId={activeDraft?.promoId ?? null}
+        onClose={() => setPromoPickerOpen(false)}
+        onPick={handlePromoPick}
         onClear={handleClearDiscount}
       />
       <RedeemPointsModal

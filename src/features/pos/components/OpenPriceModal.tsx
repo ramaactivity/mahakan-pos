@@ -58,6 +58,7 @@ export function OpenPriceModal({
     const line = buildLineItem({
       menuItemId: item.id,
       name: item.name,
+      categoryId: item.categoryId,
       categoryName,
       variant: null,
       unitPrice: parsed,

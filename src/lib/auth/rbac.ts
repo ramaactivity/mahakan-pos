@@ -17,6 +17,12 @@ export const permissions = {
   "pos.transaction.view": ["owner", "manager", "staff"],
   "pos.transaction.void": ["owner", "manager"],
   "pos.transaction.refund": ["owner", "manager"],
+  /** Apply a pre-configured promo at checkout. Staff allowed to PICK
+   * promos (Owner standard sesi K — no manual %/nominal entry). Promos
+   * with requires_approval=true also need separate Owner/Manager PIN. */
+  "pos.promo.apply": ["owner", "manager", "staff"],
+  /** Legacy manual discount apply — kept for back-compat audit. NOT used
+   * in new POS flow (Owner standard: only pre-configured promos). */
   "pos.discount.apply": ["owner", "manager"],
   "pos.receipt.print": ["owner", "manager", "staff"],
   "pos.receipt.reprint": ["owner", "manager", "staff"],
@@ -97,6 +103,11 @@ export const permissions = {
   "schedule.update": ["owner", "manager"],
   "payroll.view": ["owner", "manager"],
   "payroll.manage": ["owner"],
+
+  // Promos / Campaigns (Sesi K). View read-only at backoffice; manage =
+  // create/update/archive. Apply lives under pos.promo.apply.
+  "promo.view": ["owner", "manager"],
+  "promo.manage": ["owner", "manager"],
 
   // Settings
   "settings.business.update": ["owner"],

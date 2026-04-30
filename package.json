@@ -16,7 +16,8 @@
     "inventory:template": "tsx scripts/inventory-template.ts",
     "inventory:export": "tsx --env-file-if-exists=.env.local scripts/inventory-export.ts",
     "inventory:import": "tsx --env-file-if-exists=.env.local scripts/inventory-import.ts",
-    "seed:mock-stock": "tsx --env-file-if-exists=.env.local scripts/seed-mock-stock.ts"
+    "seed:mock-stock": "tsx --env-file-if-exists=.env.local scripts/seed-mock-stock.ts",
+    "seed:default-promos": "tsx --env-file-if-exists=.env.local scripts/seed-default-promos.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.2",

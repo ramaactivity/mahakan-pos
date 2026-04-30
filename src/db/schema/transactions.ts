@@ -96,6 +96,12 @@ export const transactions = pgTable(
     loyaltyPointsEarned: integer("loyalty_points_earned"),
     loyaltyPointsRedeemed: integer("loyalty_points_redeemed"),
 
+    /** Sesi K — link to master promos table. NULL for ad-hoc legacy
+     * transactions (pre-promo-system) and any future ad-hoc kompensasi
+     * paths. When set, transactions.discountAmount equals the snapshot
+     * stored in promo_usages.discountAmount. */
+    promoId: uuid("promo_id"),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

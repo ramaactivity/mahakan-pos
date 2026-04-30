@@ -82,6 +82,11 @@ export const AUDIT_EVENT_TYPES = [
   "payroll.compute",
   "payroll.finalize",
   "payroll.paid",
+  // Promos / Campaigns (Sesi K).
+  "promo.create",
+  "promo.update",
+  "promo.delete",
+  "promo.apply",
   // Sesi B-2 — Owner-only approval code (void/refund).
   "approval_code.generate",
   "approval_code.consume",
@@ -113,7 +118,8 @@ export type AuditEntityType =
   | "employee"
   | "attendance"
   | "schedule"
-  | "payroll_period";
+  | "payroll_period"
+  | "promo";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

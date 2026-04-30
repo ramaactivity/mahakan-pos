@@ -14,3 +14,4 @@ export * from "./split_payments";
 export * from "./employees";
 export * from "./attendance";
 export * from "./hr";
+export * from "./promos";

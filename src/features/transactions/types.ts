@@ -164,6 +164,10 @@ export interface CreateTransactionInput {
    * on the existing discount slot — XOR with manual discount/compliment
    * is enforced UI-side. */
   loyaltyPointsRedeemed?: number | null;
+  /** Sesi K — when discount comes from a master promo, set this to the
+   * promo's UUID. Server validates eligibility, inserts promo_usages row,
+   * and increments promos.currentUses (all in same DB tx). */
+  promoId?: string | null;
 }
 
 export interface VoidTransactionInput {
@@ -220,6 +224,8 @@ export interface SaveOpenBillInput {
   discountReason: string | null;
   total: number;
   discountApproverToken?: string;
+  /** Sesi K — same semantics as CreateTransactionInput.promoId. */
+  promoId?: string | null;
 }
 
 /**
@@ -250,4 +256,6 @@ export interface EditOpenBillInput {
   discountReason: string | null;
   total: number;
   discountApproverToken?: string;
+  /** Sesi K — same semantics as CreateTransactionInput.promoId. */
+  promoId?: string | null;
 }

@@ -20,6 +20,10 @@ export interface CartLineItem {
   cartItemId: string;
   menuItemId: string;
   name: string;
+  /** Category UUID — used for category-scoped promo eligibility (sesi K).
+   * Optional because legacy open bills may not have it stored; in that
+   * case the line is excluded from category-scope discount calculation. */
+  categoryId: string | null;
   categoryName: string;
   variant: Variant | null;
   /** Base price snapshot (excludes modifier deltas). */
@@ -54,6 +58,12 @@ export interface Draft {
   /** For Staff-initiated discount: approver who PIN-verified. */
   discountApproverId: string | null;
   discountApproverToken: string | null;
+  /** Sesi K — pre-configured promo applied to this draft (FK to promos).
+   * Set in tandem with `discount` when staff picks a promo from POS picker.
+   * Cleared when discount cleared or when redemption replaces it.
+   * NULL for ad-hoc discount paths (compliment, redeem) so transaction
+   * save knows to skip promo_usages insert + currentUses increment. */
+  promoId: string | null;
   /** Set when this draft is editing an existing open bill. UI swaps the
    * "Simpan sebagai Open Bill" + "Bayar" buttons with a single "Update Bill"
    * action and routes save through `editOpenBill` instead of `saveAsOpenBill`. */
