@@ -7,6 +7,25 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { todayWibIso } from "@/features/cash/helpers";
+import { fetchScheduleByEmployeeAndDate } from "@/features/schedules/queries";
+
+/** Minutes of grace before late detection trips (Sesi C-8). Hardcoded
+ * until per-outlet setting lands. */
+const LATE_GRACE_MINUTES = 5;
+
+/** Convert a Date timestamp + WIB date string into "minutes past
+ * 00:00 in WIB". Used to compare clock event vs schedule HH:MM:SS. */
+function minutesIntoWibDay(at: Date): number {
+  // WIB is UTC+7, no DST.
+  const wibHours = (at.getUTCHours() + 7) % 24;
+  const wibMinutes = at.getUTCMinutes();
+  return wibHours * 60 + wibMinutes;
+}
+
+function timeStringToMinutes(hms: string): number {
+  const [h, m] = hms.split(":").map((s) => parseInt(s, 10));
+  return (h ?? 0) * 60 + (m ?? 0);
+}
 import {
   fetchAttendance,
   fetchOpenAttendance,
@@ -122,6 +141,26 @@ export async function clockIn(
     );
   }
 
+  // Schedule lookup for late detection (C-8). Day-off + missing
+  // schedule both fall back to is_late=unknown so reports can ignore
+  // these days for late tracking.
+  const schedule = await fetchScheduleByEmployeeAndDate(v.employeeId, today);
+  let isLate: "yes" | "no" | "unknown" = "unknown";
+  let lateMinutes: number | null = null;
+  const now = new Date();
+  if (schedule && !schedule.dayOff && schedule.startTime) {
+    const scheduledStart = timeStringToMinutes(schedule.startTime);
+    const actualStart = minutesIntoWibDay(now);
+    const diff = actualStart - scheduledStart;
+    if (diff > LATE_GRACE_MINUTES) {
+      isLate = "yes";
+      lateMinutes = diff;
+    } else {
+      isLate = "no";
+      lateMinutes = 0;
+    }
+  }
+
   try {
     const [row] = await db
       .insert(attendanceRecords)
@@ -129,8 +168,11 @@ export async function clockIn(
         outletId: session.user.outletId,
         employeeId: v.employeeId,
         shiftDate: today,
+        clockInAt: now,
         clockedInBy: session.user.id,
         notes: v.notes,
+        isLate,
+        lateMinutes,
       })
       .returning();
 
@@ -202,12 +244,40 @@ export async function clockOut(
     Math.floor((now.getTime() - current.clockInAt.getTime()) / 60_000),
   );
 
+  // Overtime detection: lookup schedule for the shift_date; if found
+  // + non-day-off + has end_time, compute minutes past scheduled end.
+  // Handles overnight shifts where end_time < start_time.
+  let overtimeMinutes: number | null = null;
+  const schedule = await fetchScheduleByEmployeeAndDate(
+    current.employeeId,
+    current.shiftDate,
+  );
+  if (schedule && !schedule.dayOff && schedule.endTime && schedule.startTime) {
+    const scheduledEnd = timeStringToMinutes(schedule.endTime);
+    const scheduledStart = timeStringToMinutes(schedule.startTime);
+    const isOvernight = scheduledEnd < scheduledStart;
+    const actualEnd = minutesIntoWibDay(now);
+    let diff: number;
+    if (isOvernight) {
+      // Overnight: scheduledEnd is "tomorrow morning" in real time.
+      // If actualEnd already past midnight (< scheduledStart), compare
+      // directly; if still pre-midnight (>= scheduledStart), add 1440.
+      const adjustedActual =
+        actualEnd >= scheduledStart ? actualEnd : actualEnd + 1440;
+      diff = adjustedActual - (scheduledEnd + 1440);
+    } else {
+      diff = actualEnd - scheduledEnd;
+    }
+    overtimeMinutes = Math.max(0, diff);
+  }
+
   const [row] = await db
     .update(attendanceRecords)
     .set({
       clockOutAt: now,
       clockedOutBy: session.user.id,
       workMinutes,
+      overtimeMinutes,
       notes:
         v.notes !== null
           ? [current.notes, v.notes].filter(Boolean).join(" | ")

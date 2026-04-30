@@ -1,0 +1,722 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  CheckCircle2,
+  DollarSign,
+  Lock,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  Input,
+  Modal,
+  Skeleton,
+  toast,
+} from "@/components/ui";
+import {
+  computePayrollLines,
+  createPayrollPeriod,
+  deletePayrollPeriod,
+  finalizePayrollPeriod,
+  isOk,
+  listPayrollLines,
+  listPayrollPeriods,
+  markPayrollPaid,
+  updatePayrollLine,
+  type PayrollLineWithEmployee,
+  type PayrollPeriodWithStats,
+  type PayrollStatus,
+} from "@/features/payroll";
+import type { Role } from "@/lib/auth";
+import { formatRupiah, parseRupiah } from "@/lib/format";
+import { formatIndonesianDateTime } from "@/lib/date";
+import { cn } from "@/lib/utils";
+
+const STATUS_LABELS: Record<PayrollStatus, { variant: "warning" | "info" | "success"; label: string }> =
+  {
+    draft: { variant: "warning", label: "Draft" },
+    finalized: { variant: "info", label: "Finalized" },
+    paid: { variant: "success", label: "Paid" },
+  };
+
+interface PayrollSectionProps {
+  viewerRole: Role;
+}
+
+export function PayrollSection({ viewerRole }: PayrollSectionProps) {
+  const [periods, setPeriods] = useState<PayrollPeriodWithStats[]>([]);
+  const [loadingPeriods, setLoadingPeriods] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(null);
+  const [lines, setLines] = useState<PayrollLineWithEmployee[]>([]);
+  const [loadingLines, setLoadingLines] = useState(false);
+
+  const [editingLine, setEditingLine] =
+    useState<PayrollLineWithEmployee | null>(null);
+
+  const canManage = viewerRole === "owner";
+
+  useEffect(() => {
+    let cancelled = false;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setLoadingPeriods(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    void (async () => {
+      const res = await listPayrollPeriods();
+      if (cancelled) return;
+      if (isOk(res)) setPeriods(res.data);
+      setLoadingPeriods(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (!selectedPeriodId) {
+      setLines([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingLines(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    void (async () => {
+      const res = await listPayrollLines(selectedPeriodId);
+      if (cancelled) return;
+      if (isOk(res)) setLines(res.data);
+      setLoadingLines(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPeriodId, refreshKey]);
+
+  const selectedPeriod = useMemo(
+    () => periods.find((p) => p.id === selectedPeriodId) ?? null,
+    [periods, selectedPeriodId],
+  );
+
+  async function handleCompute() {
+    if (!selectedPeriod) return;
+    if (!confirm("Recompute payroll? Line yang sudah ada akan ditimpa.")) return;
+    const res = await computePayrollLines(selectedPeriod.id);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(`${res.data.lineCount} line di-compute`);
+    setRefreshKey((k) => k + 1);
+  }
+
+  async function handleFinalize() {
+    if (!selectedPeriod) return;
+    if (!confirm(`Finalize payroll "${selectedPeriod.label}"? Setelah ini line tidak bisa diedit non-Owner.`))
+      return;
+    const res = await finalizePayrollPeriod(selectedPeriod.id);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success("Payroll di-finalize");
+    setRefreshKey((k) => k + 1);
+  }
+
+  async function handleMarkPaid() {
+    if (!selectedPeriod) return;
+    if (!confirm(`Tandai payroll "${selectedPeriod.label}" sebagai Paid?`)) return;
+    const res = await markPayrollPaid(selectedPeriod.id);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success("Payroll ditandai paid");
+    setRefreshKey((k) => k + 1);
+  }
+
+  async function handleDelete() {
+    if (!selectedPeriod) return;
+    if (!confirm(`Hapus periode payroll "${selectedPeriod.label}"?`)) return;
+    const res = await deletePayrollPeriod(selectedPeriod.id);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success("Periode dihapus");
+    setSelectedPeriodId(null);
+    setRefreshKey((k) => k + 1);
+  }
+
+  return (
+    <div className="space-y-4 p-6">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-lg bg-mahakan-green-100 text-mahakan-green-900">
+            <DollarSign className="size-5" aria-hidden />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-mahakan-green-900">
+              Payroll
+            </h1>
+            <p className="text-sm text-neutral-600">
+              Periode bulanan + recompute dari attendance + adjust per line.
+            </p>
+          </div>
+        </div>
+        {canManage ? (
+          <Button onClick={() => setCreateOpen(true)} size="lg">
+            <Plus className="size-4" aria-hidden /> Periode Baru
+          </Button>
+        ) : null}
+      </header>
+
+      <div className="grid gap-4 md:grid-cols-[280px_1fr]">
+        <Card>
+          <CardContent className="px-0 py-2">
+            <p className="border-b border-neutral-200 px-4 py-2 text-xs uppercase tracking-wider text-neutral-500">
+              Periode
+            </p>
+            {loadingPeriods ? (
+              <div className="space-y-2 p-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-12 w-full" />
+                ))}
+              </div>
+            ) : periods.length === 0 ? (
+              <p className="px-4 py-6 text-center text-sm italic text-neutral-500">
+                Belum ada periode.
+              </p>
+            ) : (
+              <ul className="space-y-0.5 p-2">
+                {periods.map((p) => {
+                  const status = STATUS_LABELS[p.status as PayrollStatus];
+                  return (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPeriodId(p.id)}
+                        className={cn(
+                          "w-full rounded-md px-3 py-2 text-left text-sm transition-colors",
+                          selectedPeriodId === p.id
+                            ? "bg-mahakan-green-100 text-mahakan-green-900"
+                            : "hover:bg-neutral-100",
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate font-medium">
+                            {p.label}
+                          </span>
+                          <Badge variant={status.variant}>{status.label}</Badge>
+                        </div>
+                        <div className="mt-0.5 text-xs text-neutral-500">
+                          {p.periodStart} → {p.periodEnd}
+                        </div>
+                        <div className="text-xs text-neutral-500">
+                          {p.lineCount} karyawan ·{" "}
+                          {formatRupiah(p.netPayTotal)}
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="space-y-3 px-6 py-4">
+            {!selectedPeriod ? (
+              <p className="py-12 text-center text-sm italic text-neutral-500">
+                Pilih periode di kiri untuk lihat detail.
+              </p>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-lg font-semibold text-neutral-900">
+                      {selectedPeriod.label}
+                    </h2>
+                    <p className="text-xs text-neutral-500">
+                      {selectedPeriod.periodStart} → {selectedPeriod.periodEnd}
+                    </p>
+                    {selectedPeriod.finalizedAt ? (
+                      <p className="text-xs text-neutral-500">
+                        Finalized{" "}
+                        {formatIndonesianDateTime(selectedPeriod.finalizedAt)}
+                      </p>
+                    ) : null}
+                    {selectedPeriod.paidAt ? (
+                      <p className="text-xs text-neutral-500">
+                        Paid {formatIndonesianDateTime(selectedPeriod.paidAt)}
+                      </p>
+                    ) : null}
+                  </div>
+                  {canManage ? (
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleCompute}
+                        disabled={selectedPeriod.status !== "draft"}
+                      >
+                        <RefreshCw className="size-3.5" aria-hidden /> Recompute
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleFinalize}
+                        disabled={selectedPeriod.status !== "draft"}
+                      >
+                        <Lock className="size-3.5" aria-hidden /> Finalize
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={handleMarkPaid}
+                        disabled={selectedPeriod.status !== "finalized"}
+                      >
+                        <CheckCircle2 className="size-3.5" aria-hidden /> Mark Paid
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={handleDelete}
+                        disabled={selectedPeriod.status === "paid"}
+                        className="!text-danger-500 hover:!bg-danger-100/40"
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+
+                {loadingLines ? (
+                  <div className="space-y-2">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <Skeleton key={i} className="h-10 w-full" />
+                    ))}
+                  </div>
+                ) : lines.length === 0 ? (
+                  <p className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-6 text-center text-sm italic text-neutral-500">
+                    Belum ada line. Klik &ldquo;Recompute&rdquo; untuk
+                    generate dari attendance.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="border-y border-neutral-200 bg-neutral-50 text-left uppercase tracking-wider text-neutral-500">
+                        <tr>
+                          <th className="px-3 py-2">Karyawan</th>
+                          <th className="px-3 py-2 text-right">Hari</th>
+                          <th className="px-3 py-2 text-right">Telat (m)</th>
+                          <th className="px-3 py-2 text-right">OT (m)</th>
+                          <th className="px-3 py-2 text-right">Base</th>
+                          <th className="px-3 py-2 text-right">+ OT/Bonus</th>
+                          <th className="px-3 py-2 text-right">- Deduct</th>
+                          <th className="px-3 py-2 text-right">Net</th>
+                          {canManage ? <th /> : null}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lines.map((l) => (
+                          <tr
+                            key={l.id}
+                            className="border-b border-neutral-100 last:border-0"
+                          >
+                            <td className="px-3 py-2">
+                              <div className="font-medium text-neutral-900">
+                                {l.employeeFullName}
+                              </div>
+                              {l.employeePosition ? (
+                                <div className="text-[10px] text-neutral-500">
+                                  {l.employeePosition}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono">
+                              {l.workDays}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono">
+                              {l.totalLateMinutes}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono">
+                              {l.totalOvertimeMinutes}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono">
+                              {formatRupiah(l.baseSalary)}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-success-500">
+                              {formatRupiah(l.overtimePay + l.bonus)}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-danger-500">
+                              {formatRupiah(
+                                l.lateDeduction + l.otherDeductions,
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono font-bold">
+                              {formatRupiah(l.netPay)}
+                            </td>
+                            {canManage ? (
+                              <td className="px-3 py-2 text-right">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => setEditingLine(l)}
+                                  disabled={selectedPeriod.status === "paid"}
+                                >
+                                  <Pencil className="size-3.5" aria-hidden />
+                                </Button>
+                              </td>
+                            ) : null}
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="border-t-2 border-neutral-300 bg-neutral-50 font-semibold">
+                        <tr>
+                          <td className="px-3 py-2" colSpan={7}>
+                            Total Net Pay
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-base">
+                            {formatRupiah(
+                              lines.reduce((s, l) => s + l.netPay, 0),
+                            )}
+                          </td>
+                          {canManage ? <td /> : null}
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <CreatePeriodDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={(id) => {
+          setCreateOpen(false);
+          setSelectedPeriodId(id);
+          setRefreshKey((k) => k + 1);
+        }}
+      />
+
+      <EditLineDialog
+        line={editingLine}
+        onClose={() => setEditingLine(null)}
+        onSaved={() => {
+          setEditingLine(null);
+          setRefreshKey((k) => k + 1);
+        }}
+      />
+    </div>
+  );
+}
+
+function CreatePeriodDialog({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreated: (periodId: string) => void;
+}) {
+  const [label, setLabel] = useState("");
+  const [periodStart, setPeriodStart] = useState("");
+  const [periodEnd, setPeriodEnd] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    const now = new Date();
+    const monthLabel = now.toLocaleDateString("id-ID", {
+      month: "long",
+      year: "numeric",
+    });
+    setLabel(monthLabel);
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    setPeriodStart(first.toISOString().slice(0, 10));
+    setPeriodEnd(last.toISOString().slice(0, 10));
+    setNotes("");
+    setError(null);
+    setSubmitting(false);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [open]);
+
+  async function handleSubmit() {
+    if (submitting) return;
+    setError(null);
+    if (label.trim().length === 0) {
+      setError("Label wajib");
+      return;
+    }
+    if (!periodStart || !periodEnd) {
+      setError("Tanggal wajib");
+      return;
+    }
+    setSubmitting(true);
+    const res = await createPayrollPeriod({
+      label: label.trim(),
+      periodStart,
+      periodEnd,
+      notes: notes.trim() || null,
+    });
+    setSubmitting(false);
+    if (!isOk(res)) {
+      setError(res.error.message);
+      return;
+    }
+    toast.success(`Periode "${res.data.label}" dibuat`);
+    onCreated(res.data.id);
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Periode Payroll Baru"
+      description="Setelah dibuat, klik Recompute untuk generate line dari attendance."
+      size="md"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+            Batal
+          </Button>
+          <Button onClick={handleSubmit} loading={submitting} size="lg">
+            Buat
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <Input
+          label="Label"
+          type="text"
+          value={label}
+          onChange={(e) => setLabel(e.target.value.slice(0, 100))}
+          placeholder="Mis. April 2026"
+          required
+          disabled={submitting}
+        />
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label="Mulai"
+            type="date"
+            value={periodStart}
+            onChange={(e) => setPeriodStart(e.target.value)}
+            required
+            disabled={submitting}
+          />
+          <Input
+            label="Selesai"
+            type="date"
+            value={periodEnd}
+            onChange={(e) => setPeriodEnd(e.target.value)}
+            required
+            disabled={submitting}
+          />
+        </div>
+        <Input
+          label="Catatan (opsional)"
+          type="text"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value.slice(0, 500))}
+          disabled={submitting}
+        />
+        {error ? (
+          <p role="alert" className="text-sm font-medium text-danger-500">
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}
+
+function EditLineDialog({
+  line,
+  onClose,
+  onSaved,
+}: {
+  line: PayrollLineWithEmployee | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [baseSalary, setBaseSalary] = useState("");
+  const [overtimePay, setOvertimePay] = useState("");
+  const [lateDeduction, setLateDeduction] = useState("");
+  const [bonus, setBonus] = useState("");
+  const [otherDeductions, setOtherDeductions] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!line) return;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setBaseSalary(String(line.baseSalary));
+    setOvertimePay(String(line.overtimePay));
+    setLateDeduction(String(line.lateDeduction));
+    setBonus(String(line.bonus));
+    setOtherDeductions(String(line.otherDeductions));
+    setNotes(line.notes ?? "");
+    setError(null);
+    setSubmitting(false);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [line]);
+
+  function tryParse(s: string): number {
+    const trimmed = s.trim();
+    if (trimmed.length === 0) return 0;
+    try {
+      const n = parseRupiah(trimmed);
+      return n >= 0 ? n : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  async function handleSave() {
+    if (!line) return;
+    if (submitting) return;
+    setSubmitting(true);
+    const res = await updatePayrollLine({
+      id: line.id,
+      baseSalary: tryParse(baseSalary),
+      overtimePay: tryParse(overtimePay),
+      lateDeduction: tryParse(lateDeduction),
+      bonus: tryParse(bonus),
+      otherDeductions: tryParse(otherDeductions),
+      notes: notes.trim() || null,
+    });
+    setSubmitting(false);
+    if (!isOk(res)) {
+      setError(res.error.message);
+      return;
+    }
+    toast.success("Line disimpan");
+    onSaved();
+  }
+
+  if (!line) return null;
+
+  const previewGross =
+    tryParse(baseSalary) + tryParse(overtimePay) + tryParse(bonus);
+  const previewNet = Math.max(
+    0,
+    previewGross - tryParse(lateDeduction) - tryParse(otherDeductions),
+  );
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Edit Line — ${line.employeeFullName}`}
+      description={`Hari ${line.workDays} · Telat ${line.totalLateMinutes}m · OT ${line.totalOvertimeMinutes}m`}
+      size="md"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+            Batal
+          </Button>
+          <Button onClick={handleSave} loading={submitting} size="lg">
+            Simpan
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <Input
+          label="Base Salary (snapshot)"
+          type="text"
+          inputMode="numeric"
+          value={baseSalary}
+          onChange={(e) => setBaseSalary(e.target.value.replace(/[^\d]/g, ""))}
+          disabled={submitting}
+        />
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label="Overtime Pay"
+            type="text"
+            inputMode="numeric"
+            value={overtimePay}
+            onChange={(e) =>
+              setOvertimePay(e.target.value.replace(/[^\d]/g, ""))
+            }
+            disabled={submitting}
+          />
+          <Input
+            label="Bonus"
+            type="text"
+            inputMode="numeric"
+            value={bonus}
+            onChange={(e) => setBonus(e.target.value.replace(/[^\d]/g, ""))}
+            disabled={submitting}
+          />
+          <Input
+            label="Late Deduction"
+            type="text"
+            inputMode="numeric"
+            value={lateDeduction}
+            onChange={(e) =>
+              setLateDeduction(e.target.value.replace(/[^\d]/g, ""))
+            }
+            disabled={submitting}
+          />
+          <Input
+            label="Other Deductions"
+            type="text"
+            inputMode="numeric"
+            value={otherDeductions}
+            onChange={(e) =>
+              setOtherDeductions(e.target.value.replace(/[^\d]/g, ""))
+            }
+            disabled={submitting}
+          />
+        </div>
+        <Input
+          label="Catatan (opsional)"
+          type="text"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value.slice(0, 500))}
+          disabled={submitting}
+        />
+        <div className="rounded-md bg-mahakan-green-50 p-3 text-sm">
+          <div className="flex justify-between">
+            <span className="text-neutral-700">Gross</span>
+            <span className="font-mono font-semibold">
+              {formatRupiah(previewGross)}
+            </span>
+          </div>
+          <div className="flex justify-between border-t border-mahakan-green-200 pt-2 mt-2 text-mahakan-green-900">
+            <span className="font-semibold">Net</span>
+            <span className="font-mono text-lg font-bold">
+              {formatRupiah(previewNet)}
+            </span>
+          </div>
+        </div>
+        {error ? (
+          <p role="alert" className="text-sm font-medium text-danger-500">
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}

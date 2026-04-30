@@ -7,6 +7,8 @@ import {
 } from "@/features/admin/components/AdminLeftNav";
 import { AttendanceSection } from "@/features/admin/sections/AttendanceSection";
 import { AuditLogSection } from "@/features/admin/sections/AuditLogSection";
+import { PayrollSection } from "@/features/admin/sections/PayrollSection";
+import { SchedulesSection } from "@/features/admin/sections/SchedulesSection";
 import { CashSection } from "@/features/admin/sections/CashSection";
 import { CustomersSection } from "@/features/admin/sections/CustomersSection";
 import { DashboardHome } from "@/features/admin/sections/DashboardHome";
@@ -55,6 +57,10 @@ export function AdminShell() {
           <EmployeesSection />
         ) : section === "attendance" ? (
           <AttendanceSection />
+        ) : section === "schedules" ? (
+          <SchedulesSection />
+        ) : section === "payroll" ? (
+          <PayrollSection viewerRole={session.user.role} />
         ) : section === "shifts" ? (
           <ShiftsSection />
         ) : section === "cash" ? (

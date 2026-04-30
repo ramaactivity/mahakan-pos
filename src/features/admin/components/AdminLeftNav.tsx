@@ -3,8 +3,10 @@
 import {
   BarChart3,
   Briefcase,
+  CalendarDays,
   Clock,
   Coffee,
+  DollarSign,
   Heart,
   LayoutDashboard,
   LogOut,
@@ -27,6 +29,8 @@ export type AdminSection =
   | "staff"
   | "employees"
   | "attendance"
+  | "schedules"
+  | "payroll"
   | "shifts"
   | "cash"
   | "reports"
@@ -57,6 +61,8 @@ const NAV_ITEMS: NavItem[] = [
   { key: "staff", label: "Staff", Icon: Users },
   { key: "employees", label: "Karyawan", Icon: Briefcase },
   { key: "attendance", label: "Absensi", Icon: Clock },
+  { key: "schedules", label: "Jadwal", Icon: CalendarDays },
+  { key: "payroll", label: "Payroll", Icon: DollarSign },
   { key: "shifts", label: "Shifts", Icon: Receipt },
   { key: "cash", label: "Kas", Icon: Wallet },
   { key: "reports", label: "Laporan", Icon: BarChart3 },

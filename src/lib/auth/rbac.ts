@@ -92,6 +92,12 @@ export const permissions = {
   "attendance.view": ["owner", "manager"],
   "attendance.record": ["owner", "manager", "staff"],
 
+  // HR — Schedule + Payroll (Sesi C-8).
+  "schedule.view": ["owner", "manager"],
+  "schedule.update": ["owner", "manager"],
+  "payroll.view": ["owner", "manager"],
+  "payroll.manage": ["owner"],
+
   // Settings
   "settings.business.update": ["owner"],
   "settings.printer.pair": ["owner", "manager", "staff"],
