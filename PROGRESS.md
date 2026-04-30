@@ -4,13 +4,13 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 — **Sesi D CLOSE 2026-04-30**: HR Reports + CSV exports + per-outlet late grace. Three zero-migration additions yang melengkapi HR module supaya field-testable end-to-end. (1) `outlets.settings.attendance.lateGraceMinutes` JSONB extension — `clockIn` membaca per-outlet override (default 5m). New `updateAttendanceSettings` action + gear-icon modal di AttendanceSection. (2) New `src/features/hr-reports` module: `getAttendanceSummary` per-employee aggregate (workDays + totalWorkMinutes + lateOccurrences + missedScheduledDays via schedule diff), `exportAttendanceCsv` + `exportPayrollCsv` (UTF-8 BOM supaya Excel decode bahasa Indonesia tanpa mojibake). (3) Admin "Laporan HR" section dengan 2 tab (Absensi summary + Payroll history) plus per-row Export CSV. 1 commit `1550ea5`, zero migration, vitest 372/372 + build 11 routes + bundle leak scan empty.
-**Active Milestone:** Sesi D done — HR module fully testable end-to-end. 17 staff revisions + full HR + reports + CSV exports shipped.
-**Local HEAD:** `1550ea5` — synced with `origin/release/phase-1`, all deployed.
+**Phase:** Phase 2 — **Sesi E CLOSE 2026-04-30**: Payroll formula automation. `outlets.settings.payroll.{latePerMinute,overtimePerMinute}` JSONB extension (zero migration). `computePayrollLines` sekarang auto-fill `late_deduction = totalLateMinutes × latePerMinute` + `overtime_pay = totalOvertimeMinutes × overtimePerMinute` saat Recompute; default 0/unset → tidak auto-fill (preserve prior behavior). New `updatePayrollSettings` action gated by `payroll.manage` (Owner-only). Owner-only "Formula" gear button di PayrollSection header dengan 2 input (Rp/menit) + live preview. 1 commit `58b90c9`, zero migration, vitest 372/372 + build 11 routes + bundle leak scan empty.
+**Active Milestone:** Payroll formula auto-fill live; Owner set Rp/menit sekali, semua recompute apply. Per-line override masih works via existing pencil dialog.
+**Local HEAD:** `58b90c9` — synced with `origin/release/phase-1`, all deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `1550ea5` local + remote, latest deploy 2026-04-30 sesi D HR Reports + CSV + late grace setting)
+**Branch:** `release/phase-1` (HEAD `58b90c9` local + remote, latest deploy 2026-04-30 sesi E payroll formula automation)
 **Sesi C plan:** `~/.claude/plans/compiled-hugging-marble.md` (REWRITTEN as handover; 17 staff revisions sequenced as C-1..C-5, then HR C-6..C-8; ~11-12 sesi total)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift; M29 Loyalty landed)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
