@@ -16,6 +16,7 @@ import {
   Button,
   Card,
   CardContent,
+  DatePicker,
   Input,
   Modal,
   Skeleton,
@@ -343,16 +344,16 @@ export function AttendanceSection() {
       ) : (
         <Card>
           <CardContent className="space-y-3 px-6 py-4">
-            <div className="flex items-center gap-3">
-              <label className="text-sm font-medium text-neutral-900">
-                Tanggal:
-              </label>
-              <input
-                type="date"
-                value={listDate}
-                onChange={(e) => setListDate(e.target.value)}
-                className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
-              />
+            <div className="flex items-end gap-3">
+              <div className="w-56">
+                <DatePicker
+                  label="Tanggal"
+                  size="sm"
+                  value={listDate || null}
+                  onChange={(v) => setListDate(v ?? todayWibIso())}
+                  clearable={false}
+                />
+              </div>
             </div>
             {listLoading ? (
               <div className="space-y-2">

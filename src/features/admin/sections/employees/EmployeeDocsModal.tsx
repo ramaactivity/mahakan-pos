@@ -2,7 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { FileText, Plus, Trash2 } from "lucide-react";
-import { Badge, Button, Input, Modal, Spinner, toast } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  DatePicker,
+  Input,
+  Modal,
+  Select,
+  Spinner,
+  toast,
+  type SelectOption,
+} from "@/components/ui";
 import {
   createEmployeeDocument,
   deleteEmployeeDocument,
@@ -134,25 +144,18 @@ export function EmployeeDocsModal({
             Tambah Dokumen
           </h3>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-neutral-900">
-                Jenis
-              </label>
-              <select
-                value={docType}
-                onChange={(e) => setDocType(e.target.value as DocumentType)}
-                className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm"
-                disabled={submitting}
-              >
-                {(Object.keys(DOC_TYPE_LABELS) as DocumentType[]).map(
-                  (key) => (
-                    <option key={key} value={key}>
-                      {DOC_TYPE_LABELS[key]}
-                    </option>
-                  ),
-                )}
-              </select>
-            </div>
+            <Select
+              label="Jenis"
+              value={docType}
+              onValueChange={(v) => setDocType(v as DocumentType)}
+              disabled={submitting}
+              options={(Object.keys(DOC_TYPE_LABELS) as DocumentType[]).map<SelectOption>(
+                (key) => ({
+                  value: key,
+                  label: DOC_TYPE_LABELS[key],
+                }),
+              )}
+            />
             <Input
               label="Judul / Label"
               type="text"
@@ -170,12 +173,12 @@ export function EmployeeDocsModal({
               placeholder="https://..."
               disabled={submitting}
             />
-            <Input
+            <DatePicker
               label="Berlaku Sampai (opsional)"
-              type="date"
-              value={expiresAt}
-              onChange={(e) => setExpiresAt(e.target.value)}
+              value={expiresAt || null}
+              onChange={(v) => setExpiresAt(v ?? "")}
               disabled={submitting}
+              placeholder="Pilih tanggal expiry"
             />
           </div>
           <Input

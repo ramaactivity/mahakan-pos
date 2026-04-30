@@ -11,8 +11,10 @@ import {
   CardHeader,
   CardTitle,
   Input,
+  Select,
   Spinner,
   toast,
+  type SelectOption,
 } from "@/components/ui";
 import {
   createExpense,
@@ -269,23 +271,17 @@ export function PettyCashCard() {
                 admin Cash dulu.
               </p>
             ) : (
-              <div>
-                <label className="block text-sm font-medium text-neutral-900">
-                  Kategori
-                </label>
-                <select
-                  value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
-                  disabled={submitting}
-                >
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <Select
+                label="Kategori"
+                value={categoryId || undefined}
+                onValueChange={(v) => setCategoryId(v)}
+                disabled={submitting}
+                placeholder="Pilih kategori"
+                options={categories.map<SelectOption>((c) => ({
+                  value: c.id,
+                  label: c.name,
+                }))}
+              />
             )
           ) : null}
           {error ? (

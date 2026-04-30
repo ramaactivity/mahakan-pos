@@ -13,6 +13,7 @@ import {
   CardContent,
   Modal,
   Skeleton,
+  TimePicker,
   toast,
 } from "@/components/ui";
 import {
@@ -434,30 +435,20 @@ function ScheduleEditDialog({
         </label>
         {!dayOff ? (
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-neutral-900">
-                Mulai
-              </label>
-              <input
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
-                disabled={submitting}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-neutral-900">
-                Selesai
-              </label>
-              <input
-                type="time"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
-                disabled={submitting}
-              />
-            </div>
+            <TimePicker
+              label="Mulai"
+              value={startTime || null}
+              onChange={(v) => setStartTime(v ?? "")}
+              disabled={submitting}
+              clearable={false}
+            />
+            <TimePicker
+              label="Selesai"
+              value={endTime || null}
+              onChange={(v) => setEndTime(v ?? "")}
+              disabled={submitting}
+              clearable={false}
+            />
           </div>
         ) : null}
         <div>

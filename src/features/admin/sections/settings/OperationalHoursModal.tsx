@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Modal, toast } from "@/components/ui";
+import { Button, Modal, TimePicker, toast } from "@/components/ui";
 import { isOk, updateOperationalHours, type Outlet } from "@/features/outlets";
 import type { OperationalHours } from "@/db/schema/outlets";
 import { cn } from "@/lib/utils";
@@ -119,28 +119,26 @@ export function OperationalHoursModal({ open, outlet, onClose, onSaved }: Props)
               >
                 {h.isOpen ? "Buka" : "Tutup"}
               </button>
-              <input
-                type="time"
-                value={h.openTime ?? ""}
-                disabled={!h.isOpen}
-                onChange={(e) => setDay(d.key, { openTime: e.target.value })}
-                aria-label={`${d.label} jam buka`}
-                className={cn(
-                  "col-span-3 h-9 rounded-md border border-neutral-300 bg-white px-2 text-sm",
-                  !h.isOpen && "cursor-not-allowed bg-neutral-100 opacity-50",
-                )}
-              />
-              <input
-                type="time"
-                value={h.closeTime ?? ""}
-                disabled={!h.isOpen}
-                onChange={(e) => setDay(d.key, { closeTime: e.target.value })}
-                aria-label={`${d.label} jam tutup`}
-                className={cn(
-                  "col-span-3 h-9 rounded-md border border-neutral-300 bg-white px-2 text-sm",
-                  !h.isOpen && "cursor-not-allowed bg-neutral-100 opacity-50",
-                )}
-              />
+              <div className="col-span-3">
+                <TimePicker
+                  size="sm"
+                  ariaLabel={`${d.label} jam buka`}
+                  value={h.openTime ?? null}
+                  onChange={(v) => setDay(d.key, { openTime: v ?? "" })}
+                  disabled={!h.isOpen}
+                  clearable={false}
+                />
+              </div>
+              <div className="col-span-3">
+                <TimePicker
+                  size="sm"
+                  ariaLabel={`${d.label} jam tutup`}
+                  value={h.closeTime ?? null}
+                  onChange={(v) => setDay(d.key, { closeTime: v ?? "" })}
+                  disabled={!h.isOpen}
+                  clearable={false}
+                />
+              </div>
             </div>
           );
         })}

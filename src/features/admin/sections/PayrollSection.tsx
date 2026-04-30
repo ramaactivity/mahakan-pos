@@ -16,6 +16,7 @@ import {
   Button,
   Card,
   CardContent,
+  DatePicker,
   Input,
   Modal,
   Skeleton,
@@ -649,21 +650,22 @@ function CreatePeriodDialog({
           disabled={submitting}
         />
         <div className="grid grid-cols-2 gap-3">
-          <Input
+          <DatePicker
             label="Mulai"
-            type="date"
-            value={periodStart}
-            onChange={(e) => setPeriodStart(e.target.value)}
+            value={periodStart || null}
+            onChange={(v) => setPeriodStart(v ?? "")}
             required
             disabled={submitting}
+            clearable={false}
           />
-          <Input
+          <DatePicker
             label="Selesai"
-            type="date"
-            value={periodEnd}
-            onChange={(e) => setPeriodEnd(e.target.value)}
+            value={periodEnd || null}
+            onChange={(v) => setPeriodEnd(v ?? "")}
+            minDate={periodStart || undefined}
             required
             disabled={submitting}
+            clearable={false}
           />
         </div>
         <Input

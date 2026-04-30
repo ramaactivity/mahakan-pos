@@ -12,6 +12,7 @@ import {
   Button,
   Card,
   CardContent,
+  DateRangePicker,
   Skeleton,
   toast,
 } from "@/components/ui";
@@ -178,26 +179,15 @@ export function HrReportsSection() {
         <Card>
           <CardContent className="space-y-3 px-6 py-4">
             <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <label className="block text-xs font-medium text-neutral-700">
-                  Dari
-                </label>
-                <input
-                  type="date"
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                  className="mt-1 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-neutral-700">
-                  Sampai
-                </label>
-                <input
-                  type="date"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  className="mt-1 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+              <div className="min-w-72">
+                <DateRangePicker
+                  label="Rentang Tanggal"
+                  size="sm"
+                  value={{ from, to }}
+                  onChange={(v) => {
+                    setFrom(v.from ?? from);
+                    setTo(v.to ?? to);
+                  }}
                 />
               </div>
               <Button

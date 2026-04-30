@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Input, Modal, toast } from "@/components/ui";
+import {
+  Button,
+  Combobox,
+  DatePicker,
+  Input,
+  Modal,
+  Select,
+  toast,
+  type ComboboxOption,
+  type SelectOption,
+} from "@/components/ui";
 import {
   createEmployee,
   isOk,
@@ -184,12 +194,12 @@ export function EmployeeFormModal({
               }
               disabled={submitting}
             />
-            <Input
+            <DatePicker
               label="Tanggal Lahir"
-              type="date"
-              value={dateOfBirth}
-              onChange={(e) => setDateOfBirth(e.target.value)}
+              value={dateOfBirth || null}
+              onChange={(v) => setDateOfBirth(v ?? "")}
               disabled={submitting}
+              placeholder="Pilih tanggal lahir"
             />
             <Input
               label="Email"
@@ -227,12 +237,12 @@ export function EmployeeFormModal({
               placeholder="Mis. MK-001"
               disabled={submitting}
             />
-            <Input
+            <DatePicker
               label="Tanggal Masuk"
-              type="date"
-              value={hireDate}
-              onChange={(e) => setHireDate(e.target.value)}
+              value={hireDate || null}
+              onChange={(v) => setHireDate(v ?? "")}
               disabled={submitting}
+              placeholder="Pilih tanggal masuk"
             />
             <Input
               label="Posisi"
@@ -250,26 +260,19 @@ export function EmployeeFormModal({
               placeholder="Mis. Service / Kitchen / Bar"
               disabled={submitting}
             />
-            <div>
-              <label className="block text-sm font-medium text-neutral-900">
-                Status Kepegawaian
-              </label>
-              <select
-                value={employmentType}
-                onChange={(e) =>
-                  setEmploymentType(e.target.value as EmploymentType | "")
-                }
-                className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
-                disabled={submitting}
-              >
-                <option value="">— Belum diset —</option>
-                {EMPLOYMENT_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select
+              label="Status Kepegawaian"
+              value={employmentType === "" ? undefined : employmentType}
+              onValueChange={(v) =>
+                setEmploymentType(v === "" ? "" : (v as EmploymentType))
+              }
+              placeholder="— Belum diset —"
+              disabled={submitting}
+              options={EMPLOYMENT_TYPES.map<SelectOption>((t) => ({
+                value: t.value,
+                label: t.label,
+              }))}
+            />
             <Input
               label="Gaji Pokok / Bulan"
               type="text"
@@ -290,27 +293,19 @@ export function EmployeeFormModal({
 
         <Section title="Akun & Catatan">
           <div>
-            <label className="block text-sm font-medium text-neutral-900">
-              Tautkan ke Akun POS / Back Office (opsional)
-            </label>
-            <select
-              value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+            <Combobox
+              label="Tautkan ke Akun POS / Back Office (opsional)"
+              value={userId === "" ? null : userId}
+              onChange={(v) => setUserId(v ?? "")}
+              placeholder="— Belum dilink —"
               disabled={submitting}
-            >
-              <option value="">— Belum dilink —</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name} ({u.role}
-                  {u.email ? ` · ${u.email}` : ""})
-                </option>
-              ))}
-            </select>
-            <p className="mt-1 text-xs text-neutral-500">
-              Tambah / kelola akun login dulu di tab Staff. Kalau karyawan
-              gak butuh login (dishwasher, runner), tinggalkan kosong.
-            </p>
+              options={users.map<ComboboxOption>((u) => ({
+                value: u.id,
+                label: u.name,
+                hint: `${u.role}${u.email ? ` · ${u.email}` : ""}`,
+              }))}
+              hint="Tambah / kelola akun login dulu di tab Staff. Kalau karyawan gak butuh login (dishwasher, runner), tinggalkan kosong."
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-neutral-900">
