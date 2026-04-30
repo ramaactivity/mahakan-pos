@@ -71,6 +71,9 @@ export const AUDIT_EVENT_TYPES = [
   "employee.create",
   "employee.update",
   "employee.delete",
+  // HR (Sesi C-7) — Attendance.
+  "attendance.clock_in",
+  "attendance.clock_out",
   // Sesi B-2 — Owner-only approval code (void/refund).
   "approval_code.generate",
   "approval_code.consume",
@@ -99,7 +102,8 @@ export type AuditEntityType =
   | "import_run"
   | "customer"
   | "approval_code"
-  | "employee";
+  | "employee"
+  | "attendance";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

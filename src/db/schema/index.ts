@@ -12,3 +12,4 @@ export * from "./approval_codes";
 export * from "./refund_events";
 export * from "./split_payments";
 export * from "./employees";
+export * from "./attendance";

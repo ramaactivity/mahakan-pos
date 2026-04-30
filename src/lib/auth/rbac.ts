@@ -86,6 +86,12 @@ export const permissions = {
   "employee.update": ["owner", "manager"],
   "employee.delete": ["owner"],
 
+  // HR — Attendance (Sesi C-7). `record` = clock in/out (the kiosk
+  // operator). `view` = list/admin reports. Staff can record their own
+  // attendance via the kiosk; the device's logged-in user is the actor.
+  "attendance.view": ["owner", "manager"],
+  "attendance.record": ["owner", "manager", "staff"],
+
   // Settings
   "settings.business.update": ["owner"],
   "settings.printer.pair": ["owner", "manager", "staff"],

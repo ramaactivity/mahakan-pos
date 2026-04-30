@@ -5,6 +5,7 @@ import {
   AdminLeftNav,
   type AdminSection,
 } from "@/features/admin/components/AdminLeftNav";
+import { AttendanceSection } from "@/features/admin/sections/AttendanceSection";
 import { AuditLogSection } from "@/features/admin/sections/AuditLogSection";
 import { CashSection } from "@/features/admin/sections/CashSection";
 import { CustomersSection } from "@/features/admin/sections/CustomersSection";
@@ -52,6 +53,8 @@ export function AdminShell() {
           />
         ) : section === "employees" ? (
           <EmployeesSection />
+        ) : section === "attendance" ? (
+          <AttendanceSection />
         ) : section === "shifts" ? (
           <ShiftsSection />
         ) : section === "cash" ? (
