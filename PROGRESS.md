@@ -4,13 +4,13 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 — **Sesi C-6 CLOSE 2026-04-30**: foundational HR module (employee master + docs metadata). New `employees` + `employee_documents` tables (migration 0013), separate dari `users` (POS login) — 1 employee opsional link ke 1 user account. Full identity (full_name, NIK, email, phone, address, DOB) + employment info (employee_number, position, department, hire_date, employment_type, salary_amount) + status enum + soft-delete. Documents tracker dengan expiry — Owner bisa input KTP/BPJS/kontrak metadata + URL. New `src/features/employees` module dengan CRUD actions + zod schemas + queries (single-query list dengan leftJoin users + subselect doc count). New AdminLeftNav "Karyawan" section (Briefcase icon) dengan EmployeesSection (status filter chips + search + 4-card stats + table) + EmployeeFormModal (3 fieldsets) + EmployeeDocsModal. RBAC employee.{view,create,update,delete} dengan delete owner-only. Audit events employee.{create,update,delete}. 1 commit `1298e3c`, migration 0013 applied, vitest 372/372 + build 11 routes + bundle leak scan empty.
-**Active Milestone (sesi C-7 next):** Attendance kiosk (clock in/out, daily attendance records). Plus optional file upload buat employee docs.
-**Local HEAD:** `1298e3c` — synced with `origin/release/phase-1`, all deployed.
+**Phase:** Phase 2 — **Sesi C-7 CLOSE 2026-04-30**: HR attendance — kiosk + list mode. New `attendance_records` table (migration 0014) dengan partial-unique index supaya 1 karyawan gak bisa double-clock-in di hari yang sama. Server clockIn/clockOut atomic + audit-logged + permission gating; staff bisa record (the kiosk operator), view restricted ke owner+manager. Admin "Absensi" section dengan 2 view modes: **Kiosk** = grid kartu besar per karyawan dengan state-aware Clock In/Out button + 4 stat cards (On Floor / Selesai / Belum Masuk / Total) + 30s tick untuk elapsed duration; **List** = date picker + table dengan clock times + work duration + actor names + notes. Confirm modal dengan optional notes textarea ("telat 15 menit", "lembur"). 1 commit `2ac606f`, migration 0014 applied, vitest 372/372 + build 11 routes + bundle leak scan empty.
+**Active Milestone (sesi C-8 next):** Final HR — schedule planning per karyawan per tanggal + payroll monthly summary. Late/overtime detection wired setelah schedule available.
+**Local HEAD:** `2ac606f` — synced with `origin/release/phase-1`, all deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `1298e3c` local + remote, latest deploy 2026-04-30 sesi C-6 employees foundation, migration 0013 applied)
+**Branch:** `release/phase-1` (HEAD `2ac606f` local + remote, latest deploy 2026-04-30 sesi C-7 attendance kiosk, migration 0014 applied)
 **Sesi C plan:** `~/.claude/plans/compiled-hugging-marble.md` (REWRITTEN as handover; 17 staff revisions sequenced as C-1..C-5, then HR C-6..C-8; ~11-12 sesi total)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift; M29 Loyalty landed)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
