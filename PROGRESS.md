@@ -4,13 +4,13 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 — **Sesi E CLOSE 2026-04-30**: Payroll formula automation. `outlets.settings.payroll.{latePerMinute,overtimePerMinute}` JSONB extension (zero migration). `computePayrollLines` sekarang auto-fill `late_deduction = totalLateMinutes × latePerMinute` + `overtime_pay = totalOvertimeMinutes × overtimePerMinute` saat Recompute; default 0/unset → tidak auto-fill (preserve prior behavior). New `updatePayrollSettings` action gated by `payroll.manage` (Owner-only). Owner-only "Formula" gear button di PayrollSection header dengan 2 input (Rp/menit) + live preview. 1 commit `58b90c9`, zero migration, vitest 372/372 + build 11 routes + bundle leak scan empty.
-**Active Milestone:** Payroll formula auto-fill live; Owner set Rp/menit sekali, semua recompute apply. Per-line override masih works via existing pencil dialog.
-**Local HEAD:** `58b90c9` — synced with `origin/release/phase-1`, all deployed.
+**Phase:** Phase 2 — **Sesi F CLOSE 2026-04-30**: Eliminate browser-native form widgets. Owner standard saved permanent ke memory `no-native-pickers` — never pakai `<select>` / `<input type="date">` / `<input type="time">`. New TimePicker component (popover dengan hour + minute step columns, 24h "HH:MM" string). Replaced 15 native widgets across 8 files: PayrollSection (2 dates), AttendanceSection (1 date), HrReportsSection (2 dates → DateRangePicker), EmployeeFormModal (2 dates + 2 selects), EmployeeDocsModal (1 date + 1 select), SchedulesSection (2 times), OperationalHoursModal (14 times), PettyCashCard (1 select). Reused existing Select/Combobox/DatePicker/DateRangePicker. Zero behavior change (same value formats in/out); konsisten across iPad/Android/desktop sekarang. 1 commit `2783304`, zero migration, vitest 372/372 + build 11 routes + bundle leak scan empty.
+**Active Milestone:** UI consistency standard locked; semua form widgets dari design system. Future features harus pakai dedicated components only.
+**Local HEAD:** `2783304` — synced with `origin/release/phase-1`, all deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `58b90c9` local + remote, latest deploy 2026-04-30 sesi E payroll formula automation)
+**Branch:** `release/phase-1` (HEAD `2783304` local + remote, latest deploy 2026-04-30 sesi F dedicated form widgets)
 **Sesi C plan:** `~/.claude/plans/compiled-hugging-marble.md` (REWRITTEN as handover; 17 staff revisions sequenced as C-1..C-5, then HR C-6..C-8; ~11-12 sesi total)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift; M29 Loyalty landed)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
