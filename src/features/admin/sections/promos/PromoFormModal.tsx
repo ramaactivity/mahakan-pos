@@ -83,10 +83,22 @@ export function PromoFormModal({
   // Load categories for category-scope picker.
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     void (async () => {
-      const res = await listCategories();
-      if (isOk(res)) setCategories(res.data.items);
+      try {
+        const res = await listCategories();
+        if (cancelled) return;
+        if (isOk(res)) setCategories(res.data.items);
+      } catch (e) {
+        if (!cancelled) {
+          const msg = e instanceof Error ? e.message : "Gagal load kategori";
+          toast.error(msg);
+        }
+      }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   // Reset form when modal opens or `initial` changes.

@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { promos, promoUsages, transactions } from "@/db/schema";
 import type { Promo, PromoWithStats } from "./types";
@@ -20,29 +20,42 @@ export async function fetchPromos(
     conds.push(eq(promos.status, opts.status));
   }
 
-  // Sub-aggregate of total discount given via promo_usages JOINed to
-  // non-voided transactions. Use lateral subselect for clean aggregation.
+  // Step 1: list of promos.
   const rows = await db
-    .select({
-      promo: promos,
-      totalDiscountGiven: sql<number>`
-        COALESCE(
-          (SELECT SUM(${promoUsages.discountAmount})
-           FROM ${promoUsages}
-           INNER JOIN ${transactions} ON ${transactions.id} = ${promoUsages.transactionId}
-           WHERE ${promoUsages.promoId} = ${promos.id}
-             AND ${transactions.status} NOT IN ('voided', 'refunded')),
-          0
-        )::bigint
-      `,
-    })
+    .select()
     .from(promos)
     .where(and(...conds))
     .orderBy(desc(promos.createdAt));
 
+  if (rows.length === 0) return [];
+
+  // Step 2: aggregate total discount given per promo, joined to non-voided
+  // transactions. One GROUP BY query — simpler than correlated subselect
+  // and side-steps drizzle template quirks.
+  const promoIds = rows.map((r) => r.id);
+  const aggRows = await db
+    .select({
+      promoId: promoUsages.promoId,
+      totalDiscountGiven: sql<string>`COALESCE(SUM(${promoUsages.discountAmount}), 0)::text`,
+    })
+    .from(promoUsages)
+    .innerJoin(transactions, eq(transactions.id, promoUsages.transactionId))
+    .where(
+      and(
+        inArray(promoUsages.promoId, promoIds),
+        sql`${transactions.status} NOT IN ('voided', 'refunded')`,
+      ),
+    )
+    .groupBy(promoUsages.promoId);
+
+  const totalByPromo = new Map<string, number>();
+  for (const a of aggRows) {
+    totalByPromo.set(a.promoId, Number(a.totalDiscountGiven));
+  }
+
   return rows.map((r) => ({
-    ...r.promo,
-    totalDiscountGiven: Number(r.totalDiscountGiven),
+    ...r,
+    totalDiscountGiven: totalByPromo.get(r.id) ?? 0,
   }));
 }
 

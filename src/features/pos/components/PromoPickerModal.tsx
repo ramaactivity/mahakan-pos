@@ -52,11 +52,19 @@ export function PromoPickerModal({
     setLoading(true);
     /* eslint-enable react-hooks/set-state-in-effect */
     void (async () => {
-      const res = await listActivePromosForPos();
-      if (cancelled) return;
-      if (isOk(res)) setPromos(res.data);
-      else toast.error(res.error.message);
-      setLoading(false);
+      try {
+        const res = await listActivePromosForPos();
+        if (cancelled) return;
+        if (isOk(res)) setPromos(res.data);
+        else toast.error(res.error.message);
+      } catch (e) {
+        if (!cancelled) {
+          const msg = e instanceof Error ? e.message : "Gagal load promo";
+          toast.error(msg);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
     return () => {
       cancelled = true;
