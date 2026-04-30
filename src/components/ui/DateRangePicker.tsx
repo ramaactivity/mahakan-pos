@@ -14,11 +14,13 @@ import { useId, useState } from "react";
 import { DayPicker, type DateRange } from "react-day-picker";
 import { id as localeId } from "date-fns/locale";
 import {
+  addYears,
   endOfMonth,
   format,
   parseISO,
   startOfMonth,
   subDays,
+  subYears,
 } from "date-fns";
 import "react-day-picker/dist/style.css";
 import { cn } from "@/lib/utils";
@@ -252,26 +254,35 @@ export function DateRangePicker({
             ) : null}
             <div className="p-3">
               <DayPicker
-                animate
                 mode="range"
                 locale={localeId}
                 selected={range}
+                defaultMonth={range?.from ?? new Date()}
                 onSelect={(r) => {
                   onChange({
                     from: dateToIso(r?.from),
                     to: dateToIso(r?.to),
                   });
                 }}
+                captionLayout="dropdown"
+                startMonth={startOfMonth(subYears(new Date(), 10))}
+                endMonth={startOfMonth(addYears(new Date(), 5))}
                 numberOfMonths={2}
                 showOutsideDays
                 classNames={{
                   months: "flex gap-4",
                   month: "space-y-2",
-                  caption: "flex items-center justify-between px-1 py-1",
-                  caption_label: "text-sm font-semibold text-neutral-900",
-                  nav: "flex items-center gap-1",
-                  button_previous: "rounded-md p-1 hover:bg-neutral-100 text-neutral-600",
-                  button_next: "rounded-md p-1 hover:bg-neutral-100 text-neutral-600",
+                  month_caption: "flex items-center justify-center gap-2 px-1 py-1",
+                  caption_label: "hidden",
+                  dropdowns: "flex items-center gap-2",
+                  dropdown:
+                    "rounded-md border border-neutral-200 bg-white px-2 py-1 text-sm font-medium text-neutral-900 hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                  dropdown_root: "relative",
+                  nav: "flex items-center justify-between mb-1",
+                  button_previous:
+                    "rounded-md p-1.5 hover:bg-neutral-100 text-neutral-600 inline-flex items-center justify-center",
+                  button_next:
+                    "rounded-md p-1.5 hover:bg-neutral-100 text-neutral-600 inline-flex items-center justify-center",
                   month_grid: "border-collapse w-full",
                   weekdays: "flex",
                   weekday: "w-8 text-center text-[11px] font-medium text-neutral-500",
@@ -280,10 +291,14 @@ export function DateRangePicker({
                   day_button:
                     "size-8 rounded-md text-neutral-900 hover:bg-mahakan-green-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
                   today: "font-semibold text-mahakan-green-700",
-                  selected: "[&_button]:bg-mahakan-green-700 [&_button]:text-white [&_button]:hover:bg-mahakan-green-800",
-                  range_start: "[&_button]:bg-mahakan-green-700 [&_button]:text-white [&_button]:rounded-r-none",
-                  range_end: "[&_button]:bg-mahakan-green-700 [&_button]:text-white [&_button]:rounded-l-none",
-                  range_middle: "[&_button]:bg-mahakan-green-100 [&_button]:text-mahakan-green-900 [&_button]:rounded-none",
+                  selected:
+                    "[&_button]:bg-mahakan-green-700 [&_button]:text-white [&_button]:hover:bg-mahakan-green-800",
+                  range_start:
+                    "[&_button]:bg-mahakan-green-700 [&_button]:text-white [&_button]:rounded-r-none",
+                  range_end:
+                    "[&_button]:bg-mahakan-green-700 [&_button]:text-white [&_button]:rounded-l-none",
+                  range_middle:
+                    "[&_button]:bg-mahakan-green-100 [&_button]:text-mahakan-green-900 [&_button]:rounded-none",
                   outside: "text-neutral-400 opacity-60",
                   disabled: "text-neutral-400 opacity-40",
                 }}
