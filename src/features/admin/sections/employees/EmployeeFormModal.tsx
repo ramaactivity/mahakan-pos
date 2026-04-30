@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Briefcase, CalendarClock, UserCircle2 } from "lucide-react";
+import { Briefcase, CalendarClock, Plus, Trash2, UserCircle2, X } from "lucide-react";
 import {
   differenceInDays,
   differenceInMonths,
@@ -24,7 +24,9 @@ import {
   type SelectOption,
 } from "@/components/ui";
 import {
+  createCareerHistoryEntry,
   createEmployee,
+  deleteCareerHistoryEntry,
   isOk,
   listEmployeeCareerHistory,
   updateEmployee,
@@ -129,6 +131,18 @@ export function EmployeeFormModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Manual career entry sub-form state
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualDate, setManualDate] = useState("");
+  const [manualPosition, setManualPosition] = useState("");
+  const [manualDepartment, setManualDepartment] = useState("");
+  const [manualEmploymentType, setManualEmploymentType] =
+    useState<EmploymentType | "">("");
+  const [manualSalary, setManualSalary] = useState("");
+  const [manualNote, setManualNote] = useState("");
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!open) return;
     /* eslint-disable react-hooks/set-state-in-effect */
@@ -159,6 +173,15 @@ export function EmployeeFormModal({
     );
     setResignReason(initial?.resignReason ?? "");
     setCareerHistory([]);
+    setManualOpen(false);
+    setManualDate("");
+    setManualPosition("");
+    setManualDepartment("");
+    setManualEmploymentType("");
+    setManualSalary("");
+    setManualNote("");
+    setManualSubmitting(false);
+    setManualError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
 
     let cancelled = false;
@@ -200,6 +223,75 @@ export function EmployeeFormModal({
     } catch {
       parsedSalary = null;
     }
+  }
+
+  async function refetchCareerHistory(employeeId: string) {
+    setCareerLoading(true);
+    try {
+      const res = await listEmployeeCareerHistory(employeeId);
+      if (isOk(res)) setCareerHistory(res.data);
+    } finally {
+      setCareerLoading(false);
+    }
+  }
+
+  async function handleManualSubmit() {
+    if (!initial || manualSubmitting) return;
+    setManualError(null);
+    if (!manualDate) {
+      setManualError("Tanggal efektif wajib diisi");
+      return;
+    }
+    let salary: number | null = null;
+    if (manualSalary.trim().length > 0) {
+      try {
+        const n = parseRupiah(manualSalary);
+        salary = n >= 0 ? n : null;
+      } catch {
+        setManualError("Format gaji tidak valid");
+        return;
+      }
+    }
+    setManualSubmitting(true);
+    const res = await createCareerHistoryEntry({
+      employeeId: initial.id,
+      effectiveDate: manualDate,
+      position: manualPosition.trim() || null,
+      department: manualDepartment.trim() || null,
+      employmentType: manualEmploymentType === "" ? null : manualEmploymentType,
+      salaryAmount: salary,
+      note: manualNote.trim() || null,
+    });
+    setManualSubmitting(false);
+    if (!isOk(res)) {
+      setManualError(res.error.message);
+      return;
+    }
+    toast.success("Riwayat karir ditambahkan");
+    // Reset form + close
+    setManualOpen(false);
+    setManualDate("");
+    setManualPosition("");
+    setManualDepartment("");
+    setManualEmploymentType("");
+    setManualSalary("");
+    setManualNote("");
+    void refetchCareerHistory(initial.id);
+  }
+
+  async function handleDeleteEntry(entry: EmployeeCareerHistoryEntry) {
+    if (!initial) return;
+    const label = `${entry.position ?? "—"} (${entry.effectiveDate})`;
+    if (!confirm(`Hapus riwayat karir "${label}"? Tindakan ini akan tercatat di audit log.`)) {
+      return;
+    }
+    const res = await deleteCareerHistoryEntry(entry.id);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success("Riwayat karir dihapus");
+    void refetchCareerHistory(initial.id);
   }
 
   const tenure = useMemo(() => {
@@ -519,11 +611,149 @@ export function EmployeeFormModal({
         {/* Career history — only when editing */}
         {initial ? (
           <Section title="Riwayat Karir">
-            <div className="space-y-2">
-              <p className="text-xs text-neutral-500">
-                Otomatis tercatat saat posisi / departemen / tipe / gaji
-                berubah. Sesi mendatang Owner bisa tambah entry manual.
-              </p>
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <p className="flex-1 text-xs text-neutral-500">
+                  Otomatis tercatat saat posisi / departemen / tipe / gaji
+                  berubah. Tambah manual untuk backfill historis sebelum
+                  sistem dipakai.
+                </p>
+                {!manualOpen ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setManualOpen(true)}
+                    disabled={submitting}
+                  >
+                    <Plus className="size-3.5" aria-hidden /> Tambah Manual
+                  </Button>
+                ) : null}
+              </div>
+
+              {/* Manual entry inline form */}
+              {manualOpen ? (
+                <div className="space-y-3 rounded-md border border-mahakan-green-200 bg-mahakan-green-50/30 p-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-semibold text-mahakan-green-900">
+                      Backfill Riwayat Karir
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManualOpen(false);
+                        setManualError(null);
+                      }}
+                      aria-label="Tutup form"
+                      className="rounded-sm p-1 text-neutral-500 hover:bg-neutral-100"
+                    >
+                      <X className="size-4" aria-hidden />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <DatePicker
+                      label="Tanggal Efektif *"
+                      value={manualDate || null}
+                      onChange={(v) => setManualDate(v ?? "")}
+                      placeholder="Kapan posisi ini mulai"
+                      disabled={manualSubmitting}
+                      required
+                    />
+                    <Input
+                      label="Posisi"
+                      type="text"
+                      value={manualPosition}
+                      onChange={(e) =>
+                        setManualPosition(e.target.value.slice(0, 80))
+                      }
+                      placeholder="Mis. Helper / Barista"
+                      disabled={manualSubmitting}
+                    />
+                    <Input
+                      label="Departemen"
+                      type="text"
+                      value={manualDepartment}
+                      onChange={(e) =>
+                        setManualDepartment(e.target.value.slice(0, 80))
+                      }
+                      placeholder="Mis. Bar / Service"
+                      disabled={manualSubmitting}
+                    />
+                    <Select
+                      label="Tipe"
+                      value={
+                        manualEmploymentType === ""
+                          ? undefined
+                          : manualEmploymentType
+                      }
+                      onValueChange={(v) =>
+                        setManualEmploymentType(
+                          v === "" ? "" : (v as EmploymentType),
+                        )
+                      }
+                      placeholder="— Pilih tipe —"
+                      disabled={manualSubmitting}
+                      options={EMPLOYMENT_TYPES.map<SelectOption>((t) => ({
+                        value: t.value,
+                        label: t.label,
+                      }))}
+                    />
+                    <Input
+                      label="Gaji saat itu (Rp)"
+                      type="text"
+                      inputMode="numeric"
+                      value={manualSalary}
+                      onChange={(e) =>
+                        setManualSalary(e.target.value.replace(/\D/g, ""))
+                      }
+                      hint={
+                        manualSalary
+                          ? `Preview: ${formatRupiah(parseInt(manualSalary, 10) || 0)}`
+                          : undefined
+                      }
+                      disabled={manualSubmitting}
+                    />
+                    <Input
+                      label="Catatan"
+                      type="text"
+                      value={manualNote}
+                      onChange={(e) =>
+                        setManualNote(e.target.value.slice(0, 500))
+                      }
+                      placeholder="Mis. Promosi ke Head Bar"
+                      disabled={manualSubmitting}
+                    />
+                  </div>
+                  {manualError ? (
+                    <p
+                      role="alert"
+                      className="text-xs font-medium text-danger-500"
+                    >
+                      {manualError}
+                    </p>
+                  ) : null}
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setManualOpen(false);
+                        setManualError(null);
+                      }}
+                      disabled={manualSubmitting}
+                    >
+                      Batal
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleManualSubmit}
+                      loading={manualSubmitting}
+                    >
+                      Simpan Entry
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
               {careerLoading ? (
                 <div className="flex h-16 items-center justify-center">
                   <Spinner className="size-4 text-mahakan-green-700" />
@@ -545,36 +775,52 @@ export function EmployeeFormModal({
                         )}
                         aria-hidden
                       />
-                      <div className="rounded-md border border-neutral-200 bg-white p-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-semibold text-neutral-900">
-                            {entry.position ?? "—"}
-                          </span>
-                          {entry.department ? (
-                            <span className="text-xs text-neutral-500">
-                              · {entry.department}
-                            </span>
-                          ) : null}
-                          {entry.employmentType ? (
-                            <Badge variant="neutral">
-                              {EMPLOYMENT_TYPE_LABELS[entry.employmentType as EmploymentType]}
-                            </Badge>
-                          ) : null}
-                          {entry.source === "manual" ? (
-                            <Badge variant="info">Manual</Badge>
-                          ) : null}
+                      <div className="group rounded-md border border-neutral-200 bg-white p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-semibold text-neutral-900">
+                                {entry.position ?? "—"}
+                              </span>
+                              {entry.department ? (
+                                <span className="text-xs text-neutral-500">
+                                  · {entry.department}
+                                </span>
+                              ) : null}
+                              {entry.employmentType ? (
+                                <Badge variant="neutral">
+                                  {
+                                    EMPLOYMENT_TYPE_LABELS[
+                                      entry.employmentType as EmploymentType
+                                    ]
+                                  }
+                                </Badge>
+                              ) : null}
+                              {entry.source === "manual" ? (
+                                <Badge variant="info">Manual</Badge>
+                              ) : null}
+                            </div>
+                            <p className="mt-0.5 text-xs text-neutral-500">
+                              {formatIndonesianDate(entry.effectiveDate)}
+                              {entry.salaryAmount !== null
+                                ? ` · ${formatRupiah(entry.salaryAmount)}`
+                                : ""}
+                            </p>
+                            {entry.note ? (
+                              <p className="mt-1 text-xs italic text-neutral-600">
+                                {entry.note}
+                              </p>
+                            ) : null}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteEntry(entry)}
+                            aria-label="Hapus entry"
+                            className="rounded-sm p-1 text-neutral-300 opacity-0 transition-opacity hover:bg-danger-100/40 hover:text-danger-500 focus:opacity-100 group-hover:opacity-100"
+                          >
+                            <Trash2 className="size-3.5" aria-hidden />
+                          </button>
                         </div>
-                        <p className="mt-0.5 text-xs text-neutral-500">
-                          {formatIndonesianDate(entry.effectiveDate)}
-                          {entry.salaryAmount !== null
-                            ? ` · ${formatRupiah(entry.salaryAmount)}`
-                            : ""}
-                        </p>
-                        {entry.note ? (
-                          <p className="mt-1 text-xs italic text-neutral-600">
-                            {entry.note}
-                          </p>
-                        ) : null}
                       </div>
                     </li>
                   ))}

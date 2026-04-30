@@ -1,5 +1,6 @@
 export type {
   ApiResult,
+  CreateCareerHistoryEntryInput,
   CreateEmployeeDocumentInput,
   CreateEmployeeInput,
   DocumentType,
@@ -16,10 +17,13 @@ export type {
 export { isOk } from "./types";
 
 export {
+  createCareerHistoryEntry,
   createEmployee,
   createEmployeeDocument,
+  deleteCareerHistoryEntry,
   deleteEmployee,
   deleteEmployeeDocument,
+  exportEmployeesCsv,
   getEmployee,
   listEmployeeCareerHistory,
   listEmployeeDocuments,

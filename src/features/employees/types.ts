@@ -105,6 +105,16 @@ export interface CreateEmployeeDocumentInput {
   notes?: string | null;
 }
 
+export interface CreateCareerHistoryEntryInput {
+  employeeId: string;
+  effectiveDate: string;
+  position?: string | null;
+  department?: string | null;
+  employmentType?: EmploymentType | null;
+  salaryAmount?: number | null;
+  note?: string | null;
+}
+
 export interface UpdateEmployeeDocumentInput
   extends CreateEmployeeDocumentInput {
   id: string;

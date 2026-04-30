@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
+  Download,
   FileText as FileTextIcon,
   Pencil,
   Plus,
@@ -21,6 +22,7 @@ import {
 } from "@/components/ui";
 import {
   deleteEmployee,
+  exportEmployeesCsv,
   getEmployee,
   isOk,
   listEmployees,
@@ -64,7 +66,9 @@ export function EmployeesSection() {
   const [statusFilter, setStatusFilter] = useState<EmployeeStatus | "all">(
     "all",
   );
+  const [tenureFilter, setTenureFilter] = useState<TenureBucket>("all");
   const [search, setSearch] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   const [formOpen, setFormOpen] = useState(false);
   const [formInitial, setFormInitial] = useState<Employee | null>(null);
@@ -99,6 +103,36 @@ export function EmployeesSection() {
     for (const e of items) byStatus[e.status as EmployeeStatus]++;
     return byStatus;
   }, [items]);
+
+  // Apply tenure-bucket filter client-side (server filter is status+search).
+  const filteredItems = useMemo(
+    () => items.filter((e) => matchesTenureBucket(e, tenureFilter)),
+    [items, tenureFilter],
+  );
+
+  async function handleExportCsv() {
+    if (exporting) return;
+    setExporting(true);
+    const res = await exportEmployeesCsv();
+    setExporting(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    // Trigger browser download
+    const blob = new Blob([res.data.csv], {
+      type: "text/csv;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = res.data.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success("CSV ter-download");
+  }
 
   async function openEdit(emp: EmployeeWithLink) {
     const res = await getEmployee(emp.id);
@@ -152,15 +186,25 @@ export function EmployeesSection() {
             </p>
           </div>
         </div>
-        <Button
-          onClick={() => {
-            setFormInitial(null);
-            setFormOpen(true);
-          }}
-          size="lg"
-        >
-          <Plus className="size-4" aria-hidden /> Tambah Karyawan
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={handleExportCsv}
+            loading={exporting}
+          >
+            <Download className="size-4" aria-hidden /> Export CSV
+          </Button>
+          <Button
+            onClick={() => {
+              setFormInitial(null);
+              setFormOpen(true);
+            }}
+            size="lg"
+          >
+            <Plus className="size-4" aria-hidden /> Tambah Karyawan
+          </Button>
+        </div>
       </header>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -181,7 +225,7 @@ export function EmployeesSection() {
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               {STATUS_FILTERS.map((f) => (
                 <button
                   key={f.value}
@@ -190,6 +234,22 @@ export function EmployeesSection() {
                   className={cn(
                     "rounded-md border px-3 py-1.5 text-xs font-medium transition-all",
                     statusFilter === f.value
+                      ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                      : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50",
+                  )}
+                >
+                  {f.label}
+                </button>
+              ))}
+              <span className="mx-1 text-neutral-300">·</span>
+              {TENURE_FILTERS.map((f) => (
+                <button
+                  key={f.value}
+                  type="button"
+                  onClick={() => setTenureFilter(f.value)}
+                  className={cn(
+                    "rounded-md border px-3 py-1.5 text-xs font-medium transition-all",
+                    tenureFilter === f.value
                       ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
                       : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50",
                   )}
@@ -219,7 +279,7 @@ export function EmployeesSection() {
                 <Skeleton key={i} className="h-16 w-full" />
               ))}
             </div>
-          ) : items.length === 0 ? (
+          ) : filteredItems.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-12 text-center">
               <AlertCircle className="size-8 text-neutral-300" aria-hidden />
               <p className="text-sm font-medium text-neutral-700">
@@ -244,7 +304,7 @@ export function EmployeesSection() {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((emp) => {
+                  {filteredItems.map((emp) => {
                     const status = STATUS_BADGE[emp.status as EmployeeStatus];
                     return (
                       <tr
@@ -365,6 +425,35 @@ export function EmployeesSection() {
       />
     </div>
   );
+}
+
+type TenureBucket = "all" | "lt_1y" | "1y_3y" | "gte_3y" | "no_date";
+
+const TENURE_FILTERS: Array<{ value: TenureBucket; label: string }> = [
+  { value: "all", label: "Semua tenure" },
+  { value: "lt_1y", label: "< 1 tahun" },
+  { value: "1y_3y", label: "1–3 tahun" },
+  { value: "gte_3y", label: "≥ 3 tahun" },
+  { value: "no_date", label: "Tanpa tgl masuk" },
+];
+
+function matchesTenureBucket(
+  emp: { hireDate: string | null; resignedAt: Date | null },
+  bucket: TenureBucket,
+): boolean {
+  if (bucket === "all") return true;
+  if (!emp.hireDate) return bucket === "no_date";
+  if (bucket === "no_date") return false;
+  const start = new Date(emp.hireDate);
+  const end = emp.resignedAt ? new Date(emp.resignedAt) : new Date();
+  const ms = end.getTime() - start.getTime();
+  if (ms < 0) return false;
+  const days = ms / (1000 * 60 * 60 * 24);
+  const years = days / 365;
+  if (bucket === "lt_1y") return years < 1;
+  if (bucket === "1y_3y") return years >= 1 && years < 3;
+  if (bucket === "gte_3y") return years >= 3;
+  return false;
 }
 
 /** Compact tenure label for list view: "1th 3bln" / "2bln" / "12 hari". */

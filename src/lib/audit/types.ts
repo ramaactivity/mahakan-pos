@@ -87,6 +87,11 @@ export const AUDIT_EVENT_TYPES = [
   "promo.update",
   "promo.delete",
   "promo.apply",
+  // Career history (Sesi M) — manual backfill + delete.
+  "career_history.create",
+  "career_history.delete",
+  // Employee CSV export (Sesi M).
+  "employee.export_csv",
   // Sesi B-2 — Owner-only approval code (void/refund).
   "approval_code.generate",
   "approval_code.consume",
@@ -119,7 +124,8 @@ export type AuditEntityType =
   | "attendance"
   | "schedule"
   | "payroll_period"
-  | "promo";
+  | "promo"
+  | "employee_career_history";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

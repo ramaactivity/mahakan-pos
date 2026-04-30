@@ -82,3 +82,16 @@ export const createEmployeeDocumentSchema = z.object({
 export const updateEmployeeDocumentSchema = createEmployeeDocumentSchema.extend(
   { id: z.uuid() },
 );
+
+/** Sesi M — manual career history backfill (Owner adds historical promo). */
+export const createCareerHistoryEntrySchema = z.object({
+  employeeId: z.uuid(),
+  effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  position: optionalText(80),
+  department: optionalText(80),
+  employmentType: z
+    .enum(["full_time", "part_time", "contract", "freelance"])
+    .nullish(),
+  salaryAmount: z.number().int().nonnegative().nullish(),
+  note: optionalText(500),
+});

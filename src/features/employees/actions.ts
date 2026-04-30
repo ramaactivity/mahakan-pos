@@ -16,6 +16,7 @@ import {
   type ListEmployeesOptions,
 } from "./queries";
 import {
+  createCareerHistoryEntrySchema,
   createEmployeeDocumentSchema,
   createEmployeeSchema,
   updateEmployeeDocumentSchema,
@@ -25,6 +26,7 @@ import {
   fail,
   ok,
   type ApiResult,
+  type CreateCareerHistoryEntryInput,
   type EmployeeCareerHistoryEntry,
   type CreateEmployeeDocumentInput,
   type CreateEmployeeInput,
@@ -503,4 +505,227 @@ export async function deleteEmployeeDocument(
     })
     .where(eq(employeeDocuments.id, id));
   return ok({ id });
+}
+
+// ---------- Career History — Sesi M ----------
+
+/** Manually backfill a career history entry — Owner adds historical
+ * promo / role change that pre-dated the system. source='manual' so it
+ * shows distinctly from auto-tracked rows. */
+export async function createCareerHistoryEntry(
+  input: CreateCareerHistoryEntryInput,
+): Promise<ApiResult<EmployeeCareerHistoryEntry>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "employee.update")) {
+    return fail("FORBIDDEN", "Tidak punya hak edit karyawan");
+  }
+  const parsed = createCareerHistoryEntrySchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+  const emp = await fetchEmployeeById(v.employeeId);
+  if (!emp) return fail("NOT_FOUND", "Karyawan tidak ditemukan");
+  if (emp.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Karyawan dari outlet lain");
+  }
+
+  const [row] = await db
+    .insert(employeeCareerHistory)
+    .values({
+      employeeId: v.employeeId,
+      effectiveDate: v.effectiveDate,
+      position: v.position ?? null,
+      department: v.department ?? null,
+      employmentType: v.employmentType ?? null,
+      salaryAmount: v.salaryAmount ?? null,
+      note: v.note ?? null,
+      source: "manual",
+      createdBy: session.user.id,
+    })
+    .returning();
+
+  logAudit({
+    eventType: "career_history.create",
+    userId: session.user.id,
+    entityType: "employee_career_history",
+    entityId: row.id,
+    payload: {
+      summary: `Backfill riwayat karir ${emp.fullName}: ${row.position ?? "—"} (${row.effectiveDate})`,
+    },
+  }).catch((e) => console.error("[audit career_history.create]", e));
+
+  return ok(row);
+}
+
+/** Soft-delete a career history entry. Used to clean up accidental
+ * auto-records or wrong manual entries. Audit-logged. */
+export async function deleteCareerHistoryEntry(
+  id: string,
+): Promise<ApiResult<{ id: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "employee.update")) {
+    return fail("FORBIDDEN", "Tidak punya hak edit karyawan");
+  }
+
+  // Fetch the entry + parent employee for audit + outlet authorization.
+  const [entry] = await db
+    .select()
+    .from(employeeCareerHistory)
+    .where(eq(employeeCareerHistory.id, id))
+    .limit(1);
+  if (!entry) return fail("NOT_FOUND", "Entry tidak ditemukan");
+
+  const emp = await fetchEmployeeById(entry.employeeId);
+  if (!emp) return fail("NOT_FOUND", "Karyawan tidak ditemukan");
+  if (emp.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Karyawan dari outlet lain");
+  }
+
+  await db
+    .update(employeeCareerHistory)
+    .set({ deletedAt: new Date() })
+    .where(eq(employeeCareerHistory.id, id));
+
+  logAudit({
+    eventType: "career_history.delete",
+    userId: session.user.id,
+    entityType: "employee_career_history",
+    entityId: id,
+    payload: {
+      summary: `Hapus riwayat karir ${emp.fullName}: ${entry.position ?? "—"} (${entry.effectiveDate})`,
+      before: {
+        position: entry.position,
+        department: entry.department,
+        salaryAmount: entry.salaryAmount,
+        source: entry.source,
+      },
+    },
+  }).catch((e) => console.error("[audit career_history.delete]", e));
+
+  return ok({ id });
+}
+
+// ---------- CSV Export — Sesi M ----------
+
+/** Export all employees to CSV (UTF-8 BOM for Excel). Includes tenure
+ * computed from hireDate to current date. Owner-only. */
+export async function exportEmployeesCsv(): Promise<
+  ApiResult<{ filename: string; csv: string }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "employee.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak export karyawan");
+  }
+
+  const result = await fetchEmployees({
+    outletId: session.user.outletId,
+    status: "all",
+  });
+  const rows = result.items;
+
+  const header = [
+    "no",
+    "nama_lengkap",
+    "panggilan",
+    "nomor_karyawan",
+    "nik",
+    "email",
+    "telp",
+    "tanggal_lahir",
+    "alamat",
+    "posisi",
+    "departemen",
+    "tipe_kepegawaian",
+    "tanggal_masuk",
+    "lama_bekerja",
+    "gaji_bulanan",
+    "status",
+    "tanggal_resign",
+    "alasan_resign",
+    "akun_pos",
+    "akun_pos_email",
+    "jumlah_dokumen",
+  ];
+
+  const lines: string[] = [header.join(",")];
+  rows.forEach((r, idx) => {
+    const tenure = r.hireDate
+      ? csvTenure(r.hireDate, r.resignedAt)
+      : "";
+    const cells = [
+      idx + 1,
+      r.fullName,
+      r.nickname ?? "",
+      r.employeeNumber ?? "",
+      r.nik ?? "",
+      r.email ?? "",
+      r.phone ?? "",
+      r.dateOfBirth ?? "",
+      r.address ?? "",
+      r.position ?? "",
+      r.department ?? "",
+      r.employmentType ?? "",
+      r.hireDate ?? "",
+      tenure,
+      r.salaryAmount ?? "",
+      r.status,
+      r.resignedAt ? new Date(r.resignedAt).toISOString().slice(0, 10) : "",
+      r.resignReason ?? "",
+      r.linkedUserName ?? "",
+      r.linkedUserEmail ?? "",
+      r.documentsCount ?? 0,
+    ];
+    lines.push(
+      cells
+        .map((c) => csvEscape(typeof c === "number" ? String(c) : c))
+        .join(","),
+    );
+  });
+
+  // UTF-8 BOM so Excel detects encoding correctly (Indonesian chars).
+  const csv = "﻿" + lines.join("\n");
+  const stamp = new Date().toISOString().slice(0, 10);
+  const filename = `karyawan-${stamp}.csv`;
+
+  logAudit({
+    eventType: "employee.export_csv",
+    userId: session.user.id,
+    entityType: "employee",
+    payload: {
+      summary: `Export ${rows.length} karyawan ke CSV`,
+    },
+  }).catch((e) => console.error("[audit employee.export_csv]", e));
+
+  return ok({ filename, csv });
+}
+
+function csvEscape(s: string): string {
+  if (s === "" || s === null || s === undefined) return "";
+  if (/[",\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function csvTenure(
+  hireIso: string,
+  resignedAt: Date | null,
+): string {
+  const start = new Date(hireIso);
+  const end = resignedAt ? new Date(resignedAt) : new Date();
+  const ms = end.getTime() - start.getTime();
+  if (ms < 0) return "";
+  const days = Math.floor(ms / (1000 * 60 * 60 * 24));
+  const years = Math.floor(days / 365);
+  const remDays = days - years * 365;
+  const months = Math.floor(remDays / 30);
+  if (years > 0) {
+    return months > 0 ? `${years} tahun ${months} bulan` : `${years} tahun`;
+  }
+  if (months > 0) return `${months} bulan`;
+  return `${days} hari`;
 }
