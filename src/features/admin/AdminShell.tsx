@@ -21,6 +21,7 @@ import { ReportsSection } from "@/features/admin/sections/ReportsSection";
 import { SettingsSection } from "@/features/admin/sections/SettingsSection";
 import { ShiftsSection } from "@/features/admin/sections/ShiftsSection";
 import { StaffSection } from "@/features/admin/sections/StaffSection";
+import { SuppliersSection } from "@/features/admin/sections/SuppliersSection";
 import { useSession } from "@/features/auth/SessionProvider";
 
 export function AdminShell() {
@@ -48,6 +49,8 @@ export function AdminShell() {
           <MenuSection />
         ) : section === "inventory" ? (
           <InventorySection />
+        ) : section === "suppliers" ? (
+          <SuppliersSection />
         ) : section === "customers" ? (
           <CustomersSection />
         ) : section === "staff" ? (

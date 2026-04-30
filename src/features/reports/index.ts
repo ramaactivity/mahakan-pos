@@ -11,6 +11,10 @@ export type {
   PnlReport,
   SalesRangeReport,
   TopItem,
+  HppReport,
+  HppReportRow,
+  PurchaseRollupCell,
+  PurchaseRollupReport,
 } from "./types";
 export { isOk } from "./types";
 
@@ -20,4 +24,6 @@ export {
   getMenuEngineeringMatrix,
   getPnlReport,
   getSalesRangeReport,
+  getHppReport,
+  getPurchaseRollupReport,
 } from "./actions";

@@ -67,6 +67,18 @@ export const AUDIT_EVENT_TYPES = [
   "inventory.opname.submit",
   "inventory.opname.finalize",
   "inventory.opname.cancel",
+  // Inventory — Section bulk assign (Sesi O)
+  "inventory.section.bulk_assign",
+  // Suppliers (Sesi O)
+  "supplier.create",
+  "supplier.update",
+  "supplier.delete",
+  // Purchases (Sesi O)
+  "purchase.create",
+  "purchase.update",
+  "purchase.cancel",
+  "purchase.mark_paid",
+  "purchase.unmark_paid",
   // Customers / Loyalty — Phase 2 Tier 1.3 (M29)
   "customer.create",
   "customer.update",
@@ -131,7 +143,9 @@ export type AuditEntityType =
   | "payroll_period"
   | "promo"
   | "employee_career_history"
-  | "stock_opname_session";
+  | "stock_opname_session"
+  | "supplier"
+  | "purchase";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

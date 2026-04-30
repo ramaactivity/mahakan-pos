@@ -7,6 +7,7 @@ import type {
 } from "@/db/schema";
 
 export type Ingredient = InferSelectModel<typeof ingredients>;
+export type IngredientSection = NonNullable<Ingredient["section"]>;
 export type InventoryMovement = InferSelectModel<typeof inventoryMovements>;
 export type Recipe = InferSelectModel<typeof recipes>;
 export type RecipeIngredient = InferSelectModel<typeof recipeIngredients>;
@@ -71,6 +72,7 @@ export interface CreateIngredientInput {
   notes?: string | null;
   isPreparation?: boolean;
   preparationYield?: number | null;
+  section?: IngredientSection | null;
 }
 
 export interface UpdateIngredientInput {
@@ -81,6 +83,12 @@ export interface UpdateIngredientInput {
   notes?: string | null;
   isActive?: boolean;
   preparationYield?: number | null;
+  section?: IngredientSection | null;
+}
+
+export interface BulkAssignSectionInput {
+  ingredientIds: string[];
+  section: IngredientSection | null;
 }
 
 /** Narrowed view of an ingredient that is acting as a preparation. */
@@ -144,6 +152,8 @@ export interface ListMovementsOptions {
   limit?: number;
   offset?: number;
 }
+
+export type SectionFilter = IngredientSection | "unassigned" | "all";
 
 export interface RecipeIngredientInput {
   ingredientId: string;

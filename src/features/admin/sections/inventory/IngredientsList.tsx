@@ -8,7 +8,9 @@ import {
   Plus,
   PackagePlus,
   Sliders,
+  Tags,
   Trash2,
+  X,
 } from "lucide-react";
 import {
   Badge,
@@ -27,14 +29,40 @@ import {
   listAtomicIngredients,
   listLowStockIngredients,
   type Ingredient,
+  type IngredientSection,
+  type SectionFilter,
 } from "@/features/inventory";
 import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { IngredientFormModal } from "./IngredientFormModal";
 import { StockReceiveModal } from "./StockReceiveModal";
 import { StockAdjustModal } from "./StockAdjustModal";
 import { StockWasteModal } from "./StockWasteModal";
+import { SectionAssignModal } from "./SectionAssignModal";
+
+const SECTION_FILTERS: Array<{ value: SectionFilter; label: string }> = [
+  { value: "all", label: "Semua" },
+  { value: "kitchen", label: "Kitchen" },
+  { value: "bar", label: "Bar" },
+  { value: "supporting", label: "Supporting" },
+  { value: "cleaning", label: "Cleaning" },
+  { value: "unassigned", label: "Belum diset" },
+];
+
+const SECTION_BADGE: Record<
+  IngredientSection,
+  {
+    variant: "success" | "info" | "warning" | "neutral";
+    label: string;
+  }
+> = {
+  kitchen: { variant: "success", label: "Kitchen" },
+  bar: { variant: "info", label: "Bar" },
+  supporting: { variant: "warning", label: "Supporting" },
+  cleaning: { variant: "neutral", label: "Cleaning" },
+};
 
 type ActionTarget =
   | { kind: "edit"; ingredient: Ingredient }
@@ -57,15 +85,21 @@ export function IngredientsList() {
   const canCreate = role
     ? hasPermission(role, "inventory.ingredient.create")
     : false;
+  const canBulkAssign = role
+    ? hasPermission(role, "inventory.section.bulk_assign")
+    : false;
 
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [lowStock, setLowStock] = useState<Ingredient[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
+  const [sectionFilter, setSectionFilter] = useState<SectionFilter>("all");
   const [refreshKey, setRefreshKey] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [target, setTarget] = useState<ActionTarget>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,6 +109,7 @@ export function IngredientsList() {
         listAtomicIngredients({
           activeOnly: !showInactive,
           search: search || undefined,
+          section: sectionFilter,
         }),
         listLowStockIngredients(),
       ]);
@@ -87,7 +122,24 @@ export function IngredientsList() {
     return () => {
       cancelled = true;
     };
-  }, [refreshKey, search, showInactive]);
+  }, [refreshKey, search, showInactive, sectionFilter]);
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAllVisible() {
+    setSelectedIds(new Set(ingredients.map((i) => i.id)));
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
 
   const lowStockIds = useMemo(
     () => new Set(lowStock.map((i) => i.id)),
@@ -157,7 +209,7 @@ export function IngredientsList() {
       ) : null}
 
       <Card>
-        <CardHeader>
+        <CardHeader className="space-y-3">
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex-1 min-w-[200px]">
               <Input
@@ -177,6 +229,28 @@ export function IngredientsList() {
               Tampilkan non-aktif
             </label>
           </div>
+          <div
+            className="flex flex-wrap gap-1.5"
+            role="tablist"
+            aria-label="Filter section"
+          >
+            {SECTION_FILTERS.map((f) => (
+              <button
+                key={f.value}
+                type="button"
+                onClick={() => setSectionFilter(f.value)}
+                className={cn(
+                  "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                  sectionFilter === f.value
+                    ? "bg-mahakan-green-700 text-white"
+                    : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200",
+                )}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
         </CardHeader>
         <CardContent className="px-0">
           {loading ? (
@@ -194,7 +268,28 @@ export function IngredientsList() {
               <table className="w-full text-sm">
                 <thead className="border-b border-neutral-200 bg-neutral-50 text-xs uppercase tracking-wider text-neutral-500">
                   <tr>
+                    {canBulkAssign ? (
+                      <th className="px-2 py-2 text-left font-medium w-8">
+                        <input
+                          type="checkbox"
+                          aria-label="Pilih semua"
+                          checked={
+                            ingredients.length > 0 &&
+                            ingredients.every((i) => selectedIds.has(i.id))
+                          }
+                          onChange={(e) =>
+                            e.target.checked
+                              ? selectAllVisible()
+                              : clearSelection()
+                          }
+                          className="size-4 rounded border-neutral-300 text-mahakan-green-700 focus:ring-mahakan-green-700"
+                        />
+                      </th>
+                    ) : null}
                     <th className="px-4 py-2 text-left font-medium">Nama</th>
+                    <th className="px-4 py-2 text-left font-medium">
+                      Section
+                    </th>
                     <th className="px-4 py-2 text-right font-medium">Stok</th>
                     <th className="px-4 py-2 text-left font-medium">Unit</th>
                     {canSeeCost ? (
@@ -207,8 +302,22 @@ export function IngredientsList() {
                 <tbody className="divide-y divide-neutral-100">
                   {ingredients.map((i) => {
                     const isLow = lowStockIds.has(i.id);
+                    const sectionInfo = i.section
+                      ? SECTION_BADGE[i.section]
+                      : null;
                     return (
                       <tr key={i.id} className="hover:bg-neutral-50">
+                        {canBulkAssign ? (
+                          <td className="px-2 py-3">
+                            <input
+                              type="checkbox"
+                              aria-label={`Pilih ${i.name}`}
+                              checked={selectedIds.has(i.id)}
+                              onChange={() => toggleSelected(i.id)}
+                              className="size-4 rounded border-neutral-300 text-mahakan-green-700 focus:ring-mahakan-green-700"
+                            />
+                          </td>
+                        ) : null}
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <span className="font-medium text-neutral-900">
@@ -229,6 +338,17 @@ export function IngredientsList() {
                               {i.notes}
                             </p>
                           ) : null}
+                        </td>
+                        <td className="px-4 py-3">
+                          {sectionInfo ? (
+                            <Badge variant={sectionInfo.variant}>
+                              {sectionInfo.label}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs italic text-neutral-400">
+                              belum diset
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right font-mono">
                           {i.currentStock.toLocaleString("id-ID")}
@@ -367,6 +487,40 @@ export function IngredientsList() {
           refresh();
         }}
       />
+
+      <SectionAssignModal
+        open={bulkOpen}
+        ingredientIds={Array.from(selectedIds)}
+        onClose={() => setBulkOpen(false)}
+        onSaved={() => {
+          setBulkOpen(false);
+          clearSelection();
+          refresh();
+        }}
+      />
+
+      {canBulkAssign && selectedIds.size > 0 ? (
+        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full bg-mahakan-green-900 px-4 py-2 text-sm text-white shadow-lg">
+          <span className="font-medium">
+            {selectedIds.size} bahan dipilih
+          </span>
+          <Button
+            size="sm"
+            onClick={() => setBulkOpen(true)}
+            className="bg-white text-mahakan-green-900 hover:bg-neutral-100"
+          >
+            <Tags className="size-4" aria-hidden /> Set Section
+          </Button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            aria-label="Batal pilih"
+            className="rounded-full p-1 hover:bg-mahakan-green-700"
+          >
+            <X className="size-4" aria-hidden />
+          </button>
+        </div>
+      ) : null}
 
       <Modal
         open={target?.kind === "delete"}

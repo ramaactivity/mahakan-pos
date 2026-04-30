@@ -31,6 +31,7 @@ import {
 } from "./queries";
 import {
   adjustStockSchema,
+  bulkAssignSectionSchema,
   createIngredientSchema,
   createRecipeSchema,
   receiveStockSchema,
@@ -44,6 +45,7 @@ import {
   type ApiFailure,
   type ApiResult,
   type AdjustStockInput,
+  type BulkAssignSectionInput,
   type CreateIngredientInput,
   type CreateRecipeInput,
   type Ingredient,
@@ -179,6 +181,7 @@ export async function createIngredient(
           notes: v.notes ?? null,
           isPreparation: v.isPreparation ?? false,
           preparationYield: v.preparationYield ?? null,
+          section: v.section ?? null,
           createdBy: session.user.id,
           updatedBy: session.user.id,
         })
@@ -1220,4 +1223,73 @@ export async function deleteRecipe(
   });
 
   return ok({ id });
+}
+
+// ---------- Section bulk-assign (Sesi O) ----------
+
+export async function bulkAssignSection(
+  input: BulkAssignSectionInput,
+): Promise<ApiResult<{ updated: number }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.section.bulk_assign")) {
+    return fail(
+      "FORBIDDEN",
+      "Hanya manager / owner yang boleh bulk-assign section",
+    );
+  }
+  const parsed = bulkAssignSectionSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  try {
+    const updated = await db.transaction(async (tx) => {
+      const rows = await tx
+        .update(ingredients)
+        .set({
+          section: v.section,
+          updatedAt: new Date(),
+          updatedBy: session.user.id,
+        })
+        .where(
+          and(
+            eq(ingredients.outletId, session.user.outletId),
+            inArray(ingredients.id, v.ingredientIds),
+            isNull(ingredients.deletedAt),
+          ),
+        )
+        .returning({ id: ingredients.id });
+      return rows.length;
+    });
+
+    await logAudit({
+      eventType: "inventory.section.bulk_assign",
+      userId: session.user.id,
+      entityType: "ingredient",
+      entityId: null,
+      payload: {
+        summary: `Bulk-assign section ${v.section ?? "unassigned"} untuk ${updated} bahan`,
+        context: {
+          ingredientIds: v.ingredientIds,
+          section: v.section,
+          updated,
+        },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    });
+
+    return ok({ updated });
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      e instanceof Error ? e.message : "Database error",
+    );
+  }
 }

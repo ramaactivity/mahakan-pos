@@ -7,6 +7,7 @@ import {
   isOk,
   updateIngredient,
   type Ingredient,
+  type IngredientSection,
 } from "@/features/inventory";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 
@@ -18,6 +19,17 @@ interface IngredientFormModalProps {
 }
 
 const COMMON_UNITS = ["g", "kg", "ml", "L", "pcs", "pack", "btl"];
+
+const SECTION_OPTIONS: Array<{
+  value: IngredientSection | "__none";
+  label: string;
+}> = [
+  { value: "__none", label: "Belum diset" },
+  { value: "kitchen", label: "Kitchen" },
+  { value: "bar", label: "Bar" },
+  { value: "supporting", label: "Supporting Supplies" },
+  { value: "cleaning", label: "Cleaning Supplies" },
+];
 
 export function IngredientFormModal({
   open,
@@ -32,6 +44,9 @@ export function IngredientFormModal({
   const [reorderThreshold, setReorderThreshold] = useState("");
   const [notes, setNotes] = useState("");
   const [isActive, setIsActive] = useState(true);
+  const [section, setSection] = useState<IngredientSection | "__none">(
+    "__none",
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +63,7 @@ export function IngredientFormModal({
       );
       setNotes(edit.notes ?? "");
       setIsActive(edit.isActive);
+      setSection(edit.section ?? "__none");
     } else {
       setName("");
       setUnit("g");
@@ -56,6 +72,7 @@ export function IngredientFormModal({
       setReorderThreshold("");
       setNotes("");
       setIsActive(true);
+      setSection("__none");
     }
     setError(null);
     setSubmitting(false);
@@ -105,6 +122,8 @@ export function IngredientFormModal({
     setError(null);
 
     const trimmedNotes = notes.trim();
+    const sectionValue =
+      section === "__none" ? null : (section as IngredientSection);
     const res = edit
       ? await updateIngredient(edit.id, {
           name: name.trim(),
@@ -113,6 +132,7 @@ export function IngredientFormModal({
           reorderThreshold: threshold,
           notes: trimmedNotes.length > 0 ? trimmedNotes : null,
           isActive,
+          section: sectionValue,
         })
       : await createIngredient({
           name: name.trim(),
@@ -121,6 +141,7 @@ export function IngredientFormModal({
           initialStock: stock,
           reorderThreshold: threshold,
           notes: trimmedNotes.length > 0 ? trimmedNotes : null,
+          section: sectionValue,
         });
 
     if (!isOk(res)) {
@@ -161,6 +182,18 @@ export function IngredientFormModal({
           value={name}
           onChange={(e) => setName(e.target.value)}
           autoFocus
+        />
+
+        <Select
+          label="Section"
+          options={SECTION_OPTIONS.map((o) => ({
+            value: o.value,
+            label: o.label,
+          }))}
+          value={section}
+          onValueChange={(v) =>
+            setSection(v as IngredientSection | "__none")
+          }
         />
 
         <div className="grid grid-cols-2 gap-3">

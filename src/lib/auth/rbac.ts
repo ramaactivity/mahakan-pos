@@ -150,6 +150,30 @@ export const permissions = {
   "inventory.opname.finalize": ["owner", "manager"],
   "inventory.opname.cancel": ["owner", "manager"],
 
+  // Suppliers master (Sesi O). Adopted from Owner's `List Supplier.csv`.
+  "supplier.view": ["owner", "manager"],
+  "supplier.create": ["owner", "manager"],
+  "supplier.update": ["owner", "manager"],
+  "supplier.delete": ["owner"],
+
+  // Purchases (Sesi O). Replaces Form Cash + Form TOP spreadsheets.
+  // Staff bisa input pembelian harian (mereka tim purchasing); finalize
+  // payment & cancel manager+ only.
+  "purchase.view": ["owner", "manager"],
+  "purchase.create": ["owner", "manager", "staff"],
+  "purchase.update": ["owner", "manager"],
+  "purchase.cancel": ["owner", "manager"],
+  "purchase.mark_paid": ["owner", "manager"],
+
+  // Reports HPP + Purchase rollup (Sesi O). HPP = COGS by ingredient,
+  // owner-only karena cost-sensitive. Purchase rollup OK for manager.
+  "report.hpp.view": ["owner"],
+  "report.purchase_rollup.view": ["owner", "manager"],
+
+  // Bulk-assign section to ingredients (Sesi O). Manager+ untuk avoid
+  // accidental staff misclassify.
+  "inventory.section.bulk_assign": ["owner", "manager"],
+
   // Phase 2 Tier 1.3 (M29) — Customers / Loyalty.
   // Lookup is open to all roles so kasir can pull member info at checkout;
   // edit + admin list scoped to owner+manager.

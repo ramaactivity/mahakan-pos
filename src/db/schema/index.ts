@@ -16,3 +16,5 @@ export * from "./attendance";
 export * from "./hr";
 export * from "./promos";
 export * from "./stock-opname";
+export * from "./suppliers";
+export * from "./purchases";

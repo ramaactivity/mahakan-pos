@@ -8,19 +8,25 @@ import { IngredientsList } from "./inventory/IngredientsList";
 import { MovementsList } from "./inventory/MovementsList";
 import { OpnameTab } from "./inventory/opname/OpnameTab";
 import { PreparationsList } from "./inventory/PreparationsList";
+import { PurchasesView } from "./inventory/purchases/PurchasesView";
 import { RecipesList } from "./inventory/RecipesList";
+import { TopTrackerView } from "./inventory/purchases/TopTrackerView";
 import { cn } from "@/lib/utils";
 
 type InventoryTab =
   | "ingredients"
   | "preparations"
   | "opname"
+  | "purchases"
+  | "top"
   | "movements"
   | "recipes";
 
 const TABS: Array<{ key: InventoryTab; label: string; soon?: boolean }> = [
   { key: "ingredients", label: "Bahan" },
   { key: "preparations", label: "Preparations" },
+  { key: "purchases", label: "Pembelian" },
+  { key: "top", label: "Hutang Dagang" },
   { key: "opname", label: "Opname" },
   { key: "movements", label: "Pergerakan" },
   { key: "recipes", label: "Resep" },
@@ -84,6 +90,10 @@ export function InventorySection() {
           <IngredientsList />
         ) : tab === "preparations" ? (
           <PreparationsList />
+        ) : tab === "purchases" ? (
+          <PurchasesView />
+        ) : tab === "top" ? (
+          <TopTrackerView />
         ) : tab === "opname" ? (
           <OpnameTab />
         ) : tab === "movements" ? (

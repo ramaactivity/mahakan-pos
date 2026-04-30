@@ -2,15 +2,25 @@
 
 import { useState } from "react";
 import { DailySalesView } from "./reports/DailySalesView";
+import { HppView } from "./reports/HppView";
 import { ItemPerformanceView } from "./reports/ItemPerformanceView";
 import { MenuEngineeringView } from "./reports/MenuEngineeringView";
 import { PnlView } from "./reports/PnlView";
+import { PurchaseRollupView } from "./reports/PurchaseRollupView";
 import { SalesRangeView } from "./reports/SalesRangeView";
 import { TopCustomersView } from "./reports/TopCustomersView";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
-type ReportTab = "sales" | "range" | "items" | "matrix" | "members" | "pnl";
+type ReportTab =
+  | "sales"
+  | "range"
+  | "items"
+  | "matrix"
+  | "members"
+  | "pnl"
+  | "hpp"
+  | "purchase_rollup";
 
 interface ReportsSectionProps {
   viewerRole: Role;
@@ -26,6 +36,8 @@ export function ReportsSection({ viewerRole }: ReportsSectionProps) {
     { key: "items", label: "Performa Item" },
     { key: "matrix", label: "Matriks Menu", ownerOnly: true },
     { key: "members", label: "Top Member" },
+    { key: "purchase_rollup", label: "Pembelanjaan (Pivot)" },
+    { key: "hpp", label: "HPP / COGS", ownerOnly: true },
     { key: "pnl", label: "P&L (Owner)", ownerOnly: true },
   ];
   const TABS = ALL_TABS.filter((t) => !t.ownerOnly || isOwner);
@@ -75,6 +87,10 @@ export function ReportsSection({ viewerRole }: ReportsSectionProps) {
           <MenuEngineeringView />
         ) : tab === "members" ? (
           <TopCustomersView />
+        ) : tab === "purchase_rollup" ? (
+          <PurchaseRollupView />
+        ) : tab === "hpp" ? (
+          <HppView />
         ) : (
           <PnlView viewerRole={viewerRole} />
         )}

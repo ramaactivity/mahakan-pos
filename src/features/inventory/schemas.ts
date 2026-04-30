@@ -34,6 +34,11 @@ const costNonNeg = z
   .nonnegative("Harga harus >= 0")
   .max(999_999_999, "Harga terlalu besar");
 
+const sectionEnum = z
+  .enum(["kitchen", "bar", "supporting", "cleaning"])
+  .nullable()
+  .optional();
+
 export const createIngredientSchema = z
   .object({
     name: z.string().trim().min(NAME_MIN).max(NAME_MAX),
@@ -44,6 +49,7 @@ export const createIngredientSchema = z
     notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
     isPreparation: z.boolean().optional().default(false),
     preparationYield: qtyPositive.nullable().optional(),
+    section: sectionEnum,
   })
   .refine(
     (v) => !v.isPreparation || (v.preparationYield != null),
@@ -64,6 +70,7 @@ export const updateIngredientSchema = z
     notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
     isActive: z.boolean().optional(),
     preparationYield: qtyPositive.nullable().optional(),
+    section: sectionEnum,
   })
   .refine(
     (v) => Object.keys(v).length > 0,
@@ -71,6 +78,18 @@ export const updateIngredientSchema = z
   );
 
 export type UpdateIngredientInput = z.infer<typeof updateIngredientSchema>;
+
+export const bulkAssignSectionSchema = z.object({
+  ingredientIds: z
+    .array(z.uuid())
+    .min(1, "Pilih minimal 1 bahan")
+    .max(500, "Terlalu banyak bahan dalam 1 batch"),
+  section: z
+    .enum(["kitchen", "bar", "supporting", "cleaning"])
+    .nullable(),
+});
+
+export type BulkAssignSectionInput = z.infer<typeof bulkAssignSectionSchema>;
 
 export const receiveStockSchema = z.object({
   ingredientId: z.uuid(),

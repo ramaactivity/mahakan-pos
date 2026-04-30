@@ -11,13 +11,19 @@ import {
   fetchSalesRangeReport,
 } from "./queries";
 import {
+  fetchHppReport,
+  fetchPurchaseRollupReport,
+} from "./inventory-reports";
+import {
   fail,
   ok,
   type ApiResult,
   type DailySalesReport,
+  type HppReport,
   type ItemPerformanceRow,
   type MenuEngineeringResult,
   type PnlReport,
+  type PurchaseRollupReport,
   type SalesRangeReport,
 } from "./types";
 
@@ -117,4 +123,37 @@ export async function getPnlReport(
     return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
   }
   return ok(await fetchPnlReport(session.user.outletId, from, to));
+}
+
+export async function getHppReport(
+  from: string,
+  to: string,
+): Promise<ApiResult<HppReport>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "report.hpp.view")) {
+    return fail("FORBIDDEN", "Laporan HPP hanya untuk Owner");
+  }
+  if (!ISO_DATE.test(from) || !ISO_DATE.test(to)) {
+    return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
+  }
+  return ok(await fetchHppReport(session.user.outletId, from, to));
+}
+
+export async function getPurchaseRollupReport(
+  from: string,
+  to: string,
+): Promise<ApiResult<PurchaseRollupReport>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "report.purchase_rollup.view")) {
+    return fail(
+      "FORBIDDEN",
+      "Tidak punya hak lihat laporan pembelanjaan",
+    );
+  }
+  if (!ISO_DATE.test(from) || !ISO_DATE.test(to)) {
+    return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
+  }
+  return ok(
+    await fetchPurchaseRollupReport(session.user.outletId, from, to),
+  );
 }

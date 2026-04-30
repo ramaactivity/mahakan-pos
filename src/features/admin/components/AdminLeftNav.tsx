@@ -14,6 +14,7 @@ import {
   ScrollText,
   Settings,
   Sparkles,
+  Truck,
   Users,
   Wallet,
   Receipt,
@@ -26,6 +27,7 @@ export type AdminSection =
   | "dashboard"
   | "menu"
   | "inventory"
+  | "suppliers"
   | "customers"
   | "staff"
   | "employees"
@@ -60,6 +62,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
   { key: "menu", label: "Menu", Icon: Coffee },
   { key: "inventory", label: "Inventory", Icon: Package },
+  { key: "suppliers", label: "Supplier", Icon: Truck },
   { key: "customers", label: "Member", Icon: Heart },
   { key: "staff", label: "Staff", Icon: Users },
   { key: "employees", label: "Karyawan", Icon: Briefcase },

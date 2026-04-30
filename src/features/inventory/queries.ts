@@ -20,6 +20,9 @@ import type {
 export interface ListIngredientsOptions {
   activeOnly?: boolean;
   search?: string;
+  /** Filter ingredients by their assigned section. "unassigned" matches
+   * NULL section. "all" / undefined disables filter. */
+  section?: "kitchen" | "bar" | "supporting" | "cleaning" | "unassigned" | "all";
 }
 
 export async function fetchIngredients(
@@ -50,7 +53,7 @@ export async function fetchAtomicIngredients(
   outletId: string,
   opts: ListIngredientsOptions = {},
 ): Promise<Paginated<Ingredient>> {
-  const { activeOnly = true, search } = opts;
+  const { activeOnly = true, search, section } = opts;
   const conds = [
     eq(ingredients.outletId, outletId),
     isNull(ingredients.deletedAt),
@@ -60,6 +63,13 @@ export async function fetchAtomicIngredients(
   if (search) {
     const like = `%${search.toLowerCase().trim()}%`;
     conds.push(sql`lower(${ingredients.name}) like ${like}`);
+  }
+  if (section && section !== "all") {
+    if (section === "unassigned") {
+      conds.push(isNull(ingredients.section));
+    } else {
+      conds.push(eq(ingredients.section, section));
+    }
   }
 
   const rows = await db

@@ -26,6 +26,14 @@ export const ingredients = pgTable(
 
     name: text("name").notNull(),
     unit: text("unit").notNull(),
+    /**
+     * Operational section (Sesi O) — adopted from Owner's spreadsheet
+     * `List Bahan Baku.csv`. NULL untuk bahan yang belum di-classify
+     * (e.g. seed lama dari mock); UI surface "Belum diset" badge.
+     */
+    section: text("section", {
+      enum: ["kitchen", "bar", "supporting", "cleaning"],
+    }),
     costPerUnit: bigint("cost_per_unit", { mode: "number" })
       .notNull()
       .default(0),
@@ -61,6 +69,7 @@ export const ingredients = pgTable(
       .on(t.outletId, t.name)
       .where(sql`${t.deletedAt} IS NULL`),
     index("idx_ingredients_outlet_active").on(t.outletId, t.isActive),
+    index("idx_ingredients_outlet_section").on(t.outletId, t.section),
     check("ck_ingredients_cost_nonneg", sql`${t.costPerUnit} >= 0`),
     check(
       "ck_ingredients_threshold_nonneg",
