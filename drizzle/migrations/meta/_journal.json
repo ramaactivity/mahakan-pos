@@ -92,6 +92,13 @@
       "when": 1777519094048,
       "tag": "0012_chilly_lucky_pierre",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1777521803632,
+      "tag": "0013_rich_boomer",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,7 @@
 
 import {
   BarChart3,
+  Briefcase,
   Coffee,
   Heart,
   LayoutDashboard,
@@ -23,6 +24,7 @@ export type AdminSection =
   | "inventory"
   | "customers"
   | "staff"
+  | "employees"
   | "shifts"
   | "cash"
   | "reports"
@@ -51,6 +53,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "inventory", label: "Inventory", Icon: Package },
   { key: "customers", label: "Member", Icon: Heart },
   { key: "staff", label: "Staff", Icon: Users },
+  { key: "employees", label: "Karyawan", Icon: Briefcase },
   { key: "shifts", label: "Shifts", Icon: Receipt },
   { key: "cash", label: "Kas", Icon: Wallet },
   { key: "reports", label: "Laporan", Icon: BarChart3 },

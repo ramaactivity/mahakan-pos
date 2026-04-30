@@ -67,6 +67,10 @@ export const AUDIT_EVENT_TYPES = [
   "customer.update",
   "transaction.points.earned",
   "transaction.points.redeemed",
+  // HR (Sesi C-6) — Employee master.
+  "employee.create",
+  "employee.update",
+  "employee.delete",
   // Sesi B-2 — Owner-only approval code (void/refund).
   "approval_code.generate",
   "approval_code.consume",
@@ -94,7 +98,8 @@ export type AuditEntityType =
   | "preparation"
   | "import_run"
   | "customer"
-  | "approval_code";
+  | "approval_code"
+  | "employee";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

@@ -80,6 +80,12 @@ export const permissions = {
   "audit.view.all": ["owner"],
   "audit.view.staff_actions": ["owner", "manager"],
 
+  // HR — Employee management (Sesi C-6)
+  "employee.view": ["owner", "manager"],
+  "employee.create": ["owner", "manager"],
+  "employee.update": ["owner", "manager"],
+  "employee.delete": ["owner"],
+
   // Settings
   "settings.business.update": ["owner"],
   "settings.printer.pair": ["owner", "manager", "staff"],
