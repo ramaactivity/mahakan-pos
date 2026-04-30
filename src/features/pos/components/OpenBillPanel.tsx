@@ -7,6 +7,7 @@ import {
   ClipboardList,
   FileText,
   Pencil,
+  Printer,
   RefreshCw,
 } from "lucide-react";
 import {
@@ -16,8 +17,9 @@ import {
   CardContent,
   Skeleton,
 } from "@/components/ui";
+import { PrintStationButtons } from "./PrintStationButtons";
 import {
-  getTransaction,
+  getTransactionsByIds,
   isOk,
   listTransactions,
   type Transaction,
@@ -110,21 +112,21 @@ export function OpenBillPanel({
     return () => clearInterval(id);
   }, []);
 
-  // Lazy-fetch full TransactionWithItems for each bill — needed by
-  // CloseOpenBillModal + items summary on the card.
+  // Batch-fetch TransactionWithItems for all missing bills in a single
+  // server call (4 round-trips total vs the previous N×3-4 sequential).
+  // Galih ask #7 — addresses "loading open bill lama" perceptibly.
   useEffect(() => {
     let cancelled = false;
     async function loadDetails() {
-      const missing = bills.filter((b) => !details[b.id]);
-      if (missing.length === 0) return;
-      const fetched: Record<string, TransactionWithItems> = {};
-      for (const b of missing) {
-        const res = await getTransaction(b.id);
-        if (cancelled) return;
-        if (isOk(res)) fetched[b.id] = res.data;
-      }
+      const missingIds = bills.filter((b) => !details[b.id]).map((b) => b.id);
+      if (missingIds.length === 0) return;
+      const res = await getTransactionsByIds(missingIds);
       if (cancelled) return;
-      setDetails((prev) => ({ ...prev, ...fetched }));
+      if (isOk(res)) {
+        const fetched: Record<string, TransactionWithItems> = {};
+        for (const t of res.data) fetched[t.id] = t;
+        setDetails((prev) => ({ ...prev, ...fetched }));
+      }
     }
     void loadDetails();
     return () => {
@@ -208,6 +210,9 @@ export function OpenBillPanel({
                 onEdit={() =>
                   details[b.id] ? onEditBill(details[b.id]) : null
                 }
+                cashierName={cashierName}
+                receiptConfig={receiptConfig}
+                onOpenSettings={onOpenSettings}
               />
             ))}
           </ul>
@@ -234,9 +239,22 @@ interface BillCardProps {
   nowTick: number;
   onPay: () => void;
   onEdit: () => void;
+  cashierName: string;
+  receiptConfig: ReceiptConfig | null;
+  onOpenSettings: () => void;
 }
 
-function BillCard({ summary, detail, nowTick, onPay, onEdit }: BillCardProps) {
+function BillCard({
+  summary,
+  detail,
+  nowTick,
+  onPay,
+  onEdit,
+  cashierName,
+  receiptConfig,
+  onOpenSettings,
+}: BillCardProps) {
+  const [printOpen, setPrintOpen] = useState(false);
   const { ageMinutes, isStale } = useBillAge(summary.createdAt, nowTick);
 
   const itemSummary =
@@ -291,7 +309,16 @@ function BillCard({ summary, detail, nowTick, onPay, onEdit }: BillCardProps) {
           </div>
         </header>
 
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            size="md"
+            variant="outline"
+            onClick={() => setPrintOpen((v) => !v)}
+            disabled={!detail}
+          >
+            <Printer className="size-4" aria-hidden />{" "}
+            {printOpen ? "Tutup" : "Cetak Ulang"}
+          </Button>
           <Button
             size="md"
             variant="outline"
@@ -309,6 +336,22 @@ function BillCard({ summary, detail, nowTick, onPay, onEdit }: BillCardProps) {
             Bayar Sekarang
           </Button>
         </div>
+
+        {printOpen && detail ? (
+          <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-3">
+            <p className="mb-2 text-xs font-medium text-neutral-700">
+              Cetak ulang struk untuk bill ini:
+            </p>
+            <PrintStationButtons
+              trx={detail}
+              cashierName={cashierName}
+              receiptConfig={receiptConfig}
+              onOpenSettings={onOpenSettings}
+              size="sm"
+              layout="grid"
+            />
+          </div>
+        ) : null}
 
         {isStale ? (
           <p className="rounded-md bg-warning-100/40 p-2 text-xs text-warning-500">
