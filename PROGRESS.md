@@ -4,13 +4,13 @@ Tracking milestone completion per `docs/99-EXECUTION-PLAN.md`.
 
 ## Current Status
 
-**Phase:** Phase 2 — **Sesi C-4 CLOSE 2026-04-30**: 3-item cash management ops bundle deployed. Shift handover message (#10 — `shifts.handover_message` via migration 0011, banner di OpenShiftModal step 1 nampilin pesan dari shift terakhir di outlet), tutup kasir extended (#11 — settlement channel inputs EDC + GoFood + GrabFood + ShopeeFood, plus petty cash recap dari getDailyCashSummary), petty cash POS (#12 — new PettyCashCard di PosSettingsPanel dengan create expense/income inline + RBAC extension supaya staff bisa create). 1 commit, migration 0011 applied to Neon, vitest 372/372 + build 11 routes + bundle leak scan empty.
-**Active Milestone (sesi C-5 next):** Split bill (#13 — nominal + per-menu, paling architectural). HR module bumped to C-6..C-8.
-**Local HEAD:** `12aa458` — synced with `origin/release/phase-1`, all deployed.
+**Phase:** Phase 2 — **Sesi C-5 CLOSE 2026-04-30**: split bill (#13) deployed — last item dari 17-item Galih field-test. Multi-payer settlement on single bill via dua mode (Nominal — kasir input rupiah; Per-Menu — kasir pick items+qty). Schema (migration 0012): new `split_payments` + `split_payment_items` tables, extended `transactions.payment_method` enum dengan `split`, relaxed `ck_transactions_cash_fields`. Server `addSplitPayment` validates amount ≤ remaining + per-item qty ≤ unpaid, atomic insert + auto-flip trx ke paid+split saat total tercapai, loyalty earn fires once on closing split. New `SplitPaymentModal.tsx` dengan +/− stepper per item, payment method radio, cash change preview. `OpenBillPanel.BillCard` add "Bayar Sebagian" button. `HistoryDetailModal` fetches breakdown untuk split-settled bills + render breakdown card. Receipt builder prints "BAYAR : SPLIT (multi-payer)" pada final receipt. 1 commit `997459b`, migration 0012 applied, vitest 372/372 + build 11 routes + bundle leak scan empty.
+**Active Milestone:** **All 17 staff revisions selesai** (5+4+3+3+1+1 = 17 deployed). Next: HR module C-6..C-8 (employee master + docs + attendance kiosk + schedule/payroll).
+**Local HEAD:** `997459b` — synced with `origin/release/phase-1`, all deployed.
 **Mode:** Online (production live at https://mahakan-pos.vercel.app, inventory data populated — 140 ingredients + 20 preparations + 71 active recipes + 321 recipe lines).
 **Production URL:** https://mahakan-pos.vercel.app
 **Vercel Project:** ramaactivity98-5695s-projects/mahakan-pos
-**Branch:** `release/phase-1` (HEAD `12aa458` local + remote, latest deploy 2026-04-30 sesi C-4 cash management bundle, migration 0011 applied)
+**Branch:** `release/phase-1` (HEAD `997459b` local + remote, latest deploy 2026-04-30 sesi C-5 split bill, migration 0012 applied)
 **Sesi C plan:** `~/.claude/plans/compiled-hugging-marble.md` (REWRITTEN as handover; 17 staff revisions sequenced as C-1..C-5, then HR C-6..C-8; ~11-12 sesi total)
 **Phase 2 roadmap:** see `docs/99-PHASE-2-ROADMAP.md` (updated §11 + decisions D44-D55 for sesi 12-14 drift; M29 Loyalty landed)
 **Phase 2 Tier 1.2 plan (M23.1):** `~/.claude/plans/halo-gua-mau-lanjut-twinkling-bentley.md` (10 locked decisions)
