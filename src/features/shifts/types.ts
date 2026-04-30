@@ -43,6 +43,14 @@ export interface CloseShiftInput {
   shiftId: string;
   actualCash: number;
   notes: string | null;
+  /** Pesan untuk shift berikutnya (Galih ask #10). */
+  handoverMessage?: string | null;
+  /** Kasir-reported settlement amounts for reconciliation (Galih ask #11).
+   * All optional + non-negative; outlet boleh skip channel yang gak relevan. */
+  edcSettlement?: number | null;
+  gofoodSettlement?: number | null;
+  grabfoodSettlement?: number | null;
+  shopeefoodSettlement?: number | null;
 }
 
 export interface ShiftSummary {

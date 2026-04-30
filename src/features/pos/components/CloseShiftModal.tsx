@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Badge, Button, Input, Modal, Spinner, toast } from "@/components/ui";
 import { isOk, closeShift, type Shift } from "@/features/shifts";
 import { listTransactions } from "@/features/transactions";
+import { getDailyCashSummary } from "@/features/cash";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +16,14 @@ interface SummaryPreview {
   voided: { count: number; totalAmount: number };
   refunded: { count: number; totalAmount: number };
   expectedCash: number;
+  /** Galih ask #11: petty-cash recap during the shift (today's day for
+   * approximation, since expenses/incomes don't carry shift_id). */
+  petty: {
+    expensesTotal: number;
+    expensesCount: number;
+    incomesTotal: number;
+    incomesCount: number;
+  };
 }
 
 interface CloseShiftModalProps {
@@ -35,6 +44,11 @@ export function CloseShiftModal({
   const [loading, setLoading] = useState(true);
   const [actualCash, setActualCash] = useState("0");
   const [notes, setNotes] = useState("");
+  const [edc, setEdc] = useState("");
+  const [gofood, setGofood] = useState("");
+  const [grabfood, setGrabfood] = useState("");
+  const [shopeefood, setShopeefood] = useState("");
+  const [handoverMessage, setHandoverMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,19 +59,25 @@ export function CloseShiftModal({
     setLoading(true);
     setActualCash("0");
     setNotes("");
+    setEdc("");
+    setGofood("");
+    setGrabfood("");
+    setShopeefood("");
+    setHandoverMessage("");
     setError(null);
     setSubmitting(false);
 
     async function load() {
-      const res = await listTransactions({
-        shiftId: shift.id,
-        limit: 1000,
-      });
-      if (cancelled || !isOk(res)) {
-        if (!cancelled) setLoading(false);
+      const [trxRes, cashRes] = await Promise.all([
+        listTransactions({ shiftId: shift.id, limit: 1000 }),
+        getDailyCashSummary(),
+      ]);
+      if (cancelled) return;
+      if (!isOk(trxRes)) {
+        setLoading(false);
         return;
       }
-      const items = res.data.items;
+      const items = trxRes.data.items;
       const paid = items.filter((t) => t.status === "paid");
       const voided = items.filter((t) => t.status === "voided");
       const refunded = items.filter((t) => t.status === "refunded");
@@ -68,6 +88,8 @@ export function CloseShiftModal({
       const refundedCash = refunded
         .filter((t) => t.paymentMethod === "cash")
         .reduce((s, t) => s + t.total, 0);
+
+      const cashSummary = isOk(cashRes) ? cashRes.data : null;
 
       setSummary({
         paid: {
@@ -89,6 +111,16 @@ export function CloseShiftModal({
           totalAmount: refunded.reduce((s, t) => s + t.total, 0),
         },
         expectedCash: shift.openingCash + paidCash - refundedCash,
+        petty: {
+          expensesTotal: cashSummary?.expenses.total ?? 0,
+          expensesCount:
+            cashSummary?.expenses.byCategory.reduce(
+              (s, c) => s + c.count,
+              0,
+            ) ?? 0,
+          incomesTotal: cashSummary?.income.manual.total ?? 0,
+          incomesCount: cashSummary?.income.manual.count ?? 0,
+        },
       });
       setLoading(false);
     }
@@ -118,10 +150,26 @@ export function CloseShiftModal({
     setSubmitting(true);
     setError(null);
 
+    const tryParse = (s: string): number | null => {
+      const trimmed = s.trim();
+      if (trimmed.length === 0) return null;
+      try {
+        const n = parseRupiah(trimmed);
+        return n >= 0 ? n : null;
+      } catch {
+        return null;
+      }
+    };
+
     const res = await closeShift({
       shiftId: shift.id,
       actualCash: parsedCash,
       notes: notes.trim() || null,
+      handoverMessage: handoverMessage.trim() || null,
+      edcSettlement: tryParse(edc),
+      gofoodSettlement: tryParse(gofood),
+      grabfoodSettlement: tryParse(grabfood),
+      shopeefoodSettlement: tryParse(shopeefood),
     });
     if (!isOk(res)) {
       setError(res.error.message);
@@ -248,6 +296,89 @@ export function CloseShiftModal({
             </div>
           ) : null}
 
+          <div className="space-y-2 rounded-lg border border-neutral-200 bg-white p-4">
+            <p className="text-sm font-semibold text-neutral-900">
+              Settlement Channel (opsional)
+            </p>
+            <p className="text-xs text-neutral-500">
+              Total expected dari masing-masing channel hari ini. Diisi
+              kalau outlet pakai EDC / aggregator online — kosongkan kalau
+              gak relevan.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                label="EDC (BCA card)"
+                type="text"
+                inputMode="numeric"
+                value={edc}
+                onChange={(e) =>
+                  setEdc(e.target.value.replace(/[^\d]/g, ""))
+                }
+                placeholder="0"
+                hint={summary.paid.cardBca > 0
+                  ? `POS catat: ${formatRupiah(summary.paid.cardBca)}`
+                  : undefined}
+                disabled={submitting}
+              />
+              <Input
+                label="GoFood"
+                type="text"
+                inputMode="numeric"
+                value={gofood}
+                onChange={(e) =>
+                  setGofood(e.target.value.replace(/[^\d]/g, ""))
+                }
+                placeholder="0"
+                disabled={submitting}
+              />
+              <Input
+                label="GrabFood"
+                type="text"
+                inputMode="numeric"
+                value={grabfood}
+                onChange={(e) =>
+                  setGrabfood(e.target.value.replace(/[^\d]/g, ""))
+                }
+                placeholder="0"
+                disabled={submitting}
+              />
+              <Input
+                label="ShopeeFood"
+                type="text"
+                inputMode="numeric"
+                value={shopeefood}
+                onChange={(e) =>
+                  setShopeefood(e.target.value.replace(/[^\d]/g, ""))
+                }
+                placeholder="0"
+                disabled={submitting}
+              />
+            </div>
+          </div>
+
+          {summary.petty.expensesCount > 0 || summary.petty.incomesCount > 0 ? (
+            <div className="space-y-2 rounded-lg border border-neutral-200 bg-white p-4">
+              <p className="text-sm font-semibold text-neutral-900">
+                Petty Cash Hari Ini
+              </p>
+              {summary.petty.incomesCount > 0 ? (
+                <Row
+                  label={`Pemasukan (${summary.petty.incomesCount}x)`}
+                  value={`+ ${formatRupiah(summary.petty.incomesTotal)}`}
+                />
+              ) : null}
+              {summary.petty.expensesCount > 0 ? (
+                <Row
+                  label={`Pengeluaran (${summary.petty.expensesCount}x)`}
+                  value={`- ${formatRupiah(summary.petty.expensesTotal)}`}
+                />
+              ) : null}
+              <p className="text-xs text-neutral-500">
+                Catatan otomatis dari Petty Cash di tab Pengaturan.
+              </p>
+            </div>
+          ) : null}
+
           <Input
             label="Catatan (opsional)"
             type="text"
@@ -256,6 +387,24 @@ export function CloseShiftModal({
             placeholder="Misal: kembalian kurang pas"
             disabled={submitting}
           />
+
+          <div>
+            <label className="block text-sm font-medium text-neutral-900">
+              Pesan untuk Shift Berikutnya (opsional)
+            </label>
+            <textarea
+              value={handoverMessage}
+              onChange={(e) => setHandoverMessage(e.target.value.slice(0, 500))}
+              maxLength={500}
+              rows={2}
+              placeholder="Misal: kopi house blend habis, supplier pesan besok pagi"
+              className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+              disabled={submitting}
+            />
+            <p className="mt-1 text-xs text-neutral-500">
+              Tampil saat kasir buka shift selanjutnya di outlet ini.
+            </p>
+          </div>
 
           {error ? (
             <p role="alert" className="text-sm font-medium text-danger-500">

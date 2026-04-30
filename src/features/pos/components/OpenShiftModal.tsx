@@ -1,8 +1,15 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import { MessageSquare } from "lucide-react";
 import { Button, Input, Modal, toast } from "@/components/ui";
-import { isOk, openShift } from "@/features/shifts";
+import {
+  getLastClosedShiftAtOutlet,
+  isOk,
+  openShift,
+  type Shift,
+} from "@/features/shifts";
+import { formatIndonesianDateTime } from "@/lib/date";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import type { Category, MenuItem } from "@/features/menu";
 import type { Role } from "@/lib/auth/rbac";
@@ -46,6 +53,7 @@ export function OpenShiftModal({
   const [openingCash, setOpeningCash] = useState("100000");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [previousShift, setPreviousShift] = useState<Shift | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -54,7 +62,18 @@ export function OpenShiftModal({
     setOpeningCash("100000");
     setError(null);
     setSubmitting(false);
+    setPreviousShift(null);
     /* eslint-enable react-hooks/set-state-in-effect */
+
+    let cancelled = false;
+    void (async () => {
+      const res = await getLastClosedShiftAtOutlet();
+      if (cancelled) return;
+      if (isOk(res)) setPreviousShift(res.data);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   let parsed = 0;
@@ -128,6 +147,24 @@ export function OpenShiftModal({
           className="space-y-3"
           aria-label="Form buka shift"
         >
+          {previousShift &&
+          previousShift.handoverMessage &&
+          previousShift.handoverMessage.length > 0 ? (
+            <div className="rounded-lg border border-mahakan-green-200 bg-mahakan-green-50 p-3">
+              <div className="flex items-center gap-2 text-xs font-medium text-mahakan-green-900">
+                <MessageSquare className="size-4" aria-hidden />
+                Pesan dari shift sebelumnya
+                {previousShift.closedAt ? (
+                  <span className="ml-auto text-mahakan-green-700/70">
+                    {formatIndonesianDateTime(previousShift.closedAt)}
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-900">
+                {previousShift.handoverMessage}
+              </p>
+            </div>
+          ) : null}
           <Input
             label="Kas Awal"
             type="text"

@@ -51,3 +51,19 @@ export async function fetchShiftById(id: string): Promise<Shift | null> {
   const [row] = await db.select().from(shifts).where(eq(shifts.id, id)).limit(1);
   return row ?? null;
 }
+
+/** Most recently closed shift at this outlet — surfaced to the next
+ * kasir's OpenShiftModal so any handover_message they left is shown as
+ * a banner before step 1. Returns null when no prior closed shift
+ * exists at the outlet. Galih ask #10. */
+export async function fetchLastClosedShiftForOutlet(
+  outletId: string,
+): Promise<Shift | null> {
+  const [row] = await db
+    .select()
+    .from(shifts)
+    .where(and(eq(shifts.outletId, outletId), eq(shifts.status, "closed")))
+    .orderBy(desc(shifts.closedAt))
+    .limit(1);
+  return row ?? null;
+}

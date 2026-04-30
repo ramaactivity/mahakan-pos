@@ -42,18 +42,18 @@ export const permissions = {
   "menu.modifier.update": ["owner", "manager"],
 
   // Cash & Expenses
-  "expense.create": ["owner", "manager"],
+  "expense.create": ["owner", "manager", "staff"],
   "expense.update_within_24h": ["owner", "manager"],
   "expense.update_anytime": ["owner"],
   "expense.delete": ["owner"],
   "expense.category.create": ["owner", "manager"],
   "expense.category.update": ["owner"],
   "expense.category.delete": ["owner"],
-  "income.create": ["owner", "manager"],
+  "income.create": ["owner", "manager", "staff"],
   "income.update_within_24h": ["owner", "manager"],
   "income.update_anytime": ["owner"],
   "income.delete": ["owner"],
-  "cash.daily_summary.view": ["owner", "manager"],
+  "cash.daily_summary.view": ["owner", "manager", "staff"],
 
   // Reports
   "report.sales.view": ["owner", "manager"],

@@ -28,6 +28,7 @@ import { countPendingTransactions } from "@/lib/offline/queue";
 import { syncPendingTransactions } from "@/lib/offline/sync";
 import type { Shift } from "@/features/shifts";
 import { MenuStatusCard } from "./MenuStatusCard";
+import { PettyCashCard } from "./PettyCashCard";
 
 const APP_VERSION = "Phase 2 Tier 1.1 (M22.X)";
 
@@ -73,6 +74,7 @@ export function PosSettingsPanel({
             onItemUpdated={onMenuItemUpdated}
           />
         ) : null}
+        <PettyCashCard />
         <SyncCard />
         <AboutCard shift={shift} />
       </div>

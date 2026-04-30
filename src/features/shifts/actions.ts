@@ -8,6 +8,7 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import {
   fetchActiveShiftForUser,
+  fetchLastClosedShiftForOutlet,
   fetchShiftById,
   fetchShifts,
   type ListShiftsOptions,
@@ -27,10 +28,28 @@ const openShiftSchema = z.object({
   openingCash: z.number().int().min(0).max(99_999_999),
 });
 
+const moneyOptional = z
+  .number()
+  .int()
+  .min(0)
+  .max(99_999_999)
+  .nullish()
+  .transform((n) => (typeof n === "number" ? n : null));
+
 const closeShiftSchema = z.object({
   shiftId: z.uuid(),
   actualCash: z.number().int().min(0).max(99_999_999),
   notes: z.string().max(500).nullable(),
+  handoverMessage: z
+    .string()
+    .trim()
+    .max(500)
+    .nullish()
+    .transform((s) => (s && s.length > 0 ? s : null)),
+  edcSettlement: moneyOptional,
+  gofoodSettlement: moneyOptional,
+  grabfoodSettlement: moneyOptional,
+  shopeefoodSettlement: moneyOptional,
 });
 
 async function requireSession() {
@@ -42,6 +61,16 @@ async function requireSession() {
 export async function getActiveShift(): Promise<ApiResult<Shift | null>> {
   const session = await requireSession();
   const row = await fetchActiveShiftForUser(session.user.id);
+  return ok(row);
+}
+
+/** Returns the most recent closed shift at the kasir's outlet. Used by
+ * OpenShiftModal to display the handover_message banner. Galih ask #10. */
+export async function getLastClosedShiftAtOutlet(): Promise<
+  ApiResult<Shift | null>
+> {
+  const session = await requireSession();
+  const row = await fetchLastClosedShiftForOutlet(session.user.outletId);
   return ok(row);
 }
 
@@ -179,6 +208,11 @@ export async function closeShift(
       actualCash: v.actualCash,
       variance,
       notes: v.notes,
+      handoverMessage: v.handoverMessage,
+      edcSettlement: v.edcSettlement,
+      gofoodSettlement: v.gofoodSettlement,
+      grabfoodSettlement: v.grabfoodSettlement,
+      shopeefoodSettlement: v.shopeefoodSettlement,
       closedAt: new Date(),
       updatedAt: new Date(),
     })

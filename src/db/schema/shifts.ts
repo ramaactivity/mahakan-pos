@@ -32,6 +32,20 @@ export const shifts = pgTable(
 
     notes: text("notes"),
 
+    /** Free-form pesan dari kasir tutup shift untuk shift berikutnya.
+     * Tampil di OpenShiftModal step 1 sebagai banner kalau previous
+     * shift di outlet ini meninggalkan handover. Galih ask #10. */
+    handoverMessage: text("handover_message"),
+
+    /** Kasir-reported settlement totals saat close-shift, untuk
+     * rekonsiliasi vs settlement aktual dari bank/aggregator
+     * (Galih ask #11). All nullable — outlet boleh skip channel
+     * yang gak relevan. Rupiah, non-negative. */
+    edcSettlement: bigint("edc_settlement", { mode: "number" }),
+    gofoodSettlement: bigint("gofood_settlement", { mode: "number" }),
+    grabfoodSettlement: bigint("grabfood_settlement", { mode: "number" }),
+    shopeefoodSettlement: bigint("shopeefood_settlement", { mode: "number" }),
+
     openedAt: timestamp("opened_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -54,6 +68,13 @@ export const shifts = pgTable(
     check(
       "ck_shifts_actual_nonneg",
       sql`${t.actualCash} IS NULL OR ${t.actualCash} >= 0`,
+    ),
+    check(
+      "ck_shifts_settlements_nonneg",
+      sql`(${t.edcSettlement} IS NULL OR ${t.edcSettlement} >= 0)
+        AND (${t.gofoodSettlement} IS NULL OR ${t.gofoodSettlement} >= 0)
+        AND (${t.grabfoodSettlement} IS NULL OR ${t.grabfoodSettlement} >= 0)
+        AND (${t.shopeefoodSettlement} IS NULL OR ${t.shopeefoodSettlement} >= 0)`,
     ),
     check(
       "ck_shifts_close_consistency",

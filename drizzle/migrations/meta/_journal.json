@@ -78,6 +78,13 @@
       "when": 1777477633475,
       "tag": "0010_pretty_scorpion",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1777518069089,
+      "tag": "0011_curious_adam_warlock",
+      "breakpoints": true
     }
   ]
 }
