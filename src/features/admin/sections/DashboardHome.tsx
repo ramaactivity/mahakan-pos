@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { AlertTriangle, ChevronRight } from "lucide-react";
+import { differenceInCalendarDays, parseISO } from "date-fns";
 import {
   Bar,
   BarChart,
@@ -29,6 +30,8 @@ import { getTodayAttendanceStatus } from "@/features/attendance/actions";
 import type { EmployeeAttendanceTodayStatus } from "@/features/attendance/types";
 import { listPayrollPeriods } from "@/features/payroll/actions";
 import type { PayrollPeriodWithStats } from "@/features/payroll/types";
+import { listExpiringDocuments } from "@/features/employees/actions";
+import type { ExpiringDocument } from "@/features/employees/queries";
 import { formatRupiah } from "@/lib/format";
 import type { AdminSection } from "@/features/admin/components/AdminLeftNav";
 
@@ -44,16 +47,20 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
   >(null);
   const [activePeriod, setActivePeriod] =
     useState<PayrollPeriodWithStats | null>(null);
+  const [expiringDocs, setExpiringDocs] = useState<ExpiringDocument[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const [reportRes, attendanceRes, payrollRes] = await Promise.all([
-        getDailySalesReport(),
-        getTodayAttendanceStatus(),
-        listPayrollPeriods(),
-      ]);
+      const [reportRes, attendanceRes, payrollRes, docsRes] = await Promise.all(
+        [
+          getDailySalesReport(),
+          getTodayAttendanceStatus(),
+          listPayrollPeriods(),
+          listExpiringDocuments(30),
+        ],
+      );
       if (cancelled) return;
       if (isOk(reportRes)) setReport(reportRes.data);
       if (attendanceRes.success) setAttendance(attendanceRes.data);
@@ -63,6 +70,7 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
           payrollRes.data.find((p) => p.status !== "paid") ?? null;
         setActivePeriod(active);
       }
+      if (docsRes.success) setExpiringDocs(docsRes.data);
       setLoading(false);
     }
     void load();
@@ -121,6 +129,14 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
           Ringkasan operasional hari ini · {report.date}
         </p>
       </header>
+
+      {/* Expiring docs alert — only shown when there are docs expiring/expired */}
+      {expiringDocs.length > 0 && onNavigate ? (
+        <ExpiringDocsAlert
+          docs={expiringDocs}
+          onTap={() => onNavigate("employees")}
+        />
+      ) : null}
 
       {/* HR widgets — Tim Hari Ini */}
       <section className="space-y-3">
@@ -329,6 +345,89 @@ function StatCard({
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+function ExpiringDocsAlert({
+  docs,
+  onTap,
+}: {
+  docs: ExpiringDocument[];
+  onTap: () => void;
+}) {
+  const today = new Date();
+  const expiredCount = docs.filter((d) => {
+    if (!d.expiresAt) return false;
+    return differenceInCalendarDays(parseISO(d.expiresAt), today) < 0;
+  }).length;
+  const expiringCount = docs.length - expiredCount;
+  const preview = docs.slice(0, 3);
+
+  const tone =
+    expiredCount > 0
+      ? {
+          bg: "bg-danger-100/50",
+          border: "border-danger-500/40",
+          icon: "text-danger-500",
+          text: "text-danger-700",
+        }
+      : {
+          bg: "bg-warning-100/60",
+          border: "border-warning-500/40",
+          icon: "text-warning-500",
+          text: "text-warning-700",
+        };
+
+  return (
+    <button
+      type="button"
+      onClick={onTap}
+      className={`w-full rounded-xl border ${tone.bg} ${tone.border} p-4 text-left transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700`}
+    >
+      <div className="flex items-start gap-3">
+        <AlertTriangle
+          className={`mt-0.5 size-5 shrink-0 ${tone.icon}`}
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1">
+          <p className={`text-sm font-semibold ${tone.text}`}>
+            {expiredCount > 0
+              ? `${expiredCount} dokumen sudah expire${
+                  expiringCount > 0
+                    ? ` · ${expiringCount} akan expire ≤30 hari`
+                    : ""
+                }`
+              : `${expiringCount} dokumen akan expire ≤30 hari`}
+          </p>
+          <ul className="mt-1.5 space-y-0.5 text-xs text-neutral-700">
+            {preview.map((d) => {
+              const daysLeft = d.expiresAt
+                ? differenceInCalendarDays(parseISO(d.expiresAt), today)
+                : null;
+              const stamp =
+                daysLeft === null
+                  ? ""
+                  : daysLeft < 0
+                    ? `(${Math.abs(daysLeft)}h lewat)`
+                    : daysLeft === 0
+                      ? "(hari ini!)"
+                      : `(${daysLeft}h lagi)`;
+              return (
+                <li key={d.id} className="truncate">
+                  • {d.employeeFullName} — {d.title} {stamp}
+                </li>
+              );
+            })}
+            {docs.length > 3 ? (
+              <li className="text-neutral-500">
+                + {docs.length - 3} lainnya...
+              </li>
+            ) : null}
+          </ul>
+        </div>
+        <ChevronRight className="size-4 text-neutral-400" aria-hidden />
+      </div>
+    </button>
   );
 }
 

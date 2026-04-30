@@ -10,6 +10,8 @@ import {
   fetchEmployeeById,
   fetchEmployeeDocuments,
   fetchEmployees,
+  fetchExpiringDocuments,
+  type ExpiringDocument,
   type ListEmployeesOptions,
 } from "./queries";
 import {
@@ -87,6 +89,18 @@ export async function listEmployeeDocuments(
     return fail("FORBIDDEN", "Karyawan dari outlet lain");
   }
   return ok(await fetchEmployeeDocuments(employeeId));
+}
+
+export async function listExpiringDocuments(
+  daysAhead: number = 30,
+): Promise<ApiResult<ExpiringDocument[]>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "employee.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat data karyawan");
+  }
+  return ok(
+    await fetchExpiringDocuments(session.user.outletId, daysAhead),
+  );
 }
 
 // ---------- Mutations ----------

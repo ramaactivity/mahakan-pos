@@ -22,6 +22,9 @@ export {
   getEmployee,
   listEmployeeDocuments,
   listEmployees,
+  listExpiringDocuments,
   updateEmployee,
   updateEmployeeDocument,
 } from "./actions";
+
+export type { ExpiringDocument } from "./queries";

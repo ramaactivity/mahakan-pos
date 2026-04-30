@@ -96,3 +96,47 @@ export async function fetchEmployeeDocuments(
     )
     .orderBy(desc(employeeDocuments.createdAt));
 }
+
+export interface ExpiringDocument extends EmployeeDocument {
+  employeeFullName: string;
+  employeeNickname: string | null;
+}
+
+/** Documents expiring within the next `daysAhead` days OR already expired,
+ * for active employees in the outlet. Sorted ascending so the most urgent
+ * (already-expired or expiring soonest) come first. */
+export async function fetchExpiringDocuments(
+  outletId: string,
+  daysAhead: number = 30,
+): Promise<ExpiringDocument[]> {
+  const cutoffSql = sql`(CURRENT_DATE + (${daysAhead} || ' days')::interval)::date`;
+  const rows = await db
+    .select({
+      doc: employeeDocuments,
+      employeeFullName: employees.fullName,
+      employeeNickname: employees.nickname,
+    })
+    .from(employeeDocuments)
+    .innerJoin(
+      employees,
+      and(
+        eq(employees.id, employeeDocuments.employeeId),
+        eq(employees.outletId, outletId),
+        isNull(employees.deletedAt),
+        eq(employees.status, "active"),
+      ),
+    )
+    .where(
+      and(
+        isNull(employeeDocuments.deletedAt),
+        sql`${employeeDocuments.expiresAt} IS NOT NULL`,
+        sql`${employeeDocuments.expiresAt} <= ${cutoffSql}`,
+      ),
+    )
+    .orderBy(asc(employeeDocuments.expiresAt));
+  return rows.map((r) => ({
+    ...r.doc,
+    employeeFullName: r.employeeFullName,
+    employeeNickname: r.employeeNickname,
+  }));
+}
