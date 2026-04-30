@@ -140,6 +140,16 @@ export const permissions = {
   "inventory.preparation.update": ["owner", "manager"],
   "inventory.preparation.delete": ["owner"],
 
+  // Stock Opname (Sesi N). Owner standard — opname wajib bulanan oleh
+  // staff & karyawan. Staff CAN start/count/submit (so they can run
+  // the count themselves); finalize + cancel manager+ only (commits
+  // adjust movements; fraud-prevention boundary).
+  "inventory.opname.view": ["owner", "manager", "staff"],
+  "inventory.opname.start": ["owner", "manager", "staff"],
+  "inventory.opname.count": ["owner", "manager", "staff"],
+  "inventory.opname.finalize": ["owner", "manager"],
+  "inventory.opname.cancel": ["owner", "manager"],
+
   // Phase 2 Tier 1.3 (M29) — Customers / Loyalty.
   // Lookup is open to all roles so kasir can pull member info at checkout;
   // edit + admin list scoped to owner+manager.

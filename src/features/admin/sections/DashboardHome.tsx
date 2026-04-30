@@ -34,6 +34,7 @@ import { listExpiringDocuments } from "@/features/employees/actions";
 import type { ExpiringDocument } from "@/features/employees/queries";
 import { formatRupiah } from "@/lib/format";
 import type { AdminSection } from "@/features/admin/components/AdminLeftNav";
+import { OpnameMonthlyBanner } from "./inventory/opname/OpnameMonthlyBanner";
 
 interface DashboardHomeProps {
   user: { name: string };
@@ -154,6 +155,11 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
           onTap={() => onNavigate("employees")}
         />
       ) : null}
+
+      {/* Monthly stock opname cadence banner — visible to all roles. */}
+      <OpnameMonthlyBanner
+        onTap={onNavigate ? () => onNavigate("inventory") : undefined}
+      />
 
       {/* HR widgets — Tim Hari Ini */}
       <section className="space-y-3">

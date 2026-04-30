@@ -15,3 +15,4 @@ export * from "./employees";
 export * from "./attendance";
 export * from "./hr";
 export * from "./promos";
+export * from "./stock-opname";

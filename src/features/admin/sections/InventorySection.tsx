@@ -6,6 +6,7 @@ import { Button } from "@/components/ui";
 import { CogsCalculatorWidget } from "./inventory/CogsCalculatorWidget";
 import { IngredientsList } from "./inventory/IngredientsList";
 import { MovementsList } from "./inventory/MovementsList";
+import { OpnameTab } from "./inventory/opname/OpnameTab";
 import { PreparationsList } from "./inventory/PreparationsList";
 import { RecipesList } from "./inventory/RecipesList";
 import { cn } from "@/lib/utils";
@@ -13,12 +14,14 @@ import { cn } from "@/lib/utils";
 type InventoryTab =
   | "ingredients"
   | "preparations"
+  | "opname"
   | "movements"
   | "recipes";
 
 const TABS: Array<{ key: InventoryTab; label: string; soon?: boolean }> = [
   { key: "ingredients", label: "Bahan" },
   { key: "preparations", label: "Preparations" },
+  { key: "opname", label: "Opname" },
   { key: "movements", label: "Pergerakan" },
   { key: "recipes", label: "Resep" },
 ];
@@ -81,6 +84,8 @@ export function InventorySection() {
           <IngredientsList />
         ) : tab === "preparations" ? (
           <PreparationsList />
+        ) : tab === "opname" ? (
+          <OpnameTab />
         ) : tab === "movements" ? (
           <MovementsList />
         ) : (

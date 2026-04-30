@@ -62,6 +62,11 @@ export const AUDIT_EVENT_TYPES = [
   "inventory.preparation.recompute",
   "inventory.cost.cascade",
   "inventory.import.run",
+  // Inventory — Stock Opname (Sesi N)
+  "inventory.opname.start",
+  "inventory.opname.submit",
+  "inventory.opname.finalize",
+  "inventory.opname.cancel",
   // Customers / Loyalty — Phase 2 Tier 1.3 (M29)
   "customer.create",
   "customer.update",
@@ -125,7 +130,8 @@ export type AuditEntityType =
   | "schedule"
   | "payroll_period"
   | "promo"
-  | "employee_career_history";
+  | "employee_career_history"
+  | "stock_opname_session";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */
