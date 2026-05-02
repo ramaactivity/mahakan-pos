@@ -18,3 +18,5 @@ export * from "./promos";
 export * from "./stock-opname";
 export * from "./suppliers";
 export * from "./purchases";
+export * from "./cash_deposits";
+export * from "./aggregator_settlements";

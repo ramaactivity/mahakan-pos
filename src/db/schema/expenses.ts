@@ -15,6 +15,7 @@ import {
 import { outlets } from "./outlets";
 import { users } from "./users";
 import { transactions } from "./transactions";
+import { payrollPeriods } from "./hr";
 
 export const expenseCategories = pgTable(
   "expense_categories",
@@ -60,6 +61,23 @@ export const expenses = pgTable(
       () => transactions.id,
     ),
 
+    /** Sesi Q (Finance Q1): origin of this expense row.
+     * - 'manual' = Owner/staff input via Kas section / POS petty cash
+     * - 'purchase' = auto-created by purchase confirm (sesi O)
+     * - 'payroll' = auto-created by payroll mark-paid (sesi Q)
+     * - 'refund' = auto-created by transaction refund (counter-balance) */
+    sourceType: text("source_type", {
+      enum: ["manual", "purchase", "payroll", "refund"],
+    })
+      .notNull()
+      .default("manual"),
+    payrollPeriodId: uuid("payroll_period_id").references(
+      () => payrollPeriods.id,
+    ),
+    /** Soft FK ke purchases.id (no hard constraint to avoid circular import;
+     * integrity maintained via reverse purchases.expense_id FK + app logic). */
+    purchaseId: uuid("purchase_id"),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -76,6 +94,7 @@ export const expenses = pgTable(
   (t) => [
     index("idx_expenses_outlet_date").on(t.outletId, t.expenseDate),
     index("idx_expenses_category").on(t.categoryId),
+    index("idx_expenses_source").on(t.sourceType, t.outletId, t.expenseDate),
     check("ck_expenses_amount_pos", sql`${t.amount} > 0`),
   ],
 );

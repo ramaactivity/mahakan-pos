@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Banknote,
   BarChart3,
   Briefcase,
   CalendarDays,
@@ -37,6 +38,7 @@ export type AdminSection =
   | "hr_reports"
   | "shifts"
   | "cash"
+  | "finance"
   | "promos"
   | "reports"
   | "audit"
@@ -72,6 +74,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "hr_reports", label: "Laporan HR", Icon: BarChart3 },
   { key: "shifts", label: "Shifts", Icon: Receipt },
   { key: "cash", label: "Kas", Icon: Wallet },
+  { key: "finance", label: "Keuangan", Icon: Banknote },
   { key: "promos", label: "Promo", Icon: Sparkles },
   { key: "reports", label: "Laporan", Icon: BarChart3 },
   { key: "audit", label: "Audit Log", Icon: ScrollText, ownerOnly: true },

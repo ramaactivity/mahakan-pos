@@ -5,6 +5,8 @@ import { db } from "@/db";
 import {
   attendanceRecords,
   employees,
+  expenseCategories,
+  expenses,
   outlets,
   payrollLines,
   payrollPeriods,
@@ -12,6 +14,7 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { toJakartaDateOnly } from "@/lib/date";
 import {
   createPayrollPeriodSchema,
   updatePayrollLineSchema,
@@ -428,8 +431,45 @@ export async function finalizePayrollPeriod(
   return ok(row);
 }
 
+/**
+ * Lazily get-or-create the system "Gaji Karyawan" expense category for an
+ * outlet. Idempotent — uses the unique (outlet_id, name) constraint so
+ * concurrent calls converge on the same row.
+ */
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function getOrCreatePayrollExpenseCategory(
+  tx: Tx,
+  outletId: string,
+): Promise<string> {
+  const [existing] = await tx
+    .select({ id: expenseCategories.id })
+    .from(expenseCategories)
+    .where(
+      and(
+        eq(expenseCategories.outletId, outletId),
+        eq(expenseCategories.name, "Gaji Karyawan"),
+        isNull(expenseCategories.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (existing) return existing.id;
+
+  const [created] = await tx
+    .insert(expenseCategories)
+    .values({
+      outletId,
+      name: "Gaji Karyawan",
+      isSystem: true,
+      displayOrder: 5,
+    })
+    .returning({ id: expenseCategories.id });
+  return created.id;
+}
+
 export async function markPayrollPaid(
   periodId: string,
+  paymentMethod: "cash" | "transfer" | "other" = "transfer",
 ): Promise<ApiResult<PayrollPeriod>> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "payroll.manage")) {
@@ -447,16 +487,61 @@ export async function markPayrollPaid(
   if (period.status !== "finalized") {
     return fail("INVALID_STATE", "Hanya period finalized yang bisa di-paid");
   }
-  const [row] = await db
-    .update(payrollPeriods)
-    .set({
-      status: "paid",
-      paidAt: new Date(),
-      paidBy: session.user.id,
-      updatedAt: new Date(),
-    })
-    .where(eq(payrollPeriods.id, periodId))
-    .returning();
+
+  const result = await db.transaction(async (tx) => {
+    // Idempotency guard — if expense already linked, skip insert.
+    const [existingExpense] = await tx
+      .select({ id: expenses.id })
+      .from(expenses)
+      .where(eq(expenses.payrollPeriodId, periodId))
+      .limit(1);
+
+    // Sum net pay for the period.
+    const [sumRow] = await tx
+      .select({
+        total: sql<string>`COALESCE(SUM(${payrollLines.netPay}), 0)`,
+      })
+      .from(payrollLines)
+      .where(eq(payrollLines.periodId, periodId));
+    const totalNet = Number(sumRow?.total ?? 0);
+
+    const [row] = await tx
+      .update(payrollPeriods)
+      .set({
+        status: "paid",
+        paidAt: new Date(),
+        paidBy: session.user.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(payrollPeriods.id, periodId))
+      .returning();
+
+    let expenseId: string | null = existingExpense?.id ?? null;
+    if (!existingExpense && totalNet > 0) {
+      const categoryId = await getOrCreatePayrollExpenseCategory(
+        tx,
+        period.outletId,
+      );
+      const today = toJakartaDateOnly(new Date());
+      const [inserted] = await tx
+        .insert(expenses)
+        .values({
+          outletId: period.outletId,
+          expenseDate: today,
+          categoryId,
+          description: `Payroll ${row.label}`,
+          amount: totalNet,
+          paymentMethod,
+          sourceType: "payroll",
+          payrollPeriodId: periodId,
+          createdBy: session.user.id,
+        })
+        .returning({ id: expenses.id });
+      expenseId = inserted.id;
+    }
+
+    return { row, expenseId, totalNet };
+  });
 
   logAudit({
     eventType: "payroll.paid",
@@ -464,8 +549,13 @@ export async function markPayrollPaid(
     entityType: "payroll_period",
     entityId: periodId,
     payload: {
-      summary: `Payroll ${row.label} ditandai paid`,
-      after: { status: "paid", paidAt: row.paidAt },
+      summary: `Payroll ${result.row.label} ditandai paid`,
+      after: {
+        status: "paid",
+        paidAt: result.row.paidAt,
+        expenseId: result.expenseId,
+        totalNet: result.totalNet,
+      },
     },
     metadata: {
       outletId: session.user.outletId,
@@ -473,7 +563,28 @@ export async function markPayrollPaid(
     },
   }).catch((e) => console.error("[audit payroll.paid]", e));
 
-  return ok(row);
+  if (result.expenseId) {
+    logAudit({
+      eventType: "payroll.expense.create",
+      userId: session.user.id,
+      entityType: "expense",
+      entityId: result.expenseId,
+      payload: {
+        summary: `Expense Gaji Karyawan ${result.row.label} dibuat otomatis`,
+        after: {
+          amount: result.totalNet,
+          paymentMethod,
+          payrollPeriodId: periodId,
+        },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }).catch((e) => console.error("[audit payroll.expense.create]", e));
+  }
+
+  return ok(result.row);
 }
 
 export async function deletePayrollPeriod(

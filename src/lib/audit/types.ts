@@ -99,6 +99,14 @@ export const AUDIT_EVENT_TYPES = [
   "payroll.compute",
   "payroll.finalize",
   "payroll.paid",
+  "payroll.expense.create",
+  // Sesi Q — Finance (Keuangan): cash deposit + aggregator settlement.
+  "cash_deposit.create",
+  "cash_deposit.update",
+  "cash_deposit.verify",
+  "cash_deposit.reject",
+  "aggregator_settlement.create",
+  "aggregator_settlement.update",
   // Promos / Campaigns (Sesi K).
   "promo.create",
   "promo.update",
@@ -145,7 +153,9 @@ export type AuditEntityType =
   | "employee_career_history"
   | "stock_opname_session"
   | "supplier"
-  | "purchase";
+  | "purchase"
+  | "cash_deposit"
+  | "aggregator_settlement";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

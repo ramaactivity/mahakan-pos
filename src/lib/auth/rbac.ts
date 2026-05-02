@@ -197,6 +197,19 @@ export const permissions = {
   /** View + revoke active approval codes (admin panel). */
   "approval_code.view": ["owner"],
   "approval_code.revoke": ["owner"],
+
+  // Finance / Keuangan (Sesi Q). Q1 daily settlement + Q2 cash deposit
+  // (Setoran Tunai) + Q3 cash flow ledger + aggregator reconciliation.
+  // Verify is owner-only by design (manager creates pending → owner verifies).
+  "finance.dashboard.view": ["owner", "manager"],
+  "report.daily_settlement.view": ["owner", "manager"],
+  "cash_deposit.view": ["owner", "manager"],
+  "cash_deposit.create": ["owner", "manager"],
+  "cash_deposit.verify": ["owner"],
+  "report.cash_flow.view": ["owner"],
+  "aggregator_settlement.view": ["owner", "manager"],
+  "aggregator_settlement.create": ["owner", "manager"],
+  "settings.cash_threshold.update": ["owner"],
 } as const satisfies Record<string, ReadonlyArray<Role>>;
 
 export type Permission = keyof typeof permissions;
