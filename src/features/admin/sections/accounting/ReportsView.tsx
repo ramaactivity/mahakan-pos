@@ -5,6 +5,7 @@ import {
   BarChart3,
   BookOpen,
   CheckCircle2,
+  Download,
   FileText,
   ShieldCheck,
   TrendingUp,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   Badge,
+  Button,
   Combobox,
   DatePicker,
   DateRangePicker,
@@ -20,6 +22,12 @@ import {
   toast,
   type ComboboxOption,
 } from "@/components/ui";
+import { getOwnOutlet, isOk, type Outlet } from "@/features/outlets";
+import {
+  exportBalanceSheetPdf,
+  exportIncomeStatementPdf,
+  exportTrialBalancePdf,
+} from "@/lib/pdf-export";
 import {
   fetchAccounts,
   fetchBalanceSheet,
@@ -263,15 +271,33 @@ function TrialBalanceTab() {
     void load();
   }, [range.from, range.to]);
 
+  async function onExportPdf() {
+    if (!report) return;
+    const outletRes = await getOwnOutlet();
+    if (!isOk(outletRes)) {
+      toast.error("Gagal load outlet info");
+      return;
+    }
+    exportTrialBalancePdf(report, outletRes.data, range);
+    toast.success("PDF Trial Balance terdownload");
+  }
+
   return (
     <div className="space-y-3">
-      <DateRangePicker
-        label="Periode"
-        value={range}
-        onChange={(r) => {
-          if (r.from && r.to) setRange({ from: r.from, to: r.to });
-        }}
-      />
+      <div className="flex items-end justify-between gap-3">
+        <DateRangePicker
+          label="Periode"
+          value={range}
+          onChange={(r) => {
+            if (r.from && r.to) setRange({ from: r.from, to: r.to });
+          }}
+        />
+        {report && report.rows.length > 0 ? (
+          <Button variant="outline" size="sm" onClick={onExportPdf}>
+            <Download className="size-4" /> Export PDF
+          </Button>
+        ) : null}
+      </div>
       {loading || !report ? (
         <Skeleton className="h-64 w-full" />
       ) : (
@@ -371,15 +397,33 @@ function IncomeStatementTab() {
     void load();
   }, [range.from, range.to]);
 
+  async function onExportPdf() {
+    if (!report) return;
+    const outletRes = await getOwnOutlet();
+    if (!isOk(outletRes)) {
+      toast.error("Gagal load outlet info");
+      return;
+    }
+    exportIncomeStatementPdf(report, outletRes.data);
+    toast.success("PDF Laba Rugi terdownload");
+  }
+
   return (
     <div className="space-y-3">
-      <DateRangePicker
-        label="Periode"
-        value={range}
-        onChange={(r) => {
-          if (r.from && r.to) setRange({ from: r.from, to: r.to });
-        }}
-      />
+      <div className="flex items-end justify-between gap-3">
+        <DateRangePicker
+          label="Periode"
+          value={range}
+          onChange={(r) => {
+            if (r.from && r.to) setRange({ from: r.from, to: r.to });
+          }}
+        />
+        {report ? (
+          <Button variant="outline" size="sm" onClick={onExportPdf}>
+            <Download className="size-4" /> Export PDF
+          </Button>
+        ) : null}
+      </div>
       {loading || !report ? (
         <Skeleton className="h-64 w-full" />
       ) : (
@@ -464,13 +508,31 @@ function BalanceSheetTab() {
     void load();
   }, [asOfDate]);
 
+  async function onExportPdf() {
+    if (!report) return;
+    const outletRes = await getOwnOutlet();
+    if (!isOk(outletRes)) {
+      toast.error("Gagal load outlet info");
+      return;
+    }
+    exportBalanceSheetPdf(report, outletRes.data);
+    toast.success("PDF Neraca terdownload");
+  }
+
   return (
     <div className="space-y-3">
-      <DatePicker
-        label="Per tanggal"
-        value={asOfDate}
-        onChange={(v) => v && setAsOfDate(v)}
-      />
+      <div className="flex items-end justify-between gap-3">
+        <DatePicker
+          label="Per tanggal"
+          value={asOfDate}
+          onChange={(v) => v && setAsOfDate(v)}
+        />
+        {report ? (
+          <Button variant="outline" size="sm" onClick={onExportPdf}>
+            <Download className="size-4" /> Export PDF
+          </Button>
+        ) : null}
+      </div>
       {loading || !report ? (
         <Skeleton className="h-64 w-full" />
       ) : (

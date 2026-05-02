@@ -346,3 +346,281 @@ export function exportSalesRangePdf(
     `mahakan-range-${report.period.from}_${report.period.to}.pdf`,
   );
 }
+
+// ============================================================================
+// Sesi Y — Accounting reports PDF (TB / IS / BS)
+// ============================================================================
+
+import type {
+  TrialBalanceReport,
+  IncomeStatementReport,
+  BalanceSheetReport,
+} from "@/features/accounting/reports";
+
+export function exportTrialBalancePdf(
+  report: TrialBalanceReport,
+  outlet: Outlet,
+  range: { from: string; to: string },
+): void {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  let y = brandedHeader(
+    doc,
+    outlet,
+    `Trial Balance — ${range.from} s/d ${range.to}`,
+  );
+
+  // Table header
+  const pageW = doc.internal.pageSize.getWidth();
+  const colCode = MARGIN;
+  const colName = MARGIN + 18;
+  const colDebit = pageW - MARGIN - 50;
+  const colCredit = pageW - MARGIN;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(BRAND.muted);
+  doc.text("Kode", colCode, y);
+  doc.text("Akun", colName, y);
+  doc.text("Debit", colDebit, y, { align: "right" });
+  doc.text("Credit", colCredit, y, { align: "right" });
+  y += 4;
+  y = divider(doc, y);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(BRAND.text);
+  for (const r of report.rows) {
+    y = ensurePage(doc, y);
+    doc.text(r.code, colCode, y);
+    const nameLines = doc.splitTextToSize(r.name, colDebit - colName - 2);
+    doc.text(nameLines[0] ?? r.name, colName, y);
+    doc.text(
+      r.debit > 0 ? formatRupiah(r.debit) : "—",
+      colDebit,
+      y,
+      { align: "right" },
+    );
+    doc.text(
+      r.credit > 0 ? formatRupiah(r.credit) : "—",
+      colCredit,
+      y,
+      { align: "right" },
+    );
+    y += 4.5;
+  }
+
+  y += 1;
+  y = divider(doc, y);
+  doc.setFont("helvetica", "bold");
+  doc.text("TOTAL", colName, y);
+  doc.text(formatRupiah(report.totalDebit), colDebit, y, { align: "right" });
+  doc.text(formatRupiah(report.totalCredit), colCredit, y, { align: "right" });
+  y += 5;
+
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(8);
+  doc.setTextColor(report.balanced ? "#2E7D5B" : "#C0392B");
+  doc.text(
+    report.balanced
+      ? "✓ Balanced — total debit = total credit"
+      : `✕ TIDAK BALANCE — selisih ${formatRupiah(Math.abs(report.totalDebit - report.totalCredit))}`,
+    MARGIN,
+    y,
+  );
+
+  footer(doc);
+  save(doc, `mahakan-trial-balance-${range.from}_${range.to}.pdf`);
+}
+
+export function exportIncomeStatementPdf(
+  report: IncomeStatementReport,
+  outlet: Outlet,
+): void {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  let y = brandedHeader(
+    doc,
+    outlet,
+    `Laporan Laba Rugi — ${report.periodLabel}`,
+  );
+
+  // Pendapatan
+  y = sectionTitle(doc, "PENDAPATAN", y);
+  for (const item of report.revenue.items) {
+    y = ensurePage(doc, y);
+    y = row(doc, `  ${item.code} ${item.name}`, formatRupiah(item.amount), y);
+  }
+  y = row(doc, "Subtotal Pendapatan", formatRupiah(report.revenue.subtotal), y, true);
+
+  if (report.revenueContra.items.length > 0) {
+    y += 2;
+    for (const item of report.revenueContra.items) {
+      y = ensurePage(doc, y);
+      y = row(
+        doc,
+        `  ${item.code} ${item.name}`,
+        `(${formatRupiah(item.amount)})`,
+        y,
+      );
+    }
+    y = row(
+      doc,
+      "Subtotal Diskon + Refund",
+      `(${formatRupiah(report.revenueContra.subtotal)})`,
+      y,
+      true,
+    );
+  }
+  y = divider(doc, y);
+  y = row(doc, "PENDAPATAN BERSIH", formatRupiah(report.netRevenue), y, true);
+  y = divider(doc, y);
+
+  // HPP
+  y = ensurePage(doc, y);
+  y = sectionTitle(doc, "HARGA POKOK PENJUALAN", y);
+  for (const item of report.cogs.items) {
+    y = ensurePage(doc, y);
+    y = row(
+      doc,
+      `  ${item.code} ${item.name}`,
+      `(${formatRupiah(item.amount)})`,
+      y,
+    );
+  }
+  y = row(
+    doc,
+    "Subtotal HPP",
+    `(${formatRupiah(report.cogs.subtotal)})`,
+    y,
+    true,
+  );
+  y = divider(doc, y);
+  y = row(doc, "LABA KOTOR", formatRupiah(report.grossProfit), y, true);
+  y = divider(doc, y);
+
+  // Beban Operasional
+  y = ensurePage(doc, y);
+  y = sectionTitle(doc, "BEBAN OPERASIONAL", y);
+  for (const item of report.expenses.items) {
+    y = ensurePage(doc, y);
+    y = row(
+      doc,
+      `  ${item.code} ${item.name}`,
+      `(${formatRupiah(item.amount)})`,
+      y,
+    );
+  }
+  y = row(
+    doc,
+    "Subtotal Beban",
+    `(${formatRupiah(report.expenses.subtotal)})`,
+    y,
+    true,
+  );
+  y = divider(doc, y);
+
+  y = ensurePage(doc, y);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.setTextColor(report.netIncome >= 0 ? BRAND.primary : "#C0392B");
+  const pageW = doc.internal.pageSize.getWidth();
+  doc.text("LABA / RUGI BERSIH", MARGIN, y);
+  doc.text(
+    `${report.netIncome < 0 ? "(" : ""}${formatRupiah(Math.abs(report.netIncome))}${report.netIncome < 0 ? ")" : ""}`,
+    pageW - MARGIN,
+    y,
+    { align: "right" },
+  );
+
+  footer(doc);
+  save(doc, `mahakan-laba-rugi-${report.periodLabel.replace(/\s/g, "-")}.pdf`);
+}
+
+export function exportBalanceSheetPdf(
+  report: BalanceSheetReport,
+  outlet: Outlet,
+): void {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  let y = brandedHeader(
+    doc,
+    outlet,
+    `Neraca — Per ${report.asOfDate}`,
+  );
+
+  // ASET
+  y = sectionTitle(doc, "ASET", y);
+  for (const a of report.assets) {
+    y = ensurePage(doc, y);
+    y = row(
+      doc,
+      `  ${a.code} ${a.isContra ? "(-) " : ""}${a.name}`,
+      formatRupiah(a.amount),
+      y,
+    );
+  }
+  y = divider(doc, y);
+  y = row(doc, "TOTAL ASET", formatRupiah(report.totalAssets), y, true);
+  y = divider(doc, y);
+
+  // KEWAJIBAN
+  y = ensurePage(doc, y);
+  y = sectionTitle(doc, "KEWAJIBAN", y);
+  if (report.liabilities.length === 0) {
+    y = row(doc, "  Tidak ada kewajiban", "—", y);
+  } else {
+    for (const l of report.liabilities) {
+      y = ensurePage(doc, y);
+      y = row(doc, `  ${l.code} ${l.name}`, formatRupiah(l.amount), y);
+    }
+  }
+  y = row(
+    doc,
+    "Subtotal Kewajiban",
+    formatRupiah(report.totalLiabilities),
+    y,
+    true,
+  );
+  y = divider(doc, y);
+
+  // EKUITAS
+  y = ensurePage(doc, y);
+  y = sectionTitle(doc, "EKUITAS", y);
+  for (const e of report.equity) {
+    y = ensurePage(doc, y);
+    y = row(
+      doc,
+      `  ${e.code} ${e.isContra ? "(-) " : ""}${e.name}`,
+      formatRupiah(e.amount),
+      y,
+    );
+  }
+  y = row(doc, "Subtotal Ekuitas", formatRupiah(report.totalEquity), y, true);
+  y = divider(doc, y);
+
+  y = ensurePage(doc, y);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(BRAND.text);
+  const pageW = doc.internal.pageSize.getWidth();
+  doc.text("TOTAL KEWAJIBAN + EKUITAS", MARGIN, y);
+  doc.text(
+    formatRupiah(report.totalLiabilities + report.totalEquity),
+    pageW - MARGIN,
+    y,
+    { align: "right" },
+  );
+  y += 5;
+
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(8);
+  doc.setTextColor(report.balanced ? "#2E7D5B" : "#C0392B");
+  doc.text(
+    report.balanced
+      ? "✓ Balanced — Total Aset = Total Kewajiban + Ekuitas"
+      : `✕ Tidak balance — selisih ${formatRupiah(Math.abs(report.totalAssets - (report.totalLiabilities + report.totalEquity)))}`,
+    MARGIN,
+    y,
+  );
+
+  footer(doc);
+  save(doc, `mahakan-neraca-${report.asOfDate}.pdf`);
+}
