@@ -574,14 +574,18 @@ function classifyDrift(
 export function buildValidationReport(args: {
   asOfDate: string;
   ledger: {
-    kasTunai: number;          // 1101 + 1102
-    persediaan: number;        // 1140 + 1141 + 1142
-    hutangDagang: number;      // 2101
+    kasTunai: number;             // 1101 + 1102
+    persediaanKitchen: number;    // 1140
+    persediaanBar: number;        // 1141
+    persediaanPendukung: number;  // 1142
+    hutangDagang: number;         // 2101
   };
   source: {
-    cashOnHand: number;        // dari getCashOnHand
-    persediaanValue: number;   // sum ingredients × cost
-    hutangDagangPending: number; // sum purchases pending_payment
+    cashOnHand: number;           // dari getCashOnHand
+    persediaanKitchen: number;    // sum kitchen ingredients × cost
+    persediaanBar: number;        // sum bar ingredients × cost
+    persediaanPendukung: number;  // sum supporting/cleaning ingredients × cost
+    hutangDagangPending: number;  // sum purchases pending_payment
   };
 }): ValidationReport {
   const rows: ValidationRow[] = [];
@@ -608,25 +612,65 @@ export function buildValidationReport(args: {
     });
   }
 
-  // Persediaan
+  // Persediaan Kitchen
   {
     const { diff, status } = classifyDrift(
-      args.ledger.persediaan,
-      args.source.persediaanValue,
+      args.ledger.persediaanKitchen,
+      args.source.persediaanKitchen,
     );
     rows.push({
-      label: "Persediaan Bahan Baku",
-      accountCodes: ["1140", "1141", "1142"],
-      ledgerAmount: args.ledger.persediaan,
-      sourceAmount: args.source.persediaanValue,
+      label: "Persediaan Kitchen",
+      accountCodes: ["1140"],
+      ledgerAmount: args.ledger.persediaanKitchen,
+      sourceAmount: args.source.persediaanKitchen,
       diff,
       status,
       note:
         status === "critical"
-          ? "Drift signifikan vs sum ingredients×cost. Cek apakah ada opname finalize belum ter-jurnal atau cost_per_unit berubah tanpa adjust."
+          ? "Drift signifikan vs ingredients section='kitchen' × cost. Cek opname/purchase/recipe hooks."
           : status === "warning"
-            ? "Drift kecil — kemungkinan cost rounding atau opname adjustment minor."
+            ? "Drift kecil — rounding or minor opname adjustment."
             : undefined,
+    });
+  }
+
+  // Persediaan Bar
+  {
+    const { diff, status } = classifyDrift(
+      args.ledger.persediaanBar,
+      args.source.persediaanBar,
+    );
+    rows.push({
+      label: "Persediaan Bar",
+      accountCodes: ["1141"],
+      ledgerAmount: args.ledger.persediaanBar,
+      sourceAmount: args.source.persediaanBar,
+      diff,
+      status,
+      note:
+        status === "critical"
+          ? "Drift signifikan vs ingredients section='bar' × cost."
+          : undefined,
+    });
+  }
+
+  // Persediaan Pendukung
+  {
+    const { diff, status } = classifyDrift(
+      args.ledger.persediaanPendukung,
+      args.source.persediaanPendukung,
+    );
+    rows.push({
+      label: "Persediaan Pendukung",
+      accountCodes: ["1142"],
+      ledgerAmount: args.ledger.persediaanPendukung,
+      sourceAmount: args.source.persediaanPendukung,
+      diff,
+      status,
+      note:
+        status === "critical"
+          ? "Drift signifikan vs ingredients section IN ('supporting','cleaning') × cost."
+          : undefined,
     });
   }
 

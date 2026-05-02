@@ -12,9 +12,11 @@ import {
   TrendingUp,
   TrendingDown,
   AlertCircle,
+  FastForward,
 } from "lucide-react";
 import { Badge, Button, Skeleton, toast } from "@/components/ui";
 import {
+  bulkCloseHistoricalPeriods,
   closeAccountingPeriod,
   ensureCurrentPeriod,
   fetchIncomeStatement,
@@ -165,6 +167,46 @@ export function PeriodsView({ viewerRole }: { viewerRole: Role }) {
     }
   }
 
+  async function onBulkClose() {
+    const openHistorical = rows.filter((p) => {
+      if (p.status !== "open") return false;
+      const now = new Date();
+      const j = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+      const ty = j.getUTCFullYear();
+      const tm = j.getUTCMonth() + 1;
+      if (p.periodYear < ty) return true;
+      if (p.periodYear === ty && p.periodMonth < tm) return true;
+      return false;
+    });
+    if (openHistorical.length === 0) {
+      toast.info("Tidak ada periode lama yang perlu di-tutup");
+      return;
+    }
+    if (
+      !confirm(
+        `Bulk-close ${openHistorical.length} periode lama (chronological)? Closing entry akan generate per-period. Stop on first error.`,
+      )
+    ) {
+      return;
+    }
+    setBusy("bulk");
+    const res = await bulkCloseHistoricalPeriods();
+    setBusy(null);
+    if (res.ok) {
+      const { closed, failed } = res.data;
+      if (failed.length > 0) {
+        toast.error(
+          `${closed.length} sukses, stop di ${failed[0].periodLabel}: ${failed[0].error}`,
+        );
+      } else {
+        toast.success(`${closed.length} periode lama tertutup`);
+      }
+      void load();
+    } else {
+      toast.error(res.error.message);
+    }
+  }
+
   async function onLock(p: PeriodSummary) {
     if (
       !confirm(
@@ -191,7 +233,7 @@ export function PeriodsView({ viewerRole }: { viewerRole: Role }) {
           Periode bulanan (Asia/Jakarta calendar). State: <em>open</em> →{" "}
           <em>closed</em> → <em>locked</em> (irreversible).
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {canCutover ? (
             <Button
               variant="outline"
@@ -199,6 +241,17 @@ export function PeriodsView({ viewerRole }: { viewerRole: Role }) {
               onClick={() => setCutoverOpen(true)}
             >
               <BookOpen className="size-4" /> Cutover (Jurnal Pembukaan)
+            </Button>
+          ) : null}
+          {canClose ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onBulkClose}
+              disabled={busy === "bulk"}
+              loading={busy === "bulk"}
+            >
+              <FastForward className="size-4" /> Bulk Close Lama
             </Button>
           ) : null}
           <Button

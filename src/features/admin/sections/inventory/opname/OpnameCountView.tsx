@@ -9,6 +9,7 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  Pencil,
   Search,
   X,
 } from "lucide-react";
@@ -33,6 +34,7 @@ import { hasPermission } from "@/lib/auth/rbac";
 import type { Role } from "@/lib/auth/rbac";
 import { downloadCountSheet } from "./opname-csv";
 import { cn } from "@/lib/utils";
+import { EditUnitModal } from "./EditUnitModal";
 
 interface OpnameCountViewProps {
   detail: OpnameSessionDetail;
@@ -64,6 +66,12 @@ export function OpnameCountView({
   onSubmittedForReview,
 }: OpnameCountViewProps) {
   const canCancel = hasPermission(role, "inventory.opname.cancel");
+  const canEditUnit = hasPermission(role, "inventory.ingredient.update");
+  const [editUnitFor, setEditUnitFor] = useState<{
+    id: string;
+    name: string;
+    unit: string;
+  } | null>(null);
 
   // Map of ingredientId → state. Re-init when session id changes (rare).
   const [stateMap, setStateMap] = useState<Map<string, LineState>>(() =>
@@ -375,6 +383,16 @@ export function OpnameCountView({
                   state={stateMap.get(line.ingredientId) ?? blankLineState()}
                   revealExpected={revealExpected}
                   onChange={(raw) => scheduleSave(line.ingredientId, raw)}
+                  onEditUnit={
+                    canEditUnit
+                      ? () =>
+                          setEditUnitFor({
+                            id: line.ingredientId,
+                            name: line.ingredientNameSnapshot,
+                            unit: line.unitSnapshot,
+                          })
+                      : undefined
+                  }
                 />
               ))}
             </ul>
@@ -455,6 +473,22 @@ export function OpnameCountView({
           ) : null}
         </div>
       </Modal>
+
+      {editUnitFor ? (
+        <EditUnitModal
+          open
+          onClose={() => setEditUnitFor(null)}
+          ingredientId={editUnitFor.id}
+          ingredientName={editUnitFor.name}
+          currentUnit={editUnitFor.unit}
+          onSaved={() => {
+            setEditUnitFor(null);
+            // Trigger parent refresh so future opnames see new unit. Current
+            // session unitSnapshot stays frozen by design (audit integrity).
+            onChanged();
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -480,6 +514,7 @@ interface CountRowProps {
   state: LineState;
   revealExpected: boolean;
   onChange: (raw: string) => void;
+  onEditUnit?: () => void;
 }
 
 function CountRow({
@@ -490,6 +525,7 @@ function CountRow({
   state,
   revealExpected,
   onChange,
+  onEditUnit,
 }: CountRowProps) {
   const counted = state.saved !== null;
   const diff =
@@ -513,6 +549,17 @@ function CountRow({
           <p className="font-medium text-neutral-900">{name}</p>
           <p className="text-xs text-neutral-500">
             Unit: {unit}
+            {onEditUnit ? (
+              <button
+                type="button"
+                onClick={onEditUnit}
+                className="ml-1 inline-flex items-center rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-mahakan-green-700"
+                aria-label={`Edit unit ${name}`}
+                title="Edit satuan bahan"
+              >
+                <Pencil className="size-3" />
+              </button>
+            ) : null}
             {revealExpected ? (
               <>
                 {" · "}

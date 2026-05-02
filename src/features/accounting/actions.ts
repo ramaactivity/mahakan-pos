@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   accountingPeriods,
@@ -744,6 +744,86 @@ export async function closeAccountingPeriod(
   return ok(result);
 }
 
+/**
+ * Sesi Y polish #6 — Bulk close periode lama (chronological enforced).
+ * Closes semua open period yang lebih lama dari current month, in chronological
+ * order. Stops on first error and reports progress.
+ */
+export async function bulkCloseHistoricalPeriods(): Promise<
+  ApiResult<{
+    closed: Array<{ periodLabel: string; entryNumber: string }>;
+    failed: Array<{ periodLabel: string; error: string }>;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.period.close")) {
+    return fail("FORBIDDEN", "Hanya Owner yang dapat tutup periode");
+  }
+
+  // Fetch all open periods ordered chronologically (oldest first)
+  const allPeriods = await db
+    .select()
+    .from(accountingPeriods)
+    .where(
+      and(
+        eq(accountingPeriods.outletId, session.user.outletId),
+        eq(accountingPeriods.status, "open"),
+      ),
+    )
+    .orderBy(
+      asc(accountingPeriods.periodYear),
+      asc(accountingPeriods.periodMonth),
+    );
+
+  // Determine current Jakarta year-month — skip current period (Owner closes
+  // manually after month-end, not via bulk).
+  const now = new Date();
+  const jakartaTimeMs = now.getTime() + 7 * 60 * 60 * 1000;
+  const j = new Date(jakartaTimeMs);
+  const currentYear = j.getUTCFullYear();
+  const currentMonth = j.getUTCMonth() + 1;
+
+  const eligible = allPeriods.filter((p) => {
+    if (p.periodYear < currentYear) return true;
+    if (p.periodYear === currentYear && p.periodMonth < currentMonth)
+      return true;
+    return false;
+  });
+
+  if (eligible.length === 0) {
+    return fail(
+      "NO_PERIODS",
+      "Tidak ada periode lama yang perlu di-tutup (current month tetap manual close)",
+    );
+  }
+
+  const closed: Array<{ periodLabel: string; entryNumber: string }> = [];
+  const failed: Array<{ periodLabel: string; error: string }> = [];
+
+  for (const p of eligible) {
+    const label = `${p.periodYear}-${String(p.periodMonth).padStart(2, "0")}`;
+    try {
+      const res = await closeAccountingPeriod(p.id);
+      if (res.ok) {
+        closed.push({ periodLabel: label, entryNumber: res.data.entryNumber });
+      } else {
+        failed.push({ periodLabel: label, error: res.error.message });
+        // Stop on first failure — chronological close requires earlier
+        // periods to settle first.
+        break;
+      }
+    } catch (e) {
+      failed.push({
+        periodLabel: label,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      break;
+    }
+  }
+
+  return ok({ closed, failed });
+}
+
 export async function reopenAccountingPeriod(
   periodId: string,
   reason: string,
@@ -1130,17 +1210,12 @@ export async function fetchValidationReport(
     toDate: asOfDate,
   });
   const byCode = new Map(balances.map((b) => [b.code, b]));
-  const ledgerKas = (byCode.get("1101")?.debitTotal ?? 0)
-    - (byCode.get("1101")?.creditTotal ?? 0)
-    + (byCode.get("1102")?.debitTotal ?? 0)
-    - (byCode.get("1102")?.creditTotal ?? 0);
-  const ledgerPersediaan =
-    (byCode.get("1140")?.debitTotal ?? 0)
-    - (byCode.get("1140")?.creditTotal ?? 0)
-    + (byCode.get("1141")?.debitTotal ?? 0)
-    - (byCode.get("1141")?.creditTotal ?? 0)
-    + (byCode.get("1142")?.debitTotal ?? 0)
-    - (byCode.get("1142")?.creditTotal ?? 0);
+  const balanceOf = (code: string) =>
+    (byCode.get(code)?.debitTotal ?? 0) - (byCode.get(code)?.creditTotal ?? 0);
+  const ledgerKas = balanceOf("1101") + balanceOf("1102");
+  const ledgerPersediaanKitchen = balanceOf("1140");
+  const ledgerPersediaanBar = balanceOf("1141");
+  const ledgerPersediaanPendukung = balanceOf("1142");
   // Hutang Dagang credit-normal: positive balance = creditTotal - debitTotal.
   const ledgerHutang =
     (byCode.get("2101")?.creditTotal ?? 0)
@@ -1151,14 +1226,12 @@ export async function fetchValidationReport(
   //    accounting tidak pull finance dependency.
   const { getCashOnHand } = await import("@/features/finance/queries");
   const cashSnapshot = await getCashOnHand(session.user.outletId);
-  // Pure ledger comparison: pakai cashOnHand only (already reconciled
-  // Finance side). Pending deposits / open shift drawer adalah sub-set
-  // yang sudah included di cashOnHand calc — see getCashOnHand impl.
   const sourceCashOnHandStrict = cashSnapshot.cashOnHand;
 
-  // 2. Persediaan value
-  const ingRows = await db
+  // 2. Persediaan value per section (kitchen / bar / supporting+cleaning)
+  const ingSections = await db
     .select({
+      section: ingredients.section,
       total: sql<string>`COALESCE(SUM(${ingredients.currentStock} * ${ingredients.costPerUnit}), 0)`,
     })
     .from(ingredients)
@@ -1167,8 +1240,18 @@ export async function fetchValidationReport(
         eq(ingredients.outletId, session.user.outletId),
         isNull(ingredients.deletedAt),
       ),
-    );
-  const sourcePersediaan = Math.round(Number(ingRows[0]?.total ?? 0));
+    )
+    .groupBy(ingredients.section);
+
+  let sourceKitchen = 0;
+  let sourceBar = 0;
+  let sourcePendukung = 0;
+  for (const r of ingSections) {
+    const v = Math.round(Number(r.total));
+    if (r.section === "kitchen") sourceKitchen = v;
+    else if (r.section === "bar") sourceBar = v;
+    else sourcePendukung += v; // supporting + cleaning + null
+  }
 
   // 3. Hutang Dagang outstanding
   const [hutangRow] = await db
@@ -1189,12 +1272,16 @@ export async function fetchValidationReport(
       asOfDate,
       ledger: {
         kasTunai: ledgerKas,
-        persediaan: ledgerPersediaan,
+        persediaanKitchen: ledgerPersediaanKitchen,
+        persediaanBar: ledgerPersediaanBar,
+        persediaanPendukung: ledgerPersediaanPendukung,
         hutangDagang: ledgerHutang,
       },
       source: {
         cashOnHand: sourceCashOnHandStrict,
-        persediaanValue: sourcePersediaan,
+        persediaanKitchen: sourceKitchen,
+        persediaanBar: sourceBar,
+        persediaanPendukung: sourcePendukung,
         hutangDagangPending: sourceHutang,
       },
     }),

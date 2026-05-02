@@ -326,17 +326,23 @@ async function main() {
     );
   const sourceHutang = Math.round(Number(hutangRow?.total ?? 0));
 
-  // Validation report (skip cashOnHand — needs runtime context, surface separately)
+  // Validation report (skip cashOnHand — needs runtime context, surface separately).
+  // Smoke uses aggregate persediaan in all 3 section slots dengan source value
+  // sama supaya status='ok' ketika data konsisten.
   const report = buildValidationReport({
     asOfDate: new Date().toISOString().slice(0, 10),
     ledger: {
       kasTunai: ledgerKas,
-      persediaan: ledgerPersediaan,
+      persediaanKitchen: ledgerPersediaan, // smoke: combined ledger (no per-section breakdown)
+      persediaanBar: 0,
+      persediaanPendukung: 0,
       hutangDagang: ledgerHutang,
     },
     source: {
       cashOnHand: ledgerKas, // placeholder (smoke skip cash check)
-      persediaanValue: sourcePersediaan,
+      persediaanKitchen: sourcePersediaan, // smoke: aggregate matches kitchen slot
+      persediaanBar: 0,
+      persediaanPendukung: 0,
       hutangDagangPending: sourceHutang,
     },
   });
