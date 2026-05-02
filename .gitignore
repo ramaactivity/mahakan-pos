@@ -77,3 +77,6 @@ next-env.d.ts
 /data/source-spreadsheets/
 /data/templates/
 /data/exports/
+
+# Owner-imported seed CSVs (operational data, not for repo)
+seed-data/
