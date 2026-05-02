@@ -2,20 +2,38 @@ import "server-only";
 
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { transactionItems, transactions, splitPayments } from "@/db/schema";
+import {
+  chartOfAccounts,
+  expenseCategories,
+  expenses,
+  transactionItems,
+  transactions,
+  splitPayments,
+} from "@/db/schema";
 import { isAutoJournalEnabled } from "./flag";
 import { recordJournal } from "./posting";
 import {
   mapAggregatorSettlement,
   mapCashDepositVerified,
+  mapExpenseCreate,
+  mapIncomeCreate,
+  mapOpnameAdjustment,
   mapPayrollPaid,
   mapPosCompliment,
   mapPosRefund,
   mapPosSale,
+  mapPurchaseCancel,
+  mapPurchaseCreate,
+  mapPurchasePay,
   mapShiftVariance,
   resolveBankCodeFromDestination,
   type AggregatedItem,
   type AggregatorChannel,
+  type ExpensePaymentMethod,
+  type IncomePaymentMethod,
+  type IngredientSection,
+  type OpnameSectionDiff,
+  type PurchasePaymentMethod,
 } from "./mapping";
 
 /**
@@ -390,6 +408,277 @@ export async function postJournalForShiftVariance(args: {
     description: `Selisih kas ${args.shiftLabel} (${args.variance > 0 ? "+" : ""}${args.variance})`,
     sourceType: "shift_variance",
     sourceId: args.shiftId,
+    lines,
+    actorId: args.actorId,
+  });
+}
+
+// ============================================================
+// Purchase (Sesi U)
+// ============================================================
+
+export async function postJournalForPurchaseCreate(args: {
+  outletId: string;
+  purchaseId: string;
+  purchaseLabel: string;
+  paymentMethod: PurchasePaymentMethod;
+  total: number;
+  /** Per-line aggregated by section. */
+  lines: { section: IngredientSection; amount: number }[];
+  entryDate: string;
+  actorId: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+
+  const lines = mapPurchaseCreate({
+    purchaseId: args.purchaseId,
+    purchaseLabel: args.purchaseLabel,
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    paymentMethod: args.paymentMethod,
+    lines: args.lines,
+    total: args.total,
+  });
+
+  await recordJournal({
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    description: `Pembelian ${args.purchaseLabel}`,
+    sourceType: "purchase_create",
+    sourceId: args.purchaseId,
+    lines,
+    actorId: args.actorId,
+  });
+}
+
+export async function postJournalForPurchasePay(args: {
+  outletId: string;
+  purchaseId: string;
+  purchaseLabel: string;
+  paymentMethod: "cash" | "transfer_bca" | "transfer_bri" | "transfer_other";
+  total: number;
+  entryDate: string;
+  actorId: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+
+  const lines = mapPurchasePay({
+    purchaseId: args.purchaseId,
+    purchaseLabel: args.purchaseLabel,
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    paymentMethod: args.paymentMethod,
+    total: args.total,
+  });
+
+  await recordJournal({
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    description: `Bayar hutang ${args.purchaseLabel}`,
+    sourceType: "purchase_pay",
+    sourceId: args.purchaseId,
+    lines,
+    actorId: args.actorId,
+  });
+}
+
+export async function postJournalForPurchaseCancel(args: {
+  outletId: string;
+  purchaseId: string;
+  purchaseLabel: string;
+  paymentMethod: PurchasePaymentMethod;
+  total: number;
+  lines: { section: IngredientSection; amount: number }[];
+  entryDate: string;
+  actorId: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+
+  const lines = mapPurchaseCancel({
+    purchaseId: args.purchaseId,
+    purchaseLabel: args.purchaseLabel,
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    paymentMethod: args.paymentMethod,
+    lines: args.lines,
+    total: args.total,
+  });
+
+  await recordJournal({
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    description: `Cancel pembelian ${args.purchaseLabel}`,
+    sourceType: "purchase_cancel",
+    sourceId: args.purchaseId,
+    lines,
+    actorId: args.actorId,
+  });
+}
+
+// ============================================================
+// Expense (Sesi U) — manual sourceType only
+// ============================================================
+
+/**
+ * Resolve expense account code:
+ * 1. Caller passes accountId via expenses.accountId
+ * 2. Else fallback ke expense_categories.defaultAccountId
+ * 3. Else final fallback ke 6901 Lain-lain
+ *
+ * Returns the resolved account.code untuk passing ke mapping.
+ */
+export async function resolveExpenseAccountCode(
+  outletId: string,
+  expenseAccountId: string | null,
+  categoryId: string,
+): Promise<string> {
+  // Priority 1: per-expense override
+  if (expenseAccountId) {
+    const [acc] = await db
+      .select({ code: chartOfAccounts.code })
+      .from(chartOfAccounts)
+      .where(eq(chartOfAccounts.id, expenseAccountId))
+      .limit(1);
+    if (acc?.code) return acc.code;
+  }
+
+  // Priority 2: category default
+  const [cat] = await db
+    .select({ defaultAccountId: expenseCategories.defaultAccountId })
+    .from(expenseCategories)
+    .where(eq(expenseCategories.id, categoryId))
+    .limit(1);
+  if (cat?.defaultAccountId) {
+    const [acc] = await db
+      .select({ code: chartOfAccounts.code })
+      .from(chartOfAccounts)
+      .where(eq(chartOfAccounts.id, cat.defaultAccountId))
+      .limit(1);
+    if (acc?.code) return acc.code;
+  }
+
+  // Priority 3: ultimate fallback
+  return "6901";
+}
+
+export async function postJournalForExpenseCreate(args: {
+  outletId: string;
+  expenseId: string;
+  actorId: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+
+  const [exp] = await db
+    .select()
+    .from(expenses)
+    .where(eq(expenses.id, args.expenseId))
+    .limit(1);
+  if (!exp) return;
+
+  // CRITICAL — only fires for sourceType='manual'. Payroll/purchase/refund
+  // expenses have their own auto-journal hooks upstream (markPayrollPaid /
+  // purchase.confirm / refundTransaction), so skipping here prevents
+  // double-counting.
+  if (exp.sourceType !== "manual") return;
+
+  const expenseAccountCode = await resolveExpenseAccountCode(
+    args.outletId,
+    exp.accountId,
+    exp.categoryId,
+  );
+
+  const lines = mapExpenseCreate({
+    expenseId: exp.id,
+    outletId: args.outletId,
+    entryDate: String(exp.expenseDate),
+    amount: Number(exp.amount),
+    description: exp.description,
+    paymentMethod: exp.paymentMethod as ExpensePaymentMethod,
+    expenseAccountCode,
+  });
+
+  await recordJournal({
+    outletId: args.outletId,
+    entryDate: String(exp.expenseDate),
+    description: exp.description,
+    sourceType: "expense_create",
+    sourceId: exp.id,
+    lines,
+    actorId: args.actorId,
+    metadata: {
+      categoryId: exp.categoryId,
+      paymentMethod: exp.paymentMethod,
+      expenseAccountCode,
+    },
+  });
+}
+
+// ============================================================
+// Income (Sesi U)
+// ============================================================
+
+export async function postJournalForIncomeCreate(args: {
+  outletId: string;
+  incomeId: string;
+  amount: number;
+  description: string;
+  paymentMethod: IncomePaymentMethod;
+  entryDate: string;
+  actorId: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+
+  const lines = mapIncomeCreate({
+    incomeId: args.incomeId,
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    amount: args.amount,
+    description: args.description,
+    paymentMethod: args.paymentMethod,
+  });
+
+  await recordJournal({
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    description: `Pemasukan: ${args.description}`,
+    sourceType: "income_create",
+    sourceId: args.incomeId,
+    lines,
+    actorId: args.actorId,
+  });
+}
+
+// ============================================================
+// Opname Adjustment (Sesi U)
+// ============================================================
+
+export async function postJournalForOpnameAdjustment(args: {
+  outletId: string;
+  opnameSessionId: string;
+  sessionLabel: string;
+  /** Caller aggregates per-line diff_value × unit_cost grouped by section. */
+  sectionDiffs: OpnameSectionDiff[];
+  entryDate: string;
+  actorId: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+
+  const lines = mapOpnameAdjustment({
+    opnameSessionId: args.opnameSessionId,
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    sessionLabel: args.sessionLabel,
+    sectionDiffs: args.sectionDiffs,
+  });
+
+  if (lines.length === 0) return;
+
+  await recordJournal({
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    description: `Penyesuaian opname ${args.sessionLabel}`,
+    sourceType: "opname_adjustment",
+    sourceId: args.opnameSessionId,
     lines,
     actorId: args.actorId,
   });

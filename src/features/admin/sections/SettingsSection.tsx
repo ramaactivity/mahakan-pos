@@ -311,6 +311,14 @@ export function SettingsSection() {
               label="Multi-outlet (Phase 4)"
               value={outlet.settings?.features?.multiOutletEnabled ? "Aktif" : "Off"}
             />
+            <Field
+              label="Auto-Journal Akuntansi (Phase 2)"
+              value={
+                outlet.settings?.features?.accounting_auto_journal
+                  ? "Aktif — POS/payroll/setoran/aggregator otomatis di-jurnal"
+                  : "Off — ledger kosong sampai Owner aktifkan post-test"
+              }
+            />
           </dl>
         </CardContent>
       </Card>

@@ -1,0 +1,53 @@
+/**
+ * mapIncomeCreate — non-POS income → journal lines.
+ *
+ * Per design doc §4.13. Income (event rental, titip jual, dll) entered di
+ * Admin → Kas → Tambah Pemasukan.
+ *
+ * Mapping:
+ *   Dr 1101 Kas / 1110 Bank          income.amount
+ *      Cr 4201 Pendapatan Lain-lain   income.amount
+ */
+
+import type { JournalLineInput } from "../posting";
+
+export type IncomePaymentMethod = "cash" | "transfer" | "other";
+
+export type IncomeCreateInput = {
+  incomeId: string;
+  outletId: string;
+  entryDate: string;
+  amount: number;
+  description: string;
+  paymentMethod: IncomePaymentMethod;
+};
+
+export function incomeCashBankCode(method: IncomePaymentMethod): string {
+  switch (method) {
+    case "cash":
+      return "1101";
+    case "transfer":
+      return "1110";
+    case "other":
+      return "1112";
+  }
+}
+
+export function mapIncomeCreate(input: IncomeCreateInput): JournalLineInput[] {
+  if (input.amount <= 0) {
+    throw new Error("MAP_INCOME_NONPOSITIVE");
+  }
+
+  return [
+    {
+      accountCode: incomeCashBankCode(input.paymentMethod),
+      debit: input.amount,
+      description: `Pemasukan ${input.paymentMethod}: ${input.description}`,
+    },
+    {
+      accountCode: "4201",
+      credit: input.amount,
+      description: input.description,
+    },
+  ];
+}

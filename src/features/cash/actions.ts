@@ -147,6 +147,24 @@ export async function createExpense(
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
   });
 
+  // Sesi U — Accounting auto-journal hook (manual expense). Hook itself
+  // checks sourceType='manual' filter — payroll/purchase/refund expenses
+  // generated upstream skip dari sini (no double-count).
+  {
+    const { fireJournalHook, postJournalForExpenseCreate } = await import(
+      "@/features/accounting/hooks"
+    );
+    fireJournalHook(
+      () =>
+        postJournalForExpenseCreate({
+          outletId: session.user.outletId,
+          expenseId: row.id,
+          actorId: session.user.id,
+        }),
+      "expense_create",
+    );
+  }
+
   return ok(row);
 }
 
@@ -195,6 +213,26 @@ export async function createIncome(
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
   });
+
+  // Sesi U — Accounting auto-journal hook (income create).
+  {
+    const { fireJournalHook, postJournalForIncomeCreate } = await import(
+      "@/features/accounting/hooks"
+    );
+    fireJournalHook(
+      () =>
+        postJournalForIncomeCreate({
+          outletId: session.user.outletId,
+          incomeId: row.id,
+          amount: Number(row.amount),
+          description: row.description,
+          paymentMethod: row.paymentMethod as "cash" | "transfer" | "other",
+          entryDate: String(row.incomeDate),
+          actorId: session.user.id,
+        }),
+      "income_create",
+    );
+  }
 
   return ok(row);
 }

@@ -27,6 +27,13 @@ export const expenseCategories = pgTable(
     name: text("name").notNull(),
     isSystem: boolean("is_system").notNull().default(false),
     displayOrder: integer("display_order").notNull().default(0),
+
+    /** Sesi U — Accounting tier: default account untuk expense yang pakai
+     * kategori ini. Soft FK ke chart_of_accounts (asset bank/kas atau expense
+     * 6xxx). UI selector di expense form fallback ke kategori default kalau
+     * Owner skip pilihan account. NULL = fallback ke 6901 Lain-lain. */
+    defaultAccountId: uuid("default_account_id"),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -77,6 +84,12 @@ export const expenses = pgTable(
     /** Soft FK ke purchases.id (no hard constraint to avoid circular import;
      * integrity maintained via reverse purchases.expense_id FK + app logic). */
     purchaseId: uuid("purchase_id"),
+
+    /** Sesi U — Accounting tier: explicit account_id selector (Owner pick di
+     * Admin → Kas → Tambah Pengeluaran). Override default dari category.
+     * Soft FK ke chart_of_accounts. NULL = fallback ke category.defaultAccountId
+     * → 6901 Lain-lain ultimate fallback. */
+    accountId: uuid("account_id"),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

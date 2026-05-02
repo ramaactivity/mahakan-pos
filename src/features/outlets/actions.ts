@@ -221,6 +221,10 @@ const featuresSchema = z.object({
   loyaltyEnabled: z.boolean().optional(),
   recipeEnabled: z.boolean().optional(),
   multiOutletEnabled: z.boolean().optional(),
+  /** Sesi T+: when true, auto-journal hooks fire on POS sale / refund /
+   * payroll / cash deposit / aggregator settlement / shift variance. Default
+   * off — Owner toggle ON post-test (verify sample journal entry benar). */
+  accounting_auto_journal: z.boolean().optional(),
 });
 
 const attendanceSettingsSchema = z.object({

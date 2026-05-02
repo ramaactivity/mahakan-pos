@@ -339,6 +339,52 @@ export async function createPurchase(
     },
   });
 
+  // Sesi U — Accounting auto-journal hook (purchase create). Aggregate per
+  // section from purchase_items snapshot (post-commit query — small overhead).
+  {
+    const items = await db
+      .select({
+        section: purchaseItems.sectionSnapshot,
+        totalCost: purchaseItems.totalCost,
+      })
+      .from(purchaseItems)
+      .where(eq(purchaseItems.purchaseId, resultId));
+
+    const bySection = new Map<string, number>();
+    for (const it of items) {
+      const key = it.section ?? "null";
+      bySection.set(key, (bySection.get(key) ?? 0) + Number(it.totalCost));
+    }
+    const sectionLines = Array.from(bySection.entries()).map(([key, amount]) => ({
+      section: (key === "null" ? null : key) as
+        | "kitchen"
+        | "bar"
+        | "supporting"
+        | "cleaning"
+        | null,
+      amount,
+    }));
+
+    const { fireJournalHook, postJournalForPurchaseCreate } = await import(
+      "@/features/accounting/hooks"
+    );
+    fireJournalHook(
+      () =>
+        postJournalForPurchaseCreate({
+          outletId: session.user.outletId,
+          purchaseId: resultId,
+          purchaseLabel:
+            v.invoiceNo ?? `${v.paymentMethod} ${v.purchaseDate}`,
+          paymentMethod: v.paymentMethod,
+          total: totalAmount,
+          lines: sectionLines,
+          entryDate: v.purchaseDate,
+          actorId: session.user.id,
+        }),
+      "purchase_create",
+    );
+  }
+
   return ok({ id: resultId, totalAmount, movementsCreated });
 }
 
@@ -472,6 +518,64 @@ export async function cancelPurchase(
     },
   });
 
+  // Sesi U — Accounting auto-journal hook (purchase cancel = counter-entry).
+  // Source id beda dari purchase_create supaya idempotency hit tidak block.
+  {
+    const [purchaseRow] = await db
+      .select()
+      .from(purchases)
+      .where(eq(purchases.id, v.id))
+      .limit(1);
+    if (purchaseRow) {
+      const items = await db
+        .select({
+          section: purchaseItems.sectionSnapshot,
+          totalCost: purchaseItems.totalCost,
+        })
+        .from(purchaseItems)
+        .where(eq(purchaseItems.purchaseId, v.id));
+      const bySection = new Map<string, number>();
+      for (const it of items) {
+        const key = it.section ?? "null";
+        bySection.set(key, (bySection.get(key) ?? 0) + Number(it.totalCost));
+      }
+      const sectionLines = Array.from(bySection.entries()).map(([key, amount]) => ({
+        section: (key === "null" ? null : key) as
+          | "kitchen"
+          | "bar"
+          | "supporting"
+          | "cleaning"
+          | null,
+        amount,
+      }));
+      const todayWib = new Date().toISOString().slice(0, 10);
+      const { fireJournalHook, postJournalForPurchaseCancel } = await import(
+        "@/features/accounting/hooks"
+      );
+      fireJournalHook(
+        () =>
+          postJournalForPurchaseCancel({
+            outletId: session.user.outletId,
+            purchaseId: v.id,
+            purchaseLabel:
+              purchaseRow.invoiceNo ??
+              `${purchaseRow.paymentMethod} ${purchaseRow.purchaseDate}`,
+            paymentMethod: purchaseRow.paymentMethod as
+              | "cash"
+              | "transfer_bca"
+              | "transfer_bri"
+              | "transfer_other"
+              | "top",
+            total: Number(purchaseRow.totalAmount),
+            lines: sectionLines,
+            entryDate: todayWib,
+            actorId: session.user.id,
+          }),
+        "purchase_cancel",
+      );
+    }
+  }
+
   return ok({ id: v.id });
 }
 
@@ -584,6 +688,44 @@ export async function markPurchasePaid(
       actorRole: session.user.role,
     },
   });
+
+  // Sesi U — Accounting auto-journal hook (purchase pay = clear hutang dagang).
+  // Source id = purchase.id (uniq per purchase, but distinct sourceType from
+  // purchase_create). Expense auto-row TIDAK perlu separate journal — kalau
+  // accounting flag ON, expense.create hook akan skip 'manual' check (expense
+  // sourceType column belum di-set untuk purchase_pay flow). Jadi safe.
+  {
+    const [purchaseRow] = await db
+      .select()
+      .from(purchases)
+      .where(eq(purchases.id, v.id))
+      .limit(1);
+    if (purchaseRow) {
+      const todayWib = new Date().toISOString().slice(0, 10);
+      const { fireJournalHook, postJournalForPurchasePay } = await import(
+        "@/features/accounting/hooks"
+      );
+      fireJournalHook(
+        () =>
+          postJournalForPurchasePay({
+            outletId: session.user.outletId,
+            purchaseId: v.id,
+            purchaseLabel:
+              purchaseRow.invoiceNo ??
+              `purchase ${purchaseRow.id.slice(0, 8)}`,
+            paymentMethod: v.paymentMethod as
+              | "cash"
+              | "transfer_bca"
+              | "transfer_bri"
+              | "transfer_other",
+            total: Number(purchaseRow.totalAmount),
+            entryDate: todayWib,
+            actorId: session.user.id,
+          }),
+        "purchase_pay",
+      );
+    }
+  }
 
   return ok({ id: v.id, expenseId });
 }

@@ -21,6 +21,10 @@ export type OutletSettings = {
     recipeEnabled?: boolean;
     multiOutletEnabled?: boolean;
     showHppToStaff?: boolean;
+    /** Sesi T+: master switch untuk Phase 2 accounting auto-journal hooks.
+     * Default false. Owner toggle true SETELAH test sample transaction +
+     * verify journal entry benar di Admin → Akuntansi → Jurnal. */
+    accounting_auto_journal?: boolean;
   };
   receipt?: {
     /** Existing: short text below "Terima kasih" line. */

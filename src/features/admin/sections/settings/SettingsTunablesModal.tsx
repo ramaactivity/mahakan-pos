@@ -40,6 +40,8 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     showQrRating: outlet.settings?.receipt?.showQrRating ?? false,
     variance: outlet.settings?.thresholds?.shiftVarianceAlert ?? 10_000,
     showHpp: outlet.settings?.features?.showHppToStaff ?? false,
+    accountingAutoJournal:
+      outlet.settings?.features?.accounting_auto_journal ?? false,
     voidMode: outlet.settings?.approval?.voidMode === "code" ? "code" : "pin",
     refundMode: outlet.settings?.approval?.refundMode === "code" ? "code" : "pin",
     notifyEmails: initialEmails,
@@ -48,6 +50,9 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
   const [showQr, setShowQr] = useState(initial.showQrRating);
   const [variance, setVariance] = useState(String(initial.variance));
   const [showHpp, setShowHpp] = useState(initial.showHpp);
+  const [accountingAutoJournal, setAccountingAutoJournal] = useState(
+    initial.accountingAutoJournal,
+  );
   const [voidCodeMode, setVoidCodeMode] = useState(initial.voidMode === "code");
   const [refundCodeMode, setRefundCodeMode] = useState(
     initial.refundMode === "code",
@@ -64,6 +69,7 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setShowQr(initial.showQrRating);
     setVariance(String(initial.variance));
     setShowHpp(initial.showHpp);
+    setAccountingAutoJournal(initial.accountingAutoJournal);
     setVoidCodeMode(initial.voidMode === "code");
     setRefundCodeMode(initial.refundMode === "code");
     setNotifyEmails(initial.notifyEmails);
@@ -153,6 +159,17 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
         return;
       }
       last = r3.data;
+    }
+    if (accountingAutoJournal !== initial.accountingAutoJournal) {
+      const r3a = await updateFeatures({
+        accounting_auto_journal: accountingAutoJournal,
+      });
+      if (!isOk(r3a)) {
+        setError(r3a.error.message);
+        setSubmitting(false);
+        return;
+      }
+      last = r3a.data;
     }
 
     const wantVoidMode = voidCodeMode ? "code" : "pin";
@@ -257,6 +274,16 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
             hint="Default off. Aktifkan kalau staff perlu lihat margin per item."
             checked={showHpp}
             onChange={setShowHpp}
+          />
+          <ToggleRow
+            label="Auto-Journal Akuntansi"
+            hint={
+              accountingAutoJournal
+                ? "Aktif — POS sale, refund, payroll, setoran tunai, settlement aggregator, dan opname akan auto-journal ke buku besar. Pastikan sudah test 1 dummy trx + verify entry sebelum aktifkan permanent."
+                : "Off — buku besar akuntansi belum ter-isi. Aktifkan setelah test sample transaction + verify journal entry benar di tab Akuntansi → Jurnal."
+            }
+            checked={accountingAutoJournal}
+            onChange={setAccountingAutoJournal}
           />
         </section>
 

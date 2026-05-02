@@ -734,6 +734,60 @@ export async function finalizeOpname(
     },
   });
 
+  // Sesi U — Accounting auto-journal hook (opname adjustment).
+  // Aggregate per-line diff_value × unit_cost grouped by ingredient.section
+  // post-commit query. Skip kalau no movements (totalDiffCost=0).
+  if (result.movementsCreated > 0) {
+    const ingSections = await db
+      .select({
+        section: ingredients.section,
+        diffValue: sql<number>`SUM(${stockOpnameLines.unitCostAtSnapshot} * (${stockOpnameLines.actualQty} - ${stockOpnameLines.expectedQty}))`,
+      })
+      .from(stockOpnameLines)
+      .innerJoin(
+        ingredients,
+        eq(stockOpnameLines.ingredientId, ingredients.id),
+      )
+      .where(eq(stockOpnameLines.sessionId, v.sessionId))
+      .groupBy(ingredients.section);
+
+    const sectionDiffs = ingSections
+      .map((r) => ({
+        section: r.section as
+          | "kitchen"
+          | "bar"
+          | "supporting"
+          | "cleaning"
+          | null,
+        diffValue: Number(r.diffValue),
+      }))
+      .filter((s) => s.diffValue !== 0);
+
+    if (sectionDiffs.length > 0) {
+      const [sessRow] = await db
+        .select({ periodLabel: stockOpnameSessions.periodLabel })
+        .from(stockOpnameSessions)
+        .where(eq(stockOpnameSessions.id, v.sessionId))
+        .limit(1);
+      const todayWib = new Date().toISOString().slice(0, 10);
+      const { fireJournalHook, postJournalForOpnameAdjustment } = await import(
+        "@/features/accounting/hooks"
+      );
+      fireJournalHook(
+        () =>
+          postJournalForOpnameAdjustment({
+            outletId: session.user.outletId,
+            opnameSessionId: v.sessionId,
+            sessionLabel: sessRow?.periodLabel ?? "—",
+            sectionDiffs,
+            entryDate: todayWib,
+            actorId: session.user.id,
+          }),
+        "opname_adjustment",
+      );
+    }
+  }
+
   return ok({
     sessionId: v.sessionId,
     ...result,

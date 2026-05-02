@@ -1,0 +1,65 @@
+/**
+ * mapExpenseCreate — manual expense → journal lines.
+ *
+ * Per design doc §4.12. CRITICAL: only fires for `sourceType='manual'` —
+ * payroll/purchase/refund have their own auto-journal hooks upstream
+ * (markPayrollPaid / purchase.confirm / refundTransaction), so skipping these
+ * via sourceType filter prevents double-counting.
+ *
+ * Account resolution priority:
+ *   1. expenses.accountId (Owner picks per-expense in form)
+ *   2. expense_categories.defaultAccountId (Owner sets per-category once)
+ *   3. fallback: 6901 Lain-lain (passed as final fallback by caller)
+ *
+ * Mapping:
+ *   Dr <expense account>             expense.amount
+ *      Cr 1101 Kas / 1110 Bank      per paymentMethod
+ */
+
+import type { JournalLineInput } from "../posting";
+
+export type ExpensePaymentMethod = "cash" | "transfer" | "other";
+
+export type ExpenseCreateInput = {
+  expenseId: string;
+  outletId: string;
+  /** Date of expense (YYYY-MM-DD WIB). */
+  entryDate: string;
+  amount: number;
+  description: string;
+  paymentMethod: ExpensePaymentMethod;
+  /** Pre-resolved expense account code (caller priority logic). */
+  expenseAccountCode: string;
+};
+
+export function expenseCashBankCode(method: ExpensePaymentMethod): string {
+  switch (method) {
+    case "cash":
+      return "1101";
+    case "transfer":
+      return "1110"; // default Bank BCA
+    case "other":
+      return "1112"; // Bank Lain-lain (atau Owner override via accountId nanti)
+  }
+}
+
+export function mapExpenseCreate(
+  input: ExpenseCreateInput,
+): JournalLineInput[] {
+  if (input.amount <= 0) {
+    throw new Error("MAP_EXPENSE_NONPOSITIVE");
+  }
+
+  return [
+    {
+      accountCode: input.expenseAccountCode,
+      debit: input.amount,
+      description: input.description,
+    },
+    {
+      accountCode: expenseCashBankCode(input.paymentMethod),
+      credit: input.amount,
+      description: `Bayar ${input.paymentMethod}: ${input.description}`,
+    },
+  ];
+}
