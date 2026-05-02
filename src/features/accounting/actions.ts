@@ -109,6 +109,9 @@ export async function fetchCurrentPeriod(): Promise<
 export async function fetchJournalEntries(filters?: {
   periodId?: string;
   status?: "draft" | "posted" | "reversed";
+  sourceType?: string;
+  fromDate?: string;
+  toDate?: string;
   limit?: number;
   offset?: number;
 }): Promise<ApiResult<JournalEntryWithLines[]>> {

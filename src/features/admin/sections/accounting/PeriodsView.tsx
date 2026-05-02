@@ -9,15 +9,21 @@ import {
   BookOpen,
   Unlock,
   ShieldCheck,
+  TrendingUp,
+  TrendingDown,
+  AlertCircle,
 } from "lucide-react";
 import { Badge, Button, Skeleton, toast } from "@/components/ui";
 import {
   closeAccountingPeriod,
   ensureCurrentPeriod,
+  fetchIncomeStatement,
   fetchPeriods,
   lockAccountingPeriod,
   reopenAccountingPeriod,
 } from "@/features/accounting/actions";
+import type { IncomeStatementReport } from "@/features/accounting/reports";
+import { formatRupiah } from "@/lib/money";
 import type {
   PeriodStatus,
   PeriodSummary,
@@ -62,6 +68,7 @@ export function PeriodsView({ viewerRole }: { viewerRole: Role }) {
   const [creating, setCreating] = useState(false);
   const [cutoverOpen, setCutoverOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [preview, setPreview] = useState<IncomeStatementReport | null>(null);
 
   const canClose = hasPermission(viewerRole, "accounting.period.close");
   const canReopen = hasPermission(viewerRole, "accounting.period.reopen");
@@ -75,8 +82,24 @@ export function PeriodsView({ viewerRole }: { viewerRole: Role }) {
     setLoading(true);
     try {
       const res = await fetchPeriods();
-      if (res.ok) setRows(res.data);
-      else toast.error(res.error.message);
+      if (res.ok) {
+        setRows(res.data);
+        // Auto-load preview untuk current open period (yang terbaru status='open')
+        const currentOpen = res.data.find((p) => p.status === "open");
+        if (currentOpen) {
+          const yyyy = currentOpen.periodYear;
+          const mm = String(currentOpen.periodMonth).padStart(2, "0");
+          const lastDay = new Date(yyyy, currentOpen.periodMonth, 0).getDate();
+          const previewRes = await fetchIncomeStatement({
+            fromDate: `${yyyy}-${mm}-01`,
+            toDate: `${yyyy}-${mm}-${String(lastDay).padStart(2, "0")}`,
+            periodLabel: `${MONTH_NAMES[currentOpen.periodMonth]} ${yyyy}`,
+          });
+          if (previewRes.ok) setPreview(previewRes.data);
+        } else {
+          setPreview(null);
+        }
+      } else toast.error(res.error.message);
     } finally {
       setLoading(false);
     }
@@ -188,6 +211,48 @@ export function PeriodsView({ viewerRole }: { viewerRole: Role }) {
           </Button>
         </div>
       </div>
+
+      {/* Period preview tile — current open period quick stats */}
+      {preview ? (
+        <div className="rounded-md border border-mahakan-green-200 bg-mahakan-green-50/30 p-3">
+          <div className="mb-2 flex items-center gap-2">
+            <TrendingUp className="size-4 text-mahakan-green-700" />
+            <span className="text-sm font-semibold text-mahakan-green-900">
+              Ringkasan Periode Berjalan — {preview.periodLabel}
+            </span>
+            <span className="text-xs text-neutral-500">(preview, before close)</span>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-4">
+            <PreviewTile
+              label="Pendapatan Bersih"
+              value={preview.netRevenue}
+              positive
+            />
+            <PreviewTile
+              label="HPP"
+              value={-preview.cogs.subtotal}
+              negative
+            />
+            <PreviewTile
+              label="Beban Operasional"
+              value={-preview.expenses.subtotal}
+              negative
+            />
+            <PreviewTile
+              label="Laba / Rugi Bersih"
+              value={preview.netIncome}
+              emphasis
+            />
+          </div>
+          {preview.netIncome < 0 ? (
+            <div className="mt-2 flex items-start gap-1.5 text-xs text-warning-500">
+              <AlertCircle className="mt-0.5 size-3 shrink-0" />
+              Periode berjalan menunjukkan rugi bersih. Cek anomali di Laporan
+              tab sebelum tutup periode.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="space-y-2">
@@ -321,6 +386,52 @@ export function PeriodsView({ viewerRole }: { viewerRole: Role }) {
         Closing entry: revenue + beban → 3302 Laba Rugi Berjalan → 3301 Saldo
         Laba. Reopen membuat counter-entry (audit).
       </p>
+    </div>
+  );
+}
+
+function PreviewTile({
+  label,
+  value,
+  positive,
+  negative,
+  emphasis,
+}: {
+  label: string;
+  value: number;
+  positive?: boolean;
+  negative?: boolean;
+  emphasis?: boolean;
+}) {
+  const negNumber = value < 0;
+  return (
+    <div
+      className={
+        emphasis
+          ? "rounded-md border border-mahakan-green-300 bg-white p-2.5"
+          : "rounded-md border border-neutral-200 bg-white p-2.5"
+      }
+    >
+      <div className="flex items-center gap-1 text-xs text-neutral-500">
+        {positive ? <TrendingUp className="size-3" /> : null}
+        {negative ? <TrendingDown className="size-3" /> : null}
+        {label}
+      </div>
+      <div
+        className={`mt-0.5 font-mono text-sm font-semibold ${
+          emphasis
+            ? value >= 0
+              ? "text-mahakan-green-700"
+              : "text-danger-500"
+            : negNumber
+              ? "text-danger-500"
+              : "text-neutral-900"
+        }`}
+      >
+        {negNumber ? "(" : ""}
+        {formatRupiah(Math.abs(value))}
+        {negNumber ? ")" : ""}
+      </div>
     </div>
   );
 }

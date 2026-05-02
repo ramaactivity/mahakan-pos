@@ -170,6 +170,9 @@ export async function listJournalEntries(
   filters?: {
     periodId?: string;
     status?: "draft" | "posted" | "reversed";
+    sourceType?: string;
+    fromDate?: string; // YYYY-MM-DD inclusive
+    toDate?: string; // YYYY-MM-DD inclusive
     limit?: number;
     offset?: number;
   },
@@ -180,6 +183,39 @@ export async function listJournalEntries(
   }
   if (filters?.status) {
     conditions.push(eq(journalEntries.status, filters.status));
+  }
+  if (filters?.sourceType) {
+    conditions.push(
+      eq(
+        journalEntries.sourceType,
+        filters.sourceType as
+          | "manual"
+          | "opening_balance"
+          | "pos_sale"
+          | "pos_refund"
+          | "pos_compliment"
+          | "purchase_create"
+          | "purchase_pay"
+          | "purchase_cancel"
+          | "payroll_paid"
+          | "expense_create"
+          | "expense_void"
+          | "income_create"
+          | "income_void"
+          | "cash_deposit_verified"
+          | "aggregator_settlement"
+          | "shift_variance"
+          | "opname_adjustment"
+          | "period_close"
+          | "period_reopen",
+      ),
+    );
+  }
+  if (filters?.fromDate) {
+    conditions.push(gte(journalEntries.entryDate, filters.fromDate));
+  }
+  if (filters?.toDate) {
+    conditions.push(lte(journalEntries.entryDate, filters.toDate));
   }
 
   const limit = filters?.limit ?? 100;

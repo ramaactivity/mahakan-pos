@@ -1,8 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BookOpen, Info, Plus, RotateCcw } from "lucide-react";
-import { Badge, Button, Skeleton, toast } from "@/components/ui";
+import { BookOpen, Filter, Info, Plus, RotateCcw, X } from "lucide-react";
+import {
+  Badge,
+  Button,
+  DateRangePicker,
+  Select,
+  Skeleton,
+  toast,
+} from "@/components/ui";
 import {
   fetchJournalEntries,
   reverseJournalEntry,
@@ -13,6 +20,7 @@ import type {
 } from "@/features/accounting/types";
 import { hasPermission, type Role } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/money";
+import { cn } from "@/lib/utils";
 import { JournalEntryModal } from "./JournalEntryModal";
 
 const STATUS_LABEL: Record<JournalEntryStatus, string> = {
@@ -30,10 +38,48 @@ const STATUS_VARIANT: Record<
   reversed: "neutral",
 };
 
+const SOURCE_TYPE_OPTIONS = [
+  { value: "all", label: "Semua sumber" },
+  { value: "manual", label: "Manual" },
+  { value: "opening_balance", label: "Jurnal Pembukaan" },
+  { value: "pos_sale", label: "POS Sale" },
+  { value: "pos_refund", label: "POS Refund" },
+  { value: "pos_compliment", label: "POS Compliment" },
+  { value: "purchase_create", label: "Purchase Create" },
+  { value: "purchase_pay", label: "Purchase Pay (TOP)" },
+  { value: "purchase_cancel", label: "Purchase Cancel" },
+  { value: "payroll_paid", label: "Payroll Paid" },
+  { value: "expense_create", label: "Expense" },
+  { value: "income_create", label: "Income" },
+  { value: "cash_deposit_verified", label: "Cash Deposit Verified" },
+  { value: "aggregator_settlement", label: "Aggregator Settlement" },
+  { value: "shift_variance", label: "Shift Variance" },
+  { value: "opname_adjustment", label: "Opname Adjustment" },
+  { value: "period_close", label: "Period Close" },
+  { value: "period_reopen", label: "Period Reopen" },
+];
+
+const STATUS_FILTER_OPTIONS: Array<{ value: "all" | JournalEntryStatus; label: string }> = [
+  { value: "all", label: "Semua" },
+  { value: "posted", label: "Posted" },
+  { value: "draft", label: "Draft" },
+  { value: "reversed", label: "Reversed" },
+];
+
 export function JournalView({ viewerRole }: { viewerRole: Role }) {
   const [rows, setRows] = useState<JournalEntryWithLines[]>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+
+  // Filters
+  const [filterSourceType, setFilterSourceType] = useState<string>("all");
+  const [filterStatus, setFilterStatus] = useState<"all" | JournalEntryStatus>(
+    "all",
+  );
+  const [filterRange, setFilterRange] = useState<{
+    from: string | null;
+    to: string | null;
+  }>({ from: null, to: null });
 
   const canDraft = hasPermission(viewerRole, "accounting.journal.draft");
   const canPost = hasPermission(viewerRole, "accounting.journal.post");
@@ -42,7 +88,13 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
   async function load() {
     setLoading(true);
     try {
-      const res = await fetchJournalEntries({ limit: 50 });
+      const res = await fetchJournalEntries({
+        limit: 100,
+        sourceType: filterSourceType === "all" ? undefined : filterSourceType,
+        status: filterStatus === "all" ? undefined : filterStatus,
+        fromDate: filterRange.from ?? undefined,
+        toDate: filterRange.to ?? undefined,
+      });
       if (res.ok) setRows(res.data);
       else toast.error(res.error.message);
     } finally {
@@ -51,9 +103,21 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
     void load();
-  }, []);
+  }, [filterSourceType, filterStatus, filterRange.from, filterRange.to]);
+
+  const hasActiveFilter =
+    filterSourceType !== "all" ||
+    filterStatus !== "all" ||
+    filterRange.from !== null ||
+    filterRange.to !== null;
+
+  function clearFilters() {
+    setFilterSourceType("all");
+    setFilterStatus("all");
+    setFilterRange({ from: null, to: null });
+  }
 
   async function onReverse(entry: JournalEntryWithLines) {
     const reason = prompt(
@@ -74,15 +138,75 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-neutral-700">
-          Daftar entri jurnal (50 terakhir). Auto-jurnal aktif kalau Owner
-          toggle flag di Settings.
+          Daftar entri jurnal (max 100). Auto-jurnal aktif kalau Owner toggle
+          flag di Settings.
         </p>
         {canDraft || canPost ? (
           <Button size="sm" onClick={() => setCreateOpen(true)}>
             <Plus className="size-4" /> Buat Entry Manual
           </Button>
+        ) : null}
+      </div>
+
+      {/* Filters */}
+      <div className="rounded-md border border-neutral-200 bg-neutral-50/50 p-3">
+        <div className="mb-2 flex items-center gap-2">
+          <Filter className="size-4 text-neutral-500" />
+          <span className="text-xs font-medium uppercase text-neutral-500">
+            Filter
+          </span>
+          {hasActiveFilter ? (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="ml-auto inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs text-neutral-600 hover:bg-neutral-100"
+            >
+              <X className="size-3" /> Reset
+            </button>
+          ) : null}
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <Select
+            label="Sumber"
+            options={SOURCE_TYPE_OPTIONS}
+            value={filterSourceType}
+            onValueChange={setFilterSourceType}
+            size="sm"
+          />
+          <div>
+            <label className="mb-1 block text-sm font-medium text-neutral-700">
+              Status
+            </label>
+            <div className="flex flex-wrap gap-1">
+              {STATUS_FILTER_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setFilterStatus(opt.value)}
+                  className={cn(
+                    "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                    filterStatus === opt.value
+                      ? "bg-mahakan-green-700 text-white"
+                      : "bg-white text-neutral-700 hover:bg-neutral-100 border border-neutral-200",
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <DateRangePicker
+            label="Rentang Tanggal"
+            value={filterRange}
+            onChange={(r) => setFilterRange({ from: r.from, to: r.to })}
+          />
+        </div>
+        {hasActiveFilter ? (
+          <p className="mt-2 text-xs text-neutral-500">
+            Menampilkan {rows.length} entri dengan filter aktif
+          </p>
         ) : null}
       </div>
 

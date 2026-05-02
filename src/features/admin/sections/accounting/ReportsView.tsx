@@ -31,6 +31,14 @@ import {
   exportTrialBalancePdf,
 } from "@/lib/pdf-export";
 import {
+  buildBalanceSheetCsv,
+  buildCashFlowStatementCsv,
+  buildGeneralLedgerCsv,
+  buildIncomeStatementCsv,
+  buildTrialBalanceCsv,
+  downloadCsv,
+} from "./accounting-csv";
+import {
   fetchAccounts,
   fetchBalanceSheet,
   fetchCashFlowStatement,
@@ -289,6 +297,13 @@ function TrialBalanceTab() {
     toast.success("PDF Trial Balance terdownload");
   }
 
+  function onExportCsv() {
+    if (!report) return;
+    const csv = buildTrialBalanceCsv(report);
+    downloadCsv(`mahakan-trial-balance-${range.from}_${range.to}.csv`, csv);
+    toast.success("CSV Trial Balance terdownload");
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-end justify-between gap-3">
@@ -300,9 +315,14 @@ function TrialBalanceTab() {
           }}
         />
         {report && report.rows.length > 0 ? (
-          <Button variant="outline" size="sm" onClick={onExportPdf}>
-            <Download className="size-4" /> Export PDF
-          </Button>
+          <div className="flex gap-1">
+            <Button variant="outline" size="sm" onClick={onExportCsv}>
+              <Download className="size-4" /> CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={onExportPdf}>
+              <Download className="size-4" /> PDF
+            </Button>
+          </div>
         ) : null}
       </div>
       {loading || !report ? (
@@ -415,6 +435,13 @@ function IncomeStatementTab() {
     toast.success("PDF Laba Rugi terdownload");
   }
 
+  function onExportCsv() {
+    if (!report) return;
+    const csv = buildIncomeStatementCsv(report);
+    downloadCsv(`mahakan-laba-rugi-${range.from}_${range.to}.csv`, csv);
+    toast.success("CSV Laba Rugi terdownload");
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-end justify-between gap-3">
@@ -426,9 +453,14 @@ function IncomeStatementTab() {
           }}
         />
         {report ? (
-          <Button variant="outline" size="sm" onClick={onExportPdf}>
-            <Download className="size-4" /> Export PDF
-          </Button>
+          <div className="flex gap-1">
+            <Button variant="outline" size="sm" onClick={onExportCsv}>
+              <Download className="size-4" /> CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={onExportPdf}>
+              <Download className="size-4" /> PDF
+            </Button>
+          </div>
         ) : null}
       </div>
       {loading || !report ? (
@@ -526,6 +558,13 @@ function BalanceSheetTab() {
     toast.success("PDF Neraca terdownload");
   }
 
+  function onExportCsv() {
+    if (!report) return;
+    const csv = buildBalanceSheetCsv(report);
+    downloadCsv(`mahakan-neraca-${asOfDate}.csv`, csv);
+    toast.success("CSV Neraca terdownload");
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-end justify-between gap-3">
@@ -535,9 +574,14 @@ function BalanceSheetTab() {
           onChange={(v) => v && setAsOfDate(v)}
         />
         {report ? (
-          <Button variant="outline" size="sm" onClick={onExportPdf}>
-            <Download className="size-4" /> Export PDF
-          </Button>
+          <div className="flex gap-1">
+            <Button variant="outline" size="sm" onClick={onExportCsv}>
+              <Download className="size-4" /> CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={onExportPdf}>
+              <Download className="size-4" /> PDF
+            </Button>
+          </div>
         ) : null}
       </div>
       {loading || !report ? (
@@ -691,6 +735,13 @@ function CashFlowTab() {
     toast.success("PDF Arus Kas terdownload");
   }
 
+  function onExportCsv() {
+    if (!report) return;
+    const csv = buildCashFlowStatementCsv(report);
+    downloadCsv(`mahakan-arus-kas-${range.from}_${range.to}.csv`, csv);
+    toast.success("CSV Arus Kas terdownload");
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-end justify-between gap-3">
@@ -702,9 +753,14 @@ function CashFlowTab() {
           }}
         />
         {report ? (
-          <Button variant="outline" size="sm" onClick={onExportPdf}>
-            <Download className="size-4" /> Export PDF
-          </Button>
+          <div className="flex gap-1">
+            <Button variant="outline" size="sm" onClick={onExportCsv}>
+              <Download className="size-4" /> CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={onExportPdf}>
+              <Download className="size-4" /> PDF
+            </Button>
+          </div>
         ) : null}
       </div>
 
@@ -888,6 +944,16 @@ function GeneralLedgerTab() {
     [accounts],
   );
 
+  function onExportCsv() {
+    if (!report) return;
+    const csv = buildGeneralLedgerCsv(report);
+    downloadCsv(
+      `mahakan-buku-besar-${report.accountCode}-${range.from}_${range.to}.csv`,
+      csv,
+    );
+    toast.success("CSV Buku Besar terdownload");
+  }
+
   return (
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-2">
@@ -906,6 +972,13 @@ function GeneralLedgerTab() {
           }}
         />
       </div>
+      {report && report.entries.length > 0 ? (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={onExportCsv}>
+            <Download className="size-4" /> Export CSV
+          </Button>
+        </div>
+      ) : null}
       {!accountId ? (
         <div className="rounded-md border border-dashed border-neutral-200 p-8 text-center text-sm text-neutral-500">
           Pilih akun untuk lihat buku besar.
