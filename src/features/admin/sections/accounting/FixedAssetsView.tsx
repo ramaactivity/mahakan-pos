@@ -7,6 +7,7 @@ import {
   TrendingDown,
   Trash2,
   Info,
+  Upload,
 } from "lucide-react";
 import { Badge, Button, Skeleton, toast } from "@/components/ui";
 import {
@@ -18,6 +19,7 @@ import { hasPermission, type Role } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/money";
 import { AssetFormModal } from "./AssetFormModal";
 import { DepreciationModal } from "./DepreciationModal";
+import { ImportAssetsModal } from "./ImportAssetsModal";
 
 interface Props {
   viewerRole: Role;
@@ -27,6 +29,7 @@ export function FixedAssetsView({ viewerRole }: Props) {
   const [rows, setRows] = useState<FixedAssetRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [depOpen, setDepOpen] = useState(false);
 
   const canManage = hasPermission(viewerRole, "accounting.coa.manage");
@@ -80,6 +83,13 @@ export function FixedAssetsView({ viewerRole }: Props) {
               disabled={rows.length === 0}
             >
               <TrendingDown className="size-4" /> Hitung Depresiasi
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setImportOpen(true)}
+            >
+              <Upload className="size-4" /> Import CSV
             </Button>
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <Plus className="size-4" /> Tambah Aset
@@ -238,6 +248,17 @@ export function FixedAssetsView({ viewerRole }: Props) {
           onClose={() => setDepOpen(false)}
           onPosted={() => {
             setDepOpen(false);
+            void load();
+          }}
+        />
+      ) : null}
+
+      {importOpen ? (
+        <ImportAssetsModal
+          open={importOpen}
+          onClose={() => setImportOpen(false)}
+          onImported={() => {
+            setImportOpen(false);
             void load();
           }}
         />

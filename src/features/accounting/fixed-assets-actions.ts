@@ -278,6 +278,142 @@ export async function createFixedAsset(
 // Deactivate (soft delete)
 // ============================================================
 
+// ============================================================
+// Sesi Y polish #5 — Bulk CSV Import
+// ============================================================
+
+export type BulkImportRow = {
+  name: string;
+  category: string | null;
+  cost: number;
+  salvageValue: number;
+  usefulLifeMonths: number;
+  acquiredDate: string;
+  assetAccountCode: string;
+  depreciationAccountCode: string;
+  capitalize: boolean;
+  paymentMethod: "cash" | "transfer_bca" | "transfer_bri" | "transfer_other";
+  notes: string | null;
+};
+
+export type BulkImportResult = {
+  inserted: number;
+  capitalized: number;
+  errors: Array<{ name: string; message: string }>;
+};
+
+export async function bulkImportFixedAssets(
+  rows: BulkImportRow[],
+): Promise<ApiResult<BulkImportResult>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.coa.manage")) {
+    return fail(
+      "FORBIDDEN",
+      "Hanya Owner yang dapat bulk import aset tetap",
+    );
+  }
+
+  if (rows.length === 0) {
+    return fail("VALIDATION", "Tidak ada baris untuk di-import");
+  }
+  if (rows.length > 200) {
+    return fail("VALIDATION", "Maksimal 200 baris per import (batch)");
+  }
+
+  // Activate placeholder accounts on first adoption (idempotent — safe re-run).
+  await db
+    .update(chartOfAccounts)
+    .set({ isActive: true, updatedAt: new Date() })
+    .where(
+      and(
+        eq(chartOfAccounts.outletId, session.user.outletId),
+        inArray(chartOfAccounts.code, FIXED_ASSET_PLACEHOLDER_CODES),
+        eq(chartOfAccounts.isActive, false),
+      ),
+    );
+
+  let inserted = 0;
+  let capitalized = 0;
+  const errors: BulkImportResult["errors"] = [];
+  const insertedIds: string[] = [];
+
+  for (const r of rows) {
+    try {
+      const [created] = await db
+        .insert(fixedAssets)
+        .values({
+          outletId: session.user.outletId,
+          name: r.name,
+          category: r.category,
+          cost: r.cost,
+          salvageValue: r.salvageValue,
+          usefulLifeMonths: r.usefulLifeMonths,
+          acquiredDate: r.acquiredDate,
+          assetAccountCode: r.assetAccountCode,
+          depreciationAccountCode: r.depreciationAccountCode,
+          accumulatedDepreciationAccountCode: "1290",
+          notes: r.notes,
+          createdBy: session.user.id,
+          updatedBy: session.user.id,
+        })
+        .returning();
+
+      inserted++;
+      insertedIds.push(created.id);
+
+      // Capitalize journal kalau toggle ON
+      if (r.capitalize) {
+        try {
+          const lines = mapCapitalizeAsset({
+            assetId: created.id,
+            assetName: created.name,
+            outletId: session.user.outletId,
+            entryDate: created.acquiredDate as string,
+            cost: Number(created.cost),
+            assetAccountCode: created.assetAccountCode,
+            paymentMethod: r.paymentMethod,
+          });
+          await recordJournal({
+            outletId: session.user.outletId,
+            entryDate: created.acquiredDate as string,
+            description: `Pengadaan aset: ${created.name} (bulk import)`,
+            sourceType: "manual",
+            sourceId: created.id,
+            lines,
+            actorId: session.user.id,
+          });
+          capitalized++;
+        } catch (e) {
+          // Capitalize failure tidak block insert
+          console.error("[bulk-import:capitalize]", e);
+          errors.push({
+            name: r.name,
+            message: `Asset tersimpan, tapi journal capitalize gagal: ${e instanceof Error ? e.message : String(e)}`,
+          });
+        }
+      }
+    } catch (e) {
+      errors.push({
+        name: r.name,
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  await logAudit({
+    eventType: "fixed_asset.create",
+    userId: session.user.id,
+    entityType: "fixed_asset",
+    entityId: insertedIds[0] ?? null,
+    payload: {
+      summary: `Bulk import aset tetap: ${inserted} sukses, ${capitalized} capitalized, ${errors.length} error`,
+      context: { inserted, capitalized, errorCount: errors.length },
+    },
+  });
+
+  return ok({ inserted, capitalized, errors });
+}
+
 export async function deactivateFixedAsset(
   id: string,
 ): Promise<ApiResult<{ id: string }>> {

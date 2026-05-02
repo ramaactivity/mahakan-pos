@@ -51,6 +51,19 @@ const EVENT_GROUPS: Array<{ label: string; types: string[] }> = [
     label: "Inventory",
     types: AUDIT_EVENT_TYPES.filter((t) => t.startsWith("inventory.")) as string[],
   },
+  {
+    label: "Akuntansi",
+    types: AUDIT_EVENT_TYPES.filter(
+      (t) =>
+        t.startsWith("chart_of_accounts.") ||
+        t.startsWith("accounting_period.") ||
+        t.startsWith("journal_entry.") ||
+        t.startsWith("fixed_asset.") ||
+        t === "opening_balance.posted" ||
+        t === "report.income_statement.export" ||
+        t === "report.balance_sheet.export",
+    ) as string[],
+  },
 ];
 
 const EVENT_TONE: Record<
