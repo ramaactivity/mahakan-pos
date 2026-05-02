@@ -60,3 +60,10 @@ export type {
   OpnameSectionDiff,
   OpnameAdjustmentInput,
 } from "./opname";
+export {
+  mapOpeningBalance,
+  computeOpeningBalanceTotals,
+} from "./openingBalance";
+export type { OpeningBalanceInput } from "./openingBalance";
+export { mapPeriodClose } from "./periodClose";
+export type { PeriodCloseInput, AccountBalance } from "./periodClose";

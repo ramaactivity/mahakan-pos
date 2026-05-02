@@ -5,15 +5,17 @@ import { BookOpen } from "lucide-react";
 import { CoaView } from "./accounting/CoaView";
 import { JournalView } from "./accounting/JournalView";
 import { PeriodsView } from "./accounting/PeriodsView";
+import { ReportsView } from "./accounting/ReportsView";
 import type { Role } from "@/lib/auth/rbac";
 import { cn } from "@/lib/utils";
 
-type AccountingTab = "coa" | "journal" | "periods";
+type AccountingTab = "coa" | "journal" | "periods" | "reports";
 
 const TABS: Array<{ key: AccountingTab; label: string }> = [
   { key: "coa", label: "Bagan Akun" },
   { key: "journal", label: "Jurnal" },
   { key: "periods", label: "Periode" },
+  { key: "reports", label: "Laporan" },
 ];
 
 interface AccountingSectionProps {
@@ -65,9 +67,11 @@ export function AccountingSection({ viewerRole }: AccountingSectionProps) {
         {tab === "coa" ? (
           <CoaView viewerRole={viewerRole} />
         ) : tab === "journal" ? (
-          <JournalView />
+          <JournalView viewerRole={viewerRole} />
+        ) : tab === "periods" ? (
+          <PeriodsView viewerRole={viewerRole} />
         ) : (
-          <PeriodsView />
+          <ReportsView />
         )}
       </div>
     </div>

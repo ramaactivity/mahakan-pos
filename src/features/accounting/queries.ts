@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, count, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   accountingPeriods,
@@ -16,6 +16,7 @@ import type {
   PeriodStatus,
   PeriodSummary,
 } from "./types";
+import type { AccountBalanceRow } from "./reports";
 
 // ---------- Chart of Accounts ----------
 
@@ -302,4 +303,154 @@ export async function listPeriodStatuses(
       desc(accountingPeriods.periodYear),
       desc(accountingPeriods.periodMonth),
     );
+}
+
+// ============================================================
+// Reports — balance aggregation
+// ============================================================
+
+/**
+ * Aggregate journal_lines per account untuk all entries within range, status='posted'.
+ * Used by Trial Balance, Income Statement, and Balance Sheet (entry_date <= asOf).
+ *
+ * `fromDate` null = from beginning of time (untuk balance sheet as-of pattern).
+ * `toDate` inclusive (entry_date <= toDate).
+ */
+export async function getAccountBalances(args: {
+  outletId: string;
+  fromDate: string | null;
+  toDate: string;
+}): Promise<AccountBalanceRow[]> {
+  const conditions = [
+    eq(journalEntries.outletId, args.outletId),
+    eq(journalEntries.status, "posted"),
+    lte(journalEntries.entryDate, args.toDate),
+  ];
+  if (args.fromDate) {
+    conditions.push(gte(journalEntries.entryDate, args.fromDate));
+  }
+
+  const rows = await db
+    .select({
+      accountId: chartOfAccounts.id,
+      code: chartOfAccounts.code,
+      name: chartOfAccounts.name,
+      type: chartOfAccounts.type,
+      normalBalance: chartOfAccounts.normalBalance,
+      isContra: chartOfAccounts.isContra,
+      parentCode: chartOfAccounts.parentCode,
+      debitTotal: sql<string>`COALESCE(SUM(${journalLines.debit}), 0)`,
+      creditTotal: sql<string>`COALESCE(SUM(${journalLines.credit}), 0)`,
+    })
+    .from(chartOfAccounts)
+    .leftJoin(journalLines, eq(journalLines.accountId, chartOfAccounts.id))
+    .leftJoin(
+      journalEntries,
+      and(
+        eq(journalEntries.id, journalLines.entryId),
+        ...conditions,
+      ),
+    )
+    .where(
+      and(
+        eq(chartOfAccounts.outletId, args.outletId),
+        isNull(chartOfAccounts.deletedAt),
+      ),
+    )
+    .groupBy(chartOfAccounts.id);
+
+  return rows.map((r) => ({
+    accountId: r.accountId,
+    code: r.code,
+    name: r.name,
+    type: r.type as AccountBalanceRow["type"],
+    normalBalance: r.normalBalance as AccountBalanceRow["normalBalance"],
+    isContra: r.isContra,
+    parentCode: r.parentCode,
+    debitTotal: Number(r.debitTotal),
+    creditTotal: Number(r.creditTotal),
+  }));
+}
+
+/**
+ * General Ledger entries untuk single account dalam range. Returns raw lines
+ * dengan parent entry context (number, date, description). Caller passes ke
+ * buildGeneralLedger() pure compute untuk running balance.
+ */
+export async function getAccountLedgerEntries(args: {
+  outletId: string;
+  accountId: string;
+  fromDate: string;
+  toDate: string;
+}): Promise<
+  Array<{
+    entryNumber: string;
+    entryDate: string;
+    entryDescription: string;
+    lineDescription: string | null;
+    debit: number;
+    credit: number;
+  }>
+> {
+  const rows = await db
+    .select({
+      entryNumber: journalEntries.entryNumber,
+      entryDate: journalEntries.entryDate,
+      entryDescription: journalEntries.description,
+      lineDescription: journalLines.description,
+      debit: journalLines.debit,
+      credit: journalLines.credit,
+    })
+    .from(journalLines)
+    .innerJoin(
+      journalEntries,
+      and(
+        eq(journalEntries.id, journalLines.entryId),
+        eq(journalEntries.outletId, args.outletId),
+        eq(journalEntries.status, "posted"),
+        gte(journalEntries.entryDate, args.fromDate),
+        lte(journalEntries.entryDate, args.toDate),
+      ),
+    )
+    .where(eq(journalLines.accountId, args.accountId))
+    .orderBy(asc(journalEntries.entryDate), asc(journalEntries.entryNumber));
+
+  return rows.map((r) => ({
+    entryNumber: r.entryNumber,
+    entryDate: String(r.entryDate),
+    entryDescription: r.entryDescription,
+    lineDescription: r.lineDescription,
+    debit: Number(r.debit),
+    credit: Number(r.credit),
+  }));
+}
+
+/**
+ * Opening balance untuk single account sampai (exclusive) `beforeDate`.
+ * Sum of debit - sum of credit dari semua posted entries dengan
+ * entry_date < beforeDate. Raw signed (caller normalizes per normalBalance).
+ */
+export async function getAccountOpeningBalance(args: {
+  outletId: string;
+  accountId: string;
+  beforeDate: string;
+}): Promise<number> {
+  const [r] = await db
+    .select({
+      debitTotal: sql<string>`COALESCE(SUM(${journalLines.debit}), 0)`,
+      creditTotal: sql<string>`COALESCE(SUM(${journalLines.credit}), 0)`,
+    })
+    .from(journalLines)
+    .innerJoin(
+      journalEntries,
+      and(
+        eq(journalEntries.id, journalLines.entryId),
+        eq(journalEntries.outletId, args.outletId),
+        eq(journalEntries.status, "posted"),
+        sql`${journalEntries.entryDate} < ${args.beforeDate}`,
+      ),
+    )
+    .where(eq(journalLines.accountId, args.accountId));
+
+  return Number(r?.debitTotal ?? 0) - Number(r?.creditTotal ?? 0);
 }
