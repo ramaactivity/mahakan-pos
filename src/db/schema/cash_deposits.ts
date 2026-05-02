@@ -38,6 +38,10 @@ export const cashDeposits = pgTable(
     depositDate: date("deposit_date").notNull(),
     amount: bigint("amount", { mode: "number" }).notNull(),
     bankDestination: text("bank_destination").notNull(),
+    /** Sesi T: optional FK ke chart_of_accounts (asset bank account, code 11xx).
+     * Kalau set, accounting auto-journal Dr akun ini saat verify; kalau null,
+     * fallback heuristic dari bankDestination string ("BCA"→1110, "BRI"→1111, else 1112). */
+    bankAccountId: uuid("bank_account_id"),
     referenceNo: text("reference_no"),
     photoUrl: text("photo_url"),
     notes: text("notes"),

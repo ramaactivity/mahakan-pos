@@ -219,6 +219,28 @@ export async function closeShift(
     .where(eq(shifts.id, current.id))
     .returning();
 
+  // Sesi T — Accounting auto-journal hook (shift variance ≠ 0).
+  if (variance !== 0) {
+    const { fireJournalHook, postJournalForShiftVariance } = await import(
+      "@/features/accounting/hooks"
+    );
+    const closedDate = updated.closedAt
+      ? new Date(updated.closedAt).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    fireJournalHook(
+      () =>
+        postJournalForShiftVariance({
+          outletId: session.user.outletId,
+          shiftId: updated.id,
+          shiftLabel: `Shift ${updated.id.slice(0, 8)}`,
+          variance,
+          entryDate: closedDate,
+          actorId: session.user.id,
+        }),
+      "shift_variance",
+    );
+  }
+
   return ok({
     shift: updated,
     summary: {

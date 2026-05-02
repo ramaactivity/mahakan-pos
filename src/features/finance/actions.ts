@@ -5,6 +5,7 @@ import { db } from "@/db";
 import {
   aggregatorSettlements,
   cashDeposits,
+  chartOfAccounts,
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
@@ -346,6 +347,37 @@ export async function verifyCashDeposit(
     },
   }).catch((e) => console.error("[audit cash_deposit.verify]", e));
 
+  // Sesi T — Accounting auto-journal hook (deposit verified). Resolve bank
+  // account code via FK kalau di-set, else fallback heuristic dari destination.
+  {
+    const { fireJournalHook, postJournalForCashDepositVerified } = await import(
+      "@/features/accounting/hooks"
+    );
+    let bankAccountCode: string | null = null;
+    if (row.bankAccountId) {
+      const [bankAcc] = await db
+        .select({ code: chartOfAccounts.code })
+        .from(chartOfAccounts)
+        .where(eq(chartOfAccounts.id, row.bankAccountId))
+        .limit(1);
+      bankAccountCode = bankAcc?.code ?? null;
+    }
+    fireJournalHook(
+      () =>
+        postJournalForCashDepositVerified({
+          outletId: session.user.outletId,
+          cashDepositId: row.id,
+          amount: Number(row.amount),
+          bankAccountCode,
+          bankDestination: row.bankDestination,
+          entryDate: String(row.depositDate),
+          referenceNo: row.referenceNo,
+          actorId: session.user.id,
+        }),
+      "cash_deposit_verified",
+    );
+  }
+
   return ok(row);
 }
 
@@ -451,6 +483,49 @@ export async function createAggregatorSettlement(
       actorRole: session.user.role,
     },
   }).catch((e) => console.error("[audit aggregator_settlement.create]", e));
+
+  // Sesi T — Accounting auto-journal hook (settlement create). Channel-aware:
+  // QRIS/EDC clear piutang; GoFood/Grab/Shopee recognize revenue ke 4104.
+  {
+    const { fireJournalHook, postJournalForAggregatorSettlement } = await import(
+      "@/features/accounting/hooks"
+    );
+    let bankAccountCode: string | null = null;
+    if (row.bankAccountId) {
+      const [bankAcc] = await db
+        .select({ code: chartOfAccounts.code })
+        .from(chartOfAccounts)
+        .where(eq(chartOfAccounts.id, row.bankAccountId))
+        .limit(1);
+      bankAccountCode = bankAcc?.code ?? null;
+    }
+    const entryDate = row.bankCreditedAt
+      ? new Date(row.bankCreditedAt).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    fireJournalHook(
+      () =>
+        postJournalForAggregatorSettlement({
+          outletId: session.user.outletId,
+          settlementId: row.id,
+          channel: row.channel as
+            | "edc_bca"
+            | "gofood"
+            | "grabfood"
+            | "shopeefood"
+            | "qris",
+          grossAmount: Number(row.grossAmount),
+          feeAmount: Number(row.feeAmount),
+          netAmount: Number(row.netAmount),
+          bankAccountCode,
+          periodFrom: String(row.periodFrom),
+          periodTo: String(row.periodTo),
+          entryDate,
+          referenceNo: row.referenceNo,
+          actorId: session.user.id,
+        }),
+      "aggregator_settlement",
+    );
+  }
 
   return ok(row);
 }

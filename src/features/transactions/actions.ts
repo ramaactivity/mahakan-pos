@@ -674,6 +674,23 @@ export async function createTransaction(
       );
     }
 
+    // Sesi T — Accounting auto-journal hook (fire-and-forget, feature-flagged).
+    // Skipped when saveAsOpenBill calls (status flipped to 'open' before paid).
+    if (!opts.skipEarn && result.trx.status === "paid") {
+      const { fireJournalHook, postJournalForPosSale } = await import(
+        "@/features/accounting/hooks"
+      );
+      fireJournalHook(
+        () =>
+          postJournalForPosSale({
+            outletId: session.user.outletId,
+            transactionId: result.trx.id,
+            actorId: session.user.id,
+          }),
+        "pos_sale",
+      );
+    }
+
     return ok({
       ...result.trx,
       items: result.items.map((it) => ({
@@ -995,6 +1012,26 @@ export async function refundTransaction(
       actorRole: session.user.role,
     },
   });
+
+  // Sesi T — Accounting auto-journal (full refund). Source id = transaction.id
+  // (full refund happens once per transaction max). Partial refunds use a
+  // separate sourceType + refund_event_id (see refundTransactionPartial).
+  {
+    const { fireJournalHook, postJournalForPosRefund } = await import(
+      "@/features/accounting/hooks"
+    );
+    fireJournalHook(
+      () =>
+        postJournalForPosRefund({
+          outletId: session.user.outletId,
+          transactionId: result.id,
+          refundEventId: result.id, // full-refund: 1:1 ke transaction
+          refundedAmount: result.total,
+          actorId: session.user.id,
+        }),
+      "pos_refund_full",
+    );
+  }
 
   return ok({ transaction: result });
 }
@@ -1780,6 +1817,23 @@ export async function closeOpenBill(
   if (current.customerId !== null) {
     earnPointsForTransaction(input.transactionId).catch((e) =>
       console.error("[loyalty earn close]", e),
+    );
+  }
+
+  // Sesi T — Accounting auto-journal hook (open bill → paid). Fire here, NOT
+  // di saveAsOpenBill (which calls createTransaction with skipEarn=true).
+  {
+    const { fireJournalHook, postJournalForPosSale } = await import(
+      "@/features/accounting/hooks"
+    );
+    fireJournalHook(
+      () =>
+        postJournalForPosSale({
+          outletId: session.user.outletId,
+          transactionId: input.transactionId,
+          actorId: session.user.id,
+        }),
+      "pos_sale_open_bill_close",
     );
   }
 

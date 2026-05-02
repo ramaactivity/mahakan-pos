@@ -584,6 +584,27 @@ export async function markPayrollPaid(
     }).catch((e) => console.error("[audit payroll.expense.create]", e));
   }
 
+  // Sesi T — Accounting auto-journal hook (payroll paid).
+  if (result.totalNet > 0) {
+    const { fireJournalHook, postJournalForPayrollPaid } = await import(
+      "@/features/accounting/hooks"
+    );
+    const todayWib = toJakartaDateOnly(new Date());
+    fireJournalHook(
+      () =>
+        postJournalForPayrollPaid({
+          outletId: session.user.outletId,
+          payrollPeriodId: periodId,
+          periodLabel: result.row.label,
+          totalNetPay: result.totalNet,
+          paymentMethod: paymentMethod === "cash" ? "cash" : "transfer",
+          entryDate: todayWib,
+          actorId: session.user.id,
+        }),
+      "payroll_paid",
+    );
+  }
+
   return ok(result.row);
 }
 

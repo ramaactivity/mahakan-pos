@@ -42,6 +42,10 @@ export const aggregatorSettlements = pgTable(
     netAmount: bigint("net_amount", { mode: "number" }).notNull(),
 
     bankCreditedAt: timestamp("bank_credited_at", { withTimezone: true }),
+    /** Sesi T: optional FK ke chart_of_accounts (asset bank account, code 11xx).
+     * Kalau set, accounting auto-journal Dr akun ini saat create; kalau null,
+     * fallback ke 1110 Bank BCA default. */
+    bankAccountId: uuid("bank_account_id"),
     referenceNo: text("reference_no"),
     notes: text("notes"),
 
