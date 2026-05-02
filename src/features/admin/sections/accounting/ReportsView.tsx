@@ -1,8 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, BookOpen, FileText, TrendingUp } from "lucide-react";
 import {
+  BarChart3,
+  BookOpen,
+  CheckCircle2,
+  FileText,
+  ShieldCheck,
+  TrendingUp,
+  AlertTriangle,
+  XCircle,
+} from "lucide-react";
+import {
+  Badge,
   Combobox,
   DatePicker,
   DateRangePicker,
@@ -16,6 +26,7 @@ import {
   fetchGeneralLedger,
   fetchIncomeStatement,
   fetchTrialBalance,
+  fetchValidationReport,
 } from "@/features/accounting/actions";
 import type {
   AccountListRow,
@@ -25,13 +36,15 @@ import type {
   GeneralLedgerReport,
   IncomeStatementReport,
   TrialBalanceReport,
+  ValidationReport,
 } from "@/features/accounting/reports";
 import { formatRupiah } from "@/lib/money";
 import { cn } from "@/lib/utils";
 
-type ReportTab = "tb" | "is" | "bs" | "gl";
+type ReportTab = "validate" | "tb" | "is" | "bs" | "gl";
 
 const TABS: Array<{ key: ReportTab; label: string; Icon: typeof FileText }> = [
+  { key: "validate", label: "Validasi Drift", Icon: ShieldCheck },
   { key: "tb", label: "Trial Balance", Icon: FileText },
   { key: "is", label: "Laba Rugi", Icon: TrendingUp },
   { key: "bs", label: "Neraca", Icon: BarChart3 },
@@ -39,7 +52,7 @@ const TABS: Array<{ key: ReportTab; label: string; Icon: typeof FileText }> = [
 ];
 
 export function ReportsView() {
-  const [tab, setTab] = useState<ReportTab>("is");
+  const [tab, setTab] = useState<ReportTab>("validate");
 
   return (
     <div className="space-y-3">
@@ -65,7 +78,9 @@ export function ReportsView() {
       </div>
 
       <div className="rounded-md border border-neutral-200 bg-white p-4">
-        {tab === "tb" ? (
+        {tab === "validate" ? (
+          <ValidationTab />
+        ) : tab === "tb" ? (
           <TrialBalanceTab />
         ) : tab === "is" ? (
           <IncomeStatementTab />
@@ -75,6 +90,148 @@ export function ReportsView() {
           <GeneralLedgerTab />
         )}
       </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Validation (Drift Detector) — Sesi W (Field Validation)
+// ============================================================
+
+function ValidationTab() {
+  const [asOfDate, setAsOfDate] = useState<string>(
+    new Date().toISOString().slice(0, 10),
+  );
+  const [report, setReport] = useState<ValidationReport | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    const res = await fetchValidationReport(asOfDate);
+    setLoading(false);
+    if (res.ok) setReport(res.data);
+    else toast.error(res.error.message);
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    void load();
+  }, [asOfDate]);
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-mahakan-green-100 bg-mahakan-green-50/40 p-3 text-xs text-neutral-700">
+        <strong>Validasi Drift</strong> — bandingkan saldo per Buku Besar vs
+        sumber data Finance/Inventory/Purchase. Status &ldquo;OK&rdquo; = match
+        sempurna. &ldquo;Warning&rdquo; = drift kecil (≤ 1%, biasanya rounding).
+        &ldquo;Critical&rdquo; = drift signifikan, perlu investigasi (cek
+        auto-journal hooks, manual entry yang lupa, atau opname/setoran belum
+        ter-reflek).
+      </div>
+
+      <DatePicker
+        label="Per tanggal"
+        value={asOfDate}
+        onChange={(v) => v && setAsOfDate(v)}
+      />
+
+      {loading || !report ? (
+        <Skeleton className="h-40 w-full" />
+      ) : (
+        <>
+          <div className="overflow-hidden rounded-md border border-neutral-200">
+            <table className="min-w-full text-sm">
+              <thead className="bg-neutral-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-medium uppercase text-neutral-500">
+                    Item
+                  </th>
+                  <th className="px-3 py-2 text-right text-xs font-medium uppercase text-neutral-500">
+                    Buku Besar
+                  </th>
+                  <th className="px-3 py-2 text-right text-xs font-medium uppercase text-neutral-500">
+                    Sumber Data
+                  </th>
+                  <th className="px-3 py-2 text-right text-xs font-medium uppercase text-neutral-500">
+                    Selisih
+                  </th>
+                  <th className="px-3 py-2 text-left text-xs font-medium uppercase text-neutral-500">
+                    Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-100">
+                {report.rows.map((row) => (
+                  <tr key={row.label}>
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-neutral-900">
+                        {row.label}
+                      </div>
+                      <div className="text-xs text-neutral-500">
+                        Akun:{" "}
+                        <span className="font-mono">
+                          {row.accountCodes.join(" + ")}
+                        </span>
+                      </div>
+                      {row.note ? (
+                        <div className="mt-1 text-xs text-neutral-600">
+                          {row.note}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatRupiah(row.ledgerAmount)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatRupiah(row.sourceAmount)}
+                    </td>
+                    <td
+                      className={cn(
+                        "px-3 py-2 text-right font-mono",
+                        row.diff === 0
+                          ? "text-neutral-500"
+                          : row.diff > 0
+                            ? "text-warning-500"
+                            : "text-danger-500",
+                      )}
+                    >
+                      {row.diff === 0
+                        ? "—"
+                        : `${row.diff > 0 ? "+" : ""}${formatRupiah(row.diff)}`}
+                    </td>
+                    <td className="px-3 py-2">
+                      {row.status === "ok" ? (
+                        <Badge variant="success">
+                          <CheckCircle2 className="size-3" /> OK
+                        </Badge>
+                      ) : row.status === "warning" ? (
+                        <Badge variant="warning">
+                          <AlertTriangle className="size-3" /> Warning
+                        </Badge>
+                      ) : (
+                        <Badge variant="danger">
+                          <XCircle className="size-3" /> Critical
+                        </Badge>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {report.allClean ? (
+            <div className="rounded-md border border-success-500/50 bg-success-100/40 p-3 text-sm text-success-500">
+              ✓ Semua drift bersih. Buku Besar match sumber data.
+            </div>
+          ) : (
+            <div className="rounded-md border border-warning-500/50 bg-warning-100/40 p-3 text-sm text-neutral-700">
+              ⚠ Ada drift terdeteksi. Lihat docs/11-VALIDATION-RUNBOOK.md untuk
+              langkah investigasi + remediasi.
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

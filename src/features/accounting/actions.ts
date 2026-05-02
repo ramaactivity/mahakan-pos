@@ -42,10 +42,12 @@ import {
   buildGeneralLedger,
   buildIncomeStatement,
   buildTrialBalance,
+  buildValidationReport,
   type BalanceSheetReport,
   type GeneralLedgerReport,
   type IncomeStatementReport,
   type TrialBalanceReport,
+  type ValidationReport,
 } from "./reports";
 import {
   fail,
@@ -1100,6 +1102,97 @@ export async function fetchBalanceSheet(
   // in periods belum closed). Since 3302 line itself in balances reflects
   // closing-entry transfers + manual posts, we trust DB. Pass 0 untuk now.
   return ok(buildBalanceSheet(balances, asOfDate, 0));
+}
+
+/**
+ * Sesi W (Field Validation) — fetch ledger balances + Finance source data
+ * + compute drift report. Owner uses ini selama post-cutover monitoring
+ * untuk detect kalau auto-journal hooks bug atau lupa post manual entry.
+ */
+export async function fetchValidationReport(
+  asOfDate: string,
+): Promise<ApiResult<ValidationReport>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.report.view")) {
+    return fail("FORBIDDEN", "Tidak punya akses laporan akuntansi");
+  }
+
+  // Ledger side: aggregate journal_lines per code grouped.
+  const balances = await getAccountBalances({
+    outletId: session.user.outletId,
+    fromDate: null,
+    toDate: asOfDate,
+  });
+  const byCode = new Map(balances.map((b) => [b.code, b]));
+  const ledgerKas = (byCode.get("1101")?.debitTotal ?? 0)
+    - (byCode.get("1101")?.creditTotal ?? 0)
+    + (byCode.get("1102")?.debitTotal ?? 0)
+    - (byCode.get("1102")?.creditTotal ?? 0);
+  const ledgerPersediaan =
+    (byCode.get("1140")?.debitTotal ?? 0)
+    - (byCode.get("1140")?.creditTotal ?? 0)
+    + (byCode.get("1141")?.debitTotal ?? 0)
+    - (byCode.get("1141")?.creditTotal ?? 0)
+    + (byCode.get("1142")?.debitTotal ?? 0)
+    - (byCode.get("1142")?.creditTotal ?? 0);
+  // Hutang Dagang credit-normal: positive balance = creditTotal - debitTotal.
+  const ledgerHutang =
+    (byCode.get("2101")?.creditTotal ?? 0)
+    - (byCode.get("2101")?.debitTotal ?? 0);
+
+  // Source side:
+  // 1. Cash on hand — dynamic import dari finance/queries supaya barrel
+  //    accounting tidak pull finance dependency.
+  const { getCashOnHand } = await import("@/features/finance/queries");
+  const cashSnapshot = await getCashOnHand(session.user.outletId);
+  // Pure ledger comparison: pakai cashOnHand only (already reconciled
+  // Finance side). Pending deposits / open shift drawer adalah sub-set
+  // yang sudah included di cashOnHand calc — see getCashOnHand impl.
+  const sourceCashOnHandStrict = cashSnapshot.cashOnHand;
+
+  // 2. Persediaan value
+  const ingRows = await db
+    .select({
+      total: sql<string>`COALESCE(SUM(${ingredients.currentStock} * ${ingredients.costPerUnit}), 0)`,
+    })
+    .from(ingredients)
+    .where(
+      and(
+        eq(ingredients.outletId, session.user.outletId),
+        isNull(ingredients.deletedAt),
+      ),
+    );
+  const sourcePersediaan = Math.round(Number(ingRows[0]?.total ?? 0));
+
+  // 3. Hutang Dagang outstanding
+  const [hutangRow] = await db
+    .select({
+      total: sql<string>`COALESCE(SUM(${purchases.totalAmount}), 0)`,
+    })
+    .from(purchases)
+    .where(
+      and(
+        eq(purchases.outletId, session.user.outletId),
+        eq(purchases.status, "pending_payment"),
+      ),
+    );
+  const sourceHutang = Math.round(Number(hutangRow?.total ?? 0));
+
+  return ok(
+    buildValidationReport({
+      asOfDate,
+      ledger: {
+        kasTunai: ledgerKas,
+        persediaan: ledgerPersediaan,
+        hutangDagang: ledgerHutang,
+      },
+      source: {
+        cashOnHand: sourceCashOnHandStrict,
+        persediaanValue: sourcePersediaan,
+        hutangDagangPending: sourceHutang,
+      },
+    }),
+  );
 }
 
 export async function fetchGeneralLedger(args: {

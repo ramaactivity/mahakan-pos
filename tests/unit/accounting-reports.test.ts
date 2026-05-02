@@ -9,6 +9,7 @@ import {
   buildGeneralLedger,
   buildIncomeStatement,
   buildTrialBalance,
+  buildValidationReport,
   type AccountBalanceRow,
 } from "@/features/accounting/reports";
 
@@ -485,5 +486,113 @@ describe("buildGeneralLedger", () => {
     });
     expect(report.entries[0].balanceAfter).toBe(100_000);
     expect(report.entries[1].balanceAfter).toBe(80_000);
+  });
+});
+
+// ============================================================
+// buildValidationReport (Sesi W field validation)
+// ============================================================
+
+describe("buildValidationReport", () => {
+  const ASOF = "2026-06-15";
+
+  it("all clean: ledger matches source exactly", () => {
+    const r = buildValidationReport({
+      asOfDate: ASOF,
+      ledger: {
+        kasTunai: 1_000_000,
+        persediaan: 5_000_000,
+        hutangDagang: 2_000_000,
+      },
+      source: {
+        cashOnHand: 1_000_000,
+        persediaanValue: 5_000_000,
+        hutangDagangPending: 2_000_000,
+      },
+    });
+    expect(r.allClean).toBe(true);
+    expect(r.rows.every((row) => row.status === "ok")).toBe(true);
+    expect(r.rows.every((row) => row.diff === 0)).toBe(true);
+  });
+
+  it("warning level (≤ 1% drift)", () => {
+    const r = buildValidationReport({
+      asOfDate: ASOF,
+      ledger: {
+        kasTunai: 1_000_000,
+        persediaan: 5_000_000,
+        hutangDagang: 2_000_000,
+      },
+      source: {
+        cashOnHand: 1_005_000, // 0.5% diff
+        persediaanValue: 5_000_000,
+        hutangDagangPending: 2_000_000,
+      },
+    });
+    expect(r.allClean).toBe(false);
+    const cashRow = r.rows.find((row) => row.label === "Kas Tunai")!;
+    expect(cashRow.status).toBe("warning");
+    expect(cashRow.diff).toBe(-5000);
+  });
+
+  it("critical level (> 1% drift)", () => {
+    const r = buildValidationReport({
+      asOfDate: ASOF,
+      ledger: {
+        kasTunai: 1_000_000,
+        persediaan: 5_000_000,
+        hutangDagang: 2_000_000,
+      },
+      source: {
+        cashOnHand: 800_000, // 25% diff
+        persediaanValue: 5_000_000,
+        hutangDagangPending: 2_000_000,
+      },
+    });
+    const cashRow = r.rows.find((row) => row.label === "Kas Tunai")!;
+    expect(cashRow.status).toBe("critical");
+    expect(cashRow.note).toMatch(/Drift signifikan/);
+  });
+
+  it("zero ledger and zero source: ok", () => {
+    const r = buildValidationReport({
+      asOfDate: ASOF,
+      ledger: { kasTunai: 0, persediaan: 0, hutangDagang: 0 },
+      source: { cashOnHand: 0, persediaanValue: 0, hutangDagangPending: 0 },
+    });
+    expect(r.allClean).toBe(true);
+  });
+
+  it("zero ledger but non-zero source: critical (no rounding refuge)", () => {
+    const r = buildValidationReport({
+      asOfDate: ASOF,
+      ledger: { kasTunai: 0, persediaan: 0, hutangDagang: 0 },
+      source: {
+        cashOnHand: 100_000,
+        persediaanValue: 0,
+        hutangDagangPending: 0,
+      },
+    });
+    expect(r.allClean).toBe(false);
+    const cashRow = r.rows.find((row) => row.label === "Kas Tunai")!;
+    expect(cashRow.status).toBe("critical");
+  });
+
+  it("returns 3 rows always", () => {
+    const r = buildValidationReport({
+      asOfDate: ASOF,
+      ledger: { kasTunai: 1, persediaan: 1, hutangDagang: 1 },
+      source: {
+        cashOnHand: 1,
+        persediaanValue: 1,
+        hutangDagangPending: 1,
+      },
+    });
+    expect(r.rows.length).toBe(3);
+    expect(r.rows.map((row) => row.label)).toEqual([
+      "Kas Tunai",
+      "Persediaan Bahan Baku",
+      "Hutang Dagang (TOP)",
+    ]);
   });
 });

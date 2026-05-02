@@ -337,6 +337,150 @@ export type GeneralLedgerReport = {
   closingBalance: number;
 };
 
+// ============================================================
+// Validation Report — Ledger vs Source Drift Check
+// ============================================================
+
+/**
+ * Sesi W (Field Validation) — compares accounting ledger balances vs source
+ * data dari Finance module + ingredient stock + purchases. Used during
+ * post-cutover monitoring untuk detect drift kalau auto-journal hooks bug
+ * atau kalau Owner forgot post manual entry.
+ *
+ * 3 trustworthy validations (high signal):
+ *   - Kas Tunai (1101 + 1102) vs Finance getCashOnHand snapshot
+ *   - Persediaan (1140 + 1141 + 1142) vs sum ingredients × cost grouped section
+ *   - Hutang Dagang (2101) vs sum purchases status='pending_payment'
+ *
+ * Bank + P&L validation skipped — bank reconciliation needs bank statement
+ * (manual), P&L cross-check Owner does visually via Reports tab + Finance Arus Kas.
+ */
+export type ValidationRow = {
+  label: string;
+  /** Account codes that contribute (display only). */
+  accountCodes: string[];
+  ledgerAmount: number;
+  sourceAmount: number;
+  diff: number;
+  /** "ok" kalau diff = 0, "warning" kalau ≤ 1% threshold (rounding), "critical" kalau > 1%. */
+  status: "ok" | "warning" | "critical";
+  /** Optional human note kalau drift terdeteksi. */
+  note?: string;
+};
+
+export type ValidationReport = {
+  asOfDate: string;
+  rows: ValidationRow[];
+  /** True kalau semua row status='ok'. */
+  allClean: boolean;
+};
+
+const WARNING_THRESHOLD_PCT = 0.01; // 1%
+
+function classifyDrift(
+  ledger: number,
+  source: number,
+): { diff: number; status: ValidationRow["status"] } {
+  const diff = ledger - source;
+  if (diff === 0) return { diff: 0, status: "ok" };
+  // Avoid divide-by-zero. Large absolute drift on near-zero numbers = critical.
+  const base = Math.max(Math.abs(ledger), Math.abs(source));
+  if (base === 0) return { diff, status: "critical" };
+  const pct = Math.abs(diff) / base;
+  return {
+    diff,
+    status: pct <= WARNING_THRESHOLD_PCT ? "warning" : "critical",
+  };
+}
+
+export function buildValidationReport(args: {
+  asOfDate: string;
+  ledger: {
+    kasTunai: number;          // 1101 + 1102
+    persediaan: number;        // 1140 + 1141 + 1142
+    hutangDagang: number;      // 2101
+  };
+  source: {
+    cashOnHand: number;        // dari getCashOnHand
+    persediaanValue: number;   // sum ingredients × cost
+    hutangDagangPending: number; // sum purchases pending_payment
+  };
+}): ValidationReport {
+  const rows: ValidationRow[] = [];
+
+  // Kas Tunai
+  {
+    const { diff, status } = classifyDrift(
+      args.ledger.kasTunai,
+      args.source.cashOnHand,
+    );
+    rows.push({
+      label: "Kas Tunai",
+      accountCodes: ["1101", "1102"],
+      ledgerAmount: args.ledger.kasTunai,
+      sourceAmount: args.source.cashOnHand,
+      diff,
+      status,
+      note:
+        status === "critical"
+          ? "Drift signifikan vs Finance Cash-on-Hand. Cek apakah ada setoran tunai belum verified atau shift variance hook gak fire."
+          : status === "warning"
+            ? "Drift kecil — kemungkinan rounding atau cash variance kecil yang belum ter-jurnal."
+            : undefined,
+    });
+  }
+
+  // Persediaan
+  {
+    const { diff, status } = classifyDrift(
+      args.ledger.persediaan,
+      args.source.persediaanValue,
+    );
+    rows.push({
+      label: "Persediaan Bahan Baku",
+      accountCodes: ["1140", "1141", "1142"],
+      ledgerAmount: args.ledger.persediaan,
+      sourceAmount: args.source.persediaanValue,
+      diff,
+      status,
+      note:
+        status === "critical"
+          ? "Drift signifikan vs sum ingredients×cost. Cek apakah ada opname finalize belum ter-jurnal atau cost_per_unit berubah tanpa adjust."
+          : status === "warning"
+            ? "Drift kecil — kemungkinan cost rounding atau opname adjustment minor."
+            : undefined,
+    });
+  }
+
+  // Hutang Dagang
+  {
+    const { diff, status } = classifyDrift(
+      args.ledger.hutangDagang,
+      args.source.hutangDagangPending,
+    );
+    rows.push({
+      label: "Hutang Dagang (TOP)",
+      accountCodes: ["2101"],
+      ledgerAmount: args.ledger.hutangDagang,
+      sourceAmount: args.source.hutangDagangPending,
+      diff,
+      status,
+      note:
+        status === "critical"
+          ? "Drift signifikan vs sum purchases pending_payment. Cek apakah ada purchase create/pay/cancel hook belum fire atau purchase status manual diubah."
+          : status === "warning"
+            ? "Drift kecil — kemungkinan rounding."
+            : undefined,
+    });
+  }
+
+  return {
+    asOfDate: args.asOfDate,
+    rows,
+    allClean: rows.every((r) => r.status === "ok"),
+  };
+}
+
 export function buildGeneralLedger(args: {
   accountCode: string;
   accountName: string;

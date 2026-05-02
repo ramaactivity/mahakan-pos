@@ -20,7 +20,8 @@
     "seed:default-promos": "tsx --env-file-if-exists=.env.local scripts/seed-default-promos.ts",
     "seed:suppliers-and-sections": "tsx --env-file-if-exists=.env.local scripts/seed-suppliers-and-sections.ts",
     "seed:bulk-ingredients": "tsx --env-file-if-exists=.env.local scripts/seed-bulk-ingredients.ts",
-    "seed:accounts": "tsx --env-file-if-exists=.env.local scripts/seed-accounts.ts"
+    "seed:accounts": "tsx --env-file-if-exists=.env.local scripts/seed-accounts.ts",
+    "accounting:smoke": "tsx --env-file-if-exists=.env.local scripts/accounting-smoke.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.2",
