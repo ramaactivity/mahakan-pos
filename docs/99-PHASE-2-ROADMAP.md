@@ -237,6 +237,11 @@ Saat ini production = release/phase-1 langsung. Phase 2 mungkin butuh staging br
 | **D53** | Audit `transaction.reprint` emit HANYA dari HistoryDetailModal split print (post-paid scenarios). Bukan dari PaidPanel (in-flow expected) atau OrderQueuePanel (kitchen prep tickets, irrelevant) | Signal-to-noise — Galih's concern likely abuse detection on historical reprints, not in-flow ops | 2026-04-29 |
 | **D54** | No PIN gate on reprint. Any role yang bisa view transaction bisa reprint. Audit log = passive observation only | Reprint adalah read-only ops; PIN guard adds friction tanpa security value. Future: tambah kalau Owner request abuse prevention setelah field test | 2026-04-29 |
 | **D55** | Sesi 14 migration order: migrate FIRST, deploy SECOND (kebalikan dari migration-ordering-rule untuk DROP/ALTER) | Pure additive nullable column AND new TS schema requires column to exist. Old code (pre-deploy) doesn't reference column → migrate-first window aman | 2026-04-29 |
+| **D56** | Accounting basis = **hybrid**: accrual untuk POS sales (revenue saat sale, piutang ke akun channel sampai settle), TOP purchases (hutang dagang sampai bayar), payroll (akrual bulanan); cash basis untuk operasional kecil (sewa/listrik/internet) | Selaras dengan struktur tabel existing (sourceType enum di expenses, settle lifecycle di aggregator_settlements + cash_deposits). Operasional kecil tidak ada lag signifikan | 2026-05-02 |
+| **D57** | COA detail level = **standard ~52 akun**, 4-digit code (1xxx aset / 2xxx kewajiban / 3xxx ekuitas / 4xxx pendapatan / 5xxx HPP / 6xxx beban) | UMKM kafe single-outlet — 30 terlalu kasar (gak bisa pisah penjualan makanan/minuman), 100+ overwhelming. 52 = enough granularity tanpa beban Owner | 2026-05-02 |
+| **D58** | Accounting backfill = **cutover 1 Juni 2026**. Owner input "Jurnal Pembukaan" (saldo per 31 Mei 2026) lewat wizard. Pre-cutover transactions tidak di-journal — akses via Finance views existing | Clean break, low migration risk. Backfill semua = high effort + risk error untuk gain history yang Owner jarang lookup back | 2026-05-02 |
+| **D59** | Period close cadence = **monthly**, calendar Asia/Jakarta. Period state machine: open → closed → locked. Reopen closed → open Owner-only dengan audit | Selaras siklus payroll bulanan + settlement aggregator + praktek umum pembukuan UMKM Indonesia | 2026-05-02 |
+| **D60** | Manual journal entry = **Owner-only dengan PIN gate**. Manager bisa view + draft tapi posting wajib Owner re-PIN. Reverse entry juga Owner-only | Selaras pola void/refund/compliment yang udah ada (D46 PIN required all roles). Ledger integrity = high-stakes, deserves friction | 2026-05-02 |
 
 Decisions baru selama Phase 2 ditambahkan di sini saat pengambilan keputusan.
 
@@ -291,6 +296,30 @@ Detail "why" + "how" untuk M26 + M27 features di:
 
 ---
 
+## 12. Sesi R Addition — Accounting / General Ledger Tier (2026-05-02)
+
+Setelah sesi Q ship Finance/Keuangan module (single-entry: settlement harian, setoran tunai, arus kas, rekonsiliasi aggregator, hutang surfacing), Owner direction = lanjut ke proper double-entry accounting.
+
+**Design doc**: [docs/10-ACCOUNTING-DESIGN.md](10-ACCOUNTING-DESIGN.md) — full spec. Decisions D56-D60 di §10 di atas.
+
+**Phasing 5 sesi (S-V + opsional W):**
+
+| Sesi | Fokus | Estimasi | Risk |
+|---|---|---|---|
+| S | Schema (4 tables) + COA seed 52 akun + Admin UI read-only | 3-4 hari | Medium |
+| T | Auto-journal POS + payroll + cash deposit + aggregator + cutover wizard | 4-5 hari | **High** (touches createTransaction live flow; feature flag default OFF) |
+| U | Auto-journal purchases + manual expense classification + income + opname | 3-4 hari | Medium-High |
+| V | Manual journal Owner-only + period close + Reports (TB/GL/IS/Neraca) | 4-5 hari | Medium |
+| W (opsional) | Fixed asset module + monthly depreciation | 3 hari | Low |
+
+**Cutover date**: 1 Juni 2026 (clean start period 2026-06). Pre-cutover transactions tetap akses via Finance views existing.
+
+**Integration**: dual-source selama 2 minggu validation post-sesi-V. Setelah ledger match, deprecate Finance views yang derive ulang dari journal_lines.
+
+**Out of scope** (Phase 3+): tax (PPN/PPh), multi-currency, multi-outlet consolidation, audit-grade controls, bank statement auto-reconciliation.
+
+---
+
 # 🛑 END PHASE 2 ROADMAP DRAFT
 
-**Reviewed dan approved oleh Owner sebelum implementation. Update sesuai realita field testing Phase 1. Last update 2026-04-28: §11 added for sesi 12-13 drift.**
+**Reviewed dan approved oleh Owner sebelum implementation. Update sesuai realita field testing Phase 1. Last update 2026-05-02: §10 +D56-D60 + §12 accounting tier added for sesi R design.**
