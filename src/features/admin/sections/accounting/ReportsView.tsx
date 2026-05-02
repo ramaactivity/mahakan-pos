@@ -74,6 +74,13 @@ const TABS: Array<{ key: ReportTab; label: string; Icon: typeof FileText }> = [
 
 export function ReportsView() {
   const [tab, setTab] = useState<ReportTab>("validate");
+  /** Pre-selected account code untuk GL drilldown dari Validasi tab. */
+  const [drilldownCode, setDrilldownCode] = useState<string | null>(null);
+
+  function handleDrilldown(code: string) {
+    setDrilldownCode(code);
+    setTab("gl");
+  }
 
   return (
     <div className="space-y-3">
@@ -84,7 +91,10 @@ export function ReportsView() {
             <button
               key={t.key}
               type="button"
-              onClick={() => setTab(t.key)}
+              onClick={() => {
+                setTab(t.key);
+                if (t.key !== "gl") setDrilldownCode(null);
+              }}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                 tab === t.key
@@ -100,7 +110,7 @@ export function ReportsView() {
 
       <div className="rounded-md border border-neutral-200 bg-white p-4">
         {tab === "validate" ? (
-          <ValidationTab />
+          <ValidationTab onDrilldown={handleDrilldown} />
         ) : tab === "tb" ? (
           <TrialBalanceTab />
         ) : tab === "is" ? (
@@ -110,7 +120,7 @@ export function ReportsView() {
         ) : tab === "cf" ? (
           <CashFlowTab />
         ) : (
-          <GeneralLedgerTab />
+          <GeneralLedgerTab initialAccountCode={drilldownCode} />
         )}
       </div>
     </div>
@@ -121,7 +131,11 @@ export function ReportsView() {
 // Validation (Drift Detector) — Sesi W (Field Validation)
 // ============================================================
 
-function ValidationTab() {
+function ValidationTab({
+  onDrilldown,
+}: {
+  onDrilldown: (accountCode: string) => void;
+}) {
   const [asOfDate, setAsOfDate] = useState<string>(
     new Date().toISOString().slice(0, 10),
   );
@@ -185,10 +199,26 @@ function ValidationTab() {
               </thead>
               <tbody className="divide-y divide-neutral-100">
                 {report.rows.map((row) => (
-                  <tr key={row.label}>
+                  <tr
+                    key={row.label}
+                    className="cursor-pointer transition-colors hover:bg-mahakan-green-50/40"
+                    onClick={() => onDrilldown(row.accountCodes[0])}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onDrilldown(row.accountCodes[0]);
+                      }
+                    }}
+                    aria-label={`Drilldown ke Buku Besar untuk ${row.label}`}
+                  >
                     <td className="px-3 py-2">
-                      <div className="font-medium text-neutral-900">
+                      <div className="flex items-center gap-1.5 font-medium text-neutral-900">
                         {row.label}
+                        <span className="text-xs text-mahakan-green-700">
+                          → buka GL
+                        </span>
                       </div>
                       <div className="text-xs text-neutral-500">
                         Akun:{" "}
@@ -900,7 +930,11 @@ function CashFlowSectionView({
 // General Ledger
 // ============================================================
 
-function GeneralLedgerTab() {
+function GeneralLedgerTab({
+  initialAccountCode,
+}: {
+  initialAccountCode?: string | null;
+}) {
   const [accounts, setAccounts] = useState<AccountListRow[]>([]);
   const [accountId, setAccountId] = useState<string | null>(null);
   const [range, setRange] = useState<{ from: string; to: string }>(() =>
@@ -911,8 +945,20 @@ function GeneralLedgerTab() {
 
   useEffect(() => {
     fetchAccounts({ isActive: true }).then((res) => {
-      if (res.ok) setAccounts(res.data);
+      if (res.ok) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setAccounts(res.data);
+        // Auto-resolve initialAccountCode → accountId on first mount.
+        if (initialAccountCode) {
+          const match = res.data.find((a) => a.code === initialAccountCode);
+          if (match) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            setAccountId(match.id);
+          }
+        }
+      }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function load() {

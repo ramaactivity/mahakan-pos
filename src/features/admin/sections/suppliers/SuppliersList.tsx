@@ -62,6 +62,11 @@ export function SuppliersList() {
   }, [refreshKey, search, showInactive]);
 
   const filtered = useMemo(() => items, [items]);
+  const activeCount = useMemo(
+    () => items.filter((s) => s.isActive).length,
+    [items],
+  );
+  const inactiveCount = items.length - activeCount;
 
   function refresh() {
     setRefreshKey((k) => k + 1);
@@ -85,6 +90,12 @@ export function SuppliersList() {
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold text-mahakan-green-900">
             <Truck className="size-6" aria-hidden /> Supplier
+            {!loading ? (
+              <span className="ml-1 rounded-full bg-neutral-100 px-2.5 py-0.5 text-sm font-medium text-neutral-700">
+                {activeCount}
+                {inactiveCount > 0 ? ` / ${items.length}` : ""}
+              </span>
+            ) : null}
           </h1>
           <p className="text-sm text-neutral-700">
             Master vendor dengan default term pembayaran (TOP). Dipakai
@@ -129,11 +140,27 @@ export function SuppliersList() {
               ))}
             </div>
           ) : filtered.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              {search
-                ? "Supplier tidak ditemukan"
-                : "Belum ada supplier. Klik 'Tambah Supplier' untuk mulai."}
-            </p>
+            <div className="py-10 text-center">
+              {search ? (
+                <>
+                  <p className="text-sm text-neutral-500">
+                    Tidak ada supplier yang cocok dengan &ldquo;{search}&rdquo;.
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => setSearch("")}
+                  >
+                    Reset pencarian
+                  </Button>
+                </>
+              ) : (
+                <p className="text-sm text-neutral-500">
+                  Belum ada supplier. Klik &ldquo;Tambah Supplier&rdquo; untuk mulai.
+                </p>
+              )}
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

@@ -50,6 +50,7 @@ export function ItemsList() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "available" | "sold_out" | "signature">("all");
   const [mode, setMode] = useState<Mode | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -84,10 +85,25 @@ export function ItemsList() {
     return items.filter((i) => {
       if (categoryFilter !== "all" && i.categoryId !== categoryFilter)
         return false;
+      if (statusFilter === "available" && i.isSoldOut) return false;
+      if (statusFilter === "sold_out" && !i.isSoldOut) return false;
+      if (statusFilter === "signature" && !i.isSignature) return false;
       if (q && !i.name.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [items, search, categoryFilter]);
+  }, [items, search, categoryFilter, statusFilter]);
+
+  const counts = useMemo(() => {
+    let available = 0;
+    let soldOut = 0;
+    let signature = 0;
+    for (const i of items) {
+      if (i.isSoldOut) soldOut++;
+      else available++;
+      if (i.isSignature) signature++;
+    }
+    return { available, soldOut, signature };
+  }, [items]);
 
   async function handleSoldOut(item: MenuItem) {
     const res = await toggleSoldOutAction(item.id, !item.isSoldOut);
@@ -190,6 +206,13 @@ export function ItemsList() {
         <div>
           <h2 className="text-lg font-semibold text-neutral-900">
             Menu Items ({items.length})
+            {!loading && items.length > 0 ? (
+              <span className="ml-2 text-sm font-normal text-neutral-500">
+                · {counts.available} tersedia
+                {counts.soldOut > 0 ? `, ${counts.soldOut} habis` : ""}
+                {counts.signature > 0 ? `, ${counts.signature} signature` : ""}
+              </span>
+            ) : null}
           </h2>
           <p className="text-xs text-neutral-500">
             Kelola item menu, harga, dan status sold-out.
@@ -216,7 +239,7 @@ export function ItemsList() {
       />
 
       <Card>
-        <CardHeader>
+        <CardHeader className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex-1 min-w-[200px]">
               <Input
@@ -250,6 +273,31 @@ export function ItemsList() {
               />
             </div>
           </div>
+          <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter status">
+            {(
+              [
+                { v: "all", label: `Semua (${items.length})` },
+                { v: "available", label: `Tersedia (${counts.available})` },
+                { v: "sold_out", label: `Habis (${counts.soldOut})` },
+                { v: "signature", label: `Signature (${counts.signature})` },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.v}
+                type="button"
+                onClick={() => setStatusFilter(opt.v)}
+                className={cn(
+                  "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                  statusFilter === opt.v
+                    ? "bg-mahakan-green-700 text-white"
+                    : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200",
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </CardHeader>
         <CardContent className="px-0">
           {loading ? (
@@ -259,9 +307,28 @@ export function ItemsList() {
               ))}
             </div>
           ) : filtered.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Tidak ada item yang cocok.
-            </p>
+            <div className="py-10 text-center">
+              <p className="text-sm text-neutral-500">
+                {items.length === 0
+                  ? "Belum ada item menu."
+                  : "Tidak ada item yang cocok dengan filter saat ini."}
+              </p>
+              {items.length > 0 &&
+              (search || categoryFilter !== "all" || statusFilter !== "all") ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => {
+                    setSearch("");
+                    setCategoryFilter("all");
+                    setStatusFilter("all");
+                  }}
+                >
+                  Reset filter
+                </Button>
+              ) : null}
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

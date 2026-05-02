@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ImagePlus, Loader2, X } from "lucide-react";
+import { upload } from "@vercel/blob/client";
 import { Button, DatePicker, Input, Modal, Select, toast } from "@/components/ui";
 import {
   createExpense,
@@ -37,8 +39,11 @@ export function ExpenseFormModal({
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<CashPaymentMethod>("cash");
+  const [receiptImageUrl, setReceiptImageUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -49,6 +54,7 @@ export function ExpenseFormModal({
       setDescription(edit.description);
       setAmount(String(edit.amount));
       setMethod(edit.paymentMethod);
+      setReceiptImageUrl(edit.receiptImageUrl ?? null);
     } else {
       setDate(today);
       const firstNonSystem = categories.find((c) => !c.isSystem);
@@ -56,6 +62,7 @@ export function ExpenseFormModal({
       setDescription("");
       setAmount("");
       setMethod("cash");
+      setReceiptImageUrl(null);
     }
     setError(null);
     setSubmitting(false);
@@ -88,6 +95,7 @@ export function ExpenseFormModal({
           description: description.trim(),
           amount: parsedAmount,
           paymentMethod: method,
+          receiptImageUrl,
         })
       : await createExpense({
           expenseDate: date,
@@ -95,7 +103,7 @@ export function ExpenseFormModal({
           description: description.trim(),
           amount: parsedAmount,
           paymentMethod: method,
-          receiptImageUrl: null,
+          receiptImageUrl,
         });
     if (!isOk(res)) {
       setError(res.error.message);
@@ -195,6 +203,93 @@ export function ExpenseFormModal({
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Receipt photo upload (sesi V deferred — now live) */}
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-neutral-900">
+            Foto Struk (opsional)
+          </label>
+          {receiptImageUrl ? (
+            <div className="relative rounded-md border border-neutral-200 bg-neutral-50 p-2">
+              <a
+                href={receiptImageUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={receiptImageUrl}
+                  alt="Foto struk"
+                  className="max-h-48 w-full rounded object-contain"
+                />
+              </a>
+              <button
+                type="button"
+                onClick={() => setReceiptImageUrl(null)}
+                disabled={submitting || uploading}
+                className="absolute right-1 top-1 inline-flex size-6 items-center justify-center rounded-full bg-white/90 text-neutral-700 shadow-sm hover:bg-danger-100 hover:text-danger-500"
+                aria-label="Hapus foto struk"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ) : (
+            <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50/50 p-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                hidden
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setUploading(true);
+                  setError(null);
+                  try {
+                    if (file.size > 5 * 1024 * 1024) {
+                      throw new Error("Ukuran maks 5 MB");
+                    }
+                    const safeName = file.name.replace(/[^\w.\-]/g, "_");
+                    const pathname = `expense-receipts/${Date.now()}-${safeName}`;
+                    const result = await upload(pathname, file, {
+                      access: "public",
+                      handleUploadUrl: "/api/v1/expense-receipts/upload",
+                    });
+                    setReceiptImageUrl(result.url);
+                    toast.success("Foto struk terupload");
+                  } catch (e) {
+                    setError(
+                      e instanceof Error ? e.message : "Upload gagal",
+                    );
+                  } finally {
+                    setUploading(false);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading || submitting}
+              >
+                {uploading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" /> Uploading...
+                  </>
+                ) : (
+                  <>
+                    <ImagePlus className="size-4" /> Upload Foto
+                  </>
+                )}
+              </Button>
+              <p className="mt-1 text-xs text-neutral-500">
+                JPG / PNG / WebP, max 5 MB. Foto disimpan di Vercel Blob.
+              </p>
+            </div>
+          )}
         </div>
 
         {error ? (

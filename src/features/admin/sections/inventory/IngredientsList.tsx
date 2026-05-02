@@ -100,6 +100,7 @@ export function IngredientsList() {
   const [target, setTarget] = useState<ActionTarget>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [lowOnly, setLowOnly] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,10 +134,6 @@ export function IngredientsList() {
     });
   }
 
-  function selectAllVisible() {
-    setSelectedIds(new Set(ingredients.map((i) => i.id)));
-  }
-
   function clearSelection() {
     setSelectedIds(new Set());
   }
@@ -144,6 +141,20 @@ export function IngredientsList() {
   const lowStockIds = useMemo(
     () => new Set(lowStock.map((i) => i.id)),
     [lowStock],
+  );
+
+  const visible = useMemo(
+    () => (lowOnly ? ingredients.filter((i) => lowStockIds.has(i.id)) : ingredients),
+    [ingredients, lowStockIds, lowOnly],
+  );
+
+  const totalStockValue = useMemo(
+    () =>
+      ingredients.reduce(
+        (sum, i) => sum + (i.currentStock ?? 0) * (i.costPerUnit ?? 0),
+        0,
+      ),
+    [ingredients],
   );
 
   function refresh() {
@@ -168,6 +179,14 @@ export function IngredientsList() {
         <div>
           <h2 className="text-lg font-semibold text-neutral-900">
             Bahan Baku ({ingredients.length})
+            {canSeeCost && totalStockValue > 0 ? (
+              <span className="ml-2 text-sm font-normal text-neutral-500">
+                · nilai stok{" "}
+                <span className="font-mono font-medium text-neutral-700">
+                  {formatRupiah(totalStockValue)}
+                </span>
+              </span>
+            ) : null}
           </h2>
           <p className="text-xs text-neutral-500">
             Bahan atomik (raw ingredient). Untuk bahan turunan seperti
@@ -185,10 +204,17 @@ export function IngredientsList() {
 
       {lowStock.length > 0 ? (
         <Card className="border-warning-500/40 bg-warning-100/40">
-          <CardHeader className="pb-2">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-warning-500">
               <AlertTriangle className="size-4" aria-hidden /> Stok rendah ({lowStock.length})
             </h3>
+            <Button
+              variant={lowOnly ? "primary" : "outline"}
+              size="sm"
+              onClick={() => setLowOnly((v) => !v)}
+            >
+              {lowOnly ? "Tampilkan semua" : "Filter list"}
+            </Button>
           </CardHeader>
           <CardContent className="pt-0">
             <ul className="flex flex-wrap gap-2 text-xs">
@@ -259,10 +285,32 @@ export function IngredientsList() {
                 <Skeleton key={i} className="h-12 w-full" />
               ))}
             </div>
-          ) : ingredients.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Belum ada bahan. Klik &ldquo;Tambah Bahan&rdquo; untuk mulai.
-            </p>
+          ) : visible.length === 0 ? (
+            <div className="py-10 text-center">
+              {lowOnly ? (
+                <>
+                  <p className="text-sm text-neutral-500">
+                    Tidak ada bahan stok-rendah dari hasil filter saat ini.
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => setLowOnly(false)}
+                  >
+                    Tampilkan semua
+                  </Button>
+                </>
+              ) : ingredients.length === 0 ? (
+                <p className="text-sm text-neutral-500">
+                  Belum ada bahan. Klik &ldquo;Tambah Bahan&rdquo; untuk mulai.
+                </p>
+              ) : (
+                <p className="text-sm text-neutral-500">
+                  Tidak ada bahan yang cocok dengan filter saat ini.
+                </p>
+              )}
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -274,12 +322,12 @@ export function IngredientsList() {
                           type="checkbox"
                           aria-label="Pilih semua"
                           checked={
-                            ingredients.length > 0 &&
-                            ingredients.every((i) => selectedIds.has(i.id))
+                            visible.length > 0 &&
+                            visible.every((i) => selectedIds.has(i.id))
                           }
                           onChange={(e) =>
                             e.target.checked
-                              ? selectAllVisible()
+                              ? setSelectedIds(new Set(visible.map((i) => i.id)))
                               : clearSelection()
                           }
                           className="size-4 rounded border-neutral-300 text-mahakan-green-700 focus:ring-mahakan-green-700"
@@ -300,7 +348,7 @@ export function IngredientsList() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
-                  {ingredients.map((i) => {
+                  {visible.map((i) => {
                     const isLow = lowStockIds.has(i.id);
                     const sectionInfo = i.section
                       ? SECTION_BADGE[i.section]

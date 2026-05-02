@@ -245,6 +245,7 @@ const updateExpenseSchema = z.object({
   description: z.string().trim().min(1).max(200).optional(),
   amount: z.number().int().min(1).max(999_999_999).optional(),
   paymentMethod: z.enum(["cash", "transfer", "other"]).optional(),
+  receiptImageUrl: z.string().url().nullable().optional(),
 });
 
 export type UpdateExpenseInput = z.input<typeof updateExpenseSchema>;

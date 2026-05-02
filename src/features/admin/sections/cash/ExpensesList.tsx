@@ -40,6 +40,7 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
   const [editTarget, setEditTarget] = useState<Expense | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   // Default: this month
   const today = new Date().toISOString().slice(0, 10);
@@ -187,12 +188,32 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
                           </Badge>
                         </td>
                         <td className="px-4 py-3 text-neutral-700">
-                          {e.description}
-                          {e.refundedTransactionId ? (
-                            <span className="ml-2 text-xs text-neutral-500">
-                              (auto-generated)
+                          <div className="flex items-center gap-2">
+                            {e.receiptImageUrl ? (
+                              <button
+                                type="button"
+                                onClick={() => setPreviewUrl(e.receiptImageUrl ?? null)}
+                                className="inline-flex size-9 shrink-0 items-center justify-center overflow-hidden rounded border border-neutral-200 bg-neutral-50 transition hover:border-mahakan-green-500"
+                                aria-label="Lihat foto struk"
+                                title="Lihat foto struk"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={e.receiptImageUrl}
+                                  alt=""
+                                  className="size-full object-cover"
+                                />
+                              </button>
+                            ) : null}
+                            <span>
+                              {e.description}
+                              {e.refundedTransactionId ? (
+                                <span className="ml-2 text-xs text-neutral-500">
+                                  (auto-generated)
+                                </span>
+                              ) : null}
                             </span>
-                          ) : null}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-xs text-neutral-700 capitalize">
                           {e.paymentMethod}
@@ -264,6 +285,39 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
           setRefreshKey((k) => k + 1);
         }}
       />
+
+      <Modal
+        open={previewUrl !== null}
+        onClose={() => setPreviewUrl(null)}
+        title="Foto Struk"
+        size="lg"
+      >
+        {previewUrl ? (
+          <div className="flex flex-col items-center gap-3">
+            <a
+              href={previewUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block w-full"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={previewUrl}
+                alt="Foto struk"
+                className="max-h-[70vh] w-full rounded-md object-contain"
+              />
+            </a>
+            <a
+              href={previewUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-mahakan-green-700 underline"
+            >
+              Buka di tab baru
+            </a>
+          </div>
+        ) : null}
+      </Modal>
 
       <Modal
         open={deleteTarget !== null}
