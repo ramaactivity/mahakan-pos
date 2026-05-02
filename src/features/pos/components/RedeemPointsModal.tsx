@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Sparkles } from "lucide-react";
-import { Button, Input, Modal } from "@/components/ui";
+import { Button, Modal, NumericInput } from "@/components/ui";
 import {
   clampRedemption,
   computeRedemptionAmount,
@@ -102,14 +102,11 @@ export function RedeemPointsModal({
         </div>
 
         <div>
-          <Input
+          <NumericInput
             label="Jumlah poin ditukar"
-            type="number"
-            min={0}
-            max={maxPoints}
             value={pointsInput}
-            onChange={(e) => setPointsInput(e.target.value)}
-            inputMode="numeric"
+            onChange={setPointsInput}
+            formatThousands={false}
             hint={
               overRequested
                 ? `Diminta ${requested}, akan di-clamp ke ${clamped}`

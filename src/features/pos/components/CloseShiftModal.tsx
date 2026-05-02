@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
-import { Badge, Button, Input, Modal, Spinner, toast } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Input,
+  Modal,
+  NumericInput,
+  Spinner,
+  toast,
+} from "@/components/ui";
 import { isOk, closeShift, type Shift } from "@/features/shifts";
 import { listTransactions } from "@/features/transactions";
 import { getDailyCashSummary } from "@/features/cash";
@@ -251,14 +259,11 @@ export function CloseShiftModal({
             />
           </div>
 
-          <Input
+          <NumericInput
             label="Kas Aktual (hitung manual)"
-            type="text"
-            inputMode="numeric"
             value={actualCash}
-            onChange={(e) =>
-              setActualCash(e.target.value.replace(/[^\d]/g, ""))
-            }
+            onChange={setActualCash}
+            prefix="Rp"
             hint={`Preview: ${formatRupiah(parsedCash)}`}
             required
             disabled={submitting}
@@ -306,51 +311,35 @@ export function CloseShiftModal({
               gak relevan.
             </p>
             <div className="grid grid-cols-2 gap-2">
-              <Input
+              <NumericInput
                 label="EDC (BCA card)"
-                type="text"
-                inputMode="numeric"
                 value={edc}
-                onChange={(e) =>
-                  setEdc(e.target.value.replace(/[^\d]/g, ""))
-                }
-                placeholder="0"
+                onChange={setEdc}
+                prefix="Rp"
                 hint={summary.paid.cardBca > 0
                   ? `POS catat: ${formatRupiah(summary.paid.cardBca)}`
                   : undefined}
                 disabled={submitting}
               />
-              <Input
+              <NumericInput
                 label="GoFood"
-                type="text"
-                inputMode="numeric"
                 value={gofood}
-                onChange={(e) =>
-                  setGofood(e.target.value.replace(/[^\d]/g, ""))
-                }
-                placeholder="0"
+                onChange={setGofood}
+                prefix="Rp"
                 disabled={submitting}
               />
-              <Input
+              <NumericInput
                 label="GrabFood"
-                type="text"
-                inputMode="numeric"
                 value={grabfood}
-                onChange={(e) =>
-                  setGrabfood(e.target.value.replace(/[^\d]/g, ""))
-                }
-                placeholder="0"
+                onChange={setGrabfood}
+                prefix="Rp"
                 disabled={submitting}
               />
-              <Input
+              <NumericInput
                 label="ShopeeFood"
-                type="text"
-                inputMode="numeric"
                 value={shopeefood}
-                onChange={(e) =>
-                  setShopeefood(e.target.value.replace(/[^\d]/g, ""))
-                }
-                placeholder="0"
+                onChange={setShopeefood}
+                prefix="Rp"
                 disabled={submitting}
               />
             </div>

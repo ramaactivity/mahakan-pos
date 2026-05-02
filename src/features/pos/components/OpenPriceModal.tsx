@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Input, Modal } from "@/components/ui";
+import { Button, Input, Modal, NumericInput } from "@/components/ui";
 import type { MenuItem } from "@/features/menu";
 import { buildLineItem } from "@/features/pos/cartStore";
 import { formatRupiah, parseRupiah } from "@/lib/format";
@@ -94,18 +94,15 @@ export function OpenPriceModal({
       }
     >
       <div className="space-y-4">
-        <Input
+        <NumericInput
           label="Harga (Rupiah)"
-          type="text"
-          inputMode="numeric"
           value={price}
-          onChange={(e) => {
-            setPrice(e.target.value.replace(/[^\d]/g, ""));
+          onChange={(v) => {
+            setPrice(v);
             setError(null);
           }}
-          placeholder="35000"
+          prefix="Rp"
           hint={`Preview: ${formatRupiah(parsed)}`}
-          autoFocus
         />
         <Input
           label="Catatan Beans"

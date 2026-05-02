@@ -16,6 +16,8 @@ export type { CardVariant } from "./Card";
 
 export { Input } from "./Input";
 
+export { NumericInput } from "./NumericInput";
+
 export { Modal } from "./Modal";
 export type { ModalSize } from "./Modal";
 

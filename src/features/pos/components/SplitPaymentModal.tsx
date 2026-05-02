@@ -2,7 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Banknote, Coins, ListTree, Wallet } from "lucide-react";
-import { Badge, Button, Input, Modal, Spinner, toast } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Modal,
+  NumericInput,
+  Spinner,
+  toast,
+} from "@/components/ui";
 import {
   addSplitPayment,
   getSplitBreakdown,
@@ -315,15 +322,11 @@ export function SplitPaymentModal({
           </div>
 
           {splitKind === "nominal" ? (
-            <Input
+            <NumericInput
               label="Nominal yang dibayar"
-              type="text"
-              inputMode="numeric"
               value={amount}
-              onChange={(e) =>
-                setAmount(e.target.value.replace(/[^\d]/g, ""))
-              }
-              placeholder="0"
+              onChange={setAmount}
+              prefix="Rp"
               hint={
                 parsedAmount > 0
                   ? `Preview: ${formatRupiah(parsedAmount)} (sisa setelah ini: ${formatRupiah(Math.max(0, remaining - parsedAmount))})`
@@ -400,15 +403,11 @@ export function SplitPaymentModal({
 
           {paymentMethod === "cash" && effectiveAmount > 0 ? (
             <div className="space-y-1">
-              <Input
+              <NumericInput
                 label="Tunai diterima"
-                type="text"
-                inputMode="numeric"
                 value={cashInput}
-                onChange={(e) =>
-                  setCashInput(e.target.value.replace(/[^\d]/g, ""))
-                }
-                placeholder="0"
+                onChange={setCashInput}
+                prefix="Rp"
                 disabled={submitting}
               />
               {parsedCash > 0 ? (

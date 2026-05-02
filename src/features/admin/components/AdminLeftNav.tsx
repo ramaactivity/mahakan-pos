@@ -91,20 +91,21 @@ export function AdminLeftNav({
   return (
     <nav
       aria-label="Navigasi back office"
-      className="flex w-56 shrink-0 flex-col justify-between border-r border-neutral-200 bg-white py-4"
+      className="flex w-44 shrink-0 flex-col border-r border-neutral-200 bg-white py-3 sm:w-48 lg:w-56"
     >
-      <div className="space-y-0.5 px-3">
-        <div className="mb-3 flex items-center gap-2 px-3 py-2">
-          <div className="flex size-8 items-center justify-center rounded-md bg-mahakan-green-700 text-xs font-bold text-white">
-            MK
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-mahakan-green-900">
-              Mahakan
-            </p>
-            <p className="text-xs text-neutral-500">Back Office</p>
-          </div>
+      <div className="mb-2 flex shrink-0 items-center gap-2 px-4 py-1">
+        <div className="flex size-8 items-center justify-center rounded-md bg-mahakan-green-700 text-xs font-bold text-white">
+          MK
         </div>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-mahakan-green-900">
+            Mahakan
+          </p>
+          <p className="text-xs text-neutral-500">Back Office</p>
+        </div>
+      </div>
+      {/* Scrollable items — 16+ section dengan tablet kecil bisa overflow. */}
+      <div className="flex-1 space-y-0.5 overflow-y-auto px-3 py-1">
         {items.map((item) => (
           <NavLink
             key={item.key}
@@ -115,7 +116,7 @@ export function AdminLeftNav({
           />
         ))}
       </div>
-      <div className="px-3">
+      <div className="shrink-0 border-t border-neutral-100 px-3 pt-2">
         <NavLink label="Keluar" Icon={LogOut} active={false} onClick={onLogout} />
       </div>
     </nav>

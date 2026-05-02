@@ -46,19 +46,29 @@ const TABS: Array<{ key: PosTab; label: string; Icon: LucideIcon }> = [
 
 const COLLAPSED_STORAGE_KEY = "mahakan-pos.sidebar-collapsed-v1";
 
-/** Per-device persisted preference. Default expanded so labels are readable. */
+/** Per-device persisted preference. Default to collapsed at <1024px (tablet)
+ * so cart/main content gets max width. User can manually expand and choice
+ * persists. */
 function useSidebarCollapsed(): [boolean, (next: boolean) => void] {
-  const [collapsed, setCollapsed] = useState(false);
+  // Default ke collapsed (tablet-first); tapi useEffect override dari
+  // localStorage atau viewport-based default kalau belum pernah set.
+  const [collapsed, setCollapsed] = useState(true);
 
   useEffect(() => {
     try {
       const stored = localStorage.getItem(COLLAPSED_STORAGE_KEY);
-      if (stored === "1") {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setCollapsed(true);
+      if (stored === "1" || stored === "0") {
+        /* eslint-disable react-hooks/set-state-in-effect */
+        setCollapsed(stored === "1");
+        /* eslint-enable react-hooks/set-state-in-effect */
+        return;
       }
+      // No stored preference: default = collapsed di tablet (<1280px), expanded di desktop.
+      const isTablet =
+        typeof window !== "undefined" && window.innerWidth < 1280;
+      setCollapsed(isTablet);
     } catch {
-      // localStorage might be blocked; default to expanded
+      // localStorage might be blocked
     }
   }, []);
 
@@ -88,11 +98,11 @@ export function PosLeftNav({
     <nav
       aria-label="Navigasi POS"
       className={cn(
-        "flex shrink-0 flex-col items-center justify-between border-r border-neutral-200 bg-white py-3 transition-[width] duration-200",
-        collapsed ? "w-20 lg:w-24" : "w-32 lg:w-36",
+        "flex shrink-0 flex-col items-center border-r border-neutral-200 bg-white py-2 transition-[width] duration-200",
+        collapsed ? "w-16 sm:w-20 lg:w-24" : "w-28 sm:w-32 lg:w-36",
       )}
     >
-      <div className="flex w-full flex-col items-center gap-2">
+      <div className="flex w-full flex-col items-center gap-1.5 px-1">
         <button
           type="button"
           onClick={() => setCollapsed(!collapsed)}
@@ -105,9 +115,13 @@ export function PosLeftNav({
         >
           <ToggleIcon className="size-4" aria-hidden />
         </button>
-        <div className="mb-2 flex size-10 items-center justify-center rounded-lg bg-mahakan-green-700 text-white text-xs font-bold">
+        <div className="mb-1 flex size-9 items-center justify-center rounded-lg bg-mahakan-green-700 text-white text-xs font-bold">
           MK
         </div>
+      </div>
+      {/* Items scrollable so tab kecil (Galaxy Tab landscape ~600px height)
+       * tidak kepotong; logout tetap visible di bawah via flex layout. */}
+      <div className="flex w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto px-1 py-1">
         {TABS.map((tab) => {
           const badge =
             tab.key === "cashier"
@@ -130,13 +144,15 @@ export function PosLeftNav({
           );
         })}
       </div>
-      <NavButton
-        label="Keluar"
-        Icon={LogOut}
-        active={false}
-        onClick={onLogout}
-        collapsed={collapsed}
-      />
+      <div className="w-full shrink-0 border-t border-neutral-100 px-1 pt-1.5">
+        <NavButton
+          label="Keluar"
+          Icon={LogOut}
+          active={false}
+          onClick={onLogout}
+          collapsed={collapsed}
+        />
+      </div>
     </nav>
   );
 }
@@ -164,8 +180,8 @@ function NavButton({
       title={collapsed ? label : undefined}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "relative flex flex-col items-center justify-center gap-1 rounded-xl text-[11px] font-medium uppercase tracking-wider transition-all",
-        collapsed ? "h-16 w-16" : "h-16 w-28",
+        "relative flex shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium uppercase tracking-wider transition-all",
+        collapsed ? "h-14 w-14" : "h-14 w-full max-w-[7rem]",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700 focus-visible:ring-offset-2",
         active
           ? "bg-mahakan-green-100 text-mahakan-green-900"

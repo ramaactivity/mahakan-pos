@@ -8,6 +8,7 @@ import {
   CreditCard,
   FileText,
   Gift,
+  MoreHorizontal,
   Percent,
   Plus,
   QrCode,
@@ -819,7 +820,7 @@ export function PosShell() {
   // ==================== Render ====================
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] overflow-hidden bg-neutral-50">
+    <div className="flex h-[calc(100vh-4rem)] w-full max-w-full overflow-hidden bg-neutral-50">
       <PosLeftNav
         activeTab={tab}
         onTabChange={setTab}
@@ -828,8 +829,9 @@ export function PosShell() {
         openBillsBadge={openBillsCount}
       />
 
-      {/* MIDDLE COLUMN — content per tab */}
-      <main className="flex-1 overflow-hidden">
+      {/* MIDDLE COLUMN — content per tab. min-w-0 prevents flex child from
+       * overflowing parent (causes horizontal swaying di tablet). */}
+      <main className="flex-1 min-w-0 overflow-hidden">
         {tab === "cashier" ? (
           <CashierMiddle
             menuLoading={menuLoading}
@@ -901,8 +903,10 @@ export function PosShell() {
         )}
       </main>
 
-      {/* RIGHT COLUMN — order panel */}
-      <aside className="flex w-[400px] shrink-0 flex-col overflow-hidden border-l border-neutral-200 bg-white">
+      {/* RIGHT COLUMN — order panel. Width adaptif: tablet kecil (~10")
+       * pakai 320px supaya middle column dapat ruang lebih untuk grid menu;
+       * desktop tetap 400px. */}
+      <aside className="flex w-[320px] shrink-0 flex-col overflow-hidden border-l border-neutral-200 bg-white sm:w-[360px] lg:w-[400px]">
         {rightPanel.kind === "idle" ? (
           <IdlePanel
             drafts={drafts}
@@ -1400,6 +1404,11 @@ function CartPanelImpl({
   const [billNoteOpen, setBillNoteOpen] = useState(
     Boolean(draft.billNote && draft.billNote.length > 0),
   );
+  // Secondary actions (Diskon, Compliment, Tukar Poin, Simpan Open Bill,
+  // Catatan Bill) collapsed into a single "Lainnya" group untuk hemat
+  // vertical space di tablet kecil — Galih field-test laporan footer
+  // menelan list keranjang.
+  const [moreOpen, setMoreOpen] = useState(false);
   return (
     <>
       <header className="flex items-center justify-between border-b border-neutral-200 p-4">
@@ -1476,90 +1485,139 @@ function CartPanelImpl({
         )}
       </div>
 
-      <footer className="border-t border-neutral-200 bg-neutral-50 p-4 space-y-3">
-        <div>
-          <button
-            type="button"
-            onClick={() => setBillNoteOpen((v) => !v)}
-            className="flex w-full items-center justify-between rounded-md border border-dashed border-neutral-300 bg-white px-3 py-2 text-left text-xs text-neutral-600 hover:border-neutral-400"
-          >
-            <span className="flex items-center gap-2">
-              <FileText className="size-3.5" aria-hidden />
-              {draft.billNote && draft.billNote.length > 0
-                ? "Catatan Bill"
-                : "Tambah Catatan Bill"}
-            </span>
-            <span className="text-neutral-400">
-              {billNoteOpen ? "Tutup" : draft.billNote ? "Edit" : "+"}
-            </span>
-          </button>
-          {billNoteOpen ? (
-            <textarea
-              value={draft.billNote ?? ""}
-              onChange={(e) => onSetBillNote(e.target.value)}
-              maxLength={200}
-              rows={2}
-              placeholder="Misal: pesanan tanpa gula, antar ke meja 5..."
-              className="mt-2 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+      <footer className="space-y-2 border-t border-neutral-200 bg-neutral-50 p-3">
+        {/* TOTAL row — paling penting, selalu visible */}
+        <div className="space-y-1">
+          <Row label="Subtotal" value={formatRupiah(subtotal)} muted compact />
+          {draft.discount ? (
+            <Row
+              label={
+                draft.loyaltyPointsRedeemed && draft.loyaltyPointsRedeemed > 0
+                  ? `Tukar Poin (-${draft.loyaltyPointsRedeemed})`
+                  : `Diskon ${
+                      draft.discount.type === "percent"
+                        ? `(${draft.discount.value}%)`
+                        : ""
+                    }`
+              }
+              value={`- ${formatRupiah(discountAmount)}`}
+              danger
+              compact
             />
-          ) : draft.billNote ? (
-            <p className="mt-1 px-1 text-xs italic text-neutral-600 line-clamp-2">
-              {draft.billNote}
+          ) : null}
+          {draft.billNote ? (
+            <p className="px-1 text-[11px] italic text-neutral-600 line-clamp-1">
+              📝 {draft.billNote}
             </p>
           ) : null}
+          <div className="flex items-center justify-between rounded-md bg-white px-3 py-2">
+            <span className="text-sm font-bold text-neutral-900">TOTAL</span>
+            <span className="font-mono text-lg font-bold text-mahakan-green-900">
+              {formatRupiah(total)}
+            </span>
+          </div>
         </div>
-        <Row label="Subtotal" value={formatRupiah(subtotal)} muted />
-        {draft.discount ? (
-          <Row
-            label={
-              draft.loyaltyPointsRedeemed && draft.loyaltyPointsRedeemed > 0
-                ? `Tukar Poin (-${draft.loyaltyPointsRedeemed})`
-                : `Diskon ${
-                    draft.discount.type === "percent"
-                      ? `(${draft.discount.value}%)`
-                      : ""
-                  }`
-            }
-            value={`- ${formatRupiah(discountAmount)}`}
-            danger
-          />
+
+        {/* Aksi lainnya — collapsed by default untuk hemat space */}
+        <button
+          type="button"
+          onClick={() => setMoreOpen((v) => !v)}
+          className="flex w-full items-center justify-between rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:border-neutral-300"
+        >
+          <span className="flex items-center gap-1.5">
+            <MoreHorizontal className="size-4" aria-hidden />
+            Aksi Lain
+            {(draft.billNote ||
+              draft.discount ||
+              (draft.loyaltyPointsRedeemed ?? 0) > 0) ? (
+              <span className="ml-1 size-1.5 rounded-full bg-mahakan-green-700" />
+            ) : null}
+          </span>
+          <span className="text-neutral-400">
+            {moreOpen ? "Tutup" : "Buka"}
+          </span>
+        </button>
+        {moreOpen ? (
+          <div className="space-y-2 rounded-md border border-neutral-200 bg-white p-2">
+            {/* Catatan bill */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setBillNoteOpen((v) => !v)}
+                className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs text-neutral-600 hover:bg-neutral-50"
+              >
+                <span className="flex items-center gap-2">
+                  <FileText className="size-3.5" aria-hidden />
+                  {draft.billNote && draft.billNote.length > 0
+                    ? "Edit Catatan Bill"
+                    : "Tambah Catatan Bill"}
+                </span>
+                <span className="text-neutral-400">
+                  {billNoteOpen ? "▲" : "▼"}
+                </span>
+              </button>
+              {billNoteOpen ? (
+                <textarea
+                  value={draft.billNote ?? ""}
+                  onChange={(e) => onSetBillNote(e.target.value)}
+                  maxLength={200}
+                  rows={2}
+                  placeholder="Misal: pesanan tanpa gula, antar ke meja 5..."
+                  className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+                />
+              ) : null}
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onOpenDiscount}
+                disabled={draft.items.length === 0}
+              >
+                <Percent className="size-3.5" aria-hidden /> Diskon
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onOpenCompliment}
+                disabled={draft.items.length === 0}
+                className="!border-warning-500/40 !text-warning-500 hover:!bg-warning-100/50"
+              >
+                <Gift className="size-3.5" aria-hidden /> Compliment
+              </Button>
+            </div>
+            {draft.customerPhone ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onOpenRedeem}
+                disabled={draft.items.length === 0 || redeemLoading}
+                fullWidth
+                className="!border-amber-300/60 !text-amber-700 hover:!bg-amber-100/40"
+              >
+                <Sparkles className="size-3.5" aria-hidden />
+                {redeemLoading
+                  ? "Memuat saldo..."
+                  : draft.loyaltyPointsRedeemed && draft.loyaltyPointsRedeemed > 0
+                    ? `Poin: ${draft.loyaltyPointsRedeemed} pt`
+                    : "Tukar Poin Member"}
+              </Button>
+            ) : null}
+            {!draft.editingBillId ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onSaveAsOpenBill}
+                disabled={draft.items.length === 0}
+                fullWidth
+              >
+                <FileText className="size-3.5" aria-hidden /> Simpan sebagai Open Bill
+              </Button>
+            ) : null}
+          </div>
         ) : null}
-        <div className="border-t border-neutral-200 pt-2">
-          <Row label="TOTAL" value={formatRupiah(total)} bold />
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            variant="outline"
-            onClick={onOpenDiscount}
-            disabled={draft.items.length === 0}
-          >
-            <Percent className="size-4" aria-hidden /> Diskon
-          </Button>
-          <Button
-            variant="outline"
-            onClick={onOpenCompliment}
-            disabled={draft.items.length === 0}
-            className="!border-warning-500/40 !text-warning-500 hover:!bg-warning-100/50"
-          >
-            <Gift className="size-4" aria-hidden /> Compliment
-          </Button>
-        </div>
-        {draft.customerPhone ? (
-          <Button
-            variant="outline"
-            onClick={onOpenRedeem}
-            disabled={draft.items.length === 0 || redeemLoading}
-            fullWidth
-            className="!border-amber-300/60 !text-amber-700 hover:!bg-amber-100/40"
-          >
-            <Sparkles className="size-4" aria-hidden />
-            {redeemLoading
-              ? "Memuat saldo..."
-              : draft.loyaltyPointsRedeemed && draft.loyaltyPointsRedeemed > 0
-                ? `Tukar Poin: ${draft.loyaltyPointsRedeemed} pt diaplikasikan`
-                : "Tukar Poin Member"}
-          </Button>
-        ) : null}
+
+        {/* Primary action — always visible, big touch target */}
         {draft.editingBillId ? (
           <Button
             size="lg"
@@ -1570,24 +1628,14 @@ function CartPanelImpl({
             <FileText className="size-4" aria-hidden /> Update Bill
           </Button>
         ) : (
-          <>
-            <Button
-              variant="outline"
-              onClick={onSaveAsOpenBill}
-              disabled={draft.items.length === 0}
-              fullWidth
-            >
-              <FileText className="size-4" aria-hidden /> Simpan sebagai Open Bill
-            </Button>
-            <Button
-              size="lg"
-              onClick={onProceedToPayment}
-              disabled={draft.items.length === 0}
-              fullWidth
-            >
-              Bayar
-            </Button>
-          </>
+          <Button
+            size="lg"
+            onClick={onProceedToPayment}
+            disabled={draft.items.length === 0}
+            fullWidth
+          >
+            Bayar · {formatRupiah(total)}
+          </Button>
         )}
       </footer>
     </>
@@ -1965,17 +2013,20 @@ function Row({
   muted,
   bold,
   danger,
+  compact,
 }: {
   label: string;
   value: string;
   muted?: boolean;
   bold?: boolean;
   danger?: boolean;
+  compact?: boolean;
 }) {
   return (
     <div
       className={cn(
-        "flex items-center justify-between text-sm",
+        "flex items-center justify-between",
+        compact ? "text-xs" : "text-sm",
         muted ? "text-neutral-500" : "text-neutral-900",
         danger ? "text-danger-500" : "",
         bold ? "text-base font-bold" : "",

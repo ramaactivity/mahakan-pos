@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { MessageSquare } from "lucide-react";
-import { Button, Input, Modal, toast } from "@/components/ui";
+import { Button, Modal, NumericInput, toast } from "@/components/ui";
 import {
   getLastClosedShiftAtOutlet,
   isOk,
@@ -165,17 +165,13 @@ export function OpenShiftModal({
               </p>
             </div>
           ) : null}
-          <Input
+          <NumericInput
             label="Kas Awal"
-            type="text"
-            inputMode="numeric"
             value={openingCash}
-            onChange={(e) =>
-              setOpeningCash(e.target.value.replace(/[^\d]/g, ""))
-            }
+            onChange={setOpeningCash}
+            prefix="Rp"
             hint={`Preview: ${formatRupiah(parsed)}`}
             required
-            autoFocus
             disabled={submitting}
           />
           {error ? (

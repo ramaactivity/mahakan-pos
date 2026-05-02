@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Input, Modal } from "@/components/ui";
+import { Button, Input, Modal, NumericInput } from "@/components/ui";
 import type { Discount } from "@/lib/money";
 import { computeDiscountAmount } from "@/lib/money";
 import { formatRupiah } from "@/lib/format";
@@ -153,21 +153,19 @@ export function DiscountModal({
           </div>
         </div>
 
-        <Input
+        <NumericInput
           label={type === "percent" ? "Persentase (1-100)" : "Nominal (Rupiah)"}
-          type="text"
-          inputMode="numeric"
           value={value}
-          onChange={(e) => {
-            setValue(e.target.value.replace(/[^\d]/g, ""));
+          onChange={(v) => {
+            setValue(v);
             setError(null);
           }}
+          prefix={type === "percent" ? "%" : "Rp"}
           hint={
             type === "fixed" && numericValue > 0
               ? `Preview: ${formatRupiah(numericValue)}`
               : undefined
           }
-          autoFocus
         />
 
         <div className="space-y-2">

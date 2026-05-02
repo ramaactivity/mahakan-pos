@@ -49,6 +49,18 @@ export function PrinterControls() {
     }
   }
 
+  async function onPairAcceptAll() {
+    setBusy(true);
+    try {
+      await getPrinterClient().pairAcceptAll();
+      toast.success("Printer di-pair");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Pair gagal");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onTestPrint() {
     setBusy(true);
     try {
@@ -127,6 +139,32 @@ export function PrinterControls() {
         Setelah pair, printer akan otomatis cetak struk saat transaksi
         sukses. Test print mengirim 1 baris dummy untuk verifikasi.
       </p>
+
+      <details className="text-xs text-neutral-500">
+        <summary className="cursor-pointer hover:text-neutral-700">
+          Printer tidak muncul di list?
+        </summary>
+        <div className="mt-2 space-y-2 rounded-md bg-neutral-50 p-2">
+          <p>
+            Pair Printer di atas hanya tampilkan device yang dikenal sebagai
+            thermal printer (BT-, RPP, MTP, GP-, POS, dst). Kalau printer
+            kamu pakai nama brand lain, klik tombol di bawah untuk pilih
+            dari semua device Bluetooth nearby.
+          </p>
+          <Button
+            onClick={onPairAcceptAll}
+            loading={busy}
+            variant="outline"
+            size="sm"
+          >
+            <Bluetooth className="size-3.5" aria-hidden /> Pair (semua device)
+          </Button>
+          <p className="text-[11px] text-neutral-400">
+            Tip: pastikan printer dalam mode pairing (lampu kedip), Bluetooth
+            tablet aktif, dan printer dekat (≤ 5 meter).
+          </p>
+        </div>
+      </details>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Button, Input, Modal } from "@/components/ui";
+import { Button, Input, Modal, NumericInput } from "@/components/ui";
 import { useCartStore } from "@/features/pos/cartStore";
 import type { OrderType } from "@/features/transactions";
 import {
@@ -125,28 +125,24 @@ export function NewOrderModal({ open, onClose, onCreated }: NewOrderModalProps) 
       }
     >
       <div className="space-y-4">
-        <Input
+        <NumericInput
           label="Nomor Pager"
-          type="text"
-          inputMode="numeric"
           value={pager}
-          onChange={(e) => {
-            setPager(e.target.value.replace(/[^\d]/g, "").slice(0, 2));
+          onChange={(v) => {
+            setPager(v.slice(0, 2));
             setError(null);
           }}
+          maxLength={2}
           placeholder="1-99"
-          autoFocus
+          formatThousands={false}
         />
-        <Input
+        <NumericInput
           label="Nomor HP Member (opsional)"
-          type="tel"
-          inputMode="numeric"
           value={customerPhone}
-          onChange={(e) =>
-            setCustomerPhone(e.target.value.replace(/[^\d]/g, "").slice(0, 20))
-          }
+          onChange={(v) => setCustomerPhone(v.slice(0, 20))}
           placeholder="08123456789"
           maxLength={20}
+          formatThousands={false}
           hint={
             memberLookupLoading
               ? "Cek member..."

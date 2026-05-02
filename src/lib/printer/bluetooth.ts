@@ -103,8 +103,18 @@ class PrinterClient {
   /**
    * Trigger pairing UI. Must be called from a user-gesture event handler
    * (button onClick) or browser will reject. Persists device id on success.
+   *
+   * Sesi P fix: pakai filter `services + namePrefix` untuk show ONLY thermal
+   * printer yang advertise SERVICE_UUID atau punya nama familiar (BT, RPP,
+   * MTP, POS, GP, SPRT, Thermal, Printer). Sebelumnya pakai
+   * `acceptAllDevices: true` jadi tablet show earphone/phone/jam tangan
+   * sebagai "Perangkat Tidak Dikenal" — Galih lapor printer-nya tidak
+   * detect karena tertimbun signal lain.
+   *
+   * Kalau filter terlalu strict dan printer tidak muncul, user bisa retry
+   * via `pairAcceptAll()` (escape hatch).
    */
-  async pair(): Promise<void> {
+  async pair(opts: { acceptAll?: boolean } = {}): Promise<void> {
     if (!isWebBluetoothSupported()) {
       throw new Error(
         "Web Bluetooth tidak didukung. Pakai Chrome/Edge di Android.",
@@ -113,12 +123,39 @@ class PrinterClient {
     this.setStatus({ state: "pairing", error: null });
     try {
       const nav = navigator as unknown as NavigatorBluetooth;
-      const device = (await nav.bluetooth.requestDevice({
-        // Accept any device, filter by service via optionalServices so the
-        // characteristic discovery later picks the right one.
-        acceptAllDevices: true,
-        optionalServices: [SERVICE_UUID],
-      })) as BluetoothDevice;
+      const requestOptions: Record<string, unknown> = opts.acceptAll
+        ? {
+            acceptAllDevices: true,
+            optionalServices: [SERVICE_UUID],
+          }
+        : {
+            // Filter array — Chrome OR semantics: any matching filter shows.
+            // Cover umum thermal printer brands + ESC/POS service UUID.
+            filters: [
+              { services: [SERVICE_UUID] },
+              { namePrefix: "Printer" },
+              { namePrefix: "BT-" },
+              { namePrefix: "BlueTooth" },
+              { namePrefix: "Bluetooth" },
+              { namePrefix: "POS" },
+              { namePrefix: "Thermal" },
+              { namePrefix: "RPP" },
+              { namePrefix: "MTP" },
+              { namePrefix: "MPT" },
+              { namePrefix: "GP-" },
+              { namePrefix: "GPRT" },
+              { namePrefix: "SPRT" },
+              { namePrefix: "ZJ-" },
+              { namePrefix: "PT-" },
+              { namePrefix: "Star" },
+              { namePrefix: "EPSON" },
+            ],
+            optionalServices: [SERVICE_UUID],
+          };
+
+      const device = (await nav.bluetooth.requestDevice(
+        requestOptions,
+      )) as BluetoothDevice;
 
       this.device = device;
       try {
@@ -137,6 +174,12 @@ class PrinterClient {
       this.setStatus({ state: "error", error: message });
       throw e;
     }
+  }
+
+  /** Escape hatch: filter terlalu strict, izinkan user pilih device apapun.
+   * Owner pakai kalau printer mereka tidak match prefix umum. */
+  async pairAcceptAll(): Promise<void> {
+    return this.pair({ acceptAll: true });
   }
 
   /**

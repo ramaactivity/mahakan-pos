@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
   Input,
+  NumericInput,
   Select,
   Spinner,
   toast,
@@ -251,16 +252,12 @@ export function PettyCashCard() {
             disabled={submitting}
             required
           />
-          <Input
+          <NumericInput
             label="Nominal"
-            type="text"
-            inputMode="numeric"
             value={amount}
-            onChange={(e) =>
-              setAmount(e.target.value.replace(/[^\d]/g, ""))
-            }
+            onChange={setAmount}
+            prefix="Rp"
             hint={parsedAmount > 0 ? `Preview: ${formatRupiah(parsedAmount)}` : undefined}
-            placeholder="0"
             disabled={submitting}
             required
           />
