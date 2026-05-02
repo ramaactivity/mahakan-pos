@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, ChevronRight } from "lucide-react";
+import {
+  AlertTriangle,
+  BookOpen,
+  ChevronRight,
+  TrendingUp,
+} from "lucide-react";
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import {
   Bar,
@@ -32,6 +37,8 @@ import { listPayrollPeriods } from "@/features/payroll/actions";
 import type { PayrollPeriodWithStats } from "@/features/payroll/types";
 import { listExpiringDocuments } from "@/features/employees/actions";
 import type { ExpiringDocument } from "@/features/employees/queries";
+import { fetchIncomeStatement } from "@/features/accounting/actions";
+import type { IncomeStatementReport } from "@/features/accounting/reports";
 import { formatRupiah } from "@/lib/format";
 import type { AdminSection } from "@/features/admin/components/AdminLeftNav";
 import { OpnameMonthlyBanner } from "./inventory/opname/OpnameMonthlyBanner";
@@ -49,19 +56,43 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
   const [activePeriod, setActivePeriod] =
     useState<PayrollPeriodWithStats | null>(null);
   const [expiringDocs, setExpiringDocs] = useState<ExpiringDocument[]>([]);
+  const [accountingMtd, setAccountingMtd] =
+    useState<IncomeStatementReport | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
+      // Compute MTD range for accounting summary
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, "0");
+      const lastDay = new Date(yyyy, now.getMonth() + 1, 0).getDate();
+      const mtdFrom = `${yyyy}-${mm}-01`;
+      const mtdTo = `${yyyy}-${mm}-${String(lastDay).padStart(2, "0")}`;
+      const mtdLabel = now.toLocaleDateString("id-ID", {
+        year: "numeric",
+        month: "long",
+      });
+
       // allSettled so any single action failure doesn't deadlock the loader.
-      const [reportSettled, attendanceSettled, payrollSettled, docsSettled] =
-        await Promise.allSettled([
-          getDailySalesReport(),
-          getTodayAttendanceStatus(),
-          listPayrollPeriods(),
-          listExpiringDocuments(30),
-        ]);
+      const [
+        reportSettled,
+        attendanceSettled,
+        payrollSettled,
+        docsSettled,
+        accountingSettled,
+      ] = await Promise.allSettled([
+        getDailySalesReport(),
+        getTodayAttendanceStatus(),
+        listPayrollPeriods(),
+        listExpiringDocuments(30),
+        fetchIncomeStatement({
+          fromDate: mtdFrom,
+          toDate: mtdTo,
+          periodLabel: mtdLabel,
+        }),
+      ]);
       if (cancelled) return;
       if (
         reportSettled.status === "fulfilled" &&
@@ -88,6 +119,12 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
         docsSettled.value.success
       ) {
         setExpiringDocs(docsSettled.value.data);
+      }
+      if (
+        accountingSettled.status === "fulfilled" &&
+        accountingSettled.value.ok
+      ) {
+        setAccountingMtd(accountingSettled.value.data);
       }
       setLoading(false);
     }
@@ -208,6 +245,17 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
           }
         />
       </div>
+
+      {/* Accounting MTD summary — visible kalau ada data ledger */}
+      {accountingMtd &&
+      (accountingMtd.netRevenue > 0 ||
+        accountingMtd.cogs.subtotal > 0 ||
+        accountingMtd.expenses.subtotal > 0) ? (
+        <AccountingMtdCard
+          report={accountingMtd}
+          onTap={onNavigate ? () => onNavigate("accounting") : undefined}
+        />
+      ) : null}
 
       {/* Hourly chart */}
       <Card>
@@ -335,6 +383,108 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function AccountingMtdCard({
+  report,
+  onTap,
+}: {
+  report: IncomeStatementReport;
+  onTap?: () => void;
+}) {
+  const isProfit = report.netIncome >= 0;
+  return (
+    <Card
+      variant={onTap ? "interactive" : "default"}
+      onClick={onTap}
+      className={onTap ? "cursor-pointer" : ""}
+    >
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <BookOpen className="size-4 text-mahakan-green-700" /> Akuntansi
+              — {report.periodLabel}
+            </CardTitle>
+            <CardDescription>
+              Ringkasan ledger periode berjalan (auto-update kalau auto-journal
+              flag ON)
+            </CardDescription>
+          </div>
+          {onTap ? (
+            <ChevronRight
+              className="size-5 text-neutral-400"
+              aria-hidden
+            />
+          ) : null}
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-3 sm:grid-cols-4">
+          <MtdMetric
+            label="Pendapatan Bersih"
+            value={formatRupiah(report.netRevenue)}
+            tone="positive"
+          />
+          <MtdMetric
+            label="HPP"
+            value={`(${formatRupiah(report.cogs.subtotal)})`}
+            tone="negative"
+          />
+          <MtdMetric
+            label="Beban Operasional"
+            value={`(${formatRupiah(report.expenses.subtotal)})`}
+            tone="negative"
+          />
+          <MtdMetric
+            label="Laba / Rugi Bersih"
+            value={
+              isProfit
+                ? formatRupiah(report.netIncome)
+                : `(${formatRupiah(Math.abs(report.netIncome))})`
+            }
+            tone={isProfit ? "emphasis-positive" : "emphasis-negative"}
+          />
+        </div>
+        {!isProfit ? (
+          <div className="mt-3 flex items-center gap-1.5 text-xs text-warning-500">
+            <AlertTriangle className="size-3" />
+            Periode berjalan rugi bersih — review ledger di tab Akuntansi
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MtdMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "positive" | "negative" | "emphasis-positive" | "emphasis-negative";
+}) {
+  const cls =
+    tone === "emphasis-positive"
+      ? "text-mahakan-green-700 font-bold"
+      : tone === "emphasis-negative"
+        ? "text-danger-500 font-bold"
+        : tone === "negative"
+          ? "text-danger-500"
+          : "text-neutral-900";
+  return (
+    <div>
+      <div className="flex items-center gap-1 text-xs text-neutral-500">
+        {tone.startsWith("emphasis") ? (
+          <TrendingUp className="size-3" />
+        ) : null}
+        {label}
+      </div>
+      <div className={`mt-0.5 font-mono text-base ${cls}`}>{value}</div>
     </div>
   );
 }
