@@ -67,3 +67,14 @@ export {
 export type { OpeningBalanceInput } from "./openingBalance";
 export { mapPeriodClose } from "./periodClose";
 export type { PeriodCloseInput, AccountBalance } from "./periodClose";
+export {
+  mapCapitalizeAsset,
+  mapMonthlyDepreciation,
+  computeMonthlyDepreciation,
+} from "./fixedAsset";
+export type {
+  CapitalizeAssetPaymentMethod,
+  CapitalizeAssetInput,
+  DepreciationLineInput,
+  MonthlyDepreciationInput,
+} from "./fixedAsset";

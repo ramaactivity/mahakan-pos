@@ -169,6 +169,13 @@
       "when": 1777707007886,
       "tag": "0023_special_tenebrous",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1777711878607,
+      "tag": "0024_cute_leo",
+      "breakpoints": true
     }
   ]
 }

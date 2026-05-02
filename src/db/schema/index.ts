@@ -21,3 +21,4 @@ export * from "./purchases";
 export * from "./cash_deposits";
 export * from "./aggregator_settlements";
 export * from "./accounting";
+export * from "./fixed_assets";

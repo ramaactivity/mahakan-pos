@@ -138,6 +138,10 @@ export const AUDIT_EVENT_TYPES = [
   "opening_balance.posted",
   "report.income_statement.export",
   "report.balance_sheet.export",
+  // Fixed Assets (Sesi X) — capitalization + monthly depreciation.
+  "fixed_asset.create",
+  "fixed_asset.deactivate",
+  "fixed_asset.depreciation",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -173,7 +177,8 @@ export type AuditEntityType =
   | "aggregator_settlement"
   | "chart_of_accounts"
   | "accounting_period"
-  | "journal_entry";
+  | "journal_entry"
+  | "fixed_asset";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

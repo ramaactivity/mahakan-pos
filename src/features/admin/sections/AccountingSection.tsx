@@ -3,19 +3,21 @@
 import { useState } from "react";
 import { BookOpen } from "lucide-react";
 import { CoaView } from "./accounting/CoaView";
+import { FixedAssetsView } from "./accounting/FixedAssetsView";
 import { JournalView } from "./accounting/JournalView";
 import { PeriodsView } from "./accounting/PeriodsView";
 import { ReportsView } from "./accounting/ReportsView";
 import type { Role } from "@/lib/auth/rbac";
 import { cn } from "@/lib/utils";
 
-type AccountingTab = "coa" | "journal" | "periods" | "reports";
+type AccountingTab = "coa" | "journal" | "periods" | "reports" | "assets";
 
 const TABS: Array<{ key: AccountingTab; label: string }> = [
   { key: "coa", label: "Bagan Akun" },
   { key: "journal", label: "Jurnal" },
   { key: "periods", label: "Periode" },
   { key: "reports", label: "Laporan" },
+  { key: "assets", label: "Aset Tetap" },
 ];
 
 interface AccountingSectionProps {
@@ -70,8 +72,10 @@ export function AccountingSection({ viewerRole }: AccountingSectionProps) {
           <JournalView viewerRole={viewerRole} />
         ) : tab === "periods" ? (
           <PeriodsView viewerRole={viewerRole} />
-        ) : (
+        ) : tab === "reports" ? (
           <ReportsView />
+        ) : (
+          <FixedAssetsView viewerRole={viewerRole} />
         )}
       </div>
     </div>
