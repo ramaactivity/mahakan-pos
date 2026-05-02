@@ -3,6 +3,7 @@
 import {
   Banknote,
   BarChart3,
+  BookOpen,
   Briefcase,
   CalendarDays,
   Clock,
@@ -39,6 +40,7 @@ export type AdminSection =
   | "shifts"
   | "cash"
   | "finance"
+  | "accounting"
   | "promos"
   | "reports"
   | "audit"
@@ -75,6 +77,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "shifts", label: "Shifts", Icon: Receipt },
   { key: "cash", label: "Kas", Icon: Wallet },
   { key: "finance", label: "Keuangan", Icon: Banknote },
+  { key: "accounting", label: "Akuntansi", Icon: BookOpen },
   { key: "promos", label: "Promo", Icon: Sparkles },
   { key: "reports", label: "Laporan", Icon: BarChart3 },
   { key: "audit", label: "Audit Log", Icon: ScrollText, ownerOnly: true },

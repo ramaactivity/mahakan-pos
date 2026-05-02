@@ -210,6 +210,23 @@ export const permissions = {
   "aggregator_settlement.view": ["owner", "manager"],
   "aggregator_settlement.create": ["owner", "manager"],
   "settings.cash_threshold.update": ["owner"],
+
+  // Accounting / Buku Besar (Sesi S — schema + COA + read-only UI).
+  // Sesi T+: posting actions wired (PIN-gated for journal.post + period close
+  // per D60). Sesi S registers all perms; enforcement on writes saat sesi T+.
+  "accounting.coa.view": ["owner", "manager"],
+  "accounting.coa.manage": ["owner"],
+  "accounting.journal.view": ["owner", "manager"],
+  "accounting.journal.draft": ["owner", "manager"],
+  "accounting.journal.post": ["owner"],
+  "accounting.journal.reverse": ["owner"],
+  "accounting.period.view": ["owner", "manager"],
+  "accounting.period.close": ["owner"],
+  "accounting.period.reopen": ["owner"],
+  "accounting.period.lock": ["owner"],
+  "accounting.report.view": ["owner", "manager"],
+  "accounting.report.export": ["owner"],
+  "accounting.opening_balance.input": ["owner"],
 } as const satisfies Record<string, ReadonlyArray<Role>>;
 
 export type Permission = keyof typeof permissions;

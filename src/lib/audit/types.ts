@@ -123,6 +123,21 @@ export const AUDIT_EVENT_TYPES = [
   "approval_code.failed_attempt",
   "approval_code.revoked",
   "approval_code.email_failed",
+  // Accounting (Sesi S+) — Chart of Accounts + Periods + Journal entries.
+  "chart_of_accounts.create",
+  "chart_of_accounts.update",
+  "chart_of_accounts.deactivate",
+  "accounting_period.open",
+  "accounting_period.close",
+  "accounting_period.lock",
+  "accounting_period.reopen",
+  "journal_entry.draft",
+  "journal_entry.post",
+  "journal_entry.update_draft",
+  "journal_entry.reverse",
+  "opening_balance.posted",
+  "report.income_statement.export",
+  "report.balance_sheet.export",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -155,7 +170,10 @@ export type AuditEntityType =
   | "supplier"
   | "purchase"
   | "cash_deposit"
-  | "aggregator_settlement";
+  | "aggregator_settlement"
+  | "chart_of_accounts"
+  | "accounting_period"
+  | "journal_entry";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

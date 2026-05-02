@@ -12,6 +12,7 @@ import { PayrollSection } from "@/features/admin/sections/PayrollSection";
 import { SchedulesSection } from "@/features/admin/sections/SchedulesSection";
 import { CashSection } from "@/features/admin/sections/CashSection";
 import { FinanceSection } from "@/features/admin/sections/FinanceSection";
+import { AccountingSection } from "@/features/admin/sections/AccountingSection";
 import { PromoSection } from "@/features/admin/sections/PromoSection";
 import { CustomersSection } from "@/features/admin/sections/CustomersSection";
 import { DashboardHome } from "@/features/admin/sections/DashboardHome";
@@ -75,6 +76,8 @@ export function AdminShell() {
           <CashSection viewerUserId={session.user.id} />
         ) : section === "finance" ? (
           <FinanceSection viewerRole={session.user.role} />
+        ) : section === "accounting" ? (
+          <AccountingSection viewerRole={session.user.role} />
         ) : section === "promos" ? (
           <PromoSection />
         ) : section === "reports" ? (

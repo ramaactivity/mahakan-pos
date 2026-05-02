@@ -26,6 +26,12 @@ export const categories = pgTable(
     displayOrder: integer("display_order").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
 
+    /** Sesi S — Accounting tier: default revenue account untuk auto-journal POS sale.
+     * Soft FK (no .references) untuk avoid circular import vs accounting.ts. Resolved app-side. */
+    accountingRevenueAccountId: uuid("accounting_revenue_account_id"),
+    /** Sesi S — Accounting tier: default COGS account untuk auto-journal POS sale. */
+    accountingCogsAccountId: uuid("accounting_cogs_account_id"),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
