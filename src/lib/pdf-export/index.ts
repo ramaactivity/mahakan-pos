@@ -624,3 +624,135 @@ export function exportBalanceSheetPdf(
   footer(doc);
   save(doc, `mahakan-neraca-${report.asOfDate}.pdf`);
 }
+
+import type { CashFlowStatement } from "@/features/accounting/reports";
+
+export function exportCashFlowStatementPdf(
+  report: CashFlowStatement,
+  outlet: Outlet,
+): void {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  let y = brandedHeader(
+    doc,
+    outlet,
+    `Laporan Arus Kas — ${report.periodLabel}`,
+  );
+
+  y = row(doc, "Saldo Kas Awal", formatRupiah(report.openingCash), y, true);
+  y = divider(doc, y);
+
+  // Operating
+  y = sectionTitle(doc, report.operating.label, y);
+  for (const item of report.operating.items) {
+    y = ensurePage(doc, y);
+    y = row(
+      doc,
+      `  ${item.label} (${item.entryCount}×)`,
+      `${item.amount < 0 ? "(" : ""}${formatRupiah(Math.abs(item.amount))}${item.amount < 0 ? ")" : ""}`,
+      y,
+    );
+  }
+  y = row(
+    doc,
+    "Net Operating",
+    `${report.operating.netCash < 0 ? "(" : ""}${formatRupiah(Math.abs(report.operating.netCash))}${report.operating.netCash < 0 ? ")" : ""}`,
+    y,
+    true,
+  );
+  y = divider(doc, y);
+
+  // Investing
+  y = ensurePage(doc, y);
+  y = sectionTitle(doc, report.investing.label, y);
+  if (report.investing.items.length === 0) {
+    y = row(doc, "  (tidak ada aktivitas investasi)", "—", y);
+  } else {
+    for (const item of report.investing.items) {
+      y = ensurePage(doc, y);
+      y = row(
+        doc,
+        `  ${item.label} (${item.entryCount}×)`,
+        `${item.amount < 0 ? "(" : ""}${formatRupiah(Math.abs(item.amount))}${item.amount < 0 ? ")" : ""}`,
+        y,
+      );
+    }
+  }
+  y = row(
+    doc,
+    "Net Investing",
+    `${report.investing.netCash < 0 ? "(" : ""}${formatRupiah(Math.abs(report.investing.netCash))}${report.investing.netCash < 0 ? ")" : ""}`,
+    y,
+    true,
+  );
+  y = divider(doc, y);
+
+  // Financing
+  y = ensurePage(doc, y);
+  y = sectionTitle(doc, report.financing.label, y);
+  if (report.financing.items.length === 0) {
+    y = row(doc, "  (tidak ada aktivitas pendanaan)", "—", y);
+  } else {
+    for (const item of report.financing.items) {
+      y = ensurePage(doc, y);
+      y = row(
+        doc,
+        `  ${item.label} (${item.entryCount}×)`,
+        `${item.amount < 0 ? "(" : ""}${formatRupiah(Math.abs(item.amount))}${item.amount < 0 ? ")" : ""}`,
+        y,
+      );
+    }
+  }
+  y = row(
+    doc,
+    "Net Financing",
+    `${report.financing.netCash < 0 ? "(" : ""}${formatRupiah(Math.abs(report.financing.netCash))}${report.financing.netCash < 0 ? ")" : ""}`,
+    y,
+    true,
+  );
+  y = divider(doc, y);
+
+  // Summary
+  y = ensurePage(doc, y);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(BRAND.text);
+  const pageW = doc.internal.pageSize.getWidth();
+  doc.text("Perubahan Bersih Kas", MARGIN, y);
+  doc.text(
+    `${report.netChangeInCash < 0 ? "(" : ""}${formatRupiah(Math.abs(report.netChangeInCash))}${report.netChangeInCash < 0 ? ")" : ""}`,
+    pageW - MARGIN,
+    y,
+    { align: "right" },
+  );
+  y += 5;
+  doc.text("Saldo Kas Akhir (Computed)", MARGIN, y);
+  doc.text(formatRupiah(report.closingCashComputed), pageW - MARGIN, y, {
+    align: "right",
+  });
+  y += 5;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(BRAND.muted);
+  doc.text("Saldo Kas Akhir (Aktual)", MARGIN, y);
+  doc.text(formatRupiah(report.closingCashActual), pageW - MARGIN, y, {
+    align: "right",
+  });
+  y += 5;
+
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(8);
+  doc.setTextColor(report.matchesActualClosing ? "#2E7D5B" : "#C0392B");
+  doc.text(
+    report.matchesActualClosing
+      ? "✓ Computed match aktual saldo kas — data integrity OK"
+      : `✕ Tidak match — selisih ${formatRupiah(Math.abs(report.closingCashComputed - report.closingCashActual))}`,
+    MARGIN,
+    y,
+  );
+
+  footer(doc);
+  save(
+    doc,
+    `mahakan-arus-kas-${report.periodLabel.replace(/\s/g, "-")}.pdf`,
+  );
+}

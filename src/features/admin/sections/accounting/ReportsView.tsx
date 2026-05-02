@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   TrendingUp,
   AlertTriangle,
+  ArrowUpDown,
   XCircle,
 } from "lucide-react";
 import {
@@ -25,12 +26,14 @@ import {
 import { getOwnOutlet, isOk, type Outlet } from "@/features/outlets";
 import {
   exportBalanceSheetPdf,
+  exportCashFlowStatementPdf,
   exportIncomeStatementPdf,
   exportTrialBalancePdf,
 } from "@/lib/pdf-export";
 import {
   fetchAccounts,
   fetchBalanceSheet,
+  fetchCashFlowStatement,
   fetchGeneralLedger,
   fetchIncomeStatement,
   fetchTrialBalance,
@@ -41,6 +44,7 @@ import type {
 } from "@/features/accounting/types";
 import type {
   BalanceSheetReport,
+  CashFlowStatement,
   GeneralLedgerReport,
   IncomeStatementReport,
   TrialBalanceReport,
@@ -49,13 +53,14 @@ import type {
 import { formatRupiah } from "@/lib/money";
 import { cn } from "@/lib/utils";
 
-type ReportTab = "validate" | "tb" | "is" | "bs" | "gl";
+type ReportTab = "validate" | "tb" | "is" | "bs" | "cf" | "gl";
 
 const TABS: Array<{ key: ReportTab; label: string; Icon: typeof FileText }> = [
   { key: "validate", label: "Validasi Drift", Icon: ShieldCheck },
   { key: "tb", label: "Trial Balance", Icon: FileText },
   { key: "is", label: "Laba Rugi", Icon: TrendingUp },
   { key: "bs", label: "Neraca", Icon: BarChart3 },
+  { key: "cf", label: "Arus Kas", Icon: ArrowUpDown },
   { key: "gl", label: "Buku Besar", Icon: BookOpen },
 ];
 
@@ -94,6 +99,8 @@ export function ReportsView() {
           <IncomeStatementTab />
         ) : tab === "bs" ? (
           <BalanceSheetTab />
+        ) : tab === "cf" ? (
+          <CashFlowTab />
         ) : (
           <GeneralLedgerTab />
         )}
@@ -640,6 +647,194 @@ function BalanceSheetTab() {
             )}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Cash Flow Statement (Sesi Y polish)
+// ============================================================
+
+function CashFlowTab() {
+  const [range, setRange] = useState<{ from: string; to: string }>(() =>
+    monthRangeFor(new Date()),
+  );
+  const [report, setReport] = useState<CashFlowStatement | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    const res = await fetchCashFlowStatement({
+      fromDate: range.from,
+      toDate: range.to,
+      periodLabel: `${range.from} → ${range.to}`,
+    });
+    setLoading(false);
+    if (res.ok) setReport(res.data);
+    else toast.error(res.error.message);
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    void load();
+  }, [range.from, range.to]);
+
+  async function onExportPdf() {
+    if (!report) return;
+    const outletRes = await getOwnOutlet();
+    if (!isOk(outletRes)) {
+      toast.error("Gagal load outlet info");
+      return;
+    }
+    exportCashFlowStatementPdf(report, outletRes.data);
+    toast.success("PDF Arus Kas terdownload");
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-end justify-between gap-3">
+        <DateRangePicker
+          label="Periode"
+          value={range}
+          onChange={(r) => {
+            if (r.from && r.to) setRange({ from: r.from, to: r.to });
+          }}
+        />
+        {report ? (
+          <Button variant="outline" size="sm" onClick={onExportPdf}>
+            <Download className="size-4" /> Export PDF
+          </Button>
+        ) : null}
+      </div>
+
+      {loading || !report ? (
+        <Skeleton className="h-64 w-full" />
+      ) : (
+        <div className="space-y-3">
+          <div className="rounded-md border border-mahakan-green-100 bg-mahakan-green-50/40 p-3 text-sm">
+            <div className="flex justify-between font-medium">
+              <span>Saldo Kas Awal</span>
+              <span className="font-mono">
+                {formatRupiah(report.openingCash)}
+              </span>
+            </div>
+          </div>
+
+          <CashFlowSectionView section={report.operating} />
+          <CashFlowSectionView section={report.investing} />
+          <CashFlowSectionView section={report.financing} />
+
+          <div className="rounded-md border border-mahakan-green-300 bg-mahakan-green-50 p-3 space-y-1.5 text-sm">
+            <div className="flex justify-between">
+              <span>Perubahan Bersih Kas</span>
+              <span
+                className={cn(
+                  "font-mono font-semibold",
+                  report.netChangeInCash < 0 && "text-danger-500",
+                )}
+              >
+                {report.netChangeInCash < 0 ? "(" : ""}
+                {formatRupiah(Math.abs(report.netChangeInCash))}
+                {report.netChangeInCash < 0 ? ")" : ""}
+              </span>
+            </div>
+            <div className="flex justify-between font-semibold text-mahakan-green-900">
+              <span>Saldo Kas Akhir (Computed)</span>
+              <span className="font-mono">
+                {formatRupiah(report.closingCashComputed)}
+              </span>
+            </div>
+            <div className="flex justify-between text-xs text-neutral-500">
+              <span>Saldo Kas Akhir (Aktual dari Buku Besar)</span>
+              <span className="font-mono">
+                {formatRupiah(report.closingCashActual)}
+              </span>
+            </div>
+          </div>
+
+          <div className="text-center text-xs">
+            {report.matchesActualClosing ? (
+              <span className="text-success-500">
+                ✓ Computed match aktual — data integrity OK
+              </span>
+            ) : (
+              <span className="text-danger-500">
+                ✕ Tidak match — selisih{" "}
+                {formatRupiah(
+                  Math.abs(
+                    report.closingCashComputed - report.closingCashActual,
+                  ),
+                )}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-neutral-500">
+        PSAK standar 3-section: Operasi (POS sales, expense, payroll, dll) /
+        Investasi (capitalize fixed asset) / Pendanaan (modal owner, prive).
+        Setoran tunai (kas → bank) tidak dihitung karena intra-cash transfer.
+      </p>
+    </div>
+  );
+}
+
+function CashFlowSectionView({
+  section,
+}: {
+  section: { label: string; items: Array<{ label: string; amount: number; entryCount: number }>; netCash: number };
+}) {
+  return (
+    <div>
+      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-mahakan-green-900">
+        {section.label}
+      </h3>
+      {section.items.length === 0 ? (
+        <p className="pl-4 text-xs text-neutral-400">
+          (tidak ada aktivitas di periode ini)
+        </p>
+      ) : (
+        <table className="min-w-full text-sm">
+          <tbody className="divide-y divide-neutral-100">
+            {section.items.map((item) => (
+              <tr key={item.label}>
+                <td className="py-1 pl-4">
+                  {item.label}{" "}
+                  <span className="text-xs text-neutral-400">
+                    ({item.entryCount}×)
+                  </span>
+                </td>
+                <td
+                  className={cn(
+                    "py-1 pr-2 text-right font-mono",
+                    item.amount < 0 && "text-danger-500",
+                  )}
+                >
+                  {item.amount < 0 ? "(" : ""}
+                  {formatRupiah(Math.abs(item.amount))}
+                  {item.amount < 0 ? ")" : ""}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot className="border-t border-neutral-200">
+            <tr>
+              <td className="py-1.5 pl-4 font-medium">Net</td>
+              <td
+                className={cn(
+                  "py-1.5 pr-2 text-right font-mono font-medium",
+                  section.netCash < 0 && "text-danger-500",
+                )}
+              >
+                {section.netCash < 0 ? "(" : ""}
+                {formatRupiah(Math.abs(section.netCash))}
+                {section.netCash < 0 ? ")" : ""}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
       )}
     </div>
   );

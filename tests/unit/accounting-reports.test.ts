@@ -596,3 +596,149 @@ describe("buildValidationReport", () => {
     ]);
   });
 });
+
+// ============================================================
+// buildCashFlowStatement (Sesi Y polish)
+// ============================================================
+
+import {
+  buildCashFlowStatement,
+  classifyCashFlowSourceType,
+} from "@/features/accounting/reports";
+
+describe("classifyCashFlowSourceType", () => {
+  it("operating sources route to operating", () => {
+    expect(classifyCashFlowSourceType("pos_sale")).toBe("operating");
+    expect(classifyCashFlowSourceType("payroll_paid")).toBe("operating");
+    expect(classifyCashFlowSourceType("expense_create")).toBe("operating");
+    expect(classifyCashFlowSourceType("aggregator_settlement")).toBe(
+      "operating",
+    );
+  });
+
+  it("intra-cash and non-cash sources are skipped", () => {
+    expect(classifyCashFlowSourceType("cash_deposit_verified")).toBe("skip");
+    expect(classifyCashFlowSourceType("pos_compliment")).toBe("skip");
+    expect(classifyCashFlowSourceType("opname_adjustment")).toBe("skip");
+    expect(classifyCashFlowSourceType("opening_balance")).toBe("skip");
+    expect(classifyCashFlowSourceType("period_close")).toBe("skip");
+  });
+
+  it("manual default to operating (caller sub-classifies)", () => {
+    expect(classifyCashFlowSourceType("manual")).toBe("operating");
+  });
+});
+
+describe("buildCashFlowStatement", () => {
+  it("computes positive operating + matches actual closing", () => {
+    const r = buildCashFlowStatement({
+      periodLabel: "Juni 2026",
+      openingCash: 5_000_000,
+      closingCashActual: 7_000_000,
+      entries: [
+        {
+          bucket: "operating",
+          label: "POS Cash Sales",
+          amount: 3_000_000,
+          entryCount: 50,
+        },
+        {
+          bucket: "operating",
+          label: "Operating Expenses",
+          amount: -1_000_000,
+          entryCount: 5,
+        },
+      ],
+    });
+    expect(r.operating.netCash).toBe(2_000_000);
+    expect(r.netChangeInCash).toBe(2_000_000);
+    expect(r.closingCashComputed).toBe(7_000_000);
+    expect(r.matchesActualClosing).toBe(true);
+  });
+
+  it("aggregates same-label items across multiple entries", () => {
+    const r = buildCashFlowStatement({
+      periodLabel: "Test",
+      openingCash: 0,
+      closingCashActual: 100_000,
+      entries: [
+        { bucket: "operating", label: "POS Cash Sales", amount: 60_000, entryCount: 1 },
+        { bucket: "operating", label: "POS Cash Sales", amount: 40_000, entryCount: 2 },
+      ],
+    });
+    expect(r.operating.items.length).toBe(1);
+    expect(r.operating.items[0].amount).toBe(100_000);
+    expect(r.operating.items[0].entryCount).toBe(3);
+  });
+
+  it("3-section breakdown", () => {
+    const r = buildCashFlowStatement({
+      periodLabel: "Test",
+      openingCash: 10_000_000,
+      closingCashActual: 12_000_000,
+      entries: [
+        { bucket: "operating", label: "POS", amount: 5_000_000, entryCount: 100 },
+        {
+          bucket: "investing",
+          label: "Fixed Asset",
+          amount: -10_000_000,
+          entryCount: 1,
+        },
+        {
+          bucket: "financing",
+          label: "Modal",
+          amount: 7_000_000,
+          entryCount: 1,
+        },
+      ],
+    });
+    expect(r.operating.netCash).toBe(5_000_000);
+    expect(r.investing.netCash).toBe(-10_000_000);
+    expect(r.financing.netCash).toBe(7_000_000);
+    expect(r.netChangeInCash).toBe(2_000_000);
+    expect(r.matchesActualClosing).toBe(true);
+  });
+
+  it("flags drift kalau computed != actual", () => {
+    const r = buildCashFlowStatement({
+      periodLabel: "Test",
+      openingCash: 1_000_000,
+      closingCashActual: 5_000_000,
+      entries: [
+        { bucket: "operating", label: "POS", amount: 500_000, entryCount: 1 },
+      ],
+    });
+    // Computed 1.5M vs actual 5M → drift 3.5M
+    expect(r.closingCashComputed).toBe(1_500_000);
+    expect(r.matchesActualClosing).toBe(false);
+  });
+
+  it("zero-amount items skipped", () => {
+    const r = buildCashFlowStatement({
+      periodLabel: "Test",
+      openingCash: 0,
+      closingCashActual: 0,
+      entries: [
+        { bucket: "operating", label: "Empty", amount: 0, entryCount: 5 },
+      ],
+    });
+    expect(r.operating.items.length).toBe(0);
+    expect(r.netChangeInCash).toBe(0);
+  });
+
+  it("items sorted by absolute amount descending", () => {
+    const r = buildCashFlowStatement({
+      periodLabel: "Test",
+      openingCash: 0,
+      closingCashActual: 4_000,
+      entries: [
+        { bucket: "operating", label: "Small", amount: 1_000, entryCount: 1 },
+        { bucket: "operating", label: "Big", amount: 5_000, entryCount: 1 },
+        { bucket: "operating", label: "Medium", amount: -2_000, entryCount: 1 },
+      ],
+    });
+    expect(r.operating.items[0].label).toBe("Big");
+    expect(r.operating.items[1].label).toBe("Medium");
+    expect(r.operating.items[2].label).toBe("Small");
+  });
+});

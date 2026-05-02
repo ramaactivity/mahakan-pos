@@ -312,6 +312,184 @@ export function buildBalanceSheet(
 }
 
 // ============================================================
+// Cash Flow Statement (PSAK Standar — Operating/Investing/Financing)
+// ============================================================
+
+/**
+ * Cash Flow Statement classifies cash inflows + outflows ke 3 kategori
+ * standar (PSAK / IFRS):
+ *
+ *   - Operating: POS sales, refund, purchase, payroll, expense, income,
+ *     aggregator settlement, shift variance — kegiatan rutin operasional
+ *   - Investing: fixed asset capitalization, sale of asset — capex
+ *   - Financing: modal owner setoran, prive owner withdrawal — equity
+ *
+ * Reconciliation: opening_cash + net_change_in_cash === closing_cash_actual.
+ * `matchesActualClosing` flag = data integrity check (must = true kalau ledger
+ * benar).
+ *
+ * Data source: journal_lines yang account in (1101, 1102, 1110, 1111, 1112).
+ * Caller pre-aggregates per (sourceType, section) + checks counter-account
+ * untuk classify manual entries.
+ */
+
+export type CashFlowItem = {
+  /** Display label (e.g. "POS sale", "Manual journal", etc.). */
+  label: string;
+  /** Net cash impact in period (positive = inflow, negative = outflow). */
+  amount: number;
+  /** Number of journal entries contributing. */
+  entryCount: number;
+};
+
+export type CashFlowSection = {
+  label: string;
+  items: CashFlowItem[];
+  netCash: number;
+};
+
+export type CashFlowStatement = {
+  periodLabel: string;
+  openingCash: number;
+  operating: CashFlowSection;
+  investing: CashFlowSection;
+  financing: CashFlowSection;
+  netChangeInCash: number;
+  closingCashComputed: number;
+  closingCashActual: number;
+  /** abs(closingCashComputed - closingCashActual) < 100 (rounding tolerance). */
+  matchesActualClosing: boolean;
+};
+
+/** Inputs untuk buildCashFlowStatement — caller pre-classifies. */
+export type CashFlowEntryAggregate = {
+  /** "operating" | "investing" | "financing" — caller classifies. */
+  bucket: "operating" | "investing" | "financing";
+  /** Display label biasanya derived dari sourceType. */
+  label: string;
+  /** Net cash impact (signed). */
+  amount: number;
+  /** Entry count. */
+  entryCount: number;
+};
+
+export const SOURCE_TYPE_LABELS_CF: Record<string, string> = {
+  pos_sale: "POS Cash Sales",
+  pos_refund: "Refund Payouts",
+  purchase_create: "Purchase Payments (cash)",
+  purchase_pay: "Purchase Payments (TOP paid)",
+  purchase_cancel: "Purchase Cancellation",
+  payroll_paid: "Payroll Payments",
+  expense_create: "Operating Expenses",
+  income_create: "Non-POS Income",
+  aggregator_settlement: "Aggregator Settlements",
+  shift_variance: "Shift Cash Variance",
+  manual_operating: "Manual Journal (Operating)",
+  manual_investing: "Fixed Asset Capitalization",
+  manual_financing: "Owner Modal / Prive",
+};
+
+export function classifyCashFlowSourceType(
+  sourceType: string,
+): "operating" | "investing" | "financing" | "skip" {
+  switch (sourceType) {
+    case "pos_sale":
+    case "pos_refund":
+    case "purchase_create":
+    case "purchase_pay":
+    case "purchase_cancel":
+    case "payroll_paid":
+    case "expense_create":
+    case "income_create":
+    case "aggregator_settlement":
+    case "shift_variance":
+      return "operating";
+    case "cash_deposit_verified": // intra-cash transfer (kas → bank), no net cash change
+    case "pos_compliment": // no cash movement
+    case "opname_adjustment": // no cash movement
+    case "period_close":
+    case "period_reopen":
+    case "opening_balance": // pre-period, baseline
+    case "expense_void":
+    case "income_void":
+      return "skip";
+    case "manual":
+      // Caller must sub-classify based on counter-account.
+      return "operating"; // default fallback
+    default:
+      return "operating"; // unknown sourceType → operating bucket
+  }
+}
+
+export function buildCashFlowStatement(args: {
+  periodLabel: string;
+  openingCash: number;
+  closingCashActual: number;
+  entries: CashFlowEntryAggregate[];
+}): CashFlowStatement {
+  const operating: CashFlowSection = {
+    label: "Arus Kas dari Aktivitas Operasi",
+    items: [],
+    netCash: 0,
+  };
+  const investing: CashFlowSection = {
+    label: "Arus Kas dari Aktivitas Investasi",
+    items: [],
+    netCash: 0,
+  };
+  const financing: CashFlowSection = {
+    label: "Arus Kas dari Aktivitas Pendanaan",
+    items: [],
+    netCash: 0,
+  };
+
+  // Aggregate items per label within each bucket (caller may emit multiple
+  // rows untuk same label e.g. operating manual + manual_operating).
+  const buckets = {
+    operating,
+    investing,
+    financing,
+  };
+  for (const e of args.entries) {
+    if (e.amount === 0) continue;
+    const bucket = buckets[e.bucket];
+    const existing = bucket.items.find((it) => it.label === e.label);
+    if (existing) {
+      existing.amount += e.amount;
+      existing.entryCount += e.entryCount;
+    } else {
+      bucket.items.push({
+        label: e.label,
+        amount: e.amount,
+        entryCount: e.entryCount,
+      });
+    }
+    bucket.netCash += e.amount;
+  }
+
+  // Sort items by absolute amount descending untuk display.
+  for (const b of [operating, investing, financing]) {
+    b.items.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  }
+
+  const netChange = operating.netCash + investing.netCash + financing.netCash;
+  const closingComputed = args.openingCash + netChange;
+
+  return {
+    periodLabel: args.periodLabel,
+    openingCash: args.openingCash,
+    operating,
+    investing,
+    financing,
+    netChangeInCash: netChange,
+    closingCashComputed: closingComputed,
+    closingCashActual: args.closingCashActual,
+    matchesActualClosing:
+      Math.abs(closingComputed - args.closingCashActual) < 100,
+  };
+}
+
+// ============================================================
 // General Ledger per Akun
 // ============================================================
 

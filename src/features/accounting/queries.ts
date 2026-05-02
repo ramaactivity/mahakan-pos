@@ -16,7 +16,10 @@ import type {
   PeriodStatus,
   PeriodSummary,
 } from "./types";
-import type { AccountBalanceRow } from "./reports";
+import type {
+  AccountBalanceRow,
+  CashFlowEntryAggregate,
+} from "./reports";
 
 // ---------- Chart of Accounts ----------
 
@@ -423,6 +426,174 @@ export async function getAccountLedgerEntries(args: {
     debit: Number(r.debit),
     credit: Number(r.credit),
   }));
+}
+
+// ============================================================
+// Cash Flow Statement query
+// ============================================================
+
+/**
+ * Aggregate cash impact per (sourceType, manual-classification) ke bucket
+ * format yang `buildCashFlowStatement` consume.
+ *
+ * Strategy:
+ *   1. Pull all journal entries dengan status='posted' di range
+ *   2. Untuk entries yang touch cash/bank account (1101, 1102, 1110-1112),
+ *      compute net cash impact (sum debit - sum credit pada cash lines)
+ *   3. For sourceType='manual': inspect non-cash lines untuk classify investing
+ *      (touches 1201-1204) atau financing (touches 3101/3201/3301) atau
+ *      operating (else)
+ *   4. Aggregate per (bucket, label) → array sesuai CashFlowEntryAggregate
+ */
+const CASH_BANK_CODES = ["1101", "1102", "1110", "1111", "1112"];
+const FIXED_ASSET_CODES = ["1201", "1202", "1203", "1204"];
+const EQUITY_CODES = ["3101", "3201", "3301"];
+
+export async function getCashFlowEntries(args: {
+  outletId: string;
+  fromDate: string;
+  toDate: string;
+}): Promise<CashFlowEntryAggregate[]> {
+  // Step 1 — entries dengan cash impact, plus aggregated cash net per entry.
+  // Use raw SQL untuk klausul kompleks (nested aggregation + LEFT JOIN).
+  const rows = await db.execute<{
+    entry_id: string;
+    source_type: string;
+    cash_net: string;
+    has_fixed_asset: boolean;
+    has_equity: boolean;
+  }>(sql`
+    WITH cash_impact AS (
+      SELECT
+        je.id AS entry_id,
+        je.source_type,
+        SUM(jl.debit - jl.credit) AS cash_net
+      FROM journal_entries je
+      INNER JOIN journal_lines jl ON jl.entry_id = je.id
+      INNER JOIN chart_of_accounts coa ON coa.id = jl.account_id
+      WHERE je.outlet_id = ${args.outletId}
+        AND je.status = 'posted'
+        AND je.entry_date >= ${args.fromDate}
+        AND je.entry_date <= ${args.toDate}
+        AND coa.code IN ('1101','1102','1110','1111','1112')
+      GROUP BY je.id, je.source_type
+      HAVING SUM(jl.debit - jl.credit) != 0
+    )
+    SELECT
+      ci.entry_id,
+      ci.source_type,
+      ci.cash_net::text AS cash_net,
+      EXISTS (
+        SELECT 1 FROM journal_lines jl2
+        INNER JOIN chart_of_accounts coa2 ON coa2.id = jl2.account_id
+        WHERE jl2.entry_id = ci.entry_id
+          AND coa2.code IN ('1201','1202','1203','1204')
+      ) AS has_fixed_asset,
+      EXISTS (
+        SELECT 1 FROM journal_lines jl3
+        INNER JOIN chart_of_accounts coa3 ON coa3.id = jl3.account_id
+        WHERE jl3.entry_id = ci.entry_id
+          AND coa3.code IN ('3101','3201','3301')
+      ) AS has_equity
+    FROM cash_impact ci
+  `);
+
+  // Step 2 — aggregate ke buckets.
+  const aggMap = new Map<
+    string,
+    { bucket: "operating" | "investing" | "financing"; label: string; amount: number; entryCount: number }
+  >();
+
+  // Drizzle execute returns { rows: [...] } shape — handle both.
+  const rowsList = (rows as unknown as { rows?: unknown[] }).rows ?? rows;
+  const arr = Array.isArray(rowsList) ? rowsList : [];
+
+  for (const r of arr) {
+    const row = r as {
+      entry_id: string;
+      source_type: string;
+      cash_net: string;
+      has_fixed_asset: boolean;
+      has_equity: boolean;
+    };
+    const sourceType = row.source_type;
+    const amount = Number(row.cash_net);
+
+    // Classify
+    let bucket: "operating" | "investing" | "financing" | "skip";
+    let label: string;
+    if (sourceType === "manual") {
+      if (row.has_fixed_asset) {
+        bucket = "investing";
+        label = "Fixed Asset Capitalization";
+      } else if (row.has_equity) {
+        bucket = "financing";
+        label = "Owner Modal / Prive";
+      } else {
+        bucket = "operating";
+        label = "Manual Journal (Operating)";
+      }
+    } else {
+      const cls = classifyCashFlowSourceTypeImpl(sourceType);
+      if (cls === "skip") continue;
+      bucket = cls;
+      label = SOURCE_LABELS_CF[sourceType] ?? sourceType;
+    }
+
+    const key = `${bucket}|${label}`;
+    const existing = aggMap.get(key);
+    if (existing) {
+      existing.amount += amount;
+      existing.entryCount += 1;
+    } else {
+      aggMap.set(key, { bucket, label, amount, entryCount: 1 });
+    }
+  }
+
+  return Array.from(aggMap.values());
+}
+
+// Local copy untuk avoid circular import dengan reports.ts (server-only).
+const SOURCE_LABELS_CF: Record<string, string> = {
+  pos_sale: "POS Cash Sales",
+  pos_refund: "Refund Payouts",
+  purchase_create: "Purchase Payments (cash)",
+  purchase_pay: "Purchase Payments (TOP paid)",
+  purchase_cancel: "Purchase Cancellation",
+  payroll_paid: "Payroll Payments",
+  expense_create: "Operating Expenses",
+  income_create: "Non-POS Income",
+  aggregator_settlement: "Aggregator Settlements",
+  shift_variance: "Shift Cash Variance",
+};
+
+function classifyCashFlowSourceTypeImpl(
+  sourceType: string,
+): "operating" | "investing" | "financing" | "skip" {
+  switch (sourceType) {
+    case "pos_sale":
+    case "pos_refund":
+    case "purchase_create":
+    case "purchase_pay":
+    case "purchase_cancel":
+    case "payroll_paid":
+    case "expense_create":
+    case "income_create":
+    case "aggregator_settlement":
+    case "shift_variance":
+      return "operating";
+    case "cash_deposit_verified":
+    case "pos_compliment":
+    case "opname_adjustment":
+    case "period_close":
+    case "period_reopen":
+    case "opening_balance":
+    case "expense_void":
+    case "income_void":
+      return "skip";
+    default:
+      return "operating";
+  }
 }
 
 /**

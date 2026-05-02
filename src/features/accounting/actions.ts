@@ -24,6 +24,7 @@ import {
   getAccountById,
   getAccountLedgerEntries,
   getAccountOpeningBalance,
+  getCashFlowEntries,
   getCurrentPeriod,
   getJournalEntryById,
   listAccounts,
@@ -39,11 +40,13 @@ import {
 import { recordJournal } from "./posting";
 import {
   buildBalanceSheet,
+  buildCashFlowStatement,
   buildGeneralLedger,
   buildIncomeStatement,
   buildTrialBalance,
   buildValidationReport,
   type BalanceSheetReport,
+  type CashFlowStatement,
   type GeneralLedgerReport,
   type IncomeStatementReport,
   type TrialBalanceReport,
@@ -1193,6 +1196,67 @@ export async function fetchValidationReport(
       },
     }),
   );
+}
+
+/**
+ * Sesi Y polish — Cash Flow Statement (PSAK standar 3-section).
+ */
+export async function fetchCashFlowStatement(args: {
+  fromDate: string;
+  toDate: string;
+  periodLabel: string;
+}): Promise<ApiResult<CashFlowStatement>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.report.view")) {
+    return fail("FORBIDDEN", "Tidak punya akses laporan akuntansi");
+  }
+
+  // Opening cash balance = balance per cash/bank accounts as-of (fromDate - 1)
+  const openingBalances = await getAccountBalances({
+    outletId: session.user.outletId,
+    fromDate: null,
+    toDate: prevDayIso(args.fromDate),
+  });
+  const openingCash = sumCashAccounts(openingBalances);
+
+  // Closing cash balance actual (cumulative as-of toDate)
+  const closingBalances = await getAccountBalances({
+    outletId: session.user.outletId,
+    fromDate: null,
+    toDate: args.toDate,
+  });
+  const closingCashActual = sumCashAccounts(closingBalances);
+
+  // Aggregate cash flow entries dalam range
+  const entries = await getCashFlowEntries({
+    outletId: session.user.outletId,
+    fromDate: args.fromDate,
+    toDate: args.toDate,
+  });
+
+  return ok(
+    buildCashFlowStatement({
+      periodLabel: args.periodLabel,
+      openingCash,
+      closingCashActual,
+      entries,
+    }),
+  );
+}
+
+function prevDayIso(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function sumCashAccounts(
+  balances: Array<{ code: string; debitTotal: number; creditTotal: number }>,
+): number {
+  const cashCodes = ["1101", "1102", "1110", "1111", "1112"];
+  return balances
+    .filter((b) => cashCodes.includes(b.code))
+    .reduce((s, b) => s + (b.debitTotal - b.creditTotal), 0);
 }
 
 export async function fetchGeneralLedger(args: {
