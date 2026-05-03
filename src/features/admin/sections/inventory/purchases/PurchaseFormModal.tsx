@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FileText, ImagePlus, Loader2, Plus, Trash2, X } from "lucide-react";
-import { upload } from "@vercel/blob/client";
 import {
   Button,
   Combobox,
@@ -597,18 +596,9 @@ export function PurchaseFormModal({
                   rel="noopener noreferrer"
                   className="flex flex-1 items-center gap-2 text-xs text-mahakan-green-900 hover:underline min-w-0"
                 >
-                  {receiptUrl.toLowerCase().endsWith(".pdf") ? (
-                    <FileText className="size-4 shrink-0" />
-                  ) : (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={receiptUrl}
-                      alt="Preview bukti"
-                      className="size-10 shrink-0 rounded object-cover"
-                    />
-                  )}
+                  <FileText className="size-4 shrink-0" />
                   <span className="truncate">
-                    {receiptFileName ?? "Lihat bukti"}
+                    {receiptFileName ?? "Lihat di Google Drive"}
                   </span>
                 </a>
                 <button
@@ -619,7 +609,8 @@ export function PurchaseFormModal({
                   }}
                   disabled={submitting || uploading}
                   className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-neutral-500 hover:bg-danger-100 hover:text-danger-500"
-                  aria-label="Hapus bukti"
+                  aria-label="Hapus bukti dari form (file tetap di Drive)"
+                  title="Hapus dari form. File yang sudah di Drive tidak ikut terhapus — hapus manual via Drive kalau perlu."
                 >
                   <X className="size-3.5" />
                 </button>
@@ -640,19 +631,30 @@ export function PurchaseFormModal({
                       if (file.size > 5 * 1024 * 1024) {
                         throw new Error("Ukuran maks 5 MB");
                       }
-                      const safeName = file.name.replace(/[^\w.\-]/g, "_");
-                      // Auto-rename: `purchase-receipts/{ts}-{date}-{filename}`
-                      // — date prefix bantu Owner sortir di Blob dashboard.
-                      const dateSlug = purchaseDate.replace(/-/g, "");
-                      const pathname = `purchase-receipts/${dateSlug}-${Date.now()}-${safeName}`;
-                      const result = await upload(pathname, file, {
-                        access: "public",
-                        handleUploadUrl:
-                          "/api/v1/purchase-receipts/upload",
-                      });
-                      setReceiptUrl(result.url);
+                      // Upload to Google Drive via /api/v1/purchase-receipts/upload.
+                      // Server handles auth + auto-creates year/month folders
+                      // matching Owner's NOTA MAHAKAN structure (sesi AA #2 Opsi B).
+                      const fd = new FormData();
+                      fd.append("file", file);
+                      fd.append("purchaseDate", purchaseDate);
+                      const res = await fetch(
+                        "/api/v1/purchase-receipts/upload",
+                        { method: "POST", body: fd },
+                      );
+                      const json = (await res.json()) as
+                        | { success: true; data: { url: string; folderPath: string } }
+                        | {
+                            success: false;
+                            error: { code: string; message: string };
+                          };
+                      if (!json.success) {
+                        throw new Error(json.error.message);
+                      }
+                      setReceiptUrl(json.data.url);
                       setReceiptFileName(file.name);
-                      toast.success("Bukti pembelian terupload");
+                      toast.success(
+                        `Bukti tersimpan di Drive · ${json.data.folderPath}`,
+                      );
                     } catch (e) {
                       setError(
                         e instanceof Error ? e.message : "Upload gagal",
@@ -681,8 +683,9 @@ export function PurchaseFormModal({
                   )}
                 </Button>
                 <p className="mt-1 text-xs text-neutral-500">
-                  JPG / PNG / WebP / PDF, max 5 MB. Nota toko atau bukti
-                  transfer bank. File auto-rename dengan tanggal + waktu.
+                  JPG / PNG / WebP / PDF, max 5 MB. Tersimpan otomatis di
+                  Google Drive Anda — folder <strong>NOTA MAHAKAN</strong>{" "}
+                  → tahun → bulan, sesuai struktur lama.
                 </p>
               </div>
             )}

@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.2",
+    "@googleapis/drive": "^20.1.0",
     "@neondatabase/serverless": "^1.1.0",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-popover": "^1.1.15",
@@ -40,6 +41,7 @@
     "date-fns-tz": "^3.2.0",
     "dexie": "^4.4.2",
     "drizzle-orm": "^0.45.2",
+    "google-auth-library": "^10.6.2",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.9.0",
     "nanoid": "^5.1.9",
