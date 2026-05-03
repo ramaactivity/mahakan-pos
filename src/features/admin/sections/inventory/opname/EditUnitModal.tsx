@@ -8,7 +8,11 @@ import { updateIngredient } from "@/features/inventory/actions";
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSaved: () => void;
+  /** Called after successful save. Receives the saved unit string so the
+   * caller can apply an optimistic override without waiting for the parent
+   * refresh round-trip. Sesi AA hotfix: parent refresh sometimes lags, leaving
+   * the row showing the old unit even though the DB is updated. */
+  onSaved: (newUnit: string) => void;
   ingredientId: string;
   ingredientName: string;
   /** Current unit (could be from snapshot or live; we update live ingredient.unit). */
@@ -61,7 +65,7 @@ export function EditUnitModal({
     setSubmitting(false);
     if (res.success) {
       toast.success(`Unit ${ingredientName} diubah ke "${trimmed}"`);
-      onSaved();
+      onSaved(trimmed);
     } else {
       setError(res.error.message);
     }

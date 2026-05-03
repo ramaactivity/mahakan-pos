@@ -102,6 +102,21 @@ export function OpnameCountView({
   const [stateMap, setStateMap] = useState<Map<string, LineState>>(() =>
     initialState(detail),
   );
+
+  // Optimistic unit overrides — populated when EditUnitModal saves so the
+  // CountRow updates instantly without waiting for the parent's silent
+  // refresh round-trip (sesi AA hotfix #2: even though server-side updates
+  // unitSnapshot for in_progress sessions, parent re-fetch had a race
+  // window where stale detail re-rendered before the new query landed).
+  const [unitOverrides, setUnitOverrides] = useState<Map<string, string>>(
+    () => new Map(),
+  );
+  // Reset overrides when session changes (new session = new snapshots).
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setUnitOverrides(new Map());
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [detail.id]);
   // If detail prop changes (e.g. parent refreshes after cancel), reseed.
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect */
@@ -582,12 +597,14 @@ export function OpnameCountView({
             <ul className="divide-y divide-neutral-100">
               {filteredLines.map((line) => {
                 const f = flow?.perIngredient[line.ingredientId];
+                const effectiveUnit =
+                  unitOverrides.get(line.ingredientId) ?? line.unitSnapshot;
                 return (
                   <CountRow
                     key={line.id}
                     ingredientId={line.ingredientId}
                     name={line.ingredientNameSnapshot}
-                    unit={line.unitSnapshot}
+                    unit={effectiveUnit}
                     expectedQty={line.expectedQty}
                     openingQty={f?.openingQty ?? 0}
                     purchasesQty={f?.purchasesQty ?? 0}
@@ -603,7 +620,7 @@ export function OpnameCountView({
                             setEditUnitFor({
                               id: line.ingredientId,
                               name: line.ingredientNameSnapshot,
-                              unit: line.unitSnapshot,
+                              unit: effectiveUnit,
                             })
                         : undefined
                     }
@@ -696,10 +713,21 @@ export function OpnameCountView({
           ingredientId={editUnitFor.id}
           ingredientName={editUnitFor.name}
           currentUnit={editUnitFor.unit}
-          onSaved={() => {
+          onSaved={(newUnit) => {
+            // Optimistic UI: push override so the row updates instantly,
+            // independent of when the parent's silent refetch completes.
+            // Server-side updateIngredient already updates ingredient.unit
+            // AND stockOpnameLines.unitSnapshot for in_progress sessions
+            // atomically (sesi AA backend fix).
+            const ingId = editUnitFor.id;
+            setUnitOverrides((prev) => {
+              const next = new Map(prev);
+              next.set(ingId, newUnit);
+              return next;
+            });
             setEditUnitFor(null);
-            // Trigger parent refresh so future opnames see new unit. Current
-            // session unitSnapshot stays frozen by design (audit integrity).
+            // Still trigger parent refresh so HppEstimate + history reflect
+            // the new unit on next render. The override hides the race.
             onChanged();
           }}
         />
