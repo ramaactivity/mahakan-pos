@@ -1,8 +1,8 @@
-# Google Drive Integration — Setup Guide
+# Google Drive Integration — Setup Guide (OAuth variant)
 
 **Untuk:** Mahakan POS — bukti pembelian (purchase receipts) ke Google Drive
-**Sesi:** AA #2 (Opsi B), 2026-05-03
-**Estimasi waktu:** ~10 menit
+**Sesi:** AA #2 (Opsi B — OAuth user delegation), 2026-05-04
+**Estimasi waktu:** ~10 menit (sebagian besar tunggu propagation)
 
 ---
 
@@ -18,167 +18,200 @@ MAHAKAN COFFEE / NOTA MAHAKAN /
 
 Sesi AA Opsi B mengintegrasikan Mahakan POS supaya upload bukti
 pembelian dari tab "Catat Pembelian" **langsung** masuk ke folder ini —
-auto-create subfolder tahun + bulan kalau belum ada. Sehingga:
+auto-create subfolder tahun + bulan kalau belum ada.
 
-- Workflow Owner tidak berubah (semua nota tetap di Drive).
-- Akuntan eksternal tetap akses lewat Drive yang familiar (no Mahakan login).
-- File auto-named dengan tanggal pembelian + timestamp + nama original.
-- Anyone-with-link reader permission → URL aman di-paste ke chat akuntan.
-
----
-
-## Step 1 — Buat Service Account di Google Cloud (5 menit)
-
-1. Buka https://console.cloud.google.com (login dengan akun Google
-   yang **own** folder NOTA MAHAKAN — ini penting nanti untuk share).
-2. Klik dropdown project di pojok kiri-atas → **NEW PROJECT**.
-   - Project name: `Mahakan POS Drive` (atau bebas)
-   - Klik **CREATE**, tunggu ~10 detik sampai project aktif.
-3. Pastikan project barusan ke-pilih (cek di dropdown atas).
-4. Sidebar kiri (☰ menu) → **APIs & Services** → **Library**.
-5. Search `Google Drive API` → klik hasilnya → klik **ENABLE**.
-6. Sidebar kiri → **IAM & Admin** → **Service Accounts**.
-7. Klik **+ CREATE SERVICE ACCOUNT** di atas.
-   - Name: `mahakan-pos-uploader`
-   - ID: auto-fill (biarkan)
-   - Description: `Upload purchase receipts dari Mahakan POS`
-   - Klik **CREATE AND CONTINUE**
-8. Step 2 (Grant access) → **SKIP** (klik CONTINUE — kita kasih akses
-   via folder share, bukan project-level role).
-9. Step 3 → klik **DONE**.
-10. Service account barusan muncul di list. Klik nama-nya.
-11. Tab **KEYS** di atas → **ADD KEY** → **Create new key** →
-    pilih **JSON** → **CREATE**.
-12. File JSON otomatis ke-download. Simpan, jangan share publicly.
-    Filename biasanya: `mahakan-pos-drive-xxxx.json`.
+**Kenapa OAuth, bukan Service Account?**
+Service Account TIDAK punya storage quota di personal Gmail account
+(Google policy — service accounts cuma boleh upload ke Workspace Shared
+Drives, yang berbayar). Untuk personal Gmail, kita pakai **OAuth user
+delegation**: Owner authorize 1× pakai akun Gmail, app act atas nama
+Owner, file count terhadap Owner's 15GB Gmail quota. File tetap owned
+by Owner, tetap di folder Owner.
 
 ---
 
-## Step 2 — Share folder NOTA MAHAKAN ke service account (1 menit)
+## Step 1 — Setup Google Cloud Console (~5 menit)
 
-1. Buka file JSON yang barusan di-download (text editor).
-2. Cari field `"client_email"`. Value-nya berbentuk:
-   ```
-   mahakan-pos-uploader@mahakan-pos-drive-xxxxx.iam.gserviceaccount.com
-   ```
-   **Copy** email ini.
-3. Buka folder NOTA MAHAKAN di Drive:
-   https://drive.google.com/drive/folders/1jeWbV75ElGiLdtcT7GTAHj6XZbEfOK1F
-4. Klik kanan nama folder (di breadcrumb atas) → **Share** → **Share**.
-5. Paste email service account → role pilih **Editor** → **Send**.
-   (Notify centang gak penting karena ini bukan email manusia.)
+> **Catatan:** kalau Anda sudah selesai Step 1 versi Service Account
+> sebelumnya (project sudah ada + Drive API sudah enabled), lewati ke
+> Step 1.4 (buat OAuth Client) saja.
 
-✅ Service account sekarang bisa baca + tulis ke folder ini.
+### 1.1 Project + Drive API
+1. Buka https://console.cloud.google.com (login dengan Gmail Owner)
+2. Project selector atas → **NEW PROJECT** → name: `Mahakan POS Drive` → CREATE
+3. Pastikan project barusan ke-pilih
+4. Sidebar → **APIs & Services** → **Library** → search `Google Drive API` → **ENABLE**
+
+### 1.2 OAuth Consent Screen
+5. Sidebar → **APIs & Services** → **OAuth consent screen**
+6. User Type: **External** → CREATE
+7. App name: `Mahakan POS` → User support email: pilih Gmail Anda
+8. Developer contact email: Gmail Anda → SAVE AND CONTINUE
+9. **Scopes:** klik ADD OR REMOVE SCOPES → search `drive.file` → centang
+   `https://www.googleapis.com/auth/drive.file` → UPDATE → SAVE AND CONTINUE
+10. **Test users:** ADD USERS → masukkan email Gmail Anda → SAVE AND CONTINUE
+11. Summary → BACK TO DASHBOARD
+
+> **Penting:** App tetap di mode "Testing" (gak perlu Verification Google).
+> Refresh token untuk Test User TIDAK expire setelah 7 hari (myth umum).
+> Hanya untuk app published unverified yang refresh token expire.
+> Source: https://developers.google.com/identity/protocols/oauth2#expiration
+
+### 1.3 OAuth Client ID
+12. Sidebar → **APIs & Services** → **Credentials**
+13. Klik **+ CREATE CREDENTIALS** → **OAuth client ID**
+14. Application type: **Web application**
+15. Name: `Mahakan POS OAuth`
+16. **Authorized redirect URIs** → ADD URI → masukkan:
+    ```
+    http://localhost:8765/callback
+    ```
+17. Klik **CREATE**
+18. Modal muncul dengan **Client ID** + **Client secret** — copy keduanya,
+    simpan sementara (Notepad/notes app).
+
+✅ GCP setup selesai.
 
 ---
 
-## Step 3 — Set 2 env vars di Vercel (3 menit)
+## Step 2 — Authorize via CLI (1× di laptop Owner) (~3 menit)
+
+### 2.1 Set credentials di .env.local lokal
+
+Di repo Mahakan POS lokal Anda, edit (atau buat) file `.env.local`:
+
+```bash
+GOOGLE_OAUTH_CLIENT_ID=<paste Client ID dari Step 1.18>
+GOOGLE_OAUTH_CLIENT_SECRET=<paste Client Secret dari Step 1.18>
+```
+
+> ⚠️ Jangan commit `.env.local` ke git (sudah di `.gitignore`).
+
+### 2.2 Jalankan auth script
+
+Di terminal, dari repo root:
+
+```bash
+npm run drive:auth
+```
+
+Script akan:
+1. Print URL Google consent — copy paste ke browser
+2. Browser → login Gmail Owner → "Continue" pada warning "Google hasn't verified this app" → klik nama app → ALLOW akses Drive
+3. Browser auto-redirect ke `localhost:8765` → tab muncul "✅ Authorized!"
+4. Terminal print refresh token
+
+### 2.3 Catat refresh token
+
+Output terminal:
+```
+PASTE INI KE VERCEL ENV VARS:
+
+  GOOGLE_OAUTH_REFRESH_TOKEN=1//0gXxx...long string...
+```
+
+Copy bagian setelah `=`.
+
+---
+
+## Step 3 — Set/update env vars di Vercel (~2 menit)
 
 1. Buka https://vercel.com/ramaactivity98-5695s-projects/mahakan-pos/settings/environment-variables
-2. Klik **Add New** → setup variable pertama:
-   - Key: `GOOGLE_SERVICE_ACCOUNT_JSON`
-   - Value: **Copy seluruh isi file JSON** yang di-download tadi
-     (mulai `{` sampai `}` terakhir, satu blob).
-   - Environment: pilih semua (Production + Preview + Development) atau
-     Production saja kalau lebih aman.
-   - Klik **Save**.
-3. Klik **Add New** lagi → variable kedua:
-   - Key: `GOOGLE_DRIVE_NOTA_PARENT_ID`
-   - Value: `1jeWbV75ElGiLdtcT7GTAHj6XZbEfOK1F`
-     (Ini ID folder NOTA MAHAKAN — sudah saya extract dari URL share Anda.)
-   - Environment: sama seperti di atas.
-   - Klik **Save**.
+
+2. **Tambah/update 3 env vars** (Production + Preview):
+   - `GOOGLE_OAUTH_CLIENT_ID` = (dari Step 1.18)
+   - `GOOGLE_OAUTH_CLIENT_SECRET` = (dari Step 1.18)
+   - `GOOGLE_OAUTH_REFRESH_TOKEN` = (dari Step 2.3)
+
+3. **Hapus env var lama** (sudah tidak dipakai):
+   - `GOOGLE_SERVICE_ACCOUNT_JSON` — klik Delete
+
+4. **Pastikan tetap ada:**
+   - `GOOGLE_DRIVE_NOTA_PARENT_ID` = `1jeWbV75ElGiLdtcT7GTAHj6XZbEfOK1F`
 
 ---
 
-## Step 4 — Redeploy (~2 menit)
+## Step 4 — Hapus folder share lama (opsional, 30 detik)
 
-Vercel umumnya auto-redeploy saat env vars berubah. Kalau tidak:
+Service account email yang sebelumnya Anda share ke folder NOTA MAHAKAN
+sudah tidak diperlukan. Untuk kebersihan:
 
-1. Buka https://vercel.com/ramaactivity98-5695s-projects/mahakan-pos/deployments
-2. Deploy paling atas (most recent) → klik `⋯` → **Redeploy**.
-3. Centang "Use existing Build Cache" → **Redeploy**.
+1. Buka folder NOTA MAHAKAN di Drive
+2. Klik kanan → Share → cari email service account (`mahakan-pos-uploader@xxx.iam.gserviceaccount.com`)
+3. Klik dropdown → Remove access
 
-Atau Anda bisa kasih tahu saya, saya jalankan `npx vercel --prod --yes`
-dari local.
+> Tidak akan break apa-apa kalau di-skip — service account memang sudah
+> tidak punya use case lagi.
 
 ---
 
-## Step 5 — Tes
+## Step 5 — Redeploy + tes
 
-1. Login ke https://mahakan-pos.vercel.app sebagai Owner.
-2. Inventory → Pembelian → **+ Catat Pembelian**.
-3. Isi 1 item dummy.
-4. Klik **Upload Foto / PDF** di section "Bukti Pembelian / Transfer".
-5. Pilih file PDF/JPG.
-6. Toast harus muncul: `Bukti tersimpan di Drive · NOTA MAHAKAN 2026/05. MEI`.
-7. Klik link ke "Lihat di Google Drive" — file ke-buka di Drive viewer.
-8. Cek di Drive: folder `NOTA MAHAKAN/NOTA MAHAKAN 2026/05. MEI/` —
-   file harus ada dengan nama `2026-05-03_<timestamp>_<filename>`.
+Saya akan jalankan deploy `npx vercel --prod --yes` setelah Anda confirm
+3 env vars di-set. Lalu tes upload pertama:
+
+1. Hard refresh browser (Cmd/Ctrl + Shift + R)
+2. Inventory → Pembelian → **+ Catat Pembelian** → isi 1 item dummy
+3. Klik **Upload Foto / PDF** → pilih file
+4. Toast harus muncul: `Bukti tersimpan di Drive · NOTA MAHAKAN 2026/05. MEI`
+5. Klik link "Lihat di Google Drive" → file ke-buka di Drive viewer
+6. Cek di Drive: folder `NOTA MAHAKAN/NOTA MAHAKAN 2026/05. MEI/` — file ada
 
 ---
 
 ## Troubleshooting
 
-### "GOOGLE_SERVICE_ACCOUNT_JSON env var belum di-set"
-Step 3 belum dilakukan, atau redeploy belum jalan.
+### Step 2 script — "Tidak dapat refresh_token"
+Anda sebelumnya sudah authorize app ini, jadi Google skip kasih refresh
+token (cuma kasih access token short-lived). Solusi:
+1. Buka https://myaccount.google.com/permissions
+2. Cari nama OAuth client (`Mahakan POS OAuth`)
+3. Klik → Remove access
+4. Re-run `npm run drive:auth`
 
-### "GOOGLE_SERVICE_ACCOUNT_JSON bukan JSON valid"
-JSON di-edit tidak sengaja saat copy-paste. Buka ulang file `.json`,
-copy lagi seluruh isi tanpa edit.
+### Browser warning "Google hasn't verified this app"
+Normal untuk app di mode Testing dengan scope drive.file. Klik:
+- **Advanced** (link kecil di kiri-bawah)
+- **Go to Mahakan POS (unsafe)**
 
-### "User does not have sufficient permissions for file"
-Step 2 belum dilakukan, atau email service account salah ketik.
-Re-cek field `client_email` di JSON, share ulang folder.
+Owner bisa proceed dengan aman karena Anda sendiri yang setup app.
 
-### "File too large" (upload error)
-Receipt > 5 MB. Compress dulu (foto dari HP biasanya bisa < 1 MB
-kalau pakai mode "Document" atau setting kompresi sedang).
+### "redirect_uri_mismatch" error
+Step 1.16 (Authorized redirect URIs) belum di-set persis ke
+`http://localhost:8765/callback`. Cek typo, save ulang.
 
-### Folder year/month tidak ke-create
-Service account dapet "Editor" bukan "Viewer"? Re-cek di Drive
-folder share dialog.
+### "User does not have sufficient permissions for file" saat upload
+Folder `GOOGLE_DRIVE_NOTA_PARENT_ID` tidak owned by user yang authorize,
+ATAU user yang authorize tidak punya Editor access ke folder itu. Pastikan
+Owner yang authorize adalah owner folder NOTA MAHAKAN.
 
 ### "API has not been used in project" error
-Step 1.5 belum: enable **Google Drive API** di Library. Penting,
-beda dari Drive App SDK / Google Workspace API.
+Step 1.4 (enable Google Drive API) belum dilakukan.
 
 ---
 
 ## Keamanan
 
-- File JSON service account = **kunci rahasia**. JANGAN commit ke git,
-  JANGAN share di chat. `.gitignore` sudah cover `*.json` di root,
-  tapi tetep hati-hati taruh dimana.
-- Service account hanya punya akses ke folder NOTA MAHAKAN (yang Anda
-  share manual). Tidak bisa baca Drive Anda yang lain.
-- Anyone-with-link reader = file bisa di-akses siapa saja yang punya URL.
-  URL tersimpan di DB Mahakan POS + di Drive Anda — tidak public-listed.
-  Kalau perlu strict, bisa di-tighten ke "Specific people" via Drive
-  share dialog per file (overhead manual).
-- Service account email tidak bisa login ke Mahakan POS (RBAC scope).
+- Refresh token = setara password Owner untuk Drive (scope `drive.file`
+  saja — app cuma bisa baca/tulis file yang dia create + folder yang
+  Owner pilih, BUKAN seluruh Drive).
+- JANGAN commit refresh token ke git.
+- Kalau bocor: revoke di https://myaccount.google.com/permissions, re-run
+  `npm run drive:auth`, update env var Vercel.
+- File baru di-upload owned by Owner (Anda) — count terhadap 15GB Gmail
+  quota Anda. Receipts ~1 MB jadi ratusan tahun ga habis.
+- Anyone-with-link reader = file accessible via URL, tapi URL hanya
+  tersimpan di DB Mahakan POS + di Drive Anda — tidak public-listed.
 
 ---
 
 ## Rollback (kalau perlu)
 
-Kalau mau revert ke Vercel Blob:
-1. Hapus 2 env vars di Vercel → redeploy.
-2. Upload route akan return error 500 "DRIVE_NOT_CONFIGURED" —
-   tim purchasing tidak bisa upload sampai env vars di-restore atau
-   kode revert ke pattern Blob.
-3. File yang sudah ke-upload ke Drive **tetap di Drive** — tidak ikut
-   ke-hapus. URL tersimpan di `purchases.receipt_image_url` tetap valid.
+Kalau mau nonaktifkan Drive integration sementara:
+1. Hapus 3 env vars OAuth + GOOGLE_DRIVE_NOTA_PARENT_ID di Vercel
+2. Redeploy → upload route return error 500 "DRIVE_NOT_CONFIGURED"
+3. Tim purchasing tidak bisa upload sampai env vars di-restore atau
+   kode revert ke pattern Vercel Blob
 
----
-
-## Catatan Owner
-
-- Folder ID `1jeWbV75ElGiLdtcT7GTAHj6XZbEfOK1F` dari URL Drive Anda. Kalau
-  pindah folder atau ganti parent, update env var `GOOGLE_DRIVE_NOTA_PARENT_ID`.
-- Quota Drive API gratis: 1 milyar request/hari per project. Mahakan POS
-  pakai ~5 request per upload (1 list + 1 create folder + 1 upload + 1
-  permission + 1 metadata fetch). Tidak akan kena quota selama Anda hidup.
-- Kalau ada outlet baru, cukup tambah env var pakai folder ID baru — atau
-  pakai folder yang sama, kode auto-create year/month subfolder per
-  outlet (semua outlet share parent).
+File yang sudah ke-upload ke Drive **tetap di Drive** — tidak ikut hapus.
+URL tersimpan di `purchases.receipt_image_url` tetap valid.

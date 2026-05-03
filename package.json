@@ -21,7 +21,8 @@
     "seed:suppliers-and-sections": "tsx --env-file-if-exists=.env.local scripts/seed-suppliers-and-sections.ts",
     "seed:bulk-ingredients": "tsx --env-file-if-exists=.env.local scripts/seed-bulk-ingredients.ts",
     "seed:accounts": "tsx --env-file-if-exists=.env.local scripts/seed-accounts.ts",
-    "accounting:smoke": "tsx --env-file-if-exists=.env.local scripts/accounting-smoke.ts"
+    "accounting:smoke": "tsx --env-file-if-exists=.env.local scripts/accounting-smoke.ts",
+    "drive:auth": "tsx --env-file-if-exists=.env.local scripts/google-drive-oauth.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.2",

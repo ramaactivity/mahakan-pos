@@ -1,10 +1,11 @@
 import "server-only";
 import { Readable } from "node:stream";
 import { drive, type drive_v3 } from "@googleapis/drive";
-import { GoogleAuth } from "google-auth-library";
+import { OAuth2Client } from "google-auth-library";
 
 /**
- * Google Drive uploader for purchase receipts (sesi AA #2 — Opsi B).
+ * Google Drive uploader for purchase receipts (sesi AA #2 — Opsi B,
+ * OAuth refresh-token variant).
  *
  * Drops files into a year/month subfolder structure matching Owner's
  * existing workflow:
@@ -19,14 +20,27 @@ import { GoogleAuth } from "google-auth-library";
  * shareable (anyone-with-link reader) so Owner can copy URL + share
  * dengan akuntan eksternal tanpa Mahakan POS login.
  *
+ * Why OAuth refresh token (bukan Service Account):
+ *   Service accounts tidak punya Drive storage quota di personal Gmail
+ *   accounts (Google policy — service accounts cuma boleh upload ke
+ *   Workspace Shared Drives). Untuk personal Gmail, kita pakai OAuth
+ *   user delegation: Owner authorize 1× via CLI script, refresh token
+ *   disimpan di env, app act atas nama Owner. File count terhadap
+ *   Owner's 15GB Gmail quota.
+ *
  * Required env vars (set di Vercel project settings):
- *   GOOGLE_SERVICE_ACCOUNT_JSON
- *     → entire JSON key file content of a Google Cloud service account
- *       with Drive API enabled. Owner downloads dari Google Cloud Console.
+ *   GOOGLE_OAUTH_CLIENT_ID
+ *     → from GCP Console → Credentials → OAuth client ID (Web app)
+ *   GOOGLE_OAUTH_CLIENT_SECRET
+ *     → from same OAuth client
+ *   GOOGLE_OAUTH_REFRESH_TOKEN
+ *     → from running `npx tsx scripts/google-drive-oauth.ts` locally
+ *       (one-time browser authorize flow, prints token to terminal)
  *   GOOGLE_DRIVE_NOTA_PARENT_ID
- *     → ID of the parent "NOTA MAHAKAN" folder (extracted from URL).
- *       Owner must share this folder with the service account email
- *       (Editor permission) before first upload works.
+ *     → ID of the parent "NOTA MAHAKAN" folder (from URL)
+ *
+ * The OLD env var GOOGLE_SERVICE_ACCOUNT_JSON dari setup awal sudah TIDAK
+ * dipakai — boleh di-delete dari Vercel env vars list.
  */
 
 const MONTH_LABELS_ID = [
@@ -48,24 +62,16 @@ let _drive: drive_v3.Drive | null = null;
 
 function getDrive(): drive_v3.Drive {
   if (_drive) return _drive;
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!raw) {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) {
     throw new Error(
-      "GOOGLE_SERVICE_ACCOUNT_JSON env var belum di-set. Lihat panduan setup di docs/12-DRIVE-INTEGRATION.md.",
+      "OAuth env vars belum lengkap (GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET + GOOGLE_OAUTH_REFRESH_TOKEN). Lihat docs/12-DRIVE-INTEGRATION.md.",
     );
   }
-  let credentials: Record<string, unknown>;
-  try {
-    credentials = JSON.parse(raw);
-  } catch {
-    throw new Error(
-      "GOOGLE_SERVICE_ACCOUNT_JSON bukan JSON valid. Pastikan paste seluruh konten file kunci tanpa edit.",
-    );
-  }
-  const auth = new GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/drive.file"],
-  });
+  const auth = new OAuth2Client({ clientId, clientSecret });
+  auth.setCredentials({ refresh_token: refreshToken });
   _drive = drive({ version: "v3", auth });
   return _drive;
 }
@@ -218,7 +224,9 @@ export async function uploadPurchaseReceiptToDrive(opts: {
 
 export function isDriveConfigured(): boolean {
   return Boolean(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON &&
+    process.env.GOOGLE_OAUTH_CLIENT_ID &&
+      process.env.GOOGLE_OAUTH_CLIENT_SECRET &&
+      process.env.GOOGLE_OAUTH_REFRESH_TOKEN &&
       process.env.GOOGLE_DRIVE_NOTA_PARENT_ID,
   );
 }
