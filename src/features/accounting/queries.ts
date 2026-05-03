@@ -1,6 +1,17 @@
 import "server-only";
 
-import { and, asc, count, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lte,
+  sql,
+} from "drizzle-orm";
 import { db } from "@/db";
 import {
   accountingPeriods,
@@ -240,7 +251,7 @@ export async function listJournalEntries(
     })
     .from(journalLines)
     .innerJoin(chartOfAccounts, eq(journalLines.accountId, chartOfAccounts.id))
-    .where(sql`${journalLines.entryId} = ANY(${entryIds})`)
+    .where(inArray(journalLines.entryId, entryIds))
     .orderBy(asc(journalLines.entryId), asc(journalLines.lineNumber));
 
   const linesByEntry = new Map<string, JournalEntryWithLines["lines"]>();

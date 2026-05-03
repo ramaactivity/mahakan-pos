@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FileText, ImagePlus, Loader2, Plus, Trash2, X } from "lucide-react";
+import { upload } from "@vercel/blob/client";
 import {
   Button,
   Combobox,
@@ -92,6 +93,12 @@ export function PurchaseFormModal({
   const [paymentTerm, setPaymentTerm] = useState("0");
   const [invoiceNo, setInvoiceNo] = useState("");
   const [notes, setNotes] = useState("");
+  // Receipt upload (sesi AA #2). PDF allowed in addition to image —
+  // bank/aggregator receipts often arrive as PDF.
+  const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
+  const [receiptFileName, setReceiptFileName] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [updateCost, setUpdateCost] = useState(true);
   const [createKas, setCreateKas] = useState(true);
   const [items, setItems] = useState<ItemRow[]>([newRow(), newRow()]);
@@ -112,6 +119,9 @@ export function PurchaseFormModal({
     setPaymentTerm("0");
     setInvoiceNo("");
     setNotes("");
+    setReceiptUrl(null);
+    setReceiptFileName(null);
+    setUploading(false);
     setUpdateCost(true);
     setCreateKas(true);
     setItems([newRow(), newRow()]);
@@ -280,6 +290,7 @@ export function PurchaseFormModal({
       paymentTermDays: paymentMethod === "top" ? term : 0,
       invoiceNo: invoiceNo.trim() || null,
       notes: composedNotes || null,
+      receiptImageUrl: receiptUrl,
       updateCost,
       createKasEntry: createKas,
       items: validItems,
@@ -569,6 +580,112 @@ export function PurchaseFormModal({
               placeholder="mis. retur next batch, ada barang patah"
               className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900"
             />
+          </div>
+
+          {/* Receipt / bukti transfer upload (sesi AA #2). Allows JPG/PNG/WebP
+              (foto nota) + PDF (bank/aggregator e-receipt). Stored di Vercel
+              Blob, file di-rename otomatis dengan timestamp + nama original. */}
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-neutral-900">
+              Bukti Pembelian / Transfer (opsional)
+            </label>
+            {receiptUrl ? (
+              <div className="flex items-center justify-between gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-2">
+                <a
+                  href={receiptUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex flex-1 items-center gap-2 text-xs text-mahakan-green-900 hover:underline min-w-0"
+                >
+                  {receiptUrl.toLowerCase().endsWith(".pdf") ? (
+                    <FileText className="size-4 shrink-0" />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={receiptUrl}
+                      alt="Preview bukti"
+                      className="size-10 shrink-0 rounded object-cover"
+                    />
+                  )}
+                  <span className="truncate">
+                    {receiptFileName ?? "Lihat bukti"}
+                  </span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReceiptUrl(null);
+                    setReceiptFileName(null);
+                  }}
+                  disabled={submitting || uploading}
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-neutral-500 hover:bg-danger-100 hover:text-danger-500"
+                  aria-label="Hapus bukti"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50/50 p-3">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,application/pdf"
+                  hidden
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setUploading(true);
+                    setError(null);
+                    try {
+                      if (file.size > 5 * 1024 * 1024) {
+                        throw new Error("Ukuran maks 5 MB");
+                      }
+                      const safeName = file.name.replace(/[^\w.\-]/g, "_");
+                      // Auto-rename: `purchase-receipts/{ts}-{date}-{filename}`
+                      // — date prefix bantu Owner sortir di Blob dashboard.
+                      const dateSlug = purchaseDate.replace(/-/g, "");
+                      const pathname = `purchase-receipts/${dateSlug}-${Date.now()}-${safeName}`;
+                      const result = await upload(pathname, file, {
+                        access: "public",
+                        handleUploadUrl:
+                          "/api/v1/purchase-receipts/upload",
+                      });
+                      setReceiptUrl(result.url);
+                      setReceiptFileName(file.name);
+                      toast.success("Bukti pembelian terupload");
+                    } catch (e) {
+                      setError(
+                        e instanceof Error ? e.message : "Upload gagal",
+                      );
+                    } finally {
+                      setUploading(false);
+                      if (fileInputRef.current) fileInputRef.current.value = "";
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading || submitting}
+                >
+                  {uploading ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" /> Uploading…
+                    </>
+                  ) : (
+                    <>
+                      <ImagePlus className="size-4" /> Upload Foto / PDF
+                    </>
+                  )}
+                </Button>
+                <p className="mt-1 text-xs text-neutral-500">
+                  JPG / PNG / WebP / PDF, max 5 MB. Nota toko atau bukti
+                  transfer bank. File auto-rename dengan tanggal + waktu.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="rounded-md bg-mahakan-green-100/40 p-3 text-sm">

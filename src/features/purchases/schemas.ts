@@ -45,6 +45,10 @@ export const createPurchaseSchema = z
       .default(0),
     invoiceNo: z.string().trim().max(INVOICE_MAX).nullable().optional(),
     notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
+    /** Vercel Blob URL ke foto nota / bukti transfer (sesi AA #2).
+     * URL boundary check only — actual upload + content-type enforcement
+     * di /api/v1/purchase-receipts/upload route. */
+    receiptImageUrl: z.url().max(500).nullable().optional(),
     updateCost: z.boolean().optional().default(true),
     createKasEntry: z.boolean().optional(),
     items: z

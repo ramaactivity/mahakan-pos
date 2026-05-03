@@ -176,6 +176,13 @@
       "when": 1777711878607,
       "tag": "0024_cute_leo",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1777811987610,
+      "tag": "0025_purchase_receipt_url",
+      "breakpoints": true
     }
   ]
 }

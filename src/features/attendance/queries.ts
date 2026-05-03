@@ -1,5 +1,14 @@
 import "server-only";
-import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lte,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import {
@@ -134,7 +143,7 @@ export async function fetchTodayStatus(
       and(
         eq(attendanceRecords.outletId, outletId),
         eq(attendanceRecords.shiftDate, shiftDate),
-        sql`${attendanceRecords.employeeId} = ANY(${employeeIds})`,
+        inArray(attendanceRecords.employeeId, employeeIds),
       ),
     );
 

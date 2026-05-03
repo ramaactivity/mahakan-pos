@@ -19,6 +19,8 @@ export interface CreatePurchaseInput {
   paymentTermDays?: number;
   invoiceNo?: string | null;
   notes?: string | null;
+  /** Vercel Blob URL ke foto nota / bukti transfer (sesi AA #2). */
+  receiptImageUrl?: string | null;
   /** Whether to update each ingredient.cost_per_unit master from this
    * purchase's unit cost. Default true. */
   updateCost?: boolean;

@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import {
   expenseCategories,
@@ -160,15 +160,15 @@ export async function createPurchase(
   try {
     const result = await db.transaction(async (tx) => {
       // Lock all impacted ingredients up front + verify outlet match.
+      // Drizzle's sql\`= ANY(${arr})\` interpolates JS arrays as multiple
+      // bind params (`$1, $2, ...`) which Postgres rejects inside ANY().
+      // Use the inArray helper which generates a proper `IN (...)` clause.
       const ingIds = v.items.map((i) => i.ingredientId);
       const ingRows = await tx
         .select()
         .from(ingredients)
         .where(
-          and(
-            sql`${ingredients.id} = ANY(${ingIds})`,
-            isNull(ingredients.deletedAt),
-          ),
+          and(inArray(ingredients.id, ingIds), isNull(ingredients.deletedAt)),
         )
         .for("update");
       const ingById = new Map(ingRows.map((r) => [r.id, r] as const));
@@ -198,6 +198,7 @@ export async function createPurchase(
           dueDate,
           invoiceNo: v.invoiceNo ?? null,
           notes: v.notes ?? null,
+          receiptImageUrl: v.receiptImageUrl ?? null,
           status: isTop ? "pending_payment" : "paid",
           totalAmount: total,
           paidAt: isTop ? null : new Date(),

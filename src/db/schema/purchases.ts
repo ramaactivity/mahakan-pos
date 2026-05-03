@@ -75,6 +75,12 @@ export const purchases = pgTable(
      * "buat entry kas" atau kalau status='pending_payment' (TOP). */
     expenseId: uuid("expense_id").references(() => expenses.id),
 
+    /** Vercel Blob URL ke foto nota / bukti transfer (sesi AA #2).
+     * Free-text URL field — file rename + path konvensi diatur di
+     * client (purchase-receipts/{outletId}/{ts}-{filename}). NULL = belum
+     * di-upload. JPG/PNG/WebP/PDF max 5MB enforced di /api/v1/purchase-receipts/upload. */
+    receiptImageUrl: text("receipt_image_url"),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

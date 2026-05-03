@@ -8,6 +8,8 @@ import {
   menuItems,
   recipeIngredients,
   recipes,
+  stockOpnameLines,
+  stockOpnameSessions,
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
@@ -293,6 +295,36 @@ export async function updateIngredient(
           id,
           session.user.id,
         );
+      }
+
+      // Sesi AA: when unit changes mid-opname, also update the snapshot label
+      // di stock_opname_lines untuk sesi yang masih in_progress (belum
+      // finalized → belum jadi audit record). Pre-fix: snapshot frozen on
+      // start, jadi staff edit unit di Inventory tetap lihat unit lama di
+      // opname row → bingung. Schema unique idx ux_opname_sessions_active_per_outlet
+      // menjamin maks 1 in_progress per outlet, jadi single subquery cukup.
+      if (v.unit !== undefined && v.unit !== existing.unit) {
+        const [active] = await tx
+          .select({ id: stockOpnameSessions.id })
+          .from(stockOpnameSessions)
+          .where(
+            and(
+              eq(stockOpnameSessions.outletId, session.user.outletId),
+              eq(stockOpnameSessions.status, "in_progress"),
+            ),
+          )
+          .limit(1);
+        if (active) {
+          await tx
+            .update(stockOpnameLines)
+            .set({ unitSnapshot: v.unit })
+            .where(
+              and(
+                eq(stockOpnameLines.sessionId, active.id),
+                eq(stockOpnameLines.ingredientId, id),
+              ),
+            );
+        }
       }
 
       return updated;

@@ -94,10 +94,10 @@ export function EditUnitModal({
           <div className="flex items-start gap-1.5">
             <AlertCircle className="mt-0.5 size-4 shrink-0 text-warning-500" />
             <div>
-              <strong>Heads-up:</strong> Snapshot expected qty di sesi opname
-              berjalan tidak auto-convert. Hanya text label yang berubah.
-              Recount manual kalau perubahan satuan mengubah arti angka (mis.
-              gram → kg = bagi 1000).
+              <strong>Heads-up:</strong> Label satuan di opname berjalan ikut
+              ter-update otomatis, tapi angka qty TIDAK ikut di-konversi.
+              Recount manual kalau perubahan satuan mengubah arti angka
+              (mis. gram → kg = bagi 1000).
             </div>
           </div>
         </div>

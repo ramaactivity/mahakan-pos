@@ -563,6 +563,28 @@ function PurchaseDetailModal({
               <strong>Catatan:</strong> {detail.notes}
             </p>
           ) : null}
+          {detail.receiptImageUrl ? (
+            <a
+              href={detail.receiptImageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-2 text-xs text-mahakan-green-900 hover:bg-mahakan-green-100/40"
+            >
+              {detail.receiptImageUrl.toLowerCase().endsWith(".pdf") ? (
+                <span className="font-medium">📄 Bukti pembelian (PDF)</span>
+              ) : (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={detail.receiptImageUrl}
+                    alt="Bukti pembelian"
+                    className="size-12 rounded object-cover"
+                  />
+                  <span className="font-medium">Lihat bukti pembelian</span>
+                </>
+              )}
+            </a>
+          ) : null}
           {detail.cancelReason ? (
             <p className="rounded-md bg-neutral-50 p-2 text-xs text-neutral-700">
               <strong>Alasan batal:</strong> {detail.cancelReason}
