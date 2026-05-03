@@ -30,6 +30,10 @@ import {
   fetchSessions,
 } from "./queries";
 import {
+  fetchOpnameInventoryFlow,
+  type OpnameInventoryFlow,
+} from "./inventory-flow";
+import {
   fail,
   ok,
   type ApiResult,
@@ -96,6 +100,57 @@ export async function getOpnameDetail(
     return fail("FORBIDDEN", "Tidak punya hak lihat opname");
   }
   return ok(await fetchSessionDetail(sessionId, session.user.outletId));
+}
+
+/**
+ * Per-line inventory flow for the active opname — Stok Awal +
+ * Pembelian + (window metadata) per ingredient. Surface ke
+ * OpnameCountView untuk show formula HPP real-time saat staff
+ * mengetik (sesi AA #1 enhancement). Map serialized as plain object
+ * for the server-action boundary; client rebuilds Map.
+ */
+export interface OpnameInventoryFlowSerialized {
+  perIngredient: Record<
+    string,
+    {
+      openingQty: number;
+      openingUnitCost: number;
+      purchasesQty: number;
+      purchasesCost: number;
+    }
+  >;
+  hasPriorOpname: boolean;
+  priorOpnameDate: string | null;
+  windowFrom: string;
+  windowTo: string;
+}
+
+function serializeFlow(
+  flow: OpnameInventoryFlow,
+): OpnameInventoryFlowSerialized {
+  const perIngredient: OpnameInventoryFlowSerialized["perIngredient"] = {};
+  for (const [k, v] of flow.perIngredient) perIngredient[k] = v;
+  return {
+    perIngredient,
+    hasPriorOpname: flow.hasPriorOpname,
+    priorOpnameDate: flow.priorOpnameDate,
+    windowFrom: flow.windowFrom,
+    windowTo: flow.windowTo,
+  };
+}
+
+export async function getOpnameInventoryFlow(
+  sessionId: string,
+): Promise<ApiResult<OpnameInventoryFlowSerialized | null>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.opname.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat opname");
+  }
+  const flow = await fetchOpnameInventoryFlow(
+    session.user.outletId,
+    sessionId,
+  );
+  return ok(flow ? serializeFlow(flow) : null);
 }
 
 // ============================================================================

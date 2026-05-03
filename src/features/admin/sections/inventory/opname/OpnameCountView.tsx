@@ -25,15 +25,20 @@ import {
 } from "@/components/ui";
 import {
   computeDiffStats,
+  computeHppPerSection,
+  getOpnameInventoryFlow,
   isOk,
   saveOpnameCount,
   submitOpname,
+  type HppEstimateRowInput,
   type IngredientSection,
+  type OpnameInventoryFlowSerialized,
   type OpnameSessionDetail,
 } from "@/features/stock-opname";
 import { hasPermission } from "@/lib/auth/rbac";
 import type { Role } from "@/lib/auth/rbac";
 import { downloadCountSheet } from "./opname-csv";
+import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { EditUnitModal } from "./EditUnitModal";
 
@@ -112,6 +117,24 @@ export function OpnameCountView({
   const [showOnlyUncounted, setShowOnlyUncounted] = useState(false);
   const [revealExpected, setRevealExpected] = useState(false);
   const [sectionFilter, setSectionFilter] = useState<SectionFilter>("all");
+
+  // Inventory flow per ingredient (Stok Awal + Pembelian) for the active
+  // window. Reuses HPP report's underlying helpers so opname view ↔ HPP
+  // report ↔ accounting auto-journal stay 100% konsisten. Sesi AA #1.
+  const [flow, setFlow] = useState<OpnameInventoryFlowSerialized | null>(
+    null,
+  );
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await getOpnameInventoryFlow(detail.id);
+      if (cancelled) return;
+      if (isOk(res)) setFlow(res.data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [detail.id]);
   const [submitOpen, setSubmitOpen] = useState(false);
   const [submitMode, setSubmitMode] = useState<"strict" | "fill">("strict");
   const [submitting, setSubmitting] = useState(false);
@@ -180,6 +203,26 @@ export function OpnameCountView({
     stats.totalLines === 0
       ? 0
       : Math.round((stats.countedLines / stats.totalLines) * 100);
+
+  // Per-section HPP estimate (sesi AA #1) — sum of (used × unitCost)
+  // grouped by section, mapped to Owner's P&L accounts. Uses pure helper
+  // so the math is testable + reusable.
+  const hppEstimate = useMemo(() => {
+    if (!flow) return null;
+    const rows: HppEstimateRowInput[] = detail.lines.map((l) => {
+      const f = flow.perIngredient[l.ingredientId];
+      const closing = stateMap.get(l.ingredientId)?.saved ?? null;
+      return {
+        section: l.ingredient.section,
+        openingQty: f?.openingQty ?? 0,
+        openingUnitCost: f?.openingUnitCost ?? l.unitCostAtSnapshot,
+        purchasesCost: f?.purchasesCost ?? 0,
+        closingQty: closing,
+        closingUnitCost: l.unitCostAtSnapshot,
+      };
+    });
+    return computeHppPerSection(rows);
+  }, [detail.lines, flow, stateMap]);
 
   function scheduleSave(ingredientId: string, raw: string) {
     setStateMap((prev) => {
@@ -366,6 +409,77 @@ export function OpnameCountView({
         </CardContent>
       </Card>
 
+      {hppEstimate && hppEstimate.bySection.length > 0 ? (
+        <Card className="border-mahakan-green-700/20">
+          <CardHeader className="pb-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-sm font-semibold text-neutral-900">
+                Estimasi HPP Periode Ini
+              </h3>
+              <p className="text-[11px] text-neutral-500">
+                Periode {flow?.windowFrom} → {flow?.windowTo}
+                {!flow?.hasPriorOpname ? (
+                  <span className="ml-1.5 text-warning-500">
+                    · belum ada opname sebelumnya, Stok Awal = 0
+                  </span>
+                ) : null}
+              </p>
+            </div>
+            <p className="text-[11px] text-neutral-500">
+              Formula: Stok Awal + Pembelian − Opname (input kamu) ×
+              cost. Angka ini yang akan tercatat sebagai HPP di Laporan
+              Laba Rugi setelah opname di-finalize.
+            </p>
+          </CardHeader>
+          <CardContent className="px-0 pt-0">
+            <ul className="divide-y divide-neutral-100">
+              {hppEstimate.bySection.map((sec) => (
+                <li
+                  key={sec.pnlLabel}
+                  className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-neutral-900 truncate">
+                      {sec.pnlLabel}
+                    </p>
+                    <p className="text-[11px] text-neutral-500">
+                      {sec.lineCount} bahan
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      "font-mono font-semibold tabular-nums",
+                      sec.hppCost < 0
+                        ? "text-danger-500"
+                        : sec.hppCost === 0
+                          ? "text-neutral-400"
+                          : "text-neutral-900",
+                    )}
+                  >
+                    {formatRupiah(sec.hppCost)}
+                  </span>
+                </li>
+              ))}
+              <li className="flex items-center justify-between px-4 py-3 text-sm">
+                <span className="font-semibold text-neutral-900">
+                  Total Estimasi HPP
+                </span>
+                <span
+                  className={cn(
+                    "font-mono text-base font-bold tabular-nums",
+                    hppEstimate.grandTotal < 0
+                      ? "text-danger-500"
+                      : "text-mahakan-green-900",
+                  )}
+                >
+                  {formatRupiah(hppEstimate.grandTotal)}
+                </span>
+              </li>
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader className="space-y-3 pb-2">
           <div
@@ -466,28 +580,36 @@ export function OpnameCountView({
             </p>
           ) : (
             <ul className="divide-y divide-neutral-100">
-              {filteredLines.map((line) => (
-                <CountRow
-                  key={line.id}
-                  ingredientId={line.ingredientId}
-                  name={line.ingredientNameSnapshot}
-                  unit={line.unitSnapshot}
-                  expectedQty={line.expectedQty}
-                  state={stateMap.get(line.ingredientId) ?? blankLineState()}
-                  revealExpected={revealExpected}
-                  onChange={(raw) => scheduleSave(line.ingredientId, raw)}
-                  onEditUnit={
-                    canEditUnit
-                      ? () =>
-                          setEditUnitFor({
-                            id: line.ingredientId,
-                            name: line.ingredientNameSnapshot,
-                            unit: line.unitSnapshot,
-                          })
-                      : undefined
-                  }
-                />
-              ))}
+              {filteredLines.map((line) => {
+                const f = flow?.perIngredient[line.ingredientId];
+                return (
+                  <CountRow
+                    key={line.id}
+                    ingredientId={line.ingredientId}
+                    name={line.ingredientNameSnapshot}
+                    unit={line.unitSnapshot}
+                    expectedQty={line.expectedQty}
+                    openingQty={f?.openingQty ?? 0}
+                    purchasesQty={f?.purchasesQty ?? 0}
+                    unitCost={line.unitCostAtSnapshot}
+                    flowLoaded={flow !== null}
+                    hasPriorOpname={flow?.hasPriorOpname ?? false}
+                    state={stateMap.get(line.ingredientId) ?? blankLineState()}
+                    revealExpected={revealExpected}
+                    onChange={(raw) => scheduleSave(line.ingredientId, raw)}
+                    onEditUnit={
+                      canEditUnit
+                        ? () =>
+                            setEditUnitFor({
+                              id: line.ingredientId,
+                              name: line.ingredientNameSnapshot,
+                              unit: line.unitSnapshot,
+                            })
+                        : undefined
+                    }
+                  />
+                );
+              })}
             </ul>
           )}
         </CardContent>
@@ -604,6 +726,16 @@ interface CountRowProps {
   name: string;
   unit: string;
   expectedQty: number;
+  /** Stok Awal — qty dari opname terakhir (atau 0 fallback). */
+  openingQty: number;
+  /** Pembelian — sum purchase_items.qty di window opname. */
+  purchasesQty: number;
+  /** Cost-per-unit untuk hitung Bahan Terpakai dalam rupiah. */
+  unitCost: number;
+  /** True saat fetch flow data sudah balik. False = "memuat…" placeholder. */
+  flowLoaded: boolean;
+  /** False = "Stok Awal" estimate karena belum ada opname sebelumnya. */
+  hasPriorOpname: boolean;
   state: LineState;
   revealExpected: boolean;
   onChange: (raw: string) => void;
@@ -615,6 +747,11 @@ function CountRow({
   name,
   unit,
   expectedQty,
+  openingQty,
+  purchasesQty,
+  unitCost,
+  flowLoaded,
+  hasPriorOpname,
   state,
   revealExpected,
   onChange,
@@ -623,6 +760,18 @@ function CountRow({
   const counted = state.saved !== null;
   const diff =
     state.saved !== null ? state.saved - expectedQty : null;
+  const closingQty = state.saved ?? null;
+  const usedQty =
+    closingQty === null ? null : openingQty + purchasesQty - closingQty;
+  const usedCost = usedQty === null ? null : usedQty * unitCost;
+  const usedTone =
+    usedQty === null
+      ? "neutral"
+      : usedQty < 0
+        ? "danger"
+        : usedQty === 0
+          ? "warning"
+          : "ok";
 
   return (
     <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
@@ -638,7 +787,7 @@ function CountRow({
         >
           {counted ? <Check className="size-3.5" /> : "—"}
         </div>
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <p className="font-medium text-neutral-900">{name}</p>
           <p className="text-xs text-neutral-500">
             Unit: {unit}
@@ -681,6 +830,69 @@ function CountRow({
               </>
             ) : null}
           </p>
+          {/* Inventory flow formula line — Stok Awal + Pembelian − Opname
+              = Bahan Terpakai. Reads as math so Owner/staff cepet pahami
+              basis HPP. Sesi AA #1. */}
+          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] tabular-nums text-neutral-600">
+            {!flowLoaded ? (
+              <span className="text-neutral-400">memuat data alur…</span>
+            ) : (
+              <>
+                <FlowMetric
+                  label="Stok Awal"
+                  value={openingQty}
+                  unit={unit}
+                  hint={
+                    hasPriorOpname
+                      ? "Dari opname sebelumnya"
+                      : "Estimasi — belum ada opname sebelumnya"
+                  }
+                  warn={!hasPriorOpname}
+                />
+                <FlowMetric
+                  label="Pembelian"
+                  value={purchasesQty}
+                  unit={unit}
+                  hint="Total pembelian sejak opname terakhir"
+                />
+                <FlowMetric
+                  label="Opname"
+                  value={closingQty}
+                  unit={unit}
+                  placeholder="—"
+                  hint="Stok akhir hasil hitung kamu"
+                />
+                <span
+                  className={cn(
+                    "font-medium",
+                    usedTone === "danger" && "text-danger-500",
+                    usedTone === "warning" && "text-warning-500",
+                    usedTone === "ok" && "text-mahakan-green-900",
+                    usedTone === "neutral" && "text-neutral-400",
+                  )}
+                  title={
+                    usedQty === null
+                      ? "Isi opname dulu untuk hitung pemakaian"
+                      : usedQty < 0
+                        ? "Anomali — opname > (awal + beli). Cek pembelian belum dicatat?"
+                        : usedQty === 0
+                          ? "Tidak ada pemakaian — verifikasi"
+                          : "Pemakaian periode ini"
+                  }
+                >
+                  Terpakai:{" "}
+                  {usedQty === null
+                    ? "—"
+                    : `${usedQty.toLocaleString("id-ID")} ${unit}`}
+                  {usedCost !== null && unitCost > 0 ? (
+                    <span className="ml-1 text-neutral-500">
+                      ({formatRupiah(usedCost)})
+                    </span>
+                  ) : null}
+                </span>
+              </>
+            )}
+          </div>
         </div>
       </div>
       <div className="flex items-center gap-2 sm:w-[200px]">
@@ -724,6 +936,40 @@ function CountRow({
         </p>
       ) : null}
     </li>
+  );
+}
+
+interface FlowMetricProps {
+  label: string;
+  value: number | null;
+  unit: string;
+  hint: string;
+  placeholder?: string;
+  warn?: boolean;
+}
+
+function FlowMetric({
+  label,
+  value,
+  unit,
+  hint,
+  placeholder = "0",
+  warn,
+}: FlowMetricProps) {
+  return (
+    <span title={hint} className="inline-flex items-baseline gap-1">
+      <span className="text-neutral-500">{label}:</span>
+      <span
+        className={cn(
+          "font-medium",
+          warn ? "text-warning-500" : "text-neutral-900",
+        )}
+      >
+        {value === null
+          ? placeholder
+          : `${value.toLocaleString("id-ID")} ${unit}`}
+      </span>
+    </span>
   );
 }
 

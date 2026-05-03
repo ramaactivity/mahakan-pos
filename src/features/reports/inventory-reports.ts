@@ -29,7 +29,7 @@ function sectionLabel(s: IngredientSection | null): string {
   return s ? SECTION_LABELS[s] ?? s : SECTION_LABELS.unassigned;
 }
 
-interface OpnameSnapshot {
+export interface OpnameSnapshot {
   sessionId: string;
   finalizedAt: Date;
   /** Map ingredientId → actualQty (only counted lines). */
@@ -38,7 +38,7 @@ interface OpnameSnapshot {
   costByIngredient: Map<string, number>;
 }
 
-async function fetchLatestOpnameBefore(
+export async function fetchLatestOpnameBefore(
   outletId: string,
   beforeDate: string,
 ): Promise<OpnameSnapshot | null> {
