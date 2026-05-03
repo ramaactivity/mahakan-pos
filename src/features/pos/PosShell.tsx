@@ -95,6 +95,7 @@ import {
   printTickets,
   type ReceiptConfig,
 } from "@/lib/printer/print-transaction";
+import { getPrinterClient } from "@/lib/printer/bluetooth";
 import type { Discount } from "@/lib/money";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime, toJakartaDateOnly } from "@/lib/date";
@@ -247,6 +248,26 @@ export function PosShell() {
     void loadShift();
     return () => {
       cancelled = true;
+    };
+  }, [session]);
+
+  // Sesi Z #3: pre-warm Bluetooth printer connection so the first print
+  // after sit-idle doesn't pay the 1-3s reconnect cost in front of the
+  // customer. Triggers on mount + whenever the tab becomes visible
+  // again (BLE typically drops while backgrounded). Silent — failures
+  // logged only; the actual print path still does its own connect retry.
+  useEffect(() => {
+    if (!session) return;
+    const client = getPrinterClient();
+    void client.prewarm();
+    function onVisibility() {
+      if (document.visibilityState === "visible") {
+        void client.prewarm();
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [session]);
 

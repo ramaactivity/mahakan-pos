@@ -28,6 +28,7 @@ import {
   isOk,
   saveOpnameCount,
   submitOpname,
+  type IngredientSection,
   type OpnameSessionDetail,
 } from "@/features/stock-opname";
 import { hasPermission } from "@/lib/auth/rbac";
@@ -57,6 +58,25 @@ type LineState = {
 
 const SAVE_DEBOUNCE_MS = 700;
 const SAVED_TOAST_TTL_MS = 1500;
+
+// Section grouping (sesi Z #2). Order is the operational order tim usually
+// hitung di lapangan: Bar dulu (gampang dihitung, sedikit), Kitchen, lalu
+// supplies. "Belum diset" disurface terakhir agar Owner sadar perlu
+// klasifikasi via Admin → Inventory.
+type SectionFilter = IngredientSection | "all" | "unassigned";
+
+const SECTION_TABS: Array<{ value: SectionFilter; label: string }> = [
+  { value: "all", label: "Semua" },
+  { value: "bar", label: "Bar" },
+  { value: "kitchen", label: "Kitchen" },
+  { value: "cleaning", label: "Cleaning" },
+  { value: "supporting", label: "Supporting" },
+  { value: "unassigned", label: "Belum diset" },
+];
+
+function sectionKey(s: IngredientSection | null): SectionFilter {
+  return s ?? "unassigned";
+}
 
 export function OpnameCountView({
   detail,
@@ -91,6 +111,7 @@ export function OpnameCountView({
   const [search, setSearch] = useState("");
   const [showOnlyUncounted, setShowOnlyUncounted] = useState(false);
   const [revealExpected, setRevealExpected] = useState(false);
+  const [sectionFilter, setSectionFilter] = useState<SectionFilter>("all");
   const [submitOpen, setSubmitOpen] = useState(false);
   const [submitMode, setSubmitMode] = useState<"strict" | "fill">("strict");
   const [submitting, setSubmitting] = useState(false);
@@ -110,6 +131,12 @@ export function OpnameCountView({
   const filteredLines = useMemo(() => {
     const q = search.trim().toLowerCase();
     return detail.lines.filter((l) => {
+      if (
+        sectionFilter !== "all" &&
+        sectionKey(l.ingredient.section) !== sectionFilter
+      ) {
+        return false;
+      }
       if (q && !l.ingredientNameSnapshot.toLowerCase().includes(q)) {
         return false;
       }
@@ -119,7 +146,23 @@ export function OpnameCountView({
       }
       return true;
     });
-  }, [detail.lines, search, showOnlyUncounted, stateMap]);
+  }, [detail.lines, search, showOnlyUncounted, stateMap, sectionFilter]);
+
+  // Per-section progress (counted / total) so each tab can render a hint
+  // like "Bar 5/12" — helps tim track which section masih outstanding.
+  const sectionProgress = useMemo(() => {
+    const map = new Map<SectionFilter, { counted: number; total: number }>();
+    for (const l of detail.lines) {
+      const key = sectionKey(l.ingredient.section);
+      const cur = map.get(key) ?? { counted: 0, total: 0 };
+      cur.total += 1;
+      if ((stateMap.get(l.ingredientId)?.saved ?? null) !== null) {
+        cur.counted += 1;
+      }
+      map.set(key, cur);
+    }
+    return map;
+  }, [detail.lines, stateMap]);
 
   const stats = useMemo(() => {
     const lines = detail.lines.map((l) => {
@@ -204,7 +247,11 @@ export function OpnameCountView({
       });
       return next;
     });
-    onChanged();
+    // Intentionally NOT calling onChanged() here. Parent has nothing to
+    // refresh — per-line counts only render inside this component, and a
+    // parent re-render would unmount us mid-typing and wipe other cells'
+    // in-flight (still-debouncing) input. Parent learns about line changes
+    // only at submit/finalize/cancel boundaries.
 
     // Auto-clear "saved" state after a short moment.
     window.setTimeout(() => {
@@ -320,7 +367,53 @@ export function OpnameCountView({
       </Card>
 
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="space-y-3 pb-2">
+          <div
+            role="tablist"
+            aria-label="Filter section"
+            className="flex flex-wrap gap-1.5"
+          >
+            {SECTION_TABS.map((t) => {
+              const p = sectionProgress.get(t.value);
+              const isAll = t.value === "all";
+              const counted = isAll
+                ? stats.countedLines
+                : (p?.counted ?? 0);
+              const total = isAll ? stats.totalLines : (p?.total ?? 0);
+              if (!isAll && total === 0) return null;
+              const active = sectionFilter === t.value;
+              return (
+                <button
+                  key={t.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setSectionFilter(t.value)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                    active
+                      ? "border-mahakan-green-700 bg-mahakan-green-700 text-white"
+                      : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50",
+                  )}
+                >
+                  {t.label}
+                  <span
+                    className={cn(
+                      "rounded-full px-1.5 py-0.5 text-[10px] font-mono tabular-nums",
+                      active
+                        ? "bg-white/20 text-white"
+                        : counted === total && total > 0
+                          ? "bg-mahakan-green-100 text-mahakan-green-900"
+                          : "bg-neutral-100 text-neutral-600",
+                    )}
+                  >
+                    {counted}/{total}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-[200px] flex-1">
               <Input
@@ -367,7 +460,7 @@ export function OpnameCountView({
         <CardContent className="px-0 pt-0">
           {filteredLines.length === 0 ? (
             <p className="py-8 text-center text-sm text-neutral-500">
-              {search || showOnlyUncounted
+              {search || showOnlyUncounted || sectionFilter !== "all"
                 ? "Tidak ada bahan cocok dengan filter."
                 : "Tidak ada bahan untuk di-opname."}
             </p>

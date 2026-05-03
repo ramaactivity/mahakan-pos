@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChefHat,
@@ -70,12 +70,16 @@ export function OrderQueuePanel({
     {},
   );
   const [marking, setMarking] = useState<string | null>(null);
+  // Skeleton only on the very first fetch. Background polls (30s tick) and
+  // parent-bumped refreshKey re-fetch silently — keeps order cards visible
+  // while kasir is interacting (sesi Z #1).
+  const hasLoadedOnce = useRef(false);
 
   // Fetch on filter change + manual refresh + auto-tick
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      setLoading(true);
+      if (!hasLoadedOnce.current) setLoading(true);
       const today = toJakartaDateOnly(new Date());
       const res = await listTransactions({
         from: `${today}T00:00:00.000Z`,
@@ -99,6 +103,7 @@ export function OrderQueuePanel({
         setTransactions(items);
       }
       setLoading(false);
+      hasLoadedOnce.current = true;
     }
     void load();
     return () => {

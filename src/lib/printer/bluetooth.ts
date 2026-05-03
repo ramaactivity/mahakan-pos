@@ -237,6 +237,26 @@ class PrinterClient {
     this.setStatus({ state: "idle" });
   }
 
+  /**
+   * Best-effort warm-up: open the GATT link ahead of the kasir actually
+   * tapping print. BLE drops connection after a few minutes idle, so
+   * waking it up at shift open + after tab visibility returns moves
+   * the 1-3 second connect cost out of the customer-facing payment path.
+   *
+   * Silent — failure is logged but never thrown so it can't disrupt the
+   * sale flow. Idempotent (connect() short-circuits if already connected).
+   */
+  async prewarm(): Promise<void> {
+    if (!this.device) return; // not paired yet, nothing to warm
+    if (this.isConnected()) return;
+    try {
+      await this.connect();
+    } catch (e) {
+      // Pre-warm is opportunistic — actual print will retry connect().
+      console.debug("[printer:prewarm]", e);
+    }
+  }
+
   isPaired(): boolean {
     return this.device !== null;
   }

@@ -15,6 +15,7 @@ export type {
   FinalizeOpnameInput,
   CancelOpnameInput,
   ReopenOpnameInput,
+  IngredientSection,
 } from "./types";
 
 export { isOk } from "./types";

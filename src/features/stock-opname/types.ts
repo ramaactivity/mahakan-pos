@@ -8,6 +8,8 @@ export type OpnameSession = InferSelectModel<typeof stockOpnameSessions>;
 export type OpnameLine = InferSelectModel<typeof stockOpnameLines>;
 export type OpnameStatus = OpnameSession["status"];
 
+export type IngredientSection = "kitchen" | "bar" | "supporting" | "cleaning";
+
 export interface OpnameLineWithIngredient extends OpnameLine {
   ingredient: {
     id: string;
@@ -15,6 +17,8 @@ export interface OpnameLineWithIngredient extends OpnameLine {
     unit: string;
     isActive: boolean;
     deletedAt: Date | null;
+    /** Operational section (sesi O). Null = legacy/unclassified. */
+    section: IngredientSection | null;
   };
 }
 

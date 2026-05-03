@@ -196,6 +196,36 @@ async function requireSession() {
   return session;
 }
 
+/**
+ * Block mutations on a transaction whose shift is already closed. Sesi Z #5:
+ * Owner reported staff could refund/void/edit transactions belonging to a
+ * tutup-kasir'd shift, which silently broke shift reconciliation totals.
+ *
+ * If the shift is missing we treat as not-found (defensive — should never
+ * happen because trx.shift_id has FK).
+ */
+async function assertShiftOpen(
+  shiftId: string,
+): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+  const [row] = await db
+    .select({ status: shifts.status })
+    .from(shifts)
+    .where(eq(shifts.id, shiftId))
+    .limit(1);
+  if (!row) {
+    return { ok: false, code: "NOT_FOUND", message: "Shift tidak ditemukan" };
+  }
+  if (row.status === "closed") {
+    return {
+      ok: false,
+      code: "SHIFT_CLOSED",
+      message:
+        "Shift sudah ditutup. Hubungi Owner untuk koreksi via Akuntansi → Manual Entry.",
+    };
+  }
+  return { ok: true };
+}
+
 const BILL_NOTE_MAX = 200;
 
 /** Trim + cap + normalize empty to null. Server boundary for `transactions.note`. */
@@ -774,6 +804,8 @@ export async function voidTransaction(
       "Transaksi sudah di-refund, tidak bisa di-void",
     );
   }
+  const shiftCheck = await assertShiftOpen(current.shiftId);
+  if (!shiftCheck.ok) return fail(shiftCheck.code, shiftCheck.message);
 
   const { updated, restoredIngredientIds } = await db.transaction(async (tx) => {
     const [updatedRow] = await tx
@@ -876,6 +908,8 @@ export async function refundTransaction(
       "Phase 1: hanya cash yang bisa di-refund",
     );
   }
+  const shiftCheck = await assertShiftOpen(current.shiftId);
+  if (!shiftCheck.ok) return fail(shiftCheck.code, shiftCheck.message);
 
   // Same WIB-day only
   const todayYmd = todayWibYmd();
@@ -1093,6 +1127,8 @@ export async function refundTransactionPartial(
       "Phase 1: hanya cash yang bisa di-refund",
     );
   }
+  const shiftCheck = await assertShiftOpen(current.shiftId);
+  if (!shiftCheck.ok) return fail(shiftCheck.code, shiftCheck.message);
 
   const todayYmd = todayWibYmd();
   const trxYmd = todayWibYmd(current.createdAt);
@@ -1307,6 +1343,8 @@ export async function editOpenBill(
       `Hanya open bill yang bisa di-edit (status saat ini: ${current.status})`,
     );
   }
+  const shiftCheck = await assertShiftOpen(current.shiftId);
+  if (!shiftCheck.ok) return fail(shiftCheck.code, shiftCheck.message);
 
   // Approver token consumption — Staff initiating discount on edit needs PIN.
   let discountApproverId: string | null = null;
@@ -1757,6 +1795,11 @@ export async function closeOpenBill(
       `Hanya open bill yang bisa di-close (status saat ini: ${current.status})`,
     );
   }
+  // NOTE: intentionally NOT checking assertShiftOpen here. Sesi Z #5 was
+  // scoped to refund/void/edit only — close-open-bill across shifts is
+  // legit (customer comes back next day to pay yesterday's bill). The
+  // payment still attributes to current.shiftId; if that becomes a recap
+  // gap, surface separately in a follow-up.
 
   // Cash math validation
   if (input.paymentMethod === "cash") {

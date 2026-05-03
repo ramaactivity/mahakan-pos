@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowDownCircle, ArrowUpCircle, Wallet } from "lucide-react";
 import {
   Badge,
@@ -56,8 +56,13 @@ export function PettyCashCard() {
   >([]);
   const [loadingRecent, setLoadingRecent] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Spinner only on the very first fetch — refreshKey bumps after submit
+  // refetch silently so the recent list doesn't flash spinner each time.
+  const hasLoadedOnce = useRef(false);
 
-  // Load categories once on mount.
+  // Load categories once on mount. (Effect dep on categoryId is benign:
+  // categoryId only mutates inside this effect when it was empty + items
+  // arrive, so it self-stabilizes after one extra harmless re-run.)
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -79,7 +84,7 @@ export function PettyCashCard() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      setLoadingRecent(true);
+      if (!hasLoadedOnce.current) setLoadingRecent(true);
       const today = todayWibIso();
       const [expRes, incRes] = await Promise.all([
         listExpenses({ from: today, to: today, limit: 20 }),
@@ -112,6 +117,7 @@ export function PettyCashCard() {
       merged.sort((a, b) => b.ts - a.ts);
       setRecent(merged.slice(0, 8).map(({ kind, row }) => ({ kind, row })));
       setLoadingRecent(false);
+      hasLoadedOnce.current = true;
     })();
     return () => {
       cancelled = true;

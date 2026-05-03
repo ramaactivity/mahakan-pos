@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Transaction as TrxType } from "@/features/transactions";
 import {
   AlertTriangle,
@@ -80,11 +80,15 @@ export function OpenBillPanel({
   );
   const [splittingBill, setSplittingBill] =
     useState<TransactionWithItems | null>(null);
+  // Skeleton only on the very first fetch. Background polls (30s tick) and
+  // parent-bumped refreshKey re-fetch silently — keeps card list visible
+  // while kasir is interacting (sesi Z #1: "POS sering refresh sendiri").
+  const hasLoadedOnce = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      setLoading(true);
+      if (!hasLoadedOnce.current) setLoading(true);
       const today = toJakartaDateOnly(new Date());
       const res = await listTransactions({
         from: `${today}T00:00:00.000Z`,
@@ -102,6 +106,7 @@ export function OpenBillPanel({
         onCountChange?.(sorted.length);
       }
       setLoading(false);
+      hasLoadedOnce.current = true;
     }
     void load();
     return () => {

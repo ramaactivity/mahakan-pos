@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Spinner } from "@/components/ui";
 import {
   isOk,
@@ -33,11 +33,15 @@ export function HistoryPanel({
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] =
     useState<TransactionStatus | "all">("all");
+  // Skeleton only on the very first fetch. Filter changes + parent
+  // refreshKey bumps refetch silently — list stays visible during refund
+  // commit etc. (sesi Z #1).
+  const hasLoadedOnce = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      setLoading(true);
+      if (!hasLoadedOnce.current) setLoading(true);
       const today = toJakartaDateOnly(new Date());
       const res = await listTransactions({
         from: `${today}T00:00:00.000Z`,
@@ -48,6 +52,7 @@ export function HistoryPanel({
       if (cancelled) return;
       if (isOk(res)) setTransactions(res.data.items);
       setLoading(false);
+      hasLoadedOnce.current = true;
     }
     void load();
     return () => {

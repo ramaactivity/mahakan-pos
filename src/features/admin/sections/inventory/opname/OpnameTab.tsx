@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CalendarPlus,
   CheckCircle2,
@@ -70,6 +70,12 @@ export function OpnameTab() {
   const [cadence, setCadence] = useState<MonthlyCadenceStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Tracks whether the very first fetch has completed. Only the initial fetch
+  // shows skeleton; subsequent refresh-key bumps refetch silently so the
+  // OpnameCountView does not unmount mid-typing. (Was: every refresh bumped
+  // setLoading(true) → Skeleton → unmount → child useState re-init → lost
+  // mid-debounce input from other cells. Reported by Owner sesi Z #1.)
+  const hasLoadedOnce = useRef(false);
 
   const [historyDetail, setHistoryDetail] =
     useState<OpnameSessionDetail | null>(null);
@@ -87,7 +93,7 @@ export function OpnameTab() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      setLoading(true);
+      if (!hasLoadedOnce.current) setLoading(true);
       const [activeRes, listRes, cadenceRes] = await Promise.all([
         getActiveOpname(),
         listOpnameSessions({ limit: 30 }),
@@ -108,6 +114,7 @@ export function OpnameTab() {
       if (isOk(listRes)) setHistory(listRes.data);
       if (isOk(cadenceRes)) setCadence(cadenceRes.data);
       setLoading(false);
+      hasLoadedOnce.current = true;
     }
     void load();
     return () => {

@@ -329,11 +329,15 @@ export function PurchasesView() {
                         {p.purchaseDate}
                       </td>
                       <td className="px-4 py-3">
-                        <span className="text-neutral-900">
-                          {p.supplierName ?? (
-                            <span className="text-neutral-400">—</span>
+                        <div className="flex items-center gap-2">
+                          {p.supplierName ? (
+                            <span className="text-neutral-900">
+                              {p.supplierName}
+                            </span>
+                          ) : (
+                            <Badge variant="warning">Direct</Badge>
                           )}
-                        </span>
+                        </div>
                         {p.invoiceNo ? (
                           <p className="mt-0.5 text-[11px] text-neutral-500">
                             {p.invoiceNo}

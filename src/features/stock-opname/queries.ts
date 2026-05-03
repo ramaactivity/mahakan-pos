@@ -130,6 +130,7 @@ export async function fetchSessionDetail(
         unit: ingredients.unit,
         isActive: ingredients.isActive,
         deletedAt: ingredients.deletedAt,
+        section: ingredients.section,
       },
     })
     .from(stockOpnameLines)
@@ -138,7 +139,7 @@ export async function fetchSessionDetail(
       eq(ingredients.id, stockOpnameLines.ingredientId),
     )
     .where(eq(stockOpnameLines.sessionId, sessionId))
-    .orderBy(ingredients.name);
+    .orderBy(ingredients.section, ingredients.name);
 
   const lines: OpnameLineWithIngredient[] = lineRows.map((r) => ({
     ...r.line,

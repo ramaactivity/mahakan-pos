@@ -28,6 +28,7 @@ import {
   type Supplier,
 } from "@/features/suppliers";
 import { formatRupiah, parseRupiah } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 interface PurchaseFormModalProps {
   open: boolean;
@@ -78,6 +79,13 @@ export function PurchaseFormModal({
   const [loadingMaster, setLoadingMaster] = useState(true);
 
   const [supplierId, setSupplierId] = useState<string | null>(null);
+  // "Pembelian langsung" mode (sesi Z #4) — staff belanja mendadak di
+  // warung/Alfamart/pasar yang BUKAN supplier listed. UI hides supplier
+  // picker, surfaces a free-text "tempat belanja" input, and prepends
+  // it to notes on save (no schema migration needed: supplier_id stays
+  // nullable + tempat goes into notes).
+  const [directMode, setDirectMode] = useState(false);
+  const [directPlace, setDirectPlace] = useState("");
   const [purchaseDate, setPurchaseDate] = useState(todayJakartaIso());
   const [paymentMethod, setPaymentMethod] =
     useState<PaymentMethod>("cash");
@@ -97,6 +105,8 @@ export function PurchaseFormModal({
     /* eslint-disable react-hooks/set-state-in-effect */
     setLoadingMaster(true);
     setSupplierId(null);
+    setDirectMode(false);
+    setDirectPlace("");
     setPurchaseDate(todayJakartaIso());
     setPaymentMethod("cash");
     setPaymentTerm("0");
@@ -246,14 +256,30 @@ export function PurchaseFormModal({
       return;
     }
 
+    if (directMode && paymentMethod === "top") {
+      setError(
+        "Pembelian langsung tidak bisa pakai TOP — pilih Cash atau Transfer.",
+      );
+      return;
+    }
+    const place = directPlace.trim();
+    const composedNotes = directMode
+      ? [
+          `[Direct]${place ? ` @ ${place}` : ""}`,
+          notes.trim(),
+        ]
+          .filter(Boolean)
+          .join(" — ")
+      : notes.trim();
+
     setSubmitting(true);
     const res = await createPurchase({
-      supplierId,
+      supplierId: directMode ? null : supplierId,
       purchaseDate,
       paymentMethod,
       paymentTermDays: paymentMethod === "top" ? term : 0,
       invoiceNo: invoiceNo.trim() || null,
-      notes: notes.trim() || null,
+      notes: composedNotes || null,
       updateCost,
       createKasEntry: createKas,
       items: validItems,
@@ -276,7 +302,7 @@ export function PurchaseFormModal({
       open={open}
       onClose={onClose}
       title="Catat Pembelian"
-      description="Replace `Form Pembelanjaan Cash` + `Form TOP` lama. Boleh banyak item per pembelian. Stok bahan auto-update; kalau Cash + 'Buat entry kas' aktif, expense kas otomatis dibuat."
+      description="Replace `Form Pembelanjaan Cash` + `Form TOP` lama. Pilih supplier reguler, atau toggle Pembelian Langsung untuk warung/Alfamart/pasar mendadak. Stok bahan auto-update; kalau Cash + 'Buat entry kas' aktif, expense kas otomatis dibuat."
       size="2xl"
       footer={
         <>
@@ -293,6 +319,57 @@ export function PurchaseFormModal({
         <p className="text-sm text-neutral-500">Memuat data…</p>
       ) : (
         <div className="space-y-4">
+          <div
+            role="radiogroup"
+            aria-label="Tipe pembelian"
+            className="flex flex-wrap gap-2"
+          >
+            {[
+              {
+                value: false,
+                label: "Supplier reguler",
+                hint: "Pilih dari daftar supplier",
+              },
+              {
+                value: true,
+                label: "Pembelian langsung",
+                hint: "Warung / Alfamart / pasar — tanpa supplier",
+              },
+            ].map((opt) => {
+              const active = directMode === opt.value;
+              return (
+                <button
+                  key={String(opt.value)}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => {
+                    setDirectMode(opt.value);
+                    if (opt.value) {
+                      setSupplierId(null);
+                      // Direct buys are always pay-now; force off TOP.
+                      if (paymentMethod === "top") setPaymentMethod("cash");
+                    } else {
+                      setDirectPlace("");
+                    }
+                  }}
+                  className={cn(
+                    "flex flex-1 min-w-[180px] flex-col items-start rounded-md border px-3 py-2 text-left text-sm transition",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                    active
+                      ? "border-mahakan-green-700 bg-mahakan-green-100/40 text-mahakan-green-900"
+                      : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50",
+                  )}
+                >
+                  <span className="font-medium">{opt.label}</span>
+                  <span className="text-[11px] text-neutral-500">
+                    {opt.hint}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
           <div className="grid gap-3 md:grid-cols-2">
             <DatePicker
               label="Tanggal Pembelian"
@@ -300,28 +377,38 @@ export function PurchaseFormModal({
               onChange={(v) => setPurchaseDate(v ?? todayJakartaIso())}
               clearable={false}
             />
-            <Combobox
-              label="Supplier (opsional)"
-              placeholder="Pilih supplier — boleh kosong (walk-in / pasar)"
-              searchPlaceholder="Cari supplier…"
-              clearable
-              groups={[
-                {
-                  label: "",
-                  options: supplierList.map((s) => ({
-                    value: s.id,
-                    label: s.name,
-                    hint:
-                      s.defaultPaymentTermDays > 0
-                        ? `TOP ${s.defaultPaymentTermDays}h`
-                        : "Cash",
-                    keywords: [s.category ?? ""],
-                  })),
-                } satisfies ComboboxGroup,
-              ]}
-              value={supplierId}
-              onChange={(v) => setSupplierId(v)}
-            />
+            {directMode ? (
+              <Input
+                label="Tempat belanja (opsional)"
+                placeholder="mis. Warung Bu Tini, Alfamart Cijantung"
+                value={directPlace}
+                onChange={(e) => setDirectPlace(e.target.value.slice(0, 80))}
+                hint="Disimpan di catatan untuk audit. Kalau Owner sering belanja di sini, tambahkan jadi supplier reguler nanti."
+              />
+            ) : (
+              <Combobox
+                label="Supplier"
+                placeholder="Pilih supplier"
+                searchPlaceholder="Cari supplier…"
+                clearable
+                groups={[
+                  {
+                    label: "",
+                    options: supplierList.map((s) => ({
+                      value: s.id,
+                      label: s.name,
+                      hint:
+                        s.defaultPaymentTermDays > 0
+                          ? `TOP ${s.defaultPaymentTermDays}h`
+                          : "Cash",
+                      keywords: [s.category ?? ""],
+                    })),
+                  } satisfies ComboboxGroup,
+                ]}
+                value={supplierId}
+                onChange={(v) => setSupplierId(v)}
+              />
+            )}
           </div>
 
           <div className="grid gap-3 md:grid-cols-3">
