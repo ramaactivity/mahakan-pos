@@ -53,12 +53,16 @@ export function EmployeeDocsModal({
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Add-form state
+  // Add-form state. fileUrl = manually-pasted URL (legacy "Drive link" path).
+  // pendingFile = picked-but-not-yet-uploaded file (sesi AA hotfix —
+  // deferred upload supaya tidak ada orphan files di Drive saat user
+  // tutup modal tanpa klik Simpan, dan supaya tombol "Simpan Dokumen"
+  // jadi single source of truth untuk commit). Either may be set;
+  // pendingFile takes precedence on save.
   const [docType, setDocType] = useState<DocumentType>("ktp");
   const [title, setTitle] = useState("");
   const [fileUrl, setFileUrl] = useState("");
-  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState("");
   const [notes, setNotes] = useState("");
@@ -74,8 +78,7 @@ export function EmployeeDocsModal({
     setDocType("ktp");
     setTitle("");
     setFileUrl("");
-    setUploadedFileName(null);
-    setUploading(false);
+    setPendingFile(null);
     setUploadError(null);
     setExpiresAt("");
     setNotes("");
@@ -93,54 +96,45 @@ export function EmployeeDocsModal({
     };
   }, [open, employee, refreshKey]);
 
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file || !employee) return;
+    if (!file) return;
     setUploadError(null);
     if (file.size > MAX_UPLOAD_BYTES) {
       setUploadError("Ukuran file melebihi 10 MB");
       return;
     }
-    setUploading(true);
-    try {
-      // Upload to Google Drive via /api/v1/employee-documents/upload.
-      // Server resolves employee name from DB + auto-creates per-employee
-      // folder under "DOKUMEN HR/" (sesi AA #2 extension).
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("employeeId", employee.id);
-      const res = await fetch("/api/v1/employee-documents/upload", {
-        method: "POST",
-        body: fd,
-      });
-      const json = (await res.json()) as
-        | { success: true; data: { url: string; folderPath: string } }
-        | {
-            success: false;
-            error: { code: string; message: string };
-          };
-      if (!json.success) {
-        throw new Error(json.error.message);
-      }
-      setFileUrl(json.data.url);
-      setUploadedFileName(file.name);
-      toast.success(`File tersimpan di Drive · ${json.data.folderPath}`);
-    } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : "Upload gagal — coba lagi atau gunakan link manual";
-      setUploadError(msg);
-    } finally {
-      setUploading(false);
-    }
+    // Defer upload until user clicks "Simpan Dokumen". Just remember
+    // the file in memory — no orphan files in Drive if user abandons.
+    setPendingFile(file);
+    // Clear the manually-pasted URL since the file takes precedence.
+    setFileUrl("");
   }
 
   function clearUpload() {
     setFileUrl("");
-    setUploadedFileName(null);
+    setPendingFile(null);
     setUploadError(null);
+  }
+
+  async function uploadPendingFile(file: File): Promise<string> {
+    if (!employee) throw new Error("Karyawan belum dipilih");
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("employeeId", employee.id);
+    const res = await fetch("/api/v1/employee-documents/upload", {
+      method: "POST",
+      body: fd,
+    });
+    const json = (await res.json()) as
+      | { success: true; data: { url: string; folderPath: string } }
+      | { success: false; error: { code: string; message: string } };
+    if (!json.success) {
+      throw new Error(json.error.message);
+    }
+    toast.success(`File tersimpan di Drive · ${json.data.folderPath}`);
+    return json.data.url;
   }
 
   async function handleAdd() {
@@ -152,26 +146,45 @@ export function EmployeeDocsModal({
       return;
     }
     setSubmitting(true);
-    const res = await createEmployeeDocument({
-      employeeId: employee.id,
-      docType,
-      title: title.trim(),
-      fileUrl: fileUrl.trim() || null,
-      expiresAt: expiresAt || null,
-      notes: notes.trim() || null,
-    });
-    setSubmitting(false);
-    if (!isOk(res)) {
-      setError(res.error.message);
-      return;
+    try {
+      // If user picked a file, upload to Drive first then create DB row
+      // with returned URL. Otherwise use the manually-pasted URL (or null).
+      let resolvedUrl: string | null = fileUrl.trim() || null;
+      if (pendingFile) {
+        try {
+          resolvedUrl = await uploadPendingFile(pendingFile);
+        } catch (e) {
+          setError(
+            e instanceof Error
+              ? `Upload gagal: ${e.message}`
+              : "Upload gagal — coba lagi",
+          );
+          setSubmitting(false);
+          return;
+        }
+      }
+      const res = await createEmployeeDocument({
+        employeeId: employee.id,
+        docType,
+        title: title.trim(),
+        fileUrl: resolvedUrl,
+        expiresAt: expiresAt || null,
+        notes: notes.trim() || null,
+      });
+      if (!isOk(res)) {
+        setError(res.error.message);
+        return;
+      }
+      toast.success("Dokumen ditambahkan");
+      setTitle("");
+      setFileUrl("");
+      setPendingFile(null);
+      setExpiresAt("");
+      setNotes("");
+      setRefreshKey((k) => k + 1);
+    } finally {
+      setSubmitting(false);
     }
-    toast.success("Dokumen ditambahkan");
-    setTitle("");
-    setFileUrl("");
-    setUploadedFileName(null);
-    setExpiresAt("");
-    setNotes("");
-    setRefreshKey((k) => k + 1);
   }
 
   async function handleDelete(doc: EmployeeDocument) {
@@ -241,26 +254,31 @@ export function EmployeeDocsModal({
             <label className="block text-sm font-medium text-neutral-900">
               File / Link (opsional)
             </label>
-            {uploadedFileName ? (
-              <div className="flex items-center justify-between gap-2 rounded-md border border-mahakan-green-200 bg-mahakan-green-50 px-3 py-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <FileText
-                    className="size-4 shrink-0 text-mahakan-green-700"
-                    aria-hidden
-                  />
-                  <span className="truncate text-sm text-mahakan-green-900">
-                    {uploadedFileName}
-                  </span>
+            {pendingFile ? (
+              <div className="rounded-md border border-warning-500/40 bg-warning-100/30 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <FileText
+                      className="size-4 shrink-0 text-warning-500"
+                      aria-hidden
+                    />
+                    <span className="truncate text-sm text-neutral-900">
+                      {pendingFile.name}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={clearUpload}
+                    disabled={submitting}
+                    aria-label="Batal pilih file"
+                    className="rounded-sm p-1 text-neutral-500 hover:bg-warning-100 hover:text-danger-500"
+                  >
+                    <X className="size-4" aria-hidden />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={clearUpload}
-                  disabled={submitting}
-                  aria-label="Batal upload"
-                  className="rounded-sm p-1 text-mahakan-green-700 hover:bg-mahakan-green-100"
-                >
-                  <X className="size-4" aria-hidden />
-                </button>
+                <p className="mt-1 text-[11px] text-warning-500">
+                  File belum tersimpan — klik <strong>Simpan Dokumen</strong> di bawah untuk upload ke Drive + catat ke daftar.
+                </p>
               </div>
             ) : (
               <>
@@ -269,10 +287,9 @@ export function EmployeeDocsModal({
                     type="button"
                     variant="secondary"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={submitting || uploading}
-                    loading={uploading}
+                    disabled={submitting}
                   >
-                    <Upload className="size-4" aria-hidden /> Upload File
+                    <Upload className="size-4" aria-hidden /> Pilih File
                   </Button>
                   <input
                     ref={fileInputRef}
@@ -286,12 +303,12 @@ export function EmployeeDocsModal({
                     value={fileUrl}
                     onChange={(e) => setFileUrl(e.target.value.slice(0, 500))}
                     placeholder="atau paste URL: https://..."
-                    disabled={submitting || uploading}
+                    disabled={submitting}
                     className="flex-1"
                   />
                 </div>
                 <p className="text-xs text-neutral-500">
-                  Maks 10 MB · PDF, JPG, PNG, WebP
+                  Maks 10 MB · PDF, JPG, PNG, WebP. File otomatis upload ke Google Drive saat klik <strong>Simpan Dokumen</strong>.
                 </p>
               </>
             )}
@@ -318,7 +335,7 @@ export function EmployeeDocsModal({
             loading={submitting}
             className="mt-3"
           >
-            <Plus className="size-4" aria-hidden /> Tambah
+            <Plus className="size-4" aria-hidden /> Simpan Dokumen
           </Button>
         </div>
 
