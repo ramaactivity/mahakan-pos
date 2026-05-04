@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Receipt, RefreshCw } from "lucide-react";
 import {
   Badge,
   Button,
+  Card,
+  CardContent,
   Input,
   Modal,
   NumericInput,
@@ -49,6 +51,15 @@ export function CloseShiftModal({
   onClosed,
 }: CloseShiftModalProps) {
   const [summary, setSummary] = useState<SummaryPreview | null>(null);
+  const [openBills, setOpenBills] = useState<
+    Array<{
+      id: string;
+      transactionNumber: string;
+      pagerNumber: number | null;
+      total: number;
+    }>
+  >([]);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [actualCash, setActualCash] = useState("0");
   const [notes, setNotes] = useState("");
@@ -86,6 +97,17 @@ export function CloseShiftModal({
         return;
       }
       const items = trxRes.data.items;
+      // Phase 2.1 — surface open bills before close shift; if any exist, kasir
+      // must finish them or block the close-shift action server-side anyway.
+      const open = items
+        .filter((t) => t.status === "open")
+        .map((t) => ({
+          id: t.id,
+          transactionNumber: t.transactionNumber,
+          pagerNumber: t.pagerNumber,
+          total: t.total,
+        }));
+      setOpenBills(open);
       const paid = items.filter((t) => t.status === "paid");
       const voided = items.filter((t) => t.status === "voided");
       const refunded = items.filter((t) => t.status === "refunded");
@@ -136,7 +158,7 @@ export function CloseShiftModal({
     return () => {
       cancelled = true;
     };
-  }, [open, shift]);
+  }, [open, shift, refreshKey]);
 
   let parsedCash = 0;
   try {
@@ -195,26 +217,43 @@ export function CloseShiftModal({
     onClosed();
   }
 
+  const blockedByOpenBills = openBills.length > 0;
+
   return (
     <Modal
       open={open}
       onClose={onClose}
       title="Tutup Shift"
-      description="Hitung kas fisik di laci, lalu input untuk verifikasi."
+      description={
+        blockedByOpenBills
+          ? "Ada bill belum dibayar — selesaikan dulu sebelum tutup shift."
+          : "Hitung kas fisik di laci, lalu input untuk verifikasi."
+      }
       size="lg"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
-            Batal
+            {blockedByOpenBills ? "Tutup" : "Batal"}
           </Button>
-          <Button
-            onClick={onSubmit}
-            loading={submitting}
-            disabled={loading}
-            size="lg"
-          >
-            Tutup Shift
-          </Button>
+          {blockedByOpenBills ? (
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => setRefreshKey((k) => k + 1)}
+              disabled={loading}
+            >
+              <RefreshCw className="size-4" /> Cek Ulang
+            </Button>
+          ) : (
+            <Button
+              onClick={onSubmit}
+              loading={submitting}
+              disabled={loading}
+              size="lg"
+            >
+              Tutup Shift
+            </Button>
+          )}
         </>
       }
     >
@@ -222,6 +261,50 @@ export function CloseShiftModal({
         <div className="flex h-32 items-center justify-center">
           <Spinner className="size-6 text-mahakan-green-700" />
         </div>
+      ) : blockedByOpenBills ? (
+        <Card className="border-warning-300 bg-warning-100">
+          <CardContent className="space-y-4 px-5 py-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle
+                className="mt-0.5 size-5 text-warning-500"
+                aria-hidden
+              />
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-warning-500">
+                  {openBills.length} bill belum dibayar
+                </p>
+                <p className="text-xs text-neutral-700">
+                  Tutup shift di-block sampai bill ini diselesaikan
+                  (bayar) atau dibatalkan. Cek tab <strong>Bill Aktif</strong>{" "}
+                  di POS untuk lanjut bayar.
+                </p>
+              </div>
+            </div>
+            <ul className="space-y-2">
+              {openBills.map((b) => (
+                <li
+                  key={b.id}
+                  className="flex items-center justify-between rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm"
+                >
+                  <span className="flex items-center gap-2 font-medium text-neutral-900">
+                    <Receipt className="size-4 text-neutral-500" aria-hidden />
+                    {b.transactionNumber}
+                    {b.pagerNumber ? (
+                      <Badge variant="neutral">Pager {b.pagerNumber}</Badge>
+                    ) : null}
+                  </span>
+                  <span className="font-mono text-neutral-700">
+                    {formatRupiah(b.total)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs italic text-neutral-600">
+              Sudah selesai semua? Tap <strong>Cek Ulang</strong> di footer
+              untuk refresh status.
+            </p>
+          </CardContent>
+        </Card>
       ) : !summary ? (
         <p className="text-sm text-danger-500">Gagal load summary</p>
       ) : (

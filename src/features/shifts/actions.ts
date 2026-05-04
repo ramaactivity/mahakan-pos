@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { shifts, transactions } from "@/db/schema";
@@ -160,6 +160,36 @@ export async function closeShift(
   }
   if (current.status === "closed") {
     return fail("ALREADY_CLOSED", "Shift sudah tutup");
+  }
+
+  // Phase 2.1 guard — block close if any open bills (status="open") still
+  // belong to this shift. Kasir must finish/void/refund them first; closing
+  // mid-bill orphans the bill from a closed shift and breaks reconciliation.
+  const openBillRows = await db
+    .select({
+      transactionNumber: transactions.transactionNumber,
+      pagerNumber: transactions.pagerNumber,
+      total: transactions.total,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.shiftId, current.id),
+        eq(transactions.status, "open"),
+      ),
+    );
+  if (openBillRows.length > 0) {
+    const list = openBillRows
+      .map((b) =>
+        b.pagerNumber
+          ? `${b.transactionNumber} (pager ${b.pagerNumber})`
+          : b.transactionNumber,
+      )
+      .join(", ");
+    return fail(
+      "OPEN_BILLS_EXIST",
+      `Ada ${openBillRows.length} bill belum dibayar di shift ini: ${list}. Selesaikan atau batalkan dulu sebelum tutup shift.`,
+    );
   }
 
   // Aggregate transactions in this shift
