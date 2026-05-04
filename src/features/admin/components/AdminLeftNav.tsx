@@ -62,26 +62,74 @@ interface NavItem {
   ownerOnly?: boolean;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { key: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
-  { key: "menu", label: "Menu", Icon: Coffee },
-  { key: "inventory", label: "Inventory", Icon: Package },
-  { key: "suppliers", label: "Supplier", Icon: Truck },
-  { key: "customers", label: "Member", Icon: Heart },
-  { key: "staff", label: "Staff", Icon: Users },
-  { key: "employees", label: "Karyawan", Icon: Briefcase },
-  { key: "attendance", label: "Absensi", Icon: Clock },
-  { key: "schedules", label: "Jadwal", Icon: CalendarDays },
-  { key: "payroll", label: "Payroll", Icon: DollarSign },
-  { key: "hr_reports", label: "Laporan HR", Icon: BarChart3 },
-  { key: "shifts", label: "Shifts", Icon: Receipt },
-  { key: "cash", label: "Kas", Icon: Wallet },
-  { key: "finance", label: "Keuangan", Icon: Banknote },
-  { key: "accounting", label: "Akuntansi", Icon: BookOpen },
-  { key: "promos", label: "Promo", Icon: Sparkles },
-  { key: "reports", label: "Laporan", Icon: BarChart3 },
-  { key: "audit", label: "Audit Log", Icon: ScrollText, ownerOnly: true },
-  { key: "settings", label: "Settings", Icon: Settings },
+interface NavGroup {
+  /** Uppercase label rendered above the group. Empty string = no header
+   * (e.g., first/utility group). */
+  heading: string;
+  items: NavItem[];
+}
+
+/**
+ * Phase 9.1 (sesi AB) — group sidebar items per kategori sesuai spec owner
+ * (sesi AA handover). 19 items dalam 8 group untuk visual hierarchy yang
+ * jelas, mengurangi cognitive load saat owner/manager scan menu.
+ */
+const NAV_GROUPS: NavGroup[] = [
+  {
+    heading: "Operasi",
+    items: [
+      { key: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
+      { key: "shifts", label: "Shifts", Icon: Receipt },
+    ],
+  },
+  {
+    heading: "Inventaris",
+    items: [
+      { key: "inventory", label: "Inventory", Icon: Package },
+      { key: "suppliers", label: "Supplier", Icon: Truck },
+    ],
+  },
+  {
+    heading: "Menu",
+    items: [{ key: "menu", label: "Menu", Icon: Coffee }],
+  },
+  {
+    heading: "Cashflow",
+    items: [{ key: "cash", label: "Kas", Icon: Wallet }],
+  },
+  {
+    heading: "HR",
+    items: [
+      { key: "staff", label: "Staff", Icon: Users },
+      { key: "employees", label: "Karyawan", Icon: Briefcase },
+      { key: "attendance", label: "Absensi", Icon: Clock },
+      { key: "schedules", label: "Jadwal", Icon: CalendarDays },
+      { key: "payroll", label: "Payroll", Icon: DollarSign },
+      { key: "hr_reports", label: "Laporan HR", Icon: BarChart3 },
+    ],
+  },
+  {
+    heading: "Finance",
+    items: [
+      { key: "finance", label: "Keuangan", Icon: Banknote },
+      { key: "accounting", label: "Akuntansi", Icon: BookOpen },
+      { key: "reports", label: "Laporan", Icon: BarChart3 },
+    ],
+  },
+  {
+    heading: "Marketing",
+    items: [
+      { key: "promos", label: "Promo", Icon: Sparkles },
+      { key: "customers", label: "Member", Icon: Heart },
+    ],
+  },
+  {
+    heading: "Sistem",
+    items: [
+      { key: "settings", label: "Settings", Icon: Settings },
+      { key: "audit", label: "Audit Log", Icon: ScrollText, ownerOnly: true },
+    ],
+  },
 ];
 
 export function AdminLeftNav({
@@ -90,9 +138,10 @@ export function AdminLeftNav({
   onLogout,
   role,
 }: AdminLeftNavProps) {
-  const items = NAV_ITEMS.filter(
-    (item) => !item.ownerOnly || role === "owner",
-  );
+  const visibleGroups = NAV_GROUPS.map((g) => ({
+    ...g,
+    items: g.items.filter((it) => !it.ownerOnly || role === "owner"),
+  })).filter((g) => g.items.length > 0);
 
   return (
     <nav
@@ -110,16 +159,31 @@ export function AdminLeftNav({
           <p className="text-xs text-neutral-500">Back Office</p>
         </div>
       </div>
-      {/* Scrollable items — 16+ section dengan tablet kecil bisa overflow. */}
-      <div className="flex-1 space-y-0.5 overflow-y-auto px-3 py-1">
-        {items.map((item) => (
-          <NavLink
-            key={item.key}
-            label={item.label}
-            Icon={item.Icon}
-            active={active === item.key}
-            onClick={() => onChange(item.key)}
-          />
+      {/* Scrollable items — 19 section dengan tablet kecil bisa overflow.
+       * Section headers (Operasi/Inventaris/dll) bantu kasih visual rest +
+       * cognitive grouping. */}
+      <div className="flex-1 overflow-y-auto px-3 py-1">
+        {visibleGroups.map((group, gi) => (
+          <div
+            key={group.heading}
+            className={cn(
+              "space-y-0.5",
+              gi > 0 ? "mt-3 border-t border-neutral-100 pt-3" : null,
+            )}
+          >
+            <p className="px-3 text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+              {group.heading}
+            </p>
+            {group.items.map((item) => (
+              <NavLink
+                key={item.key}
+                label={item.label}
+                Icon={item.Icon}
+                active={active === item.key}
+                onClick={() => onChange(item.key)}
+              />
+            ))}
+          </div>
         ))}
       </div>
       <div className="shrink-0 border-t border-neutral-100 px-3 pt-2">
