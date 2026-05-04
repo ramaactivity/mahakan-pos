@@ -58,9 +58,10 @@ const MODULE_ROOT_FOLDER: Record<UploadModule, string> = {
   purchase: "NOTA MAHAKAN",
   hr: "DOKUMEN HR",
   expense: "STRUK PENGELUARAN",
+  attendance: "ABSENSI",
 };
 
-export type UploadModule = "purchase" | "hr" | "expense";
+export type UploadModule = "purchase" | "hr" | "expense" | "attendance";
 
 let _drive: drive_v3.Drive | null = null;
 
@@ -164,6 +165,24 @@ async function resolveTargetFolder(
     return {
       folderId: empFolder,
       pathLabel: `${moduleRootName}/${empFolderName}`,
+    };
+  }
+
+  if (module === "attendance") {
+    // Phase 4 (sesi AB) — selfie absensi: ABSENSI/{Nama}/{YYYY-MM-DD}/
+    if (!ctx.employeeName)
+      throw new Error("employeeName wajib untuk attendance");
+    if (!ctx.date) throw new Error("date wajib untuk attendance");
+    const safeName = ctx.employeeName
+      .replace(/[\\/?*<>:|"]/g, "_")
+      .slice(0, 80);
+    const idHint = ctx.employeeId ? ` (${ctx.employeeId.slice(0, 8)})` : "";
+    const empFolderName = `${safeName}${idHint}`;
+    const empFolder = await findOrCreateFolder(d, empFolderName, moduleRoot);
+    const dateFolder = await findOrCreateFolder(d, ctx.date, empFolder);
+    return {
+      folderId: dateFolder,
+      pathLabel: `${moduleRootName}/${empFolderName}/${ctx.date}`,
     };
   }
 
