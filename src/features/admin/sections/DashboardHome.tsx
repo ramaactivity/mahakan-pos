@@ -48,6 +48,7 @@ import type {
   IncomeStatementReport,
 } from "@/features/accounting/reports";
 import { formatRupiah } from "@/lib/format";
+import { paymentMethodLabel } from "@/lib/payment-method";
 import type { AdminSection } from "@/features/admin/components/AdminLeftNav";
 import { OpnameMonthlyBanner } from "./inventory/opname/OpnameMonthlyBanner";
 
@@ -353,11 +354,7 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
                 >
                   <div>
                     <p className="text-sm font-medium text-neutral-900">
-                      {row.method === "cash"
-                        ? "Tunai"
-                        : row.method === "qris"
-                          ? "QRIS"
-                          : "Kartu BCA"}
+                      {paymentMethodLabel(row.method)}
                     </p>
                     <p className="text-xs text-neutral-500">
                       {row.count} transaksi

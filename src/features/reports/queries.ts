@@ -67,15 +67,26 @@ export async function fetchDailySalesReport(
     paid.length > 0 ? Math.round(revenue / paid.length) : 0;
 
   const byPaymentMethod: PaymentMethodBreakdown[] = (
-    ["cash", "qris", "card_bca"] as const
-  ).map((method) => {
-    const rows = paid.filter((t) => t.paymentMethod === method);
-    return {
-      method: method as PaymentMethod,
-      count: rows.length,
-      amount: rows.reduce((s, t) => s + netTotal(t), 0),
-    };
-  });
+    [
+      "cash",
+      "qris",
+      "card_bca",
+      "card_bni",
+      "card_mandiri",
+      "card_bri",
+      "card_other",
+    ] as const
+  )
+    .map((method) => {
+      const rows = paid.filter((t) => t.paymentMethod === method);
+      return {
+        method: method as PaymentMethod,
+        count: rows.length,
+        amount: rows.reduce((s, t) => s + netTotal(t), 0),
+      };
+    })
+    // Hide methods dengan zero transaction agar dashboard tidak penuh row 0
+    .filter((row) => row.count > 0);
 
   // Hourly bucket (WIB)
   const hourlyMap = new Map<number, HourlyBucket>();
@@ -368,15 +379,25 @@ export async function fetchSalesRangeReport(
     paid.length > 0 ? Math.round(revenue / paid.length) : 0;
 
   const byPaymentMethod: PaymentMethodBreakdown[] = (
-    ["cash", "qris", "card_bca"] as const
-  ).map((method) => {
-    const rows = paid.filter((t) => t.paymentMethod === method);
-    return {
-      method: method as PaymentMethod,
-      count: rows.length,
-      amount: rows.reduce((s, t) => s + netTotal(t), 0),
-    };
-  });
+    [
+      "cash",
+      "qris",
+      "card_bca",
+      "card_bni",
+      "card_mandiri",
+      "card_bri",
+      "card_other",
+    ] as const
+  )
+    .map((method) => {
+      const rows = paid.filter((t) => t.paymentMethod === method);
+      return {
+        method: method as PaymentMethod,
+        count: rows.length,
+        amount: rows.reduce((s, t) => s + netTotal(t), 0),
+      };
+    })
+    .filter((row) => row.count > 0);
 
   // Build daily bucket map (WIB day key)
   const wibDateKey = (d: Date) => {

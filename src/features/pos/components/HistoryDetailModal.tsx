@@ -424,12 +424,7 @@ export function HistoryDetailModal({
                     {splitBreakdown.splits.map((s, i) => (
                       <li key={s.id} className="flex justify-between gap-2">
                         <span className="truncate">
-                          #{i + 1} ·{" "}
-                          {s.paymentMethod === "cash"
-                            ? "Tunai"
-                            : s.paymentMethod === "qris"
-                              ? "QRIS"
-                              : "Kartu BCA"}
+                          #{i + 1} · {paymentMethodLabel(s.paymentMethod)}
                           {s.splitKind === "per_menu"
                             ? ` · ${s.items.length} item`
                             : " · nominal"}

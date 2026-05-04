@@ -33,6 +33,7 @@ import {
 } from "@/features/outlets";
 import { exportDailySalesPdf } from "@/lib/pdf-export";
 import { formatRupiah } from "@/lib/format";
+import { paymentMethodLabel } from "@/lib/payment-method";
 
 export function DailySalesView() {
   const today = new Date().toISOString().slice(0, 10);
@@ -212,11 +213,7 @@ function ReportContent({ report }: { report: DailySalesReport }) {
                 >
                   <div>
                     <p className="text-sm font-medium text-neutral-900">
-                      {row.method === "cash"
-                        ? "Tunai"
-                        : row.method === "qris"
-                          ? "QRIS"
-                          : "Kartu BCA"}
+                      {paymentMethodLabel(row.method)}
                     </p>
                     <p className="text-xs text-neutral-500">{row.count} trx</p>
                   </div>

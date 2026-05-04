@@ -55,8 +55,15 @@ export function ShiftDetailModal({
   const paidQris = paid
     .filter((t) => t.paymentMethod === "qris")
     .reduce((s, t) => s + t.total, 0);
+  // After Phase 2.6, kartu mencakup semua bank: BCA/BNI/Mandiri/BRI/Lainnya.
+  // Sebelumnya hanya filter card_bca → BNI/Mandiri/dll silently dropped.
   const paidCard = paid
-    .filter((t) => t.paymentMethod === "card_bca")
+    .filter(
+      (t) =>
+        t.paymentMethod !== "cash" &&
+        t.paymentMethod !== "qris" &&
+        t.paymentMethod !== "split",
+    )
     .reduce((s, t) => s + t.total, 0);
 
   return (
@@ -117,9 +124,9 @@ export function ShiftDetailModal({
             sub={`${paid.filter((t) => t.paymentMethod === "qris").length} trx`}
           />
           <SummaryCard
-            label="Kartu BCA"
+            label="Kartu (semua bank)"
             value={formatRupiah(paidCard)}
-            sub={`${paid.filter((t) => t.paymentMethod === "card_bca").length} trx`}
+            sub={`${paid.filter((t) => t.paymentMethod !== "cash" && t.paymentMethod !== "qris" && t.paymentMethod !== "split").length} trx`}
           />
           <SummaryCard
             label="Total Transaksi"

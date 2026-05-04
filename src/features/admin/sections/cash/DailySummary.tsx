@@ -110,7 +110,7 @@ export function DailySummary() {
                   <Row label="POS Tunai" value={formatRupiah(summary.income.pos.cash)} />
                   <Row label="POS QRIS" value={formatRupiah(summary.income.pos.qris)} />
                   <Row
-                    label="POS Kartu BCA"
+                    label="POS Kartu (semua bank)"
                     value={formatRupiah(summary.income.pos.cardBca)}
                   />
                   <div className="border-t border-dashed border-neutral-200 pt-2">
