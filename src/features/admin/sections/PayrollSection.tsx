@@ -17,6 +17,7 @@ import {
   Card,
   CardContent,
   DatePicker,
+  EmptyCard,
   Input,
   Modal,
   Skeleton,
@@ -327,9 +328,13 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
                 ))}
               </div>
             ) : periods.length === 0 ? (
-              <p className="px-4 py-6 text-center text-sm italic text-neutral-500">
-                Belum ada periode.
-              </p>
+              <div className="p-2">
+                <EmptyCard
+                  icon={DollarSign}
+                  title="Belum ada periode"
+                  description="Buat periode payroll baru untuk mulai compute gaji."
+                />
+              </div>
             ) : (
               <ul className="space-y-0.5 p-2">
                 {periods.map((p) => {
@@ -441,10 +446,11 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
                     ))}
                   </div>
                 ) : lines.length === 0 ? (
-                  <p className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-6 text-center text-sm italic text-neutral-500">
-                    Belum ada line. Klik &ldquo;Recompute&rdquo; untuk
-                    generate dari attendance.
-                  </p>
+                  <EmptyCard
+                    icon={RefreshCw}
+                    title="Belum ada line"
+                    description="Klik “Recompute” untuk generate line dari attendance periode ini."
+                  />
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">

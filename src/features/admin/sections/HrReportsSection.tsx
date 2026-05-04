@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import {
   BarChart3,
+  CalendarDays,
   Download,
   FileSpreadsheet,
   RefreshCw,
+  Users,
 } from "lucide-react";
 import {
   Badge,
@@ -13,6 +15,7 @@ import {
   Card,
   CardContent,
   DateRangePicker,
+  EmptyCard,
   Skeleton,
   toast,
 } from "@/components/ui";
@@ -217,9 +220,11 @@ export function HrReportsSection() {
             ) : !summary ? (
               <p className="text-sm text-danger-500">Gagal load summary</p>
             ) : summary.rows.length === 0 ? (
-              <p className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-6 text-center text-sm italic text-neutral-500">
-                Belum ada karyawan.
-              </p>
+              <EmptyCard
+                icon={Users}
+                title="Belum ada karyawan"
+                description="Tambahkan karyawan dengan status aktif di tab Karyawan dulu."
+              />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -295,9 +300,11 @@ export function HrReportsSection() {
                 ))}
               </div>
             ) : periods.length === 0 ? (
-              <p className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-6 text-center text-sm italic text-neutral-500">
-                Belum ada periode payroll. Buat di tab Payroll dulu.
-              </p>
+              <EmptyCard
+                icon={CalendarDays}
+                title="Belum ada periode payroll"
+                description="Buat periode di tab Payroll, lalu kembali ke laporan HR."
+              />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
