@@ -133,7 +133,7 @@ export function PaymentModal({
           loading={submitting}
           disabled={!cashSufficient || submitting}
           fullWidth
-          className="!h-16 !text-lg"
+          className="!h-14 !text-base"
         >
           {submitting
             ? "Memvalidasi stok & mencatat transaksi…"
@@ -150,7 +150,7 @@ export function PaymentModal({
         {/* LEFT — Cart summary, full detail biar kasir verify sebelum   */}
         {/* konfirmasi (owner standard: full detail, no miss).           */}
         {/* ============================================================ */}
-        <div className="max-h-[min(75vh,40rem)] space-y-4 overflow-y-auto p-5">
+        <div className="max-h-[calc(92vh-9rem)] space-y-3 overflow-y-auto p-4">
           <CustomerCard draft={draft} />
 
           <section>
@@ -222,9 +222,9 @@ export function PaymentModal({
         {/* ============================================================ */}
         {/* RIGHT — Payment method + amount / instruction               */}
         {/* ============================================================ */}
-        <div className="space-y-4 overflow-y-auto p-5">
+        <div className="max-h-[calc(92vh-9rem)] space-y-3 overflow-y-auto p-4">
           <section>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
               Metode Pembayaran
             </h3>
             <div
@@ -464,7 +464,7 @@ function CashInputPanel({
       {/* Big amount display */}
       <div
         className={cn(
-          "flex h-20 items-center justify-end rounded-xl border-2 px-5 transition-colors",
+          "flex h-14 items-center justify-end rounded-xl border-2 px-4 transition-colors",
           submitting && "opacity-60",
           cashReceived === 0
             ? "border-neutral-300 bg-white"
@@ -474,18 +474,18 @@ function CashInputPanel({
         )}
       >
         {cashReceived > 0 ? (
-          <span className="font-mono text-4xl font-bold tabular-nums text-neutral-900">
+          <span className="font-mono text-3xl font-bold tabular-nums text-neutral-900">
             {formatRupiah(cashReceived)}
           </span>
         ) : (
-          <span className="font-mono text-2xl text-neutral-400">
+          <span className="font-mono text-base text-neutral-400">
             Tap angka atau quick amount
           </span>
         )}
       </div>
 
       {/* Quick amounts */}
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
         {QUICK_AMOUNTS.map((amt) => (
           <button
             key={amt}
@@ -493,7 +493,7 @@ function CashInputPanel({
             onClick={() => setCashInput(String(amt))}
             disabled={submitting}
             className={cn(
-              "rounded-lg border border-neutral-300 bg-white py-2.5 text-sm font-medium transition-all",
+              "rounded-lg border border-neutral-300 bg-white py-1.5 text-sm font-medium transition-all",
               "hover:bg-neutral-100 active:scale-95",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
               "disabled:cursor-not-allowed disabled:opacity-50",
@@ -507,7 +507,7 @@ function CashInputPanel({
           onClick={() => setCashInput(String(total))}
           disabled={submitting}
           className={cn(
-            "rounded-lg border-2 border-mahakan-green-700 bg-mahakan-green-50 py-2.5 text-sm font-bold text-mahakan-green-900 transition-all",
+            "rounded-lg border-2 border-mahakan-green-700 bg-mahakan-green-50 py-1.5 text-sm font-bold text-mahakan-green-900 transition-all",
             "hover:bg-mahakan-green-100 active:scale-95",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
             "disabled:cursor-not-allowed disabled:opacity-50",
@@ -517,8 +517,8 @@ function CashInputPanel({
         </button>
       </div>
 
-      {/* Numpad — bigger touch targets dari sebelumnya (h-2.5rem → h-16) */}
-      <div className="grid grid-cols-3 gap-2">
+      {/* Numpad — h-12 keys (48px), tablet-friendly tetap fit di viewport */}
+      <div className="grid grid-cols-3 gap-1.5">
         {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
           <NumpadKey
             key={d}
@@ -549,7 +549,7 @@ function CashInputPanel({
       {/* Kembalian / Kurang — color coded */}
       <div
         className={cn(
-          "flex items-center justify-between rounded-lg border-2 px-4 py-3",
+          "flex items-center justify-between rounded-lg border-2 px-4 py-2",
           cashReceived === 0
             ? "border-neutral-200 bg-neutral-50"
             : cashSufficient
@@ -564,7 +564,7 @@ function CashInputPanel({
               ? "Kembalian"
               : "Kurang"}
         </span>
-        <span className="font-mono text-xl font-bold tabular-nums">
+        <span className="font-mono text-lg font-bold tabular-nums">
           {cashReceived === 0
             ? "—"
             : cashSufficient
@@ -593,23 +593,22 @@ function NonCashInstruction({
     : "Tap kartu di mesin EDC. Pastikan struk approved + sesuai amount sebelum konfirmasi.";
 
   return (
-    <div className="space-y-4 rounded-xl border border-info-300 bg-info-100 p-6">
-      <div className="flex flex-col items-center gap-3 text-center">
+    <div className="space-y-3 rounded-xl border border-info-300 bg-info-100 p-4">
+      <div className="flex flex-col items-center gap-2 text-center">
         {submitting ? (
-          <Loader2 className="size-12 animate-spin text-info-500" />
+          <Loader2 className="size-10 animate-spin text-info-500" />
         ) : (
-          <Icon className="size-12 text-info-500" aria-hidden />
+          <Icon className="size-10 text-info-500" aria-hidden />
         )}
-        <p className="text-base font-semibold text-info-500">{title}</p>
-        <p className="font-mono text-3xl font-bold text-mahakan-green-900">
+        <p className="text-sm font-semibold text-info-500">{title}</p>
+        <p className="font-mono text-2xl font-bold text-mahakan-green-900">
           {formatRupiah(total)}
         </p>
-        <p className="max-w-md text-sm text-neutral-700">{hint}</p>
+        <p className="max-w-md text-xs text-neutral-700">{hint}</p>
       </div>
-      <div className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-xs text-neutral-600">
-        <CheckCircle2 className="size-4 shrink-0 text-success-500" aria-hidden />
-        Tap <strong>Sudah Lunas</strong> di footer setelah customer
-        berhasil bayar.
+      <div className="flex items-center gap-2 rounded-md bg-white px-3 py-1.5 text-xs text-neutral-600">
+        <CheckCircle2 className="size-3.5 shrink-0 text-success-500" aria-hidden />
+        Tap <strong>Sudah Lunas</strong> di footer setelah customer berhasil bayar.
       </div>
     </div>
   );
@@ -637,7 +636,7 @@ function MethodTile({
       aria-checked={active}
       onClick={onClick}
       className={cn(
-        "flex flex-col items-center justify-center gap-1 rounded-lg border-2 py-3 text-xs font-medium transition-all",
+        "flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 py-2 text-xs font-medium transition-all",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
         "active:scale-95",
         active
@@ -645,7 +644,7 @@ function MethodTile({
           : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100",
       )}
     >
-      <Icon className="size-5" aria-hidden />
+      <Icon className="size-4" aria-hidden />
       {label}
     </button>
   );
@@ -668,7 +667,7 @@ function NumpadKey({
       onClick={onPress}
       disabled={disabled}
       className={cn(
-        "flex h-16 items-center justify-center rounded-lg border font-mono text-2xl font-semibold transition-all",
+        "flex h-12 items-center justify-center rounded-lg border font-mono text-xl font-semibold transition-all",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
         "active:scale-95 active:shadow-inner",
         "disabled:cursor-not-allowed disabled:opacity-50",
