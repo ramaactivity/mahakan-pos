@@ -15,6 +15,7 @@ import {
   Card,
   CardContent,
   CardHeader,
+  EmptyCard,
   Input,
   Modal,
   Skeleton,
@@ -258,9 +259,11 @@ export function OpnameTab() {
         </CardHeader>
         <CardContent className="px-0 pt-0">
           {history.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Belum ada riwayat opname.
-            </p>
+            <EmptyCard
+              icon={History}
+              title="Belum ada riwayat opname"
+              description="Klik “Mulai Opname Baru” di atas untuk session pertama."
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

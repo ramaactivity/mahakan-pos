@@ -42,6 +42,7 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     showHpp: outlet.settings?.features?.showHppToStaff ?? false,
     accountingAutoJournal:
       outlet.settings?.features?.accounting_auto_journal ?? false,
+    defaultMarkupPct: outlet.settings?.features?.defaultMarkupPct ?? 250,
     voidMode: outlet.settings?.approval?.voidMode === "code" ? "code" : "pin",
     refundMode: outlet.settings?.approval?.refundMode === "code" ? "code" : "pin",
     notifyEmails: initialEmails,
@@ -52,6 +53,9 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
   const [showHpp, setShowHpp] = useState(initial.showHpp);
   const [accountingAutoJournal, setAccountingAutoJournal] = useState(
     initial.accountingAutoJournal,
+  );
+  const [defaultMarkupPct, setDefaultMarkupPct] = useState(
+    String(initial.defaultMarkupPct),
   );
   const [voidCodeMode, setVoidCodeMode] = useState(initial.voidMode === "code");
   const [refundCodeMode, setRefundCodeMode] = useState(
@@ -70,6 +74,7 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setVariance(String(initial.variance));
     setShowHpp(initial.showHpp);
     setAccountingAutoJournal(initial.accountingAutoJournal);
+    setDefaultMarkupPct(String(initial.defaultMarkupPct));
     setVoidCodeMode(initial.voidMode === "code");
     setRefundCodeMode(initial.refundMode === "code");
     setNotifyEmails(initial.notifyEmails);
@@ -170,6 +175,24 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
         return;
       }
       last = r3a.data;
+    }
+    const parsedMarkup = parseInt(defaultMarkupPct, 10);
+    if (
+      Number.isFinite(parsedMarkup) &&
+      parsedMarkup !== initial.defaultMarkupPct
+    ) {
+      if (parsedMarkup < 0 || parsedMarkup > 500) {
+        setError("Markup % harus 0-500");
+        setSubmitting(false);
+        return;
+      }
+      const r3b = await updateFeatures({ defaultMarkupPct: parsedMarkup });
+      if (!isOk(r3b)) {
+        setError(r3b.error.message);
+        setSubmitting(false);
+        return;
+      }
+      last = r3b.data;
     }
 
     const wantVoidMode = voidCodeMode ? "code" : "pin";
@@ -284,6 +307,19 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
             }
             checked={accountingAutoJournal}
             onChange={setAccountingAutoJournal}
+          />
+          <Input
+            label="Default Markup % (BOM-based pricing)"
+            type="text"
+            inputMode="numeric"
+            value={defaultMarkupPct}
+            onChange={(e) =>
+              setDefaultMarkupPct(e.target.value.replace(/[^\d]/g, ""))
+            }
+            hint={
+              "Markup% dipakai oleh BOM auto-suggest harga di Menu form. " +
+              "Contoh: COGS Rp 5.000 × markup 250% → suggested Rp 17.500. Range 0-500%, default 250%."
+            }
           />
         </section>
 
