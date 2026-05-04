@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Calculator, Plus, Trash2 } from "lucide-react";
+import { Calculator, Coffee, Plus, Trash2 } from "lucide-react";
 import {
   Button,
   Combobox,
   Input,
   Modal,
+  toast,
   type ComboboxGroup,
 } from "@/components/ui";
 import {
@@ -20,6 +21,26 @@ import { formatRupiah } from "@/lib/format";
 interface CogsCalculatorWidgetProps {
   open: boolean;
   onClose: () => void;
+  /** Phase 7.3 — kalau di-set, button "Save as Menu Item" muncul saat ada
+   * suggested price. Click handler should navigate parent ke Menu section.
+   * Calculator akan menulis prefill payload ke sessionStorage sebelum invoke. */
+  onSaveAsMenu?: () => void;
+}
+
+/** sessionStorage key untuk hand-off prefill dari calculator → MenuSection. */
+export const COGS_PREFILL_KEY = "mahakan.cogs-prefill.v1";
+
+export interface CogsPrefillPayload {
+  /** Suggested selling price (rounded), in rupiah. */
+  suggestedPrice: number;
+  /** Total COGS for reference (display only). */
+  cogs: number;
+  /** Markup% used (display only). */
+  markupPct: number;
+  /** Source description for the hint banner di MenuItemFormModal. */
+  source: string;
+  /** Captured at — for staleness detection (older than 30min ignored). */
+  capturedAt: number;
 }
 
 interface LineDraft {
@@ -35,6 +56,7 @@ function makeKey() {
 export function CogsCalculatorWidget({
   open,
   onClose,
+  onSaveAsMenu,
 }: CogsCalculatorWidgetProps) {
   const [atomics, setAtomics] = useState<Ingredient[]>([]);
   const [preps, setPreps] = useState<Ingredient[]>([]);
@@ -174,6 +196,33 @@ export function CogsCalculatorWidget({
         ? "text-warning-500"
         : "text-danger-500";
 
+  function handleSaveAsMenu() {
+    if (!onSaveAsMenu) return;
+    if (suggestedSellingRounded <= 0) {
+      toast.warning("Belum ada hasil — pilih bahan + qty dulu");
+      return;
+    }
+    const payload: CogsPrefillPayload = {
+      suggestedPrice: suggestedSellingRounded,
+      cogs: totalCost,
+      markupPct: Number.isFinite(markupNum) ? markupNum : 0,
+      source: `COGS Calculator (${filledLines.length} bahan, waste ${
+        Number.isFinite(wasteNum) ? wasteNum : 0
+      }%, markup ${Number.isFinite(markupNum) ? markupNum : 0}%)`,
+      capturedAt: Date.now(),
+    };
+    try {
+      sessionStorage.setItem(COGS_PREFILL_KEY, JSON.stringify(payload));
+    } catch {
+      // sessionStorage may be blocked — fail soft, owner can still type manually
+    }
+    toast.info("Buka tab Menu, klik Tambah Menu — harga sudah ter-prefill");
+    onSaveAsMenu();
+  }
+
+  const canSaveAsMenu =
+    typeof onSaveAsMenu === "function" && suggestedSellingRounded > 0;
+
   return (
     <Modal
       open={open}
@@ -182,9 +231,16 @@ export function CogsCalculatorWidget({
       description="Sandbox eksplorasi cost menu baru — tidak menyimpan apa-apa."
       size="3xl"
       footer={
-        <Button variant="ghost" onClick={onClose}>
-          Tutup
-        </Button>
+        <>
+          {canSaveAsMenu ? (
+            <Button onClick={handleSaveAsMenu}>
+              <Coffee className="size-4" aria-hidden /> Save as Menu Item
+            </Button>
+          ) : null}
+          <Button variant="ghost" onClick={onClose}>
+            Tutup
+          </Button>
+        </>
       }
     >
       {loading ? (

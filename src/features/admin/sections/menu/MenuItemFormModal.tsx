@@ -16,7 +16,9 @@ import {
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type Mode = { kind: "create" } | { kind: "edit"; item: MenuItem };
+type Mode =
+  | { kind: "create"; prefillPrice?: number; prefillSource?: string }
+  | { kind: "edit"; item: MenuItem };
 
 interface MenuItemFormModalProps {
   open: boolean;
@@ -73,13 +75,22 @@ export function MenuItemFormModal({
       setDescription("");
       setCategoryId(categories[0]?.id ?? "");
       setPriceType("fixed");
-      setPriceFixed("");
+      setPriceFixed(
+        mode.prefillPrice && mode.prefillPrice > 0
+          ? String(mode.prefillPrice)
+          : "",
+      );
       setPriceHot("");
       setPriceIced("");
       setIsSignature(false);
     }
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open, mode, categories]);
+
+  const createPrefillSource =
+    mode?.kind === "create" && mode.prefillPrice && mode.prefillSource
+      ? mode.prefillSource
+      : null;
 
   function applySuggestion() {
     if (!suggestion) return;
@@ -215,6 +226,14 @@ export function MenuItemFormModal({
             ))}
           </div>
         </div>
+
+        {createPrefillSource ? (
+          <div className="rounded-md border border-info-300 bg-info-100 p-3 text-xs text-info-500">
+            <Calculator className="mr-1.5 inline size-4" aria-hidden />
+            <strong>Pre-fill dari {createPrefillSource}.</strong> Harga
+            sudah ter-isi otomatis — bebas override sebelum simpan.
+          </div>
+        ) : null}
 
         {suggestion && priceType !== "open" ? (
           <div className="space-y-2 rounded-lg border border-info-300 bg-info-100 p-3">

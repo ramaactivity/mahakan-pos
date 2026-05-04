@@ -28,6 +28,10 @@ import {
 import { MenuItemFormModal } from "./MenuItemFormModal";
 import { BulkActionsBar } from "./BulkActionsBar";
 import {
+  COGS_PREFILL_KEY,
+  type CogsPrefillPayload,
+} from "../inventory/CogsCalculatorWidget";
+import {
   bulkUpdateMenuItems,
   exportMenuCsv,
   isOk,
@@ -42,7 +46,9 @@ import { useSession } from "@/features/auth/SessionProvider";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type Mode = { kind: "create" } | { kind: "edit"; item: MenuItem };
+type Mode =
+  | { kind: "create"; prefillPrice?: number; prefillSource?: string }
+  | { kind: "edit"; item: MenuItem };
 
 export function ItemsList() {
   const { session } = useSession();
@@ -76,6 +82,40 @@ export function ItemsList() {
       cancelled = true;
     };
   }, [refreshKey]);
+
+  // Phase 7.3 — pick up COGS Calculator prefill handoff. When owner clicks
+  // "Save as Menu Item" in calculator, payload is written to sessionStorage
+  // + we navigate ke Menu section. ItemsList here detects on mount, opens
+  // create modal pre-filled, then clears the key to avoid stale re-trigger.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    try {
+      const raw = sessionStorage.getItem(COGS_PREFILL_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as CogsPrefillPayload;
+      const ageMs = Date.now() - parsed.capturedAt;
+      // Stale > 30 minutes — ignore + cleanup.
+      if (ageMs > 30 * 60_000) {
+        sessionStorage.removeItem(COGS_PREFILL_KEY);
+        return;
+      }
+      setMode({
+        kind: "create",
+        prefillPrice: parsed.suggestedPrice,
+        prefillSource: parsed.source,
+      });
+      sessionStorage.removeItem(COGS_PREFILL_KEY);
+    } catch {
+      // Corrupt payload — clean up.
+      try {
+        sessionStorage.removeItem(COGS_PREFILL_KEY);
+      } catch {
+        /* noop */
+      }
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
 
   const categoryById = useMemo(() => {
     const m: Record<string, Category> = {};

@@ -12,6 +12,7 @@ import { PurchasesView } from "./inventory/purchases/PurchasesView";
 import { RecipesList } from "./inventory/RecipesList";
 import { TopTrackerView } from "./inventory/purchases/TopTrackerView";
 import { cn } from "@/lib/utils";
+import type { AdminSection } from "../components/AdminLeftNav";
 
 type InventoryTab =
   | "ingredients"
@@ -32,7 +33,11 @@ const TABS: Array<{ key: InventoryTab; label: string; soon?: boolean }> = [
   { key: "recipes", label: "Resep" },
 ];
 
-export function InventorySection() {
+interface InventorySectionProps {
+  onNavigate?: (section: AdminSection) => void;
+}
+
+export function InventorySection({ onNavigate }: InventorySectionProps = {}) {
   const [tab, setTab] = useState<InventoryTab>("ingredients");
   const [calcOpen, setCalcOpen] = useState(false);
 
@@ -106,6 +111,14 @@ export function InventorySection() {
       <CogsCalculatorWidget
         open={calcOpen}
         onClose={() => setCalcOpen(false)}
+        onSaveAsMenu={
+          onNavigate
+            ? () => {
+                setCalcOpen(false);
+                onNavigate("menu");
+              }
+            : undefined
+        }
       />
     </div>
   );

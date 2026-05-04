@@ -50,7 +50,7 @@ export function AdminShell() {
         ) : section === "menu" ? (
           <MenuSection />
         ) : section === "inventory" ? (
-          <InventorySection />
+          <InventorySection onNavigate={setSection} />
         ) : section === "suppliers" ? (
           <SuppliersSection />
         ) : section === "customers" ? (
