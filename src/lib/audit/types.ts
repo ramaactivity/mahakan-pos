@@ -28,6 +28,8 @@ export const AUDIT_EVENT_TYPES = [
   "menu.category.delete",
   "menu.category.reorder",
   "menu.modifier.update",
+  "menu.modifier.create",
+  "menu.modifier.delete",
   // Users
   "user.create",
   "user.update",

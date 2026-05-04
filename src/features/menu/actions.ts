@@ -517,6 +517,180 @@ export async function updateModifierPrice(
   return ok(row);
 }
 
+// Phase 7.1 (sesi AB) — full Modifier CRUD beyond price-only update.
+
+const SLUG_RE = /^[a-z][a-z0-9_]*$/;
+
+export interface ModifierFormInput {
+  slug: string;
+  label: string;
+  type: "single_select" | "toggle";
+  price: number;
+  options?: Array<{ value: string; label: string }> | null;
+  appliesToCategories?: string[] | null;
+  isActive?: boolean;
+}
+
+function validateModifierInput(input: ModifierFormInput): string | null {
+  if (!input.slug || !SLUG_RE.test(input.slug)) {
+    return "Slug harus huruf kecil + angka + underscore (mis. extra_shot)";
+  }
+  if (input.slug.length > 60) return "Slug max 60 karakter";
+  if (!input.label || input.label.trim().length === 0) {
+    return "Label tidak boleh kosong";
+  }
+  if (input.label.length > 120) return "Label max 120 karakter";
+  if (!Number.isInteger(input.price) || input.price < 0 || input.price > 999_999_999) {
+    return "Harga harus 0 - 999.999.999";
+  }
+  if (input.type === "single_select") {
+    if (!input.options || input.options.length === 0) {
+      return "single_select wajib punya minimal 1 pilihan";
+    }
+    for (const opt of input.options) {
+      if (!opt.value || !SLUG_RE.test(opt.value)) {
+        return `Nilai pilihan "${opt.value}" tidak valid (huruf kecil + underscore)`;
+      }
+      if (!opt.label || opt.label.trim().length === 0) {
+        return `Label pilihan "${opt.value}" tidak boleh kosong`;
+      }
+    }
+  }
+  return null;
+}
+
+export async function createModifier(
+  input: ModifierFormInput,
+): Promise<ApiResult<Modifier>> {
+  const session = await requireOwnerOrManager("menu.modifier.create");
+
+  const err = validateModifierInput(input);
+  if (err) return fail("VALIDATION", err);
+
+  const [existing] = await db
+    .select({ slug: modifiers.slug })
+    .from(modifiers)
+    .where(eq(modifiers.slug, input.slug))
+    .limit(1);
+  if (existing) return fail("DUPLICATE", `Slug "${input.slug}" sudah dipakai`);
+
+  const [row] = await db
+    .insert(modifiers)
+    .values({
+      slug: input.slug,
+      label: input.label.trim(),
+      type: input.type,
+      price: input.price,
+      optionsJson: input.type === "single_select" ? input.options ?? [] : null,
+      appliesToCategories:
+        input.appliesToCategories && input.appliesToCategories.length > 0
+          ? input.appliesToCategories
+          : null,
+      isActive: input.isActive ?? true,
+      updatedBy: session.user.id,
+    })
+    .returning();
+
+  await logAudit({
+    eventType: "menu.modifier.create",
+    userId: session.user.id,
+    entityType: "modifier",
+    payload: {
+      summary: `Buat modifier "${row.label}" (${row.slug})`,
+      after: { slug: row.slug, label: row.label, type: row.type, price: row.price },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  return ok(row);
+}
+
+export async function updateModifier(
+  input: ModifierFormInput,
+): Promise<ApiResult<Modifier>> {
+  const session = await requireOwnerOrManager("menu.modifier.update");
+
+  const err = validateModifierInput(input);
+  if (err) return fail("VALIDATION", err);
+
+  const [before] = await db
+    .select()
+    .from(modifiers)
+    .where(eq(modifiers.slug, input.slug))
+    .limit(1);
+  if (!before) return fail("NOT_FOUND", "Modifier tidak ditemukan");
+
+  const [row] = await db
+    .update(modifiers)
+    .set({
+      label: input.label.trim(),
+      type: input.type,
+      price: input.price,
+      optionsJson: input.type === "single_select" ? input.options ?? [] : null,
+      appliesToCategories:
+        input.appliesToCategories && input.appliesToCategories.length > 0
+          ? input.appliesToCategories
+          : null,
+      isActive: input.isActive ?? before.isActive,
+      updatedAt: new Date(),
+      updatedBy: session.user.id,
+    })
+    .where(eq(modifiers.slug, input.slug))
+    .returning();
+
+  await logAudit({
+    eventType: "menu.modifier.update",
+    userId: session.user.id,
+    entityType: "modifier",
+    payload: {
+      summary: `Update modifier "${row.label}" (${row.slug})`,
+      before: {
+        label: before.label,
+        type: before.type,
+        price: before.price,
+        isActive: before.isActive,
+      },
+      after: {
+        label: row.label,
+        type: row.type,
+        price: row.price,
+        isActive: row.isActive,
+      },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  return ok(row);
+}
+
+export async function deleteModifier(
+  slug: string,
+): Promise<ApiResult<{ slug: string }>> {
+  const session = await requireOwnerOrManager("menu.modifier.delete");
+
+  const [before] = await db
+    .select({ slug: modifiers.slug, label: modifiers.label })
+    .from(modifiers)
+    .where(eq(modifiers.slug, slug))
+    .limit(1);
+  if (!before) return fail("NOT_FOUND", "Modifier tidak ditemukan");
+
+  await db.delete(modifiers).where(eq(modifiers.slug, slug));
+
+  await logAudit({
+    eventType: "menu.modifier.delete",
+    userId: session.user.id,
+    entityType: "modifier",
+    payload: {
+      summary: `Hapus modifier "${before.label}" (${slug})`,
+      before: { slug: before.slug, label: before.label },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  return ok({ slug });
+}
+
 // ---------- Bulk operations ----------
 
 /**

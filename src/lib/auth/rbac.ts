@@ -46,6 +46,8 @@ export const permissions = {
   "menu.export_csv": ["owner"],
   "menu.category.crud": ["owner", "manager"],
   "menu.modifier.update": ["owner", "manager"],
+  "menu.modifier.create": ["owner", "manager"],
+  "menu.modifier.delete": ["owner"],
 
   // Cash & Expenses
   "expense.create": ["owner", "manager", "staff"],
