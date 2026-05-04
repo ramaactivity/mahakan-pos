@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Calculator } from "lucide-react";
 import { Button, Input, Modal, Select, toast } from "@/components/ui";
 import {
   isOk,
+  computeMenuItemPriceSuggestion,
   createMenuItem,
   updateMenuItem,
   type Category,
   type MenuItem,
+  type MenuItemPriceSuggestion,
   type PriceType,
 } from "@/features/menu";
 import { formatRupiah } from "@/lib/format";
@@ -40,12 +43,16 @@ export function MenuItemFormModal({
   const [isSignature, setIsSignature] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Phase 7.2 — BOM-based price suggestion (edit mode only)
+  const [suggestion, setSuggestion] =
+    useState<MenuItemPriceSuggestion | null>(null);
 
   useEffect(() => {
     if (!open || !mode) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    /* eslint-disable react-hooks/set-state-in-effect */
     setError(null);
     setSubmitting(false);
+    setSuggestion(null);
     if (mode.kind === "edit") {
       const it = mode.item;
       setName(it.name);
@@ -56,6 +63,11 @@ export function MenuItemFormModal({
       setPriceHot(it.priceHot !== null ? String(it.priceHot) : "");
       setPriceIced(it.priceIced !== null ? String(it.priceIced) : "");
       setIsSignature(it.isSignature);
+      // Fetch BOM-based price suggestion async — doesn't block the form
+      void (async () => {
+        const res = await computeMenuItemPriceSuggestion(it.id);
+        if (isOk(res) && res.data) setSuggestion(res.data);
+      })();
     } else {
       setName("");
       setDescription("");
@@ -66,7 +78,24 @@ export function MenuItemFormModal({
       setPriceIced("");
       setIsSignature(false);
     }
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [open, mode, categories]);
+
+  function applySuggestion() {
+    if (!suggestion) return;
+    if (priceType === "fixed") {
+      const fixedSugg = suggestion.perVariant.find(
+        (s) => s.variant === "fixed",
+      );
+      if (fixedSugg) setPriceFixed(String(fixedSugg.suggestedPrice));
+    } else if (priceType === "variant") {
+      const hotSugg = suggestion.perVariant.find((s) => s.variant === "hot");
+      const icedSugg = suggestion.perVariant.find((s) => s.variant === "iced");
+      if (hotSugg) setPriceHot(String(hotSugg.suggestedPrice));
+      if (icedSugg) setPriceIced(String(icedSugg.suggestedPrice));
+    }
+    toast.success("Harga ter-apply dari BOM");
+  }
 
   const parsedFixed = parseInt(priceFixed, 10) || 0;
   const parsedHot = priceHot.trim() === "" ? null : parseInt(priceHot, 10) || 0;
@@ -186,6 +215,56 @@ export function MenuItemFormModal({
             ))}
           </div>
         </div>
+
+        {suggestion && priceType !== "open" ? (
+          <div className="space-y-2 rounded-lg border border-info-300 bg-info-100 p-3">
+            <div className="flex items-start gap-2">
+              <Calculator
+                className="mt-0.5 size-4 shrink-0 text-info-500"
+                aria-hidden
+              />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-info-500">
+                  Saran harga dari BOM (markup {suggestion.markupPct}%
+                  {suggestion.fromOutletSetting
+                    ? ""
+                    : " — default"}
+                  )
+                </p>
+                <ul className="mt-1 space-y-0.5 text-xs text-neutral-700">
+                  {suggestion.perVariant
+                    .filter((s) =>
+                      priceType === "fixed"
+                        ? s.variant === "fixed"
+                        : s.variant === "hot" || s.variant === "iced",
+                    )
+                    .map((s) => (
+                      <li
+                        key={s.variant}
+                        className="flex justify-between gap-2"
+                      >
+                        <span className="capitalize text-neutral-600">
+                          {s.variant === "fixed" ? "Harga" : s.variant}:
+                        </span>
+                        <span className="font-mono">
+                          COGS {formatRupiah(s.cogs)} →{" "}
+                          <strong>{formatRupiah(s.suggestedPrice)}</strong>
+                        </span>
+                      </li>
+                    ))}
+                </ul>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={applySuggestion}
+                className="shrink-0"
+              >
+                Apply
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         {priceType === "fixed" ? (
           <Input

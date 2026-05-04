@@ -15,6 +15,10 @@ import {
   fetchModifiersForCategory,
   type ListMenuItemsOptions,
 } from "./queries";
+import { fetchRecipesForMenuItem } from "@/features/inventory/queries";
+import { expandRecipeToAtomicLeaves } from "@/features/inventory/preparation-flow";
+import { ingredients, outlets } from "@/db/schema";
+import { inArray } from "drizzle-orm";
 import {
   categoryNameSchema,
   createMenuItemSchema,
@@ -689,6 +693,92 @@ export async function deleteModifier(
   });
 
   return ok({ slug });
+}
+
+// ---------- Phase 7.2: BOM-based price suggestion ----------
+
+/** Default markup pct kalau outlet belum set defaultMarkupPct di settings.
+ * 250% = harga jual = 3.5× COGS. Cocok untuk segmen kafe Mahakan. */
+const DEFAULT_MARKUP_PCT = 250;
+
+export interface MenuItemPriceSuggestion {
+  /** COGS per variant (Rp). null = recipe variant tidak ada. */
+  perVariant: Array<{
+    /** "fixed" untuk single-recipe menu, atau "hot"/"iced" untuk variant. */
+    variant: "fixed" | "hot" | "iced";
+    cogs: number;
+    suggestedPrice: number;
+  }>;
+  /** Markup% yang dipakai (dari outlet settings atau default). */
+  markupPct: number;
+  /** True kalau outlet sudah override default. */
+  fromOutletSetting: boolean;
+}
+
+/**
+ * Compute COGS per active recipe variant for a menu item, lalu apply markup
+ * dari outlet settings (defaultMarkupPct) → suggestedPrice. Owner pakai untuk
+ * acuan harga jual baru (Phase 7.2). Return null kalau menu item tidak punya
+ * recipe aktif sama sekali.
+ *
+ * Read-only — tidak mutate menu_items.price; UI yang Apply ke field harga.
+ */
+export async function computeMenuItemPriceSuggestion(
+  menuItemId: string,
+): Promise<ApiResult<MenuItemPriceSuggestion | null>> {
+  const session = await requireSession();
+
+  const allRecipes = await fetchRecipesForMenuItem(menuItemId);
+  const activeRecipes = allRecipes.filter((r) => r.isActive);
+  if (activeRecipes.length === 0) return ok(null);
+
+  // Pull outlet markup setting (default 250%)
+  const [outletRow] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  const settingMarkup = outletRow?.settings?.features?.defaultMarkupPct;
+  const markupPct =
+    typeof settingMarkup === "number" && settingMarkup >= 0
+      ? settingMarkup
+      : DEFAULT_MARKUP_PCT;
+  const fromOutletSetting = typeof settingMarkup === "number";
+
+  const perVariant: MenuItemPriceSuggestion["perVariant"] = [];
+  for (const recipe of activeRecipes) {
+    const leaves = await expandRecipeToAtomicLeaves(
+      db,
+      recipe.id,
+      session.user.outletId,
+    );
+    if (leaves.size === 0) continue;
+    const leafIds = Array.from(leaves.keys());
+    const stockRows = await db
+      .select({ id: ingredients.id, costPerUnit: ingredients.costPerUnit })
+      .from(ingredients)
+      .where(inArray(ingredients.id, leafIds));
+    const costById = new Map(stockRows.map((r) => [r.id, r.costPerUnit ?? 0]));
+    let cogs = 0;
+    for (const [leafId, qty] of leaves) {
+      cogs += (costById.get(leafId) ?? 0) * qty;
+    }
+    cogs = Math.round(cogs);
+    // suggestedPrice = COGS × (1 + markupPct/100), rounded to nearest 500 rupiah
+    // (kelipatan 500 standard untuk price tag yang clean).
+    const rawSuggested = cogs * (1 + markupPct / 100);
+    const suggestedPrice = Math.round(rawSuggested / 500) * 500;
+    const variantKey: "fixed" | "hot" | "iced" =
+      recipe.variant === "hot"
+        ? "hot"
+        : recipe.variant === "iced"
+          ? "iced"
+          : "fixed";
+    perVariant.push({ variant: variantKey, cogs, suggestedPrice });
+  }
+
+  if (perVariant.length === 0) return ok(null);
+  return ok({ perVariant, markupPct, fromOutletSetting });
 }
 
 // ---------- Bulk operations ----------

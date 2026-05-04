@@ -225,6 +225,9 @@ const featuresSchema = z.object({
    * payroll / cash deposit / aggregator settlement / shift variance. Default
    * off — Owner toggle ON post-test (verify sample journal entry benar). */
   accounting_auto_journal: z.boolean().optional(),
+  /** Phase 7.2 — markup% untuk auto-suggest harga jual dari BOM cost.
+   * Range 0-500. Default 250% kalau tidak set. */
+  defaultMarkupPct: z.number().int().min(0).max(500).optional(),
 });
 
 const attendanceSettingsSchema = z.object({

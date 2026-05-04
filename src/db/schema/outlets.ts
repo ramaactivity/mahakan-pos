@@ -25,6 +25,11 @@ export type OutletSettings = {
      * Default false. Owner toggle true SETELAH test sample transaction +
      * verify journal entry benar di Admin → Akuntansi → Jurnal. */
     accounting_auto_journal?: boolean;
+    /** Phase 7.2 (sesi AB) — default markup percentage untuk auto-suggest
+     * harga jual berdasar BOM cost. Suggested price = COGS × (1 + pct/100).
+     * Owner bisa override per item. Default 250% kalau tidak set. Range
+     * 0..500. */
+    defaultMarkupPct?: number;
   };
   receipt?: {
     /** Existing: short text below "Terima kasih" line. */

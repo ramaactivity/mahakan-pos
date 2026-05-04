@@ -29,6 +29,8 @@ export {
   createModifier,
   updateModifier,
   deleteModifier,
+  computeMenuItemPriceSuggestion,
   type BulkAction,
   type ModifierFormInput,
+  type MenuItemPriceSuggestion,
 } from "./actions";
