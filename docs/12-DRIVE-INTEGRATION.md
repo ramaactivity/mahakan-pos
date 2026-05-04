@@ -1,24 +1,35 @@
 # Google Drive Integration — Setup Guide (OAuth variant)
 
-**Untuk:** Mahakan POS — bukti pembelian (purchase receipts) ke Google Drive
+**Untuk:** Mahakan POS — receipts/dokumen ke Google Drive
 **Sesi:** AA #2 (Opsi B — OAuth user delegation), 2026-05-04
 **Estimasi waktu:** ~10 menit (sebagian besar tunggu propagation)
 
 ---
 
-## Konteks
+## Konteks + Modul yang ter-integrasi
 
-Sebelum sesi ini, Owner mengumpulkan seluruh nota di Google Drive folder:
+Sesi AA #2 + extension: 3 modul Mahakan POS sekarang upload langsung ke
+folder Google Drive Owner, dengan struktur subfolder otomatis:
+
 ```
-MAHAKAN COFFEE / NOTA MAHAKAN /
-  NOTA MAHAKAN 2026 /
-    01. JANUARI / 02. FEBRUARI / ... / 12. DESEMBER /
-  NOTA MAHAKAN 2027 / ...
+MAHAKAN COFFEE/                                    ← root parent
+  NOTA MAHAKAN/                                    ← purchase receipts (Inventory → Pembelian)
+    NOTA MAHAKAN 2026/
+      01. JANUARI / 02. FEBRUARI / ... / 12. DESEMBER /
+    NOTA MAHAKAN 2027 / ...
+  DOKUMEN HR/                                      ← HR documents (Karyawan)
+    Charlotte Hillary (a1b2c3d4)/                  ← per-karyawan folder
+      KTP_xxx.jpg, BPJS_xxx.pdf, Kontrak_xxx.pdf
+    Galih Pratama (e5f6g7h8)/
+      ...
+  STRUK PENGELUARAN/                               ← expense receipts (Kas)
+    2026/
+      01. JANUARI / 02. FEBRUARI / ... /
 ```
 
-Sesi AA Opsi B mengintegrasikan Mahakan POS supaya upload bukti
-pembelian dari tab "Catat Pembelian" **langsung** masuk ke folder ini —
-auto-create subfolder tahun + bulan kalau belum ada.
+Folder `NOTA MAHAKAN`, `DOKUMEN HR`, `STRUK PENGELUARAN` + subfolder
+year/month/employee semua **auto-created** di first upload module
+masing-masing. Owner cuma perlu kasih ID parent folder MAHAKAN COFFEE.
 
 **Kenapa OAuth, bukan Service Account?**
 Service Account TIDAK punya storage quota di personal Gmail account
@@ -118,16 +129,15 @@ Copy bagian setelah `=`.
 
 1. Buka https://vercel.com/ramaactivity98-5695s-projects/mahakan-pos/settings/environment-variables
 
-2. **Tambah/update 3 env vars** (Production + Preview):
+2. **Tambah/update 4 env vars** (Production + Preview):
    - `GOOGLE_OAUTH_CLIENT_ID` = (dari Step 1.18)
    - `GOOGLE_OAUTH_CLIENT_SECRET` = (dari Step 1.18)
    - `GOOGLE_OAUTH_REFRESH_TOKEN` = (dari Step 2.3)
+   - `GOOGLE_DRIVE_ROOT_PARENT_ID` = ID folder **MAHAKAN COFFEE** (root, parent dari NOTA MAHAKAN). Copy dari URL Drive (segmen setelah `/folders/`), contoh: `1k9ZIW0TTb1RwEcOb3pW2sAI0qyt4X6h-`. Modul subfolder (NOTA MAHAKAN, DOKUMEN HR, STRUK PENGELUARAN) auto-created saat first upload.
 
 3. **Hapus env var lama** (sudah tidak dipakai):
    - `GOOGLE_SERVICE_ACCOUNT_JSON` — klik Delete
-
-4. **Pastikan tetap ada:**
-   - `GOOGLE_DRIVE_NOTA_PARENT_ID` = `1jeWbV75ElGiLdtcT7GTAHj6XZbEfOK1F`
+   - `GOOGLE_DRIVE_NOTA_PARENT_ID` — klik Delete (digantikan ROOT_PARENT_ID; tetap backward-compat — kalau Anda lupa hapus, purchase modul masih jalan)
 
 ---
 

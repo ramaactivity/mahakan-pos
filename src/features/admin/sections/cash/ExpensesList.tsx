@@ -190,20 +190,33 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
                         <td className="px-4 py-3 text-neutral-700">
                           <div className="flex items-center gap-2">
                             {e.receiptImageUrl ? (
-                              <button
-                                type="button"
-                                onClick={() => setPreviewUrl(e.receiptImageUrl ?? null)}
-                                className="inline-flex size-9 shrink-0 items-center justify-center overflow-hidden rounded border border-neutral-200 bg-neutral-50 transition hover:border-mahakan-green-500"
-                                aria-label="Lihat foto struk"
-                                title="Lihat foto struk"
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={e.receiptImageUrl}
-                                  alt=""
-                                  className="size-full object-cover"
-                                />
-                              </button>
+                              e.receiptImageUrl.includes("drive.google.com") ? (
+                                <a
+                                  href={e.receiptImageUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex size-9 shrink-0 items-center justify-center rounded border border-neutral-200 bg-neutral-50 text-mahakan-green-700 transition hover:border-mahakan-green-500"
+                                  aria-label="Buka foto struk di Google Drive"
+                                  title="Foto struk · Google Drive"
+                                >
+                                  📄
+                                </a>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewUrl(e.receiptImageUrl ?? null)}
+                                  className="inline-flex size-9 shrink-0 items-center justify-center overflow-hidden rounded border border-neutral-200 bg-neutral-50 transition hover:border-mahakan-green-500"
+                                  aria-label="Lihat foto struk"
+                                  title="Lihat foto struk"
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={e.receiptImageUrl}
+                                    alt=""
+                                    className="size-full object-cover"
+                                  />
+                                </button>
+                              )
                             ) : null}
                             <span>
                               {e.description}

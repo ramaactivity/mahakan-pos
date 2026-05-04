@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { FileText, Plus, Trash2, Upload, X } from "lucide-react";
-import { upload } from "@vercel/blob/client";
 import {
   Badge,
   Button,
@@ -105,21 +104,28 @@ export function EmployeeDocsModal({
     }
     setUploading(true);
     try {
-      // Sanitize filename: keep extension, prefix with employee id + timestamp
-      // for uniqueness + traceability.
-      const ext = (file.name.split(".").pop() ?? "").toLowerCase();
-      const safe = file.name
-        .replace(/\.[^/.]+$/, "")
-        .replace(/[^a-zA-Z0-9-_]/g, "_")
-        .slice(0, 60);
-      const path = `employee-docs/${employee.id}/${Date.now()}-${safe}.${ext}`;
-      const blob = await upload(path, file, {
-        access: "public",
-        handleUploadUrl: "/api/v1/employee-documents/upload",
+      // Upload to Google Drive via /api/v1/employee-documents/upload.
+      // Server resolves employee name from DB + auto-creates per-employee
+      // folder under "DOKUMEN HR/" (sesi AA #2 extension).
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("employeeId", employee.id);
+      const res = await fetch("/api/v1/employee-documents/upload", {
+        method: "POST",
+        body: fd,
       });
-      setFileUrl(blob.url);
+      const json = (await res.json()) as
+        | { success: true; data: { url: string; folderPath: string } }
+        | {
+            success: false;
+            error: { code: string; message: string };
+          };
+      if (!json.success) {
+        throw new Error(json.error.message);
+      }
+      setFileUrl(json.data.url);
       setUploadedFileName(file.name);
-      toast.success("File ter-upload");
+      toast.success(`File tersimpan di Drive · ${json.data.folderPath}`);
     } catch (err) {
       const msg =
         err instanceof Error

@@ -4,43 +4,39 @@ import { drive, type drive_v3 } from "@googleapis/drive";
 import { OAuth2Client } from "google-auth-library";
 
 /**
- * Google Drive uploader for purchase receipts (sesi AA #2 — Opsi B,
- * OAuth refresh-token variant).
+ * Google Drive uploader — module-aware (sesi AA #2).
  *
- * Drops files into a year/month subfolder structure matching Owner's
- * existing workflow:
+ * Drops files into auto-organized subfolder structure under a single
+ * MAHAKAN COFFEE root folder, keeping Owner's existing nota archive
+ * convention + extending to HR + expense modules. All modules share the
+ * same OAuth client + folder-ID cache, so first upload after cold start
+ * pays one traversal and subsequent uploads of the same module/period
+ * are single-file-create round-trips.
  *
- *   {GOOGLE_DRIVE_NOTA_PARENT_ID}/
- *     NOTA MAHAKAN 2026/
- *       01. JANUARI/
- *       02. FEBRUARI/
- *       ...
- *
- * Folders auto-created on first upload of that month. Files made
- * shareable (anyone-with-link reader) so Owner can copy URL + share
- * dengan akuntan eksternal tanpa Mahakan POS login.
+ *   {GOOGLE_DRIVE_ROOT_PARENT_ID}/                    ← MAHAKAN COFFEE
+ *     NOTA MAHAKAN/{YYYY}/{NN. MONTH}/                ← purchase receipts
+ *     DOKUMEN HR/{Nama Karyawan}/                     ← HR documents
+ *     STRUK PENGELUARAN/{YYYY}/{NN. MONTH}/           ← expense receipts
  *
  * Why OAuth refresh token (bukan Service Account):
  *   Service accounts tidak punya Drive storage quota di personal Gmail
- *   accounts (Google policy — service accounts cuma boleh upload ke
- *   Workspace Shared Drives). Untuk personal Gmail, kita pakai OAuth
- *   user delegation: Owner authorize 1× via CLI script, refresh token
- *   disimpan di env, app act atas nama Owner. File count terhadap
- *   Owner's 15GB Gmail quota.
+ *   accounts (Google policy). OAuth user delegation: Owner authorize 1×
+ *   via `npm run drive:auth`, app act atas nama Owner. File count
+ *   terhadap Owner's 15GB Gmail quota.
  *
- * Required env vars (set di Vercel project settings):
+ * Required env vars (Vercel project settings):
  *   GOOGLE_OAUTH_CLIENT_ID
- *     → from GCP Console → Credentials → OAuth client ID (Web app)
  *   GOOGLE_OAUTH_CLIENT_SECRET
- *     → from same OAuth client
  *   GOOGLE_OAUTH_REFRESH_TOKEN
- *     → from running `npx tsx scripts/google-drive-oauth.ts` locally
- *       (one-time browser authorize flow, prints token to terminal)
- *   GOOGLE_DRIVE_NOTA_PARENT_ID
- *     → ID of the parent "NOTA MAHAKAN" folder (from URL)
+ *   GOOGLE_DRIVE_ROOT_PARENT_ID
+ *     → folder ID dari URL Google Drive folder MAHAKAN COFFEE.
+ *       Modul subfolder (NOTA MAHAKAN, DOKUMEN HR, STRUK PENGELUARAN)
+ *       auto-create di first upload.
  *
- * The OLD env var GOOGLE_SERVICE_ACCOUNT_JSON dari setup awal sudah TIDAK
- * dipakai — boleh di-delete dari Vercel env vars list.
+ * Backward-compat: kalau ROOT_PARENT_ID belum di-set tapi
+ * NOTA_PARENT_ID (legacy, sebelum sesi AA refactor) ada, kita pakai
+ * untuk purchase saja — HR + expense return DRIVE_NOT_CONFIGURED sampai
+ * Owner upgrade ke ROOT_PARENT_ID.
  */
 
 const MONTH_LABELS_ID = [
@@ -58,6 +54,14 @@ const MONTH_LABELS_ID = [
   "12. DESEMBER",
 ] as const;
 
+const MODULE_ROOT_FOLDER: Record<UploadModule, string> = {
+  purchase: "NOTA MAHAKAN",
+  hr: "DOKUMEN HR",
+  expense: "STRUK PENGELUARAN",
+};
+
+export type UploadModule = "purchase" | "hr" | "expense";
+
 let _drive: drive_v3.Drive | null = null;
 
 function getDrive(): drive_v3.Drive {
@@ -67,7 +71,7 @@ function getDrive(): drive_v3.Drive {
   const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
   if (!clientId || !clientSecret || !refreshToken) {
     throw new Error(
-      "OAuth env vars belum lengkap (GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET + GOOGLE_OAUTH_REFRESH_TOKEN). Lihat docs/12-DRIVE-INTEGRATION.md.",
+      "OAuth env vars belum lengkap (CLIENT_ID + CLIENT_SECRET + REFRESH_TOKEN). Lihat docs/12-DRIVE-INTEGRATION.md.",
     );
   }
   const auth = new OAuth2Client({ clientId, clientSecret });
@@ -76,22 +80,27 @@ function getDrive(): drive_v3.Drive {
   return _drive;
 }
 
-function getParentId(): string {
-  const id = process.env.GOOGLE_DRIVE_NOTA_PARENT_ID;
-  if (!id) {
-    throw new Error(
-      "GOOGLE_DRIVE_NOTA_PARENT_ID env var belum di-set. Copy folder ID dari URL Drive 'NOTA MAHAKAN'.",
-    );
+/** Resolve the parent under which module subfolders are created. */
+function getModuleParent(module: UploadModule): string {
+  const root = process.env.GOOGLE_DRIVE_ROOT_PARENT_ID;
+  if (root) return root;
+  // Backward-compat: legacy single-purpose env var works only for purchase.
+  if (module === "purchase") {
+    const legacy = process.env.GOOGLE_DRIVE_NOTA_PARENT_ID;
+    if (legacy) return legacy;
   }
-  return id;
+  throw new Error(
+    "GOOGLE_DRIVE_ROOT_PARENT_ID env var belum di-set (folder ID MAHAKAN COFFEE). Lihat docs/12-DRIVE-INTEGRATION.md.",
+  );
 }
 
 // Folder ID cache — survives within a warm serverless container so we don't
-// re-query Drive for parent/year/month folder IDs on every upload.
+// re-query Drive for parent/year/month/employee folder IDs on every upload.
+// Key format: `${parentId}/${name}`. Cleared only on container restart.
 const folderIdCache = new Map<string, string>();
 
 async function findOrCreateFolder(
-  drive: drive_v3.Drive,
+  d: drive_v3.Drive,
   name: string,
   parentId: string,
 ): Promise<string> {
@@ -99,9 +108,8 @@ async function findOrCreateFolder(
   const cached = folderIdCache.get(cacheKey);
   if (cached) return cached;
 
-  // Escape single quotes in name for the q parameter (Drive API quirk).
   const safeName = name.replace(/'/g, "\\'");
-  const list = await drive.files.list({
+  const list = await d.files.list({
     q: `name='${safeName}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`,
     fields: "files(id, name)",
     pageSize: 1,
@@ -114,7 +122,7 @@ async function findOrCreateFolder(
     folderIdCache.set(cacheKey, id);
     return id;
   }
-  const created = await drive.files.create({
+  const created = await d.files.create({
     requestBody: {
       name,
       mimeType: "application/vnd.google-apps.folder",
@@ -128,52 +136,104 @@ async function findOrCreateFolder(
   return id;
 }
 
+/**
+ * Resolve the full subfolder hierarchy for a module. Returns the deepest
+ * folder ID + a human-readable label of the path traversed.
+ */
+async function resolveTargetFolder(
+  d: drive_v3.Drive,
+  module: UploadModule,
+  ctx: UploadContext,
+): Promise<{ folderId: string; pathLabel: string }> {
+  const moduleParent = getModuleParent(module);
+  const moduleRootName = MODULE_ROOT_FOLDER[module];
+  const moduleRoot = await findOrCreateFolder(d, moduleRootName, moduleParent);
+
+  if (module === "hr") {
+    if (!ctx.employeeName) throw new Error("employeeName wajib untuk HR");
+    // Folder per karyawan — semua dokumen 1 orang ngumpul di satu folder.
+    // Sertakan ID short suffix biar handle dua karyawan dengan nama sama.
+    const safeName = ctx.employeeName
+      .replace(/[\\/?*<>:|"]/g, "_")
+      .slice(0, 80);
+    const idHint = ctx.employeeId
+      ? ` (${ctx.employeeId.slice(0, 8)})`
+      : "";
+    const empFolderName = `${safeName}${idHint}`;
+    const empFolder = await findOrCreateFolder(d, empFolderName, moduleRoot);
+    return {
+      folderId: empFolder,
+      pathLabel: `${moduleRootName}/${empFolderName}`,
+    };
+  }
+
+  // purchase + expense: year/month structure
+  if (!ctx.date) throw new Error("date wajib untuk purchase/expense");
+  const m = ctx.date.match(/^(\d{4})-(\d{2})-\d{2}$/);
+  if (!m) throw new Error("date harus YYYY-MM-DD");
+  const yyyy = m[1];
+  const monthIdx = parseInt(m[2], 10) - 1;
+  const yearFolderName =
+    module === "purchase" ? `NOTA MAHAKAN ${yyyy}` : yyyy;
+  const monthFolderName = MONTH_LABELS_ID[monthIdx];
+
+  const yearFolder = await findOrCreateFolder(d, yearFolderName, moduleRoot);
+  const monthFolder = await findOrCreateFolder(
+    d,
+    monthFolderName,
+    yearFolder,
+  );
+  return {
+    folderId: monthFolder,
+    pathLabel: `${moduleRootName}/${yearFolderName}/${monthFolderName}`,
+  };
+}
+
+interface UploadContext {
+  /** YYYY-MM-DD — required for purchase/expense (drives year+month folder). */
+  date?: string;
+  /** Required for HR — drives the per-employee folder name. */
+  employeeId?: string;
+  /** Required for HR — folder labelled with this. */
+  employeeName?: string;
+}
+
+export interface UploadOpts {
+  module: UploadModule;
+  context: UploadContext;
+  originalName: string;
+  contentType: string;
+  data: Buffer;
+}
+
 export interface DriveUploadResult {
-  /** Public webViewLink (anyone with link can view). Stored di
-   * purchases.receipt_image_url. */
+  /** Public webViewLink (anyone-with-link reader). Stored di
+   * receiver kolom URL (mis. purchases.receipt_image_url). */
   url: string;
-  /** Drive file ID — kept for future ops (rename, delete). */
+  /** Drive file ID — for future ops (rename, delete). */
   fileId: string;
-  /** Year/month folder labels (untuk audit log + UI hint). */
+  /** Path label like "NOTA MAHAKAN/2026/05. MEI" — surface ke toast
+   * supaya user tahu file masuk folder mana. */
   folderPath: string;
 }
 
 /**
- * Upload a purchase receipt to Google Drive. Auto-creates year + month
- * subfolders matching Owner's existing structure (NOTA MAHAKAN {YYYY} /
- * {NN. MONTH_ID}). File renamed to {purchaseDate}-{ts}-{originalName} to
- * match the auto-rename convention of the deprecated Vercel Blob path.
+ * Upload a file to Google Drive under the module's auto-organized
+ * subfolder. Returns webViewLink + folder path label.
  *
- * @param purchaseDate ISO date string (YYYY-MM-DD) — drives year+month folder
- * @param originalName user-supplied filename (sanitized server-side)
- * @param contentType MIME type
- * @param data file bytes
+ * Performance: folder lookups cached at module level, so subsequent
+ * uploads to the same date (purchase/expense) or same employee (HR) are
+ * a single API call. Anyone-with-link reader set in parallel with
+ * metadata fetch.
  */
-export async function uploadPurchaseReceiptToDrive(opts: {
-  purchaseDate: string;
-  originalName: string;
-  contentType: string;
-  data: Buffer;
-}): Promise<DriveUploadResult> {
-  const drive = getDrive();
-  const parentId = getParentId();
-
-  // Year + month from purchaseDate (Asia/Jakarta calendar already implied
-  // by purchase_date being a date-only string with no TZ).
-  const m = opts.purchaseDate.match(/^(\d{4})-(\d{2})-\d{2}$/);
-  if (!m) {
-    throw new Error("purchaseDate harus YYYY-MM-DD");
-  }
-  const yyyy = m[1];
-  const monthIdx = parseInt(m[2], 10) - 1;
-  const yearFolderName = `NOTA MAHAKAN ${yyyy}`;
-  const monthFolderName = MONTH_LABELS_ID[monthIdx];
-
-  const yearFolderId = await findOrCreateFolder(drive, yearFolderName, parentId);
-  const monthFolderId = await findOrCreateFolder(
-    drive,
-    monthFolderName,
-    yearFolderId,
+export async function uploadToDrive(
+  opts: UploadOpts,
+): Promise<DriveUploadResult> {
+  const d = getDrive();
+  const { folderId, pathLabel } = await resolveTargetFolder(
+    d,
+    opts.module,
+    opts.context,
   );
 
   // Sanitize filename — strip path separators, collapse weird chars.
@@ -181,12 +241,13 @@ export async function uploadPurchaseReceiptToDrive(opts: {
     .replace(/[^\w.\-]/g, "_")
     .slice(0, 100);
   const ts = Date.now();
-  const finalName = `${opts.purchaseDate}_${ts}_${safeName}`;
+  const datePrefix = opts.context.date ? `${opts.context.date}_` : "";
+  const finalName = `${datePrefix}${ts}_${safeName}`;
 
-  const created = await drive.files.create({
+  const created = await d.files.create({
     requestBody: {
       name: finalName,
-      parents: [monthFolderId],
+      parents: [folderId],
     },
     media: {
       mimeType: opts.contentType,
@@ -198,35 +259,37 @@ export async function uploadPurchaseReceiptToDrive(opts: {
   const fileId = created.data.id;
   if (!fileId) throw new Error("Drive tidak return file ID");
 
-  // Make shareable — anyone with link can view (read-only). Owner can
-  // copy URL ke akuntan tanpa share folder access individually.
-  await drive.permissions.create({
-    fileId,
-    requestBody: { role: "reader", type: "anyone" },
-    supportsAllDrives: true,
-  });
-
-  // webViewLink populated only after permissions set, fetch it now.
-  const meta = await drive.files.get({
-    fileId,
-    fields: "webViewLink",
-    supportsAllDrives: true,
-  });
-  const url = meta.data.webViewLink;
+  // Set anyone-with-link reader + fetch webViewLink in parallel — webViewLink
+  // returned by create() is sometimes the un-shared variant which 404s for
+  // non-owner readers. Re-fetch after permission grant guarantees the
+  // shareable URL is propagated.
+  const [, meta] = await Promise.all([
+    d.permissions.create({
+      fileId,
+      requestBody: { role: "reader", type: "anyone" },
+      supportsAllDrives: true,
+    }),
+    d.files.get({
+      fileId,
+      fields: "webViewLink",
+      supportsAllDrives: true,
+    }),
+  ]);
+  const url = meta.data.webViewLink ?? created.data.webViewLink;
   if (!url) throw new Error("Drive tidak return webViewLink");
 
-  return {
-    url,
-    fileId,
-    folderPath: `${yearFolderName}/${monthFolderName}`,
-  };
+  return { url, fileId, folderPath: pathLabel };
 }
 
 export function isDriveConfigured(): boolean {
-  return Boolean(
+  const hasOAuth = Boolean(
     process.env.GOOGLE_OAUTH_CLIENT_ID &&
       process.env.GOOGLE_OAUTH_CLIENT_SECRET &&
-      process.env.GOOGLE_OAUTH_REFRESH_TOKEN &&
+      process.env.GOOGLE_OAUTH_REFRESH_TOKEN,
+  );
+  const hasParent = Boolean(
+    process.env.GOOGLE_DRIVE_ROOT_PARENT_ID ||
       process.env.GOOGLE_DRIVE_NOTA_PARENT_ID,
   );
+  return hasOAuth && hasParent;
 }

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ImagePlus, Loader2, X } from "lucide-react";
-import { upload } from "@vercel/blob/client";
 import { Button, DatePicker, Input, Modal, Select, toast } from "@/components/ui";
 import {
   createExpense,
@@ -211,29 +210,55 @@ export function ExpenseFormModal({
             Foto Struk (opsional)
           </label>
           {receiptImageUrl ? (
-            <div className="relative rounded-md border border-neutral-200 bg-neutral-50 p-2">
-              <a
-                href={receiptImageUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={receiptImageUrl}
-                  alt="Foto struk"
-                  className="max-h-48 w-full rounded object-contain"
-                />
-              </a>
-              <button
-                type="button"
-                onClick={() => setReceiptImageUrl(null)}
-                disabled={submitting || uploading}
-                className="absolute right-1 top-1 inline-flex size-6 items-center justify-center rounded-full bg-white/90 text-neutral-700 shadow-sm hover:bg-danger-100 hover:text-danger-500"
-                aria-label="Hapus foto struk"
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
+            receiptImageUrl.includes("drive.google.com") ? (
+              <div className="flex items-center justify-between gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-2">
+                <a
+                  href={receiptImageUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex flex-1 items-center gap-2 text-xs text-mahakan-green-900 hover:underline min-w-0"
+                >
+                  <ImagePlus className="size-4 shrink-0" />
+                  <span className="truncate">
+                    Lihat foto struk di Google Drive
+                  </span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setReceiptImageUrl(null)}
+                  disabled={submitting || uploading}
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-neutral-500 hover:bg-danger-100 hover:text-danger-500"
+                  aria-label="Hapus foto struk dari form (file tetap di Drive)"
+                  title="Hapus dari form. File yang sudah di Drive tidak ikut hapus."
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="relative rounded-md border border-neutral-200 bg-neutral-50 p-2">
+                <a
+                  href={receiptImageUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={receiptImageUrl}
+                    alt="Foto struk"
+                    className="max-h-48 w-full rounded object-contain"
+                  />
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setReceiptImageUrl(null)}
+                  disabled={submitting || uploading}
+                  className="absolute right-1 top-1 inline-flex size-6 items-center justify-center rounded-full bg-white/90 text-neutral-700 shadow-sm hover:bg-danger-100 hover:text-danger-500"
+                  aria-label="Hapus foto struk"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            )
           ) : (
             <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50/50 p-3">
               <input
@@ -250,14 +275,32 @@ export function ExpenseFormModal({
                     if (file.size > 5 * 1024 * 1024) {
                       throw new Error("Ukuran maks 5 MB");
                     }
-                    const safeName = file.name.replace(/[^\w.\-]/g, "_");
-                    const pathname = `expense-receipts/${Date.now()}-${safeName}`;
-                    const result = await upload(pathname, file, {
-                      access: "public",
-                      handleUploadUrl: "/api/v1/expense-receipts/upload",
-                    });
-                    setReceiptImageUrl(result.url);
-                    toast.success("Foto struk terupload");
+                    // Upload to Google Drive via /api/v1/expense-receipts/upload.
+                    // Server auto-creates "STRUK PENGELUARAN/{YYYY}/{NN. MONTH}/"
+                    // subfolder per bulan (sesi AA #2 extension).
+                    const fd = new FormData();
+                    fd.append("file", file);
+                    fd.append("expenseDate", date);
+                    const res = await fetch(
+                      "/api/v1/expense-receipts/upload",
+                      { method: "POST", body: fd },
+                    );
+                    const json = (await res.json()) as
+                      | {
+                          success: true;
+                          data: { url: string; folderPath: string };
+                        }
+                      | {
+                          success: false;
+                          error: { code: string; message: string };
+                        };
+                    if (!json.success) {
+                      throw new Error(json.error.message);
+                    }
+                    setReceiptImageUrl(json.data.url);
+                    toast.success(
+                      `Struk tersimpan di Drive · ${json.data.folderPath}`,
+                    );
                   } catch (e) {
                     setError(
                       e instanceof Error ? e.message : "Upload gagal",

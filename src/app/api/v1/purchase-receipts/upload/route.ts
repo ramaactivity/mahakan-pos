@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth/rbac";
 import {
   isDriveConfigured,
-  uploadPurchaseReceiptToDrive,
+  uploadToDrive,
 } from "@/lib/google-drive/uploader";
 
 /**
@@ -123,8 +123,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const result = await uploadPurchaseReceiptToDrive({
-      purchaseDate,
+    const result = await uploadToDrive({
+      module: "purchase",
+      context: { date: purchaseDate },
       originalName: file.name,
       contentType: file.type,
       data: buffer,
