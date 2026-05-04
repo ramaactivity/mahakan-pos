@@ -74,6 +74,8 @@ export function PaymentModal({
   const cardLabel = methodLabel(paymentMethod);
 
   // Keyboard shortcuts — only when modal open + cash method active.
+  // Hook MUST run unconditionally per Rules of Hooks; the early-return
+  // sentinel (`if (!open) return null`) below is placed AFTER all hooks.
   useEffect(() => {
     if (!open || !isCash) return;
     function onKey(e: KeyboardEvent) {
@@ -97,6 +99,15 @@ export function PaymentModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, isCash, submitting, cashSufficient, onSubmit, setCashInput]);
+
+  // CRITICAL: only render Modal + children when actually open. JSX expressions
+  // accessing `draft.items.map(...)` etc. are evaluated eagerly when the
+  // <Modal> element is constructed, even though Modal's own `if (!open)
+  // return null` would skip mounting. So if PaymentModal is invoked with
+  // open=false + an empty draft fallback, JSX evaluation throws before Modal
+  // ever gets a chance to short-circuit. Fix: early-return null here so the
+  // children expression never runs when closed.
+  if (!open) return null;
 
   const headerSubtitle = [
     draft.customerName?.trim() || null,

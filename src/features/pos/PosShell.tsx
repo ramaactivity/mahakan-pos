@@ -1090,27 +1090,31 @@ export function PosShell() {
 
       {/* Phase 3.1+3.2 — full-viewport PaymentModal overlay menggantikan
        * PayingPanel di kolom kanan. Cart tetap visible di balik modal supaya
-       * cancel kembali ke state cart yang sama. */}
-      <PaymentModal
-        open={rightPanel.kind === "paying" && activeDraft !== null}
-        draft={activeDraft ?? ({} as never)}
-        subtotal={subtotal}
-        discountAmount={discountAmount}
-        total={total}
-        paymentMethod={paymentMethod}
-        setPaymentMethod={setPaymentMethod}
-        setCashInput={setCashInput}
-        cashReceived={cashReceived}
-        cashChange={cashChange}
-        cashSufficient={cashSufficient}
-        submitting={paymentSubmitting}
-        error={paymentError}
-        onCancel={() =>
-          activeDraft &&
-          setRightPanel({ kind: "cart", draftId: activeDraft.id })
-        }
-        onSubmit={handleProcessPayment}
-      />
+       * cancel kembali ke state cart yang sama. Conditional render kalau
+       * activeDraft ada — JSX inside PaymentModal accesses draft.items
+       * eagerly saat element construction (sebelum Modal sempat early-return),
+       * jadi kita harus pastikan draft tidak null. */}
+      {activeDraft ? (
+        <PaymentModal
+          open={rightPanel.kind === "paying"}
+          draft={activeDraft}
+          subtotal={subtotal}
+          discountAmount={discountAmount}
+          total={total}
+          paymentMethod={paymentMethod}
+          setPaymentMethod={setPaymentMethod}
+          setCashInput={setCashInput}
+          cashReceived={cashReceived}
+          cashChange={cashChange}
+          cashSufficient={cashSufficient}
+          submitting={paymentSubmitting}
+          error={paymentError}
+          onCancel={() =>
+            setRightPanel({ kind: "cart", draftId: activeDraft.id })
+          }
+          onSubmit={handleProcessPayment}
+        />
+      ) : null}
 
       {/* MODALS */}
       <NewOrderModal
