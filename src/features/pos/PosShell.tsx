@@ -3,15 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
-  Banknote,
   CheckCircle2,
-  CreditCard,
   FileText,
   Gift,
   MoreHorizontal,
   Percent,
   Plus,
-  QrCode,
   Search,
   ShoppingCart,
   Sparkles,
@@ -20,10 +17,6 @@ import {
 import {
   Badge,
   Button,
-  Card,
-  CardDescription,
-  CardHeader,
-  CardTitle,
   Input,
   Skeleton,
   toast,
@@ -33,6 +26,7 @@ import { CartLineItem } from "@/features/pos/components/CartLineItem";
 import { CategoryTabs } from "@/features/pos/components/CategoryTabs";
 import { CloseShiftModal } from "@/features/pos/components/CloseShiftModal";
 import { ComplimentModal } from "@/features/pos/components/ComplimentModal";
+import { PaymentModal } from "@/features/pos/components/PaymentModal";
 import { PromoPickerModal } from "@/features/pos/components/PromoPickerModal";
 import type { Promo } from "@/features/promos";
 import { RedeemPointsModal } from "@/features/pos/components/RedeemPointsModal";
@@ -113,7 +107,6 @@ type RightPanelState =
   | { kind: "paying"; draftId: string }
   | { kind: "paid"; trx: TransactionWithItems };
 
-const QUICK_AMOUNTS = [50_000, 100_000, 200_000];
 
 /**
  * Phase 2.2 — short alert tone via Web Audio API for shift-close warnings.
@@ -1062,7 +1055,8 @@ export function PosShell() {
             userName={session.user.name}
             userRole={session.user.role}
           />
-        ) : rightPanel.kind === "cart" && activeDraft ? (
+        ) : (rightPanel.kind === "cart" || rightPanel.kind === "paying") &&
+          activeDraft ? (
           <CartPanel
             draft={activeDraft}
             subtotal={subtotal}
@@ -1083,23 +1077,6 @@ export function PosShell() {
             onSwitchDraft={() => setRightPanel({ kind: "idle" })}
             onSetBillNote={(note) => setBillNote(activeDraft.id, note)}
           />
-        ) : rightPanel.kind === "paying" && activeDraft ? (
-          <PayingPanel
-            draft={activeDraft}
-            total={total}
-            paymentMethod={paymentMethod}
-            setPaymentMethod={setPaymentMethod}
-            setCashInput={setCashInput}
-            cashReceived={cashReceived}
-            cashChange={cashChange}
-            cashSufficient={cashSufficient}
-            submitting={paymentSubmitting}
-            error={paymentError}
-            onCancel={() =>
-              setRightPanel({ kind: "cart", draftId: activeDraft.id })
-            }
-            onSubmit={handleProcessPayment}
-          />
         ) : rightPanel.kind === "paid" ? (
           <PaidPanel
             trx={rightPanel.trx}
@@ -1110,6 +1087,30 @@ export function PosShell() {
           />
         ) : null}
       </aside>
+
+      {/* Phase 3.1+3.2 — full-viewport PaymentModal overlay menggantikan
+       * PayingPanel di kolom kanan. Cart tetap visible di balik modal supaya
+       * cancel kembali ke state cart yang sama. */}
+      <PaymentModal
+        open={rightPanel.kind === "paying" && activeDraft !== null}
+        draft={activeDraft ?? ({} as never)}
+        subtotal={subtotal}
+        discountAmount={discountAmount}
+        total={total}
+        paymentMethod={paymentMethod}
+        setPaymentMethod={setPaymentMethod}
+        setCashInput={setCashInput}
+        cashReceived={cashReceived}
+        cashChange={cashChange}
+        cashSufficient={cashSufficient}
+        submitting={paymentSubmitting}
+        error={paymentError}
+        onCancel={() =>
+          activeDraft &&
+          setRightPanel({ kind: "cart", draftId: activeDraft.id })
+        }
+        onSubmit={handleProcessPayment}
+      />
 
       {/* MODALS */}
       <NewOrderModal
@@ -1788,212 +1789,6 @@ function CartPanelImpl({
   );
 }
 
-interface PayingPanelProps {
-  draft: NonNullable<
-    ReturnType<typeof useCartStore.getState>["drafts"][string]
-  >;
-  total: number;
-  paymentMethod: PaymentMethod;
-  setPaymentMethod: (m: PaymentMethod) => void;
-  setCashInput: React.Dispatch<React.SetStateAction<string>>;
-  cashReceived: number;
-  cashChange: number;
-  cashSufficient: boolean;
-  submitting: boolean;
-  error: string | null;
-  onCancel: () => void;
-  onSubmit: () => void;
-}
-
-function PayingPanel({
-  draft,
-  total,
-  paymentMethod,
-  setPaymentMethod,
-  setCashInput,
-  cashReceived,
-  cashChange,
-  cashSufficient,
-  submitting,
-  error,
-  onCancel,
-  onSubmit,
-}: PayingPanelProps) {
-  return (
-    <>
-      <header className="flex items-center justify-between border-b border-neutral-200 p-4">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="inline-flex items-center gap-1 text-sm font-medium text-neutral-700 hover:text-neutral-900"
-          disabled={submitting}
-        >
-          <ArrowLeft className="size-4" aria-hidden /> Cart
-        </button>
-        {draft.pagerNumber !== null ? (
-          <Badge variant="signature">
-            Pager <span className="font-mono">{draft.pagerNumber}</span>
-          </Badge>
-        ) : null}
-      </header>
-
-      <div className="flex-1 space-y-4 overflow-y-auto p-4">
-        <div className="rounded-md bg-mahakan-green-50 p-3 text-center">
-          <p className="text-xs text-mahakan-green-900">Total Tagihan</p>
-          <p className="font-mono text-2xl font-bold text-mahakan-green-900">
-            {formatRupiah(total)}
-          </p>
-        </div>
-
-        <div
-          className="grid grid-cols-3 gap-2 sm:grid-cols-4"
-          role="radiogroup"
-          aria-label="Metode pembayaran"
-        >
-          <MethodButton
-            active={paymentMethod === "cash"}
-            onClick={() => setPaymentMethod("cash")}
-            label="Tunai"
-            Icon={Banknote}
-          />
-          <MethodButton
-            active={paymentMethod === "qris"}
-            onClick={() => setPaymentMethod("qris")}
-            label="QRIS"
-            Icon={QrCode}
-          />
-          <MethodButton
-            active={paymentMethod === "card_bca"}
-            onClick={() => setPaymentMethod("card_bca")}
-            label="BCA"
-            Icon={CreditCard}
-          />
-          <MethodButton
-            active={paymentMethod === "card_bni"}
-            onClick={() => setPaymentMethod("card_bni")}
-            label="BNI"
-            Icon={CreditCard}
-          />
-          <MethodButton
-            active={paymentMethod === "card_mandiri"}
-            onClick={() => setPaymentMethod("card_mandiri")}
-            label="Mandiri"
-            Icon={CreditCard}
-          />
-          <MethodButton
-            active={paymentMethod === "card_bri"}
-            onClick={() => setPaymentMethod("card_bri")}
-            label="BRI"
-            Icon={CreditCard}
-          />
-          <MethodButton
-            active={paymentMethod === "card_other"}
-            onClick={() => setPaymentMethod("card_other")}
-            label="Lainnya"
-            Icon={CreditCard}
-          />
-        </div>
-
-        {paymentMethod === "cash" ? (
-          <>
-            <div className="flex h-12 items-center justify-end rounded-md border border-neutral-300 bg-white px-3 font-mono text-xl font-bold">
-              {cashReceived > 0 ? formatRupiah(cashReceived) : "—"}
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              {QUICK_AMOUNTS.map((amt) => (
-                <button
-                  key={amt}
-                  type="button"
-                  onClick={() => setCashInput(String(amt))}
-                  className="rounded-md border border-neutral-300 bg-white py-1.5 text-xs font-medium hover:bg-neutral-100"
-                >
-                  {formatRupiah(amt).replace("Rp ", "")}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setCashInput(String(total))}
-                className="rounded-md border border-mahakan-green-700 bg-mahakan-green-50 py-1.5 text-xs font-medium text-mahakan-green-900 hover:bg-mahakan-green-100"
-              >
-                Pas
-              </button>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
-                <NumKey
-                  key={d}
-                  label={d}
-                  onPress={() => setCashInput((s) => s + d)}
-                />
-              ))}
-              <NumKey label="C" onPress={() => setCashInput("")} />
-              <NumKey label="0" onPress={() => setCashInput((s) => s + "0")} />
-              <NumKey
-                label="⌫"
-                onPress={() => setCashInput((s) => s.slice(0, -1))}
-              />
-            </div>
-            <div className="rounded-md bg-neutral-100 p-3 text-sm">
-              <Row
-                label="Kembalian"
-                value={
-                  cashReceived >= total
-                    ? formatRupiah(cashChange)
-                    : `Kurang ${formatRupiah(total - cashReceived)}`
-                }
-                bold
-                danger={!cashSufficient}
-              />
-            </div>
-          </>
-        ) : (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">
-                Konfirmasi {paymentMethod === "qris" ? "QRIS" : "Kartu BCA"}
-              </CardTitle>
-              <CardDescription className="text-xs">
-                Customer scan QRIS / tap kartu di EDC. Tap tombol di bawah
-                setelah lunas.
-              </CardDescription>
-            </CardHeader>
-          </Card>
-        )}
-
-        {error ? (
-          <p role="alert" className="text-sm font-medium text-danger-500">
-            {error}
-          </p>
-        ) : null}
-      </div>
-
-      <footer className="border-t border-neutral-200 p-4 space-y-2 bg-white">
-        {submitting ? (
-          <p
-            className="text-center text-xs text-neutral-600"
-            aria-live="polite"
-          >
-            Memvalidasi stok &amp; mencatat transaksi…
-          </p>
-        ) : null}
-        <Button
-          size="xl"
-          onClick={onSubmit}
-          loading={submitting}
-          disabled={!cashSufficient}
-          fullWidth
-        >
-          {paymentMethod === "cash"
-            ? `Konfirmasi ${formatRupiah(total)}`
-            : paymentMethod === "qris"
-              ? "Sudah Lunas QRIS"
-              : "Sudah Lunas Kartu"}
-        </Button>
-      </footer>
-    </>
-  );
-}
-
 interface PaidPanelProps {
   trx: TransactionWithItems;
   cashierName: string;
@@ -2133,49 +1928,6 @@ function PaidPanel({
 // ============================================================================
 // Tiny helpers
 // ============================================================================
-
-function MethodButton({
-  active,
-  onClick,
-  label,
-  Icon,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  Icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={active}
-      onClick={onClick}
-      className={cn(
-        "flex flex-col items-center justify-center gap-1 rounded-lg border py-3 text-xs font-medium transition-all",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
-        active
-          ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
-          : "border-neutral-300 bg-white hover:bg-neutral-100",
-      )}
-    >
-      <Icon className="size-4" aria-hidden />
-      {label}
-    </button>
-  );
-}
-
-function NumKey({ label, onPress }: { label: string; onPress: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onPress}
-      className="rounded-md border border-neutral-200 bg-white py-2 font-mono text-base font-medium hover:bg-neutral-100 active:scale-95"
-    >
-      {label}
-    </button>
-  );
-}
 
 function Row({
   label,
