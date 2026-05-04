@@ -4,10 +4,11 @@ import {
   forwardRef,
   useEffect,
   useId,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { Calculator, Delete } from "lucide-react";
+import { Calculator, Delete, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface NumericInputProps {
@@ -72,6 +73,7 @@ export const NumericInput = forwardRef<HTMLDivElement, NumericInputProps>(
   ) {
     const reactId = useId();
     const [open, setOpen] = useState(false);
+    const wrapperRef = useRef<HTMLDivElement | null>(null);
 
     // Close keypad when disabled toggled on
     useEffect(() => {
@@ -79,6 +81,22 @@ export const NumericInput = forwardRef<HTMLDivElement, NumericInputProps>(
       if (disabled && open) setOpen(false);
       /* eslint-enable react-hooks/set-state-in-effect */
     }, [disabled, open]);
+
+    // Phase 3.3 (sesi AB) — click outside the wrapper closes keypad. Owner
+    // pakai tablet, gampang accidentally tap di area lain saat keypad open
+    // dan ekspektasi keypad tutup. Wrapper covers both input button + keypad
+    // popup, jadi clicks di dalam keypad tetap hit (digit append, etc).
+    useEffect(() => {
+      if (!open) return;
+      function onMouseDown(e: MouseEvent) {
+        const target = e.target as Node;
+        if (wrapperRef.current && !wrapperRef.current.contains(target)) {
+          setOpen(false);
+        }
+      }
+      document.addEventListener("mousedown", onMouseDown);
+      return () => document.removeEventListener("mousedown", onMouseDown);
+    }, [open]);
 
     function append(d: string) {
       if (disabled) return;
@@ -112,8 +130,14 @@ export const NumericInput = forwardRef<HTMLDivElement, NumericInputProps>(
 
     const display = formatDisplay(value, formatThousands);
 
+    function setRefs(el: HTMLDivElement | null) {
+      wrapperRef.current = el;
+      if (typeof ref === "function") ref(el);
+      else if (ref) ref.current = el;
+    }
+
     return (
-      <div ref={ref} className={cn("space-y-1.5", className)}>
+      <div ref={setRefs} className={cn("space-y-1.5", className)}>
         {label ? (
           <label
             htmlFor={reactId}
@@ -198,9 +222,10 @@ export const NumericInput = forwardRef<HTMLDivElement, NumericInputProps>(
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="mt-2 w-full rounded-md bg-mahakan-green-700 py-2 text-sm font-medium text-white hover:bg-mahakan-green-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700/40 focus-visible:ring-offset-2"
+              aria-label="Tutup keyboard numerik"
+              className="mt-2 flex h-12 w-full items-center justify-center gap-2 rounded-md bg-mahakan-green-700 text-sm font-semibold text-white shadow-sm transition-all hover:bg-mahakan-green-900 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700/40 focus-visible:ring-offset-2"
             >
-              Selesai
+              <X className="size-4" aria-hidden /> Tutup Keyboard
             </button>
           </div>
         ) : null}
