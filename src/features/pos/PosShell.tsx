@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Banknote,
@@ -232,6 +232,10 @@ export function PosShell() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [cashInput, setCashInput] = useState("");
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+  // Synchronous double-tap guard. React state updates are async, so two taps
+  // within one commit window both observe paymentSubmitting=false and fire
+  // duplicate transactions. Ref updates synchronously and gates re-entry.
+  const paymentInFlightRef = useRef(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
 
   // ==================== Effects ====================
@@ -630,114 +634,15 @@ export function PosShell() {
   }
 
   async function commitSaveAsOpenBill() {
+    if (paymentInFlightRef.current) return;
     if (!activeDraft || !shift || !session) return;
     if (activeDraft.items.length === 0) return;
+    paymentInFlightRef.current = true;
     setPaymentSubmitting(true);
     setPaymentError(null);
 
-    const itemsPayload = activeDraft.items.map((item) => ({
-      menuItemId: item.menuItemId,
-      variant: item.variant,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      modifiersPriceDelta: item.modifiersPriceDelta,
-      subtotal: item.subtotal,
-      note: item.note,
-      openPriceNote: item.openPriceNote,
-      modifiers: item.modifiers.map((m) => ({
-        modifierSlug: m.modifierSlug,
-        selectedValue: m.selectedValue,
-        priceDelta: m.priceDelta,
-      })),
-    }));
-
-    if (activeDraft.editingBillId) {
-      // EDIT path — replace items on existing open bill.
-      const res = await editOpenBill({
-        transactionId: activeDraft.editingBillId,
-        customerName: activeDraft.customerName,
-        customerPhone: activeDraft.customerPhone,
-        note: activeDraft.billNote,
-        items: itemsPayload,
-        subtotal,
-        discountType: activeDraft.discount?.type ?? null,
-        discountValue: activeDraft.discount?.value ?? null,
-        discountAmount,
-        discountReason: activeDraft.discountReason,
-        total,
-        discountApproverToken:
-          activeDraft.discountApproverToken ?? undefined,
-        promoId: activeDraft.promoId,
-      });
-      setPaymentSubmitting(false);
-      if (!res.success) {
-        setPaymentError(res.error.message);
-        toast.error(res.error.message);
-        return;
-      }
-      toast.success(`Open bill ${res.data.transactionNumber} di-update.`);
-      removeDraft(activeDraft.id);
-      setRightPanel({ kind: "idle" });
-      setHistoryRefreshKey((k) => k + 1);
-      setPrintConfirm({ trx: res.data, title: "Bill di-update" });
-      return;
-    }
-
-    // CREATE path — fresh open bill.
-    const payload = {
-      clientRefId: crypto.randomUUID(),
-      shiftId: shift.id,
-      cashierId: session.user.id,
-      pagerNumber: activeDraft.pagerNumber,
-      orderType: activeDraft.orderType,
-      customerName: activeDraft.customerName,
-      customerPhone: activeDraft.customerPhone,
-      note: activeDraft.billNote,
-      items: itemsPayload,
-      subtotal,
-      discountType: activeDraft.discount?.type ?? null,
-      discountValue: activeDraft.discount?.value ?? null,
-      discountAmount,
-      discountReason: activeDraft.discountReason,
-      total,
-      discountApproverToken: activeDraft.discountApproverToken ?? undefined,
-      promoId: activeDraft.promoId,
-    };
-    const res = await saveAsOpenBill(payload);
-    setPaymentSubmitting(false);
-    if (!res.success) {
-      setPaymentError(res.error.message);
-      toast.error(res.error.message);
-      return;
-    }
-    toast.success(
-      `Open bill ${res.data.transactionNumber} disimpan. Customer bayar nanti via tab Bill Aktif.`,
-    );
-    removeDraft(activeDraft.id);
-    setRightPanel({ kind: "idle" });
-    setHistoryRefreshKey((k) => k + 1);
-    setPrintConfirm({ trx: res.data, title: "Bill disimpan" });
-  }
-
-  async function handleProcessPayment() {
-    if (paymentSubmitting || !activeDraft || !shift) return;
-    if (!cashSufficient) {
-      setPaymentError("Uang yang diterima kurang dari total");
-      return;
-    }
-    setPaymentSubmitting(true);
-    setPaymentError(null);
-
-    const payload = {
-      clientRefId: crypto.randomUUID(),
-      shiftId: shift.id,
-      cashierId: session!.user.id,
-      pagerNumber: activeDraft.pagerNumber,
-      orderType: activeDraft.orderType,
-      customerName: activeDraft.customerName,
-      customerPhone: activeDraft.customerPhone,
-      note: activeDraft.billNote,
-      items: activeDraft.items.map((item) => ({
+    try {
+      const itemsPayload = activeDraft.items.map((item) => ({
         menuItemId: item.menuItemId,
         variant: item.variant,
         quantity: item.quantity,
@@ -751,77 +656,183 @@ export function PosShell() {
           selectedValue: m.selectedValue,
           priceDelta: m.priceDelta,
         })),
-      })),
-      subtotal,
-      discountType: activeDraft.discount?.type ?? null,
-      discountValue: activeDraft.discount?.value ?? null,
-      discountAmount,
-      discountReason: activeDraft.discountReason,
-      total,
-      paymentMethod,
-      cashReceived: paymentMethod === "cash" ? cashReceived : null,
-      cashChange: paymentMethod === "cash" ? cashChange : null,
-      discountApproverToken: activeDraft.discountApproverToken ?? undefined,
-      loyaltyPointsRedeemed: activeDraft.loyaltyPointsRedeemed,
-      promoId: activeDraft.promoId,
-    };
+      }));
 
-    // Offline path: queue locally, drop the draft, show offline-paid screen.
-    // Server will process it via clientRefId idempotency once back online.
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      try {
-        await queuePendingTransaction(payload);
+      if (activeDraft.editingBillId) {
+        // EDIT path — replace items on existing open bill.
+        const res = await editOpenBill({
+          transactionId: activeDraft.editingBillId,
+          customerName: activeDraft.customerName,
+          customerPhone: activeDraft.customerPhone,
+          note: activeDraft.billNote,
+          items: itemsPayload,
+          subtotal,
+          discountType: activeDraft.discount?.type ?? null,
+          discountValue: activeDraft.discount?.value ?? null,
+          discountAmount,
+          discountReason: activeDraft.discountReason,
+          total,
+          discountApproverToken:
+            activeDraft.discountApproverToken ?? undefined,
+          promoId: activeDraft.promoId,
+        });
+        if (!res.success) {
+          setPaymentError(res.error.message);
+          toast.error(res.error.message);
+          return;
+        }
+        toast.success(`Open bill ${res.data.transactionNumber} di-update.`);
         removeDraft(activeDraft.id);
-        toast.info("Offline — transaksi tersimpan lokal, ter-sync nanti");
         setRightPanel({ kind: "idle" });
-        setPaymentSubmitting(false);
-        return;
-      } catch (e) {
-        const message = e instanceof Error ? e.message : "Gagal queue offline";
-        setPaymentError(message);
-        setPaymentSubmitting(false);
+        setHistoryRefreshKey((k) => k + 1);
+        setPrintConfirm({ trx: res.data, title: "Bill di-update" });
         return;
       }
+
+      // CREATE path — fresh open bill.
+      const payload = {
+        clientRefId: crypto.randomUUID(),
+        shiftId: shift.id,
+        cashierId: session.user.id,
+        pagerNumber: activeDraft.pagerNumber,
+        orderType: activeDraft.orderType,
+        customerName: activeDraft.customerName,
+        customerPhone: activeDraft.customerPhone,
+        note: activeDraft.billNote,
+        items: itemsPayload,
+        subtotal,
+        discountType: activeDraft.discount?.type ?? null,
+        discountValue: activeDraft.discount?.value ?? null,
+        discountAmount,
+        discountReason: activeDraft.discountReason,
+        total,
+        discountApproverToken: activeDraft.discountApproverToken ?? undefined,
+        promoId: activeDraft.promoId,
+      };
+      const res = await saveAsOpenBill(payload);
+      if (!res.success) {
+        setPaymentError(res.error.message);
+        toast.error(res.error.message);
+        return;
+      }
+      toast.success(
+        `Open bill ${res.data.transactionNumber} disimpan. Customer bayar nanti via tab Bill Aktif.`,
+      );
+      removeDraft(activeDraft.id);
+      setRightPanel({ kind: "idle" });
+      setHistoryRefreshKey((k) => k + 1);
+      setPrintConfirm({ trx: res.data, title: "Bill disimpan" });
+    } finally {
+      paymentInFlightRef.current = false;
+      setPaymentSubmitting(false);
     }
+  }
+
+  async function handleProcessPayment() {
+    if (paymentInFlightRef.current) return;
+    if (!activeDraft || !shift) return;
+    if (!cashSufficient) {
+      setPaymentError("Uang yang diterima kurang dari total");
+      return;
+    }
+    paymentInFlightRef.current = true;
+    setPaymentSubmitting(true);
+    setPaymentError(null);
 
     try {
-      const res = await createTransaction(payload);
-      if (!isOk(res)) {
-        setPaymentError(res.error.message);
-        setPaymentSubmitting(false);
+      const payload = {
+        clientRefId: crypto.randomUUID(),
+        shiftId: shift.id,
+        cashierId: session!.user.id,
+        pagerNumber: activeDraft.pagerNumber,
+        orderType: activeDraft.orderType,
+        customerName: activeDraft.customerName,
+        customerPhone: activeDraft.customerPhone,
+        note: activeDraft.billNote,
+        items: activeDraft.items.map((item) => ({
+          menuItemId: item.menuItemId,
+          variant: item.variant,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          modifiersPriceDelta: item.modifiersPriceDelta,
+          subtotal: item.subtotal,
+          note: item.note,
+          openPriceNote: item.openPriceNote,
+          modifiers: item.modifiers.map((m) => ({
+            modifierSlug: m.modifierSlug,
+            selectedValue: m.selectedValue,
+            priceDelta: m.priceDelta,
+          })),
+        })),
+        subtotal,
+        discountType: activeDraft.discount?.type ?? null,
+        discountValue: activeDraft.discount?.value ?? null,
+        discountAmount,
+        discountReason: activeDraft.discountReason,
+        total,
+        paymentMethod,
+        cashReceived: paymentMethod === "cash" ? cashReceived : null,
+        cashChange: paymentMethod === "cash" ? cashChange : null,
+        discountApproverToken: activeDraft.discountApproverToken ?? undefined,
+        loyaltyPointsRedeemed: activeDraft.loyaltyPointsRedeemed,
+        promoId: activeDraft.promoId,
+      };
+
+      // Offline path: queue locally, drop the draft, show offline-paid screen.
+      // Server will process it via clientRefId idempotency once back online.
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        try {
+          await queuePendingTransaction(payload);
+          removeDraft(activeDraft.id);
+          toast.info("Offline — transaksi tersimpan lokal, ter-sync nanti");
+          setRightPanel({ kind: "idle" });
+        } catch (e) {
+          const message =
+            e instanceof Error ? e.message : "Gagal queue offline";
+          setPaymentError(message);
+        }
         return;
       }
-      removeDraft(activeDraft.id);
-      setRightPanel({ kind: "paid", trx: res.data });
-      setPaymentSubmitting(false);
-      toast.success(`Transaksi ${res.data.transactionNumber} berhasil`);
 
-      // Best-effort: print ONLY customer receipt automatically. Kitchen + bar
-      // tickets are printed manually via the Pesanan queue tab — kasir tears
-      // the customer struk for hand-off, then triggers prep tickets when ready
-      // to call the order out to staff. Pass receiptConfig so outlet-level
-      // edits (header/footer/wifi) appear on the printed struk. Skip silently
-      // if outlet config not yet loaded — kasir can reprint via Riwayat later.
-      if (receiptConfig) {
-        void printTickets(
-          res.data,
-          session!.user.name,
-          ["customer"],
-          receiptConfig,
-        );
-      }
-    } catch (e) {
-      // Network error mid-flight: queue and surface as offline-paid.
       try {
-        await queuePendingTransaction(payload);
+        const res = await createTransaction(payload);
+        if (!isOk(res)) {
+          setPaymentError(res.error.message);
+          return;
+        }
         removeDraft(activeDraft.id);
-        toast.info("Koneksi terputus — transaksi tersimpan, ter-sync nanti");
-        setRightPanel({ kind: "idle" });
-      } catch {
-        setPaymentError(
-          e instanceof Error ? e.message : "Gagal proses transaksi",
-        );
+        setRightPanel({ kind: "paid", trx: res.data });
+        toast.success(`Transaksi ${res.data.transactionNumber} berhasil`);
+
+        // Best-effort: print ONLY customer receipt automatically. Kitchen + bar
+        // tickets are printed manually via the Pesanan queue tab — kasir tears
+        // the customer struk for hand-off, then triggers prep tickets when ready
+        // to call the order out to staff. Pass receiptConfig so outlet-level
+        // edits (header/footer/wifi) appear on the printed struk. Skip silently
+        // if outlet config not yet loaded — kasir can reprint via Riwayat later.
+        if (receiptConfig) {
+          void printTickets(
+            res.data,
+            session!.user.name,
+            ["customer"],
+            receiptConfig,
+          );
+        }
+      } catch (e) {
+        // Network error mid-flight: queue and surface as offline-paid.
+        try {
+          await queuePendingTransaction(payload);
+          removeDraft(activeDraft.id);
+          toast.info("Koneksi terputus — transaksi tersimpan, ter-sync nanti");
+          setRightPanel({ kind: "idle" });
+        } catch {
+          setPaymentError(
+            e instanceof Error ? e.message : "Gagal proses transaksi",
+          );
+        }
       }
+    } finally {
+      paymentInFlightRef.current = false;
       setPaymentSubmitting(false);
     }
   }

@@ -12,7 +12,11 @@ interface ModalProps {
   title?: string;
   description?: string;
   size?: ModalSize;
-  /** If true, clicking backdrop does NOT close (force user to use buttons). */
+  /**
+   * Defaults to `true` — backdrop tap is a no-op so users do not lose form
+   * data from accidental taps (terutama di tablet POS). Pass `false`
+   * eksplisit kalau modal benar-benar mau backdrop-tap = cancel.
+   */
   disableBackdropClose?: boolean;
   /** If true, pressing ESC does NOT close. */
   disableEscClose?: boolean;
@@ -46,7 +50,7 @@ export function Modal({
   title,
   description,
   size = "md",
-  disableBackdropClose = false,
+  disableBackdropClose = true,
   disableEscClose = false,
   footer,
   children,
@@ -56,7 +60,9 @@ export function Modal({
   const contentRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
 
-  // ESC to close + lock body scroll when open
+  // Lifecycle: lock body scroll, capture previously focused, autofocus first
+  // focusable inside modal. Depends ONLY on `open` — must NOT re-run on every
+  // parent render (would steal focus away from the input being typed in).
   useEffect(() => {
     if (!open) return;
 
@@ -65,15 +71,6 @@ export function Modal({
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !disableEscClose) {
-        e.preventDefault();
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-
-    // Focus first focusable inside modal
     const timer = setTimeout(() => {
       const focusable = contentRef.current?.querySelector<HTMLElement>(
         'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
@@ -82,11 +79,24 @@ export function Modal({
     }, 0);
 
     return () => {
-      window.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
       clearTimeout(timer);
       previouslyFocused.current?.focus();
     };
+  }, [open]);
+
+  // ESC handler — separate effect so re-binding on onClose change does not
+  // disturb focus. No-op when disableEscClose is true.
+  useEffect(() => {
+    if (!open || disableEscClose) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [open, disableEscClose, onClose]);
 
   if (!open) return null;
