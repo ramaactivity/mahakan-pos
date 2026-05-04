@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { ArrowUpCircle, Plus } from "lucide-react";
 import {
   Button,
   Card,
   CardContent,
   CardHeader,
   DateRangePicker,
+  EmptyCard,
   Skeleton,
 } from "@/components/ui";
 import { IncomeFormModal } from "./IncomeFormModal";
@@ -81,9 +82,11 @@ export function IncomesList({ createdBy }: IncomesListProps) {
               ))}
             </div>
           ) : incomes.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Tidak ada pemasukan di range ini.
-            </p>
+            <EmptyCard
+              icon={ArrowUpCircle}
+              title="Tidak ada pemasukan di range ini"
+              description="Sesuaikan tanggal di atas — atau catat pemasukan kas baru."
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

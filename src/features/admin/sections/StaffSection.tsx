@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { KeyRound, Pencil, Plus, Power } from "lucide-react";
+import { KeyRound, Pencil, Plus, Power, Users } from "lucide-react";
 import {
   Badge,
   Button,
   Card,
   CardContent,
   CardHeader,
+  EmptyCard,
   Modal,
   Skeleton,
   toast,
@@ -99,9 +100,11 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
               ))}
             </div>
           ) : users.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Belum ada user.
-            </p>
+            <EmptyCard
+              icon={Users}
+              title="Belum ada user"
+              description="Tambah staff/manager untuk akses POS dan back-office."
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

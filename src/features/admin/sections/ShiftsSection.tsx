@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Eye } from "lucide-react";
+import { AlertTriangle, Eye, Receipt } from "lucide-react";
 import {
   Badge,
   Button,
   Card,
   CardContent,
   CardHeader,
+  EmptyCard,
   Skeleton,
 } from "@/components/ui";
 import { ShiftDetailModal } from "./shifts/ShiftDetailModal";
@@ -110,9 +111,11 @@ export function ShiftsSection() {
               ))}
             </div>
           ) : filteredShifts.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Tidak ada shift yang cocok.
-            </p>
+            <EmptyCard
+              icon={Receipt}
+              title="Tidak ada shift yang cocok"
+              description="Coba ubah filter tanggal atau status di atas."
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowDownCircle, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Badge,
   Button,
@@ -9,6 +9,7 @@ import {
   CardContent,
   CardHeader,
   DateRangePicker,
+  EmptyCard,
   Modal,
   Select,
   Skeleton,
@@ -155,9 +156,11 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
               ))}
             </div>
           ) : expenses.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Tidak ada pengeluaran di range ini.
-            </p>
+            <EmptyCard
+              icon={ArrowDownCircle}
+              title="Tidak ada pengeluaran di range ini"
+              description="Sesuaikan tanggal atau filter kategori — atau catat pengeluaran baru."
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

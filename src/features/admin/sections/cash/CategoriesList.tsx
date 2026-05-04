@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { FolderTree, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Badge,
   Button,
   Card,
   CardContent,
   CardHeader,
+  EmptyCard,
   Input,
   Modal,
   Skeleton,
@@ -146,9 +147,11 @@ export function CategoriesList() {
               ))}
             </div>
           ) : items.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Belum ada kategori.
-            </p>
+            <EmptyCard
+              icon={FolderTree}
+              title="Belum ada kategori"
+              description="Buat kategori pengeluaran biar laporan kas lebih rapi."
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
