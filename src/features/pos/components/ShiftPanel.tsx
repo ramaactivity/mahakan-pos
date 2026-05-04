@@ -11,6 +11,7 @@ import {
   Spinner,
 } from "@/components/ui";
 import type { Shift } from "@/features/shifts";
+import { CashOnHandTile } from "@/features/admin/sections/finance/CashOnHandTile";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianTime } from "@/lib/date";
 
@@ -36,13 +37,18 @@ export function ShiftPanel({
   }
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto p-6">
-      <header className="mb-4">
+    <div className="flex h-full flex-col gap-4 overflow-y-auto p-6">
+      <header>
         <h2 className="text-lg font-semibold text-neutral-900">Shift</h2>
         <p className="text-sm text-neutral-500">
           Manage opening & closing kas. Tidak bisa transaksi tanpa shift aktif.
         </p>
       </header>
+
+      {/* Phase 6.2 (sesi AB) — Cash on Hand widget di POS biar owner/manager
+       * langsung lihat berapa cash drawer yang belum disetor tanpa harus
+       * pindah ke admin → Keuangan. Staff tidak lihat (permission gate). */}
+      <CashOnHandTile />
 
       {shift ? (
         <Card variant="emphasis">

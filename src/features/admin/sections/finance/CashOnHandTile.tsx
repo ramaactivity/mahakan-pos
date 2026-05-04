@@ -4,16 +4,26 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Wallet } from "lucide-react";
 import { fetchCashOnHand } from "@/features/finance/actions";
 import type { CashOnHandSnapshot } from "@/features/finance/types";
+import { useSession } from "@/features/auth/SessionProvider";
+import { hasPermission } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/money";
 import { Skeleton } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 export function CashOnHandTile() {
+  const { session } = useSession();
+  const role = session?.user.role;
+  const canView = role ? hasPermission(role, "cash_deposit.view") : false;
+
   const [snap, setSnap] = useState<CashOnHandSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!canView) {
+      setLoading(false);
+      return;
+    }
     let mounted = true;
     fetchCashOnHand()
       .then((res) => {
@@ -28,7 +38,11 @@ export function CashOnHandTile() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [canView]);
+
+  // Phase 6.2 — staff tidak punya cash_deposit.view; widget di-hide sepenuhnya
+  // alih-alih nampilkan FORBIDDEN error (graceful untuk kasir POS context).
+  if (!canView) return null;
 
   if (loading) {
     return <Skeleton className="h-24 w-72" />;
