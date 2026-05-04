@@ -49,3 +49,40 @@ export function formatTransactionDatePart(input: Date | string): string {
 export function toJakartaDateOnly(input: Date | string): string {
   return format(toJakartaDate(input), "yyyy-MM-dd");
 }
+
+/**
+ * Day-of-week key as used in OperationalHours JSONB ("mon"…"sun"), based on
+ * WIB calendar day of the input date.
+ */
+export function jakartaDowKey(
+  input: Date | string,
+): "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun" {
+  const wib = toJakartaDate(input);
+  const map = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+  return map[wib.getDay()];
+}
+
+/**
+ * Combine an WIB calendar date with an "HH:mm" time string into a UTC Date.
+ * Used to derive expected shift close time from outlet operationalHours.
+ * Returns null if `time` is missing or malformed.
+ *
+ * Note: produces an instant (Date object) by interpreting the time as WIB
+ * wall-clock on the same calendar day as `baseDate` (WIB). Caller should
+ * compare against `new Date()` (server-clock UTC) without further offset
+ * juggling — both are absolute instants.
+ */
+export function combineJakartaDateAndTime(
+  baseDate: Date | string,
+  time: string | null | undefined,
+): Date | null {
+  if (!time || !/^\d{2}:\d{2}$/.test(time)) return null;
+  const [hh, mm] = time.split(":").map(Number);
+  if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
+  // Build the WIB local datetime as an ISO string with the +07:00 offset,
+  // then parse it back as a UTC Date instant.
+  const ymd = toJakartaDateOnly(baseDate);
+  return new Date(
+    `${ymd}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00+07:00`,
+  );
+}

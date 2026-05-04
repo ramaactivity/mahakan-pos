@@ -99,7 +99,12 @@ import {
 import { getPrinterClient } from "@/lib/printer/bluetooth";
 import type { Discount } from "@/lib/money";
 import { formatRupiah } from "@/lib/format";
-import { formatIndonesianDateTime, toJakartaDateOnly } from "@/lib/date";
+import {
+  combineJakartaDateAndTime,
+  formatIndonesianDateTime,
+  jakartaDowKey,
+  toJakartaDateOnly,
+} from "@/lib/date";
 import { cn } from "@/lib/utils";
 
 type RightPanelState =
@@ -109,6 +114,40 @@ type RightPanelState =
   | { kind: "paid"; trx: TransactionWithItems };
 
 const QUICK_AMOUNTS = [50_000, 100_000, 200_000];
+
+/**
+ * Phase 2.2 — short alert tone via Web Audio API for shift-close warnings.
+ * Single 800Hz beep, ~0.4s with exponential decay so it cuts through cafe
+ * noise tanpa terdengar nge-glitch. Silent failover kalau AudioContext
+ * blocked (browser autoplay policy belum unlock — biasanya unlock setelah
+ * first user gesture, yang sudah pasti terjadi sebelum kasir aktif).
+ */
+function playShiftAlertTone(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 800;
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.4);
+    osc.onended = () => {
+      void ctx.close().catch(() => {});
+    };
+  } catch {
+    // Browser blocked AudioContext (e.g., autoplay policy) — toast still
+    // surfaces the warning.
+  }
+}
 
 export function PosShell() {
   const { session, logout } = useSession();
@@ -120,6 +159,13 @@ export function PosShell() {
   const [tab, setTab] = useState<PosTab>("cashier");
   const [rightPanel, setRightPanel] = useState<RightPanelState>({ kind: "idle" });
   const [openBillsCount, setOpenBillsCount] = useState(0);
+  // Phase 2.2 (sesi AB) — derived from outlet.operationalHours[today].closeTime
+  // when the outlet config loads; null if outlet operates 24h or hari ini tutup.
+  const [expectedCloseTime, setExpectedCloseTime] = useState<Date | null>(null);
+  // Track which warning toasts already fired this shift (deduplication so the
+  // 30s poll doesn't spam). Reset whenever shift opens/closes or the user
+  // logs out — it's session-only state.
+  const firedShiftWarningsRef = useRef<Set<"30min" | "15min">>(new Set());
   const [printConfirm, setPrintConfirm] = useState<{
     trx: TransactionWithItems;
     title: string;
@@ -312,6 +358,18 @@ export function PosShell() {
           voidMode: approval?.voidMode === "code" ? "code" : "pin",
           refundMode: approval?.refundMode === "code" ? "code" : "pin",
         });
+        // Phase 2.2 — derive expected shift close from outlet operational
+        // hours (today's closeTime in WIB). Null kalau hari ini tutup atau
+        // closeTime tidak diset.
+        const today = jakartaDowKey(new Date());
+        const todayHours = res.data.operationalHours?.[today];
+        if (todayHours?.isOpen && todayHours.closeTime) {
+          setExpectedCloseTime(
+            combineJakartaDateAndTime(new Date(), todayHours.closeTime),
+          );
+        } else {
+          setExpectedCloseTime(null);
+        }
       }
     }
     void loadOutlet();
@@ -319,6 +377,59 @@ export function PosShell() {
       cancelled = true;
     };
   }, [session]);
+
+  // Phase 2.2 — toast warnings 30 + 15 minutes before expectedCloseTime kalau
+  // masih ada open bills. Polling tiap 30s di shell yang aktif. Dedupe via ref
+  // set — tidak fire ulang per shift session. Reset state saat shift baru
+  // dibuka (different shift.id). Sound: short Web Audio beep, opt-out
+  // gracefully kalau browser block AudioContext.
+  useEffect(() => {
+    if (!session || !shift || !expectedCloseTime) return;
+    if (shift.status !== "open") return;
+
+    const checkAtMs = (offsetMin: number) =>
+      expectedCloseTime.getTime() - offsetMin * 60_000;
+    const tick = () => {
+      const now = Date.now();
+      // 1-minute hysteresis window so we never miss the boundary regardless
+      // of when the interval fires within the minute.
+      const inWindow = (target: number) =>
+        now >= target && now <= target + 60_000;
+
+      if (
+        openBillsCount > 0 &&
+        inWindow(checkAtMs(30)) &&
+        !firedShiftWarningsRef.current.has("30min")
+      ) {
+        firedShiftWarningsRef.current.add("30min");
+        toast.warning(
+          `30 menit lagi tutup shift — masih ${openBillsCount} bill terbuka. Kejar pembayaran sebelum kasir tutup.`,
+        );
+        playShiftAlertTone();
+      }
+      if (
+        openBillsCount > 0 &&
+        inWindow(checkAtMs(15)) &&
+        !firedShiftWarningsRef.current.has("15min")
+      ) {
+        firedShiftWarningsRef.current.add("15min");
+        toast.warning(
+          `15 menit lagi tutup shift — ${openBillsCount} bill belum dibayar. Segera selesaikan!`,
+        );
+        playShiftAlertTone();
+      }
+    };
+
+    tick();
+    const id = window.setInterval(tick, 30_000);
+    return () => window.clearInterval(id);
+  }, [session, shift, expectedCloseTime, openBillsCount]);
+
+  // Reset fired warnings when the shift identity changes (open new shift,
+  // close current shift) so a fresh shift gets fresh warnings.
+  useEffect(() => {
+    firedShiftWarningsRef.current = new Set();
+  }, [shift?.id]);
 
   useEffect(() => {
     let cancelled = false;
