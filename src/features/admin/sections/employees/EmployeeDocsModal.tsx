@@ -38,16 +38,22 @@ const DOC_TYPE_LABELS: Record<DocumentType, string> = {
   other: "Lainnya",
 };
 
+/** Modal to manage HR documents per employee. Sesi AA hotfix:
+ * onChanged emitted on every save/delete so the parent EmployeesSection
+ * can re-fetch the per-employee doc count badge in real time (was: user
+ * had to refresh the whole page after save). */
 interface EmployeeDocsModalProps {
   open: boolean;
   employee: Employee | null;
   onClose: () => void;
+  onChanged?: () => void;
 }
 
 export function EmployeeDocsModal({
   open,
   employee,
   onClose,
+  onChanged,
 }: EmployeeDocsModalProps) {
   const [docs, setDocs] = useState<EmployeeDocument[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,6 +129,11 @@ export function EmployeeDocsModal({
     const fd = new FormData();
     fd.append("file", file);
     fd.append("employeeId", employee.id);
+    // Include docType + title untuk auto-rename file di Drive (sesi AA
+    // hotfix #2). Server compose filename dengan timestamp + label +
+    // employee + title + uploader.
+    fd.append("docType", DOC_TYPE_LABELS[docType] ?? docType);
+    if (title.trim().length > 0) fd.append("docTitle", title.trim());
     const res = await fetch("/api/v1/employee-documents/upload", {
       method: "POST",
       body: fd,
@@ -182,6 +193,7 @@ export function EmployeeDocsModal({
       setExpiresAt("");
       setNotes("");
       setRefreshKey((k) => k + 1);
+      onChanged?.();
     } finally {
       setSubmitting(false);
     }
@@ -196,6 +208,7 @@ export function EmployeeDocsModal({
     }
     toast.success("Dokumen dihapus");
     setRefreshKey((k) => k + 1);
+    onChanged?.();
   }
 
   if (!employee) return null;

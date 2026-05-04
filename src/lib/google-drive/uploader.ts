@@ -204,6 +204,11 @@ export interface UploadOpts {
   originalName: string;
   contentType: string;
   data: Buffer;
+  /** Optional fully-formed filename (with extension). If set, uploader
+   * uses it as-is instead of the legacy `{date}_{ts}_{originalName}`
+   * convention. Use buildFriendlyFilename() helper untuk consistent
+   * naming convention across modules. */
+  customFilename?: string;
 }
 
 export interface DriveUploadResult {
@@ -237,12 +242,19 @@ export async function uploadToDrive(
   );
 
   // Sanitize filename — strip path separators, collapse weird chars.
-  const safeName = opts.originalName
-    .replace(/[^\w.\-]/g, "_")
-    .slice(0, 100);
-  const ts = Date.now();
-  const datePrefix = opts.context.date ? `${opts.context.date}_` : "";
-  const finalName = `${datePrefix}${ts}_${safeName}`;
+  // If caller supplied customFilename (recommended via buildFriendlyFilename
+  // helper), use that. Else fallback to legacy `{date}_{ts}_{originalName}`.
+  let finalName: string;
+  if (opts.customFilename && opts.customFilename.trim().length > 0) {
+    finalName = opts.customFilename.replace(/[^\w.\-]/g, "_").slice(0, 200);
+  } else {
+    const safeName = opts.originalName
+      .replace(/[^\w.\-]/g, "_")
+      .slice(0, 100);
+    const ts = Date.now();
+    const datePrefix = opts.context.date ? `${opts.context.date}_` : "";
+    finalName = `${datePrefix}${ts}_${safeName}`;
+  }
 
   const created = await d.files.create({
     requestBody: {
@@ -280,6 +292,8 @@ export async function uploadToDrive(
 
   return { url, fileId, folderPath: pathLabel };
 }
+
+export { buildFriendlyFilename } from "./filename";
 
 export function isDriveConfigured(): boolean {
   const hasOAuth = Boolean(

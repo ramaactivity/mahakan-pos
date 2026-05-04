@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth/rbac";
 import {
+  buildFriendlyFilename,
   isDriveConfigured,
   uploadToDrive,
 } from "@/lib/google-drive/uploader";
@@ -123,12 +124,20 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
+    const customFilename = buildFriendlyFilename({
+      label: "NOTA",
+      parts: [purchaseDate],
+      uploaderName: session.user.name,
+      originalName: file.name,
+      contentType: file.type,
+    });
     const result = await uploadToDrive({
       module: "purchase",
       context: { date: purchaseDate },
       originalName: file.name,
       contentType: file.type,
       data: buffer,
+      customFilename,
     });
 
     return NextResponse.json({

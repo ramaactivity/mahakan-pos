@@ -422,6 +422,7 @@ export function EmployeesSection() {
         open={docsFor !== null}
         employee={docsFor}
         onClose={() => setDocsFor(null)}
+        onChanged={() => setRefreshKey((k) => k + 1)}
       />
     </div>
   );

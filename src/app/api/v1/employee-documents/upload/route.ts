@@ -5,6 +5,7 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { db } from "@/db";
 import { employees } from "@/db/schema";
 import {
+  buildFriendlyFilename,
   isDriveConfigured,
   uploadToDrive,
 } from "@/lib/google-drive/uploader";
@@ -73,6 +74,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     const form = await request.formData();
     const file = form.get("file");
     const employeeId = form.get("employeeId");
+    // Optional metadata for filename composition (sesi AA hotfix #2 —
+    // auto-rename). If absent, fallback to generic label.
+    const docType = form.get("docType");
+    const docTitle = form.get("docTitle");
     if (!(file instanceof File)) {
       return NextResponse.json(
         {
@@ -150,12 +155,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
+    const labelFromDocType =
+      typeof docType === "string" && docType.trim().length > 0
+        ? docType.trim()
+        : "DOK";
+    const titleSlug = typeof docTitle === "string" ? docTitle : null;
+    const customFilename = buildFriendlyFilename({
+      label: labelFromDocType,
+      parts: [emp.fullName, titleSlug],
+      uploaderName: session.user.name,
+      originalName: file.name,
+      contentType: file.type,
+    });
     const result = await uploadToDrive({
       module: "hr",
       context: { employeeId: emp.id, employeeName: emp.fullName },
       originalName: file.name,
       contentType: file.type,
       data: buffer,
+      customFilename,
     });
 
     return NextResponse.json({
