@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   BookOpen,
+  CheckCircle2,
   ChevronRight,
+  Scale,
   TrendingUp,
 } from "lucide-react";
 import { differenceInCalendarDays, parseISO } from "date-fns";
@@ -37,8 +39,14 @@ import { listPayrollPeriods } from "@/features/payroll/actions";
 import type { PayrollPeriodWithStats } from "@/features/payroll/types";
 import { listExpiringDocuments } from "@/features/employees/actions";
 import type { ExpiringDocument } from "@/features/employees/queries";
-import { fetchIncomeStatement } from "@/features/accounting/actions";
-import type { IncomeStatementReport } from "@/features/accounting/reports";
+import {
+  fetchBalanceSheet,
+  fetchIncomeStatement,
+} from "@/features/accounting/actions";
+import type {
+  BalanceSheetReport,
+  IncomeStatementReport,
+} from "@/features/accounting/reports";
 import { formatRupiah } from "@/lib/format";
 import type { AdminSection } from "@/features/admin/components/AdminLeftNav";
 import { OpnameMonthlyBanner } from "./inventory/opname/OpnameMonthlyBanner";
@@ -58,6 +66,8 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
   const [expiringDocs, setExpiringDocs] = useState<ExpiringDocument[]>([]);
   const [accountingMtd, setAccountingMtd] =
     useState<IncomeStatementReport | null>(null);
+  const [balanceSheet, setBalanceSheet] =
+    useState<BalanceSheetReport | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -82,6 +92,7 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
         payrollSettled,
         docsSettled,
         accountingSettled,
+        balanceSheetSettled,
       ] = await Promise.allSettled([
         getDailySalesReport(),
         getTodayAttendanceStatus(),
@@ -92,6 +103,7 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
           toDate: mtdTo,
           periodLabel: mtdLabel,
         }),
+        fetchBalanceSheet(mtdTo),
       ]);
       if (cancelled) return;
       if (
@@ -125,6 +137,12 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
         accountingSettled.value.ok
       ) {
         setAccountingMtd(accountingSettled.value.data);
+      }
+      if (
+        balanceSheetSettled.status === "fulfilled" &&
+        balanceSheetSettled.value.ok
+      ) {
+        setBalanceSheet(balanceSheetSettled.value.data);
       }
       setLoading(false);
     }
@@ -253,6 +271,17 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
         accountingMtd.expenses.subtotal > 0) ? (
         <AccountingMtdCard
           report={accountingMtd}
+          onTap={onNavigate ? () => onNavigate("accounting") : undefined}
+        />
+      ) : null}
+
+      {/* Balance Sheet snapshot — visible kalau ada data ledger */}
+      {balanceSheet &&
+      (balanceSheet.totalAssets !== 0 ||
+        balanceSheet.totalLiabilities !== 0 ||
+        balanceSheet.totalEquity !== 0) ? (
+        <BalanceSheetMtdCard
+          report={balanceSheet}
           onTap={onNavigate ? () => onNavigate("accounting") : undefined}
         />
       ) : null}
@@ -454,6 +483,78 @@ function AccountingMtdCard({
             Periode berjalan rugi bersih — review ledger di tab Akuntansi
           </div>
         ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function BalanceSheetMtdCard({
+  report,
+  onTap,
+}: {
+  report: BalanceSheetReport;
+  onTap?: () => void;
+}) {
+  return (
+    <Card
+      variant={onTap ? "interactive" : "default"}
+      onClick={onTap}
+      className={onTap ? "cursor-pointer" : ""}
+    >
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Scale className="size-4 text-mahakan-green-700" /> Neraca —{" "}
+              {report.asOfDate}
+            </CardTitle>
+            <CardDescription>
+              Saldo kumulatif semua akun per tanggal hari ini (Aset =
+              Liabilitas + Ekuitas)
+            </CardDescription>
+          </div>
+          {onTap ? (
+            <ChevronRight
+              className="size-5 text-neutral-400"
+              aria-hidden
+            />
+          ) : null}
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <MtdMetric
+            label="Total Aset"
+            value={formatRupiah(report.totalAssets)}
+            tone="emphasis-positive"
+          />
+          <MtdMetric
+            label="Total Liabilitas"
+            value={formatRupiah(report.totalLiabilities)}
+            tone="negative"
+          />
+          <MtdMetric
+            label="Total Ekuitas"
+            value={formatRupiah(report.totalEquity)}
+            tone="positive"
+          />
+        </div>
+        {report.balanced ? (
+          <div className="mt-3 flex items-center gap-1.5 text-xs text-success-500">
+            <CheckCircle2 className="size-3" />
+            Balanced — Aset = Liabilitas + Ekuitas
+          </div>
+        ) : (
+          <div className="mt-3 flex items-center gap-1.5 text-xs text-danger-500">
+            <AlertTriangle className="size-3" />
+            Tidak balance — selisih{" "}
+            {formatRupiah(
+              report.totalAssets -
+                (report.totalLiabilities + report.totalEquity),
+            )}
+            . Cek tab Akuntansi → Validate.
+          </div>
+        )}
       </CardContent>
     </Card>
   );
