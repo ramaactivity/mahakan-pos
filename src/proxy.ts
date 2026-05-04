@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 
-const PUBLIC_PATHS = ["/", "/login", "/pin", "/showcase"];
+const PUBLIC_PATHS = ["/", "/login", "/pin", "/showcase", "/absenkaryawan"];
 const ADMIN_PATHS = ["/dashboard"];
 
 function matches(pathname: string, prefixes: string[]): boolean {
@@ -57,9 +57,11 @@ export default auth((req) => {
     }
   }
 
-  // ---------- Public paths (/, /login, /pin, /showcase) ----------
+  // ---------- Public paths (/, /login, /pin, /showcase, /absenkaryawan) ----------
   if (matches(pathname, PUBLIC_PATHS)) {
     // Already-authed user landing on /login or /pin → bounce to their home.
+    // /absenkaryawan stays accessible to anyone (Phase 4 mobile route — uses
+    // its own attendance PIN flow, not session-based auth).
     if (isAuthed && (pathname === "/login" || pathname === "/pin")) {
       const target = req.auth!.user.role === "staff" ? "/pos" : "/dashboard";
       return NextResponse.redirect(new URL(target, nextUrl));
