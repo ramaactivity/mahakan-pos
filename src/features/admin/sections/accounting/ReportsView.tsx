@@ -19,6 +19,7 @@ import {
   Combobox,
   DatePicker,
   DateRangePicker,
+  Select,
   Skeleton,
   toast,
   type ComboboxOption,
@@ -430,29 +431,47 @@ function TrialBalanceTab() {
 // Income Statement
 // ============================================================
 
+type CompareMode = "none" | "prev_month" | "prev_year";
+
 function IncomeStatementTab() {
   const [range, setRange] = useState<{ from: string; to: string }>(() =>
     monthRangeFor(new Date()),
   );
+  const [compareMode, setCompareMode] = useState<CompareMode>("none");
   const [report, setReport] = useState<IncomeStatementReport | null>(null);
+  const [prevReport, setPrevReport] =
+    useState<IncomeStatementReport | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function load() {
     setLoading(true);
-    const res = await fetchIncomeStatement({
-      fromDate: range.from,
-      toDate: range.to,
-      periodLabel: `${range.from} → ${range.to}`,
-    });
+    const prevRange =
+      compareMode === "none" ? null : prevRangeFor(range, compareMode);
+    const [curRes, prevRes] = await Promise.all([
+      fetchIncomeStatement({
+        fromDate: range.from,
+        toDate: range.to,
+        periodLabel: `${range.from} → ${range.to}`,
+      }),
+      prevRange
+        ? fetchIncomeStatement({
+            fromDate: prevRange.from,
+            toDate: prevRange.to,
+            periodLabel: `${prevRange.from} → ${prevRange.to}`,
+          })
+        : Promise.resolve(null),
+    ]);
     setLoading(false);
-    if (res.ok) setReport(res.data);
-    else toast.error(res.error.message);
+    if (curRes.ok) setReport(curRes.data);
+    else toast.error(curRes.error.message);
+    if (prevRes && prevRes.ok) setPrevReport(prevRes.data);
+    else setPrevReport(null);
   }
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
     void load();
-  }, [range.from, range.to]);
+  }, [range.from, range.to, compareMode]);
 
   async function onExportPdf() {
     if (!report) return;
@@ -472,16 +491,36 @@ function IncomeStatementTab() {
     toast.success("CSV Laba Rugi terdownload");
   }
 
+  const compareLabel =
+    compareMode === "prev_month"
+      ? "Bulan sebelumnya"
+      : compareMode === "prev_year"
+        ? "Tahun sebelumnya"
+        : null;
+
   return (
     <div className="space-y-3">
       <div className="flex items-end justify-between gap-3">
-        <DateRangePicker
-          label="Periode"
-          value={range}
-          onChange={(r) => {
-            if (r.from && r.to) setRange({ from: r.from, to: r.to });
-          }}
-        />
+        <div className="flex items-end gap-3">
+          <DateRangePicker
+            label="Periode"
+            value={range}
+            onChange={(r) => {
+              if (r.from && r.to) setRange({ from: r.from, to: r.to });
+            }}
+          />
+          <Select
+            label="Bandingkan dengan"
+            value={compareMode}
+            onValueChange={(v) => setCompareMode(v as CompareMode)}
+            size="sm"
+            options={[
+              { value: "none", label: "Tidak" },
+              { value: "prev_month", label: "Bulan sebelumnya" },
+              { value: "prev_year", label: "Tahun sebelumnya" },
+            ]}
+          />
+        </div>
         {report ? (
           <div className="flex gap-1">
             <Button variant="outline" size="sm" onClick={onExportCsv}>
@@ -518,7 +557,12 @@ function IncomeStatementTab() {
               ))}
             </Section>
           ) : null}
-          <TotalRow label="PENDAPATAN BERSIH" value={report.netRevenue} />
+          <TotalRow
+            label="PENDAPATAN BERSIH"
+            value={report.netRevenue}
+            prevValue={prevReport?.netRevenue}
+            prevLabel={compareLabel}
+          />
 
           <Section title={report.cogs.label} subtotal={-report.cogs.subtotal} sign="-">
             {report.cogs.items.map((i) => (
@@ -530,7 +574,12 @@ function IncomeStatementTab() {
               />
             ))}
           </Section>
-          <TotalRow label="LABA KOTOR" value={report.grossProfit} />
+          <TotalRow
+            label="LABA KOTOR"
+            value={report.grossProfit}
+            prevValue={prevReport?.grossProfit}
+            prevLabel={compareLabel}
+          />
 
           <Section title={report.expenses.label} subtotal={-report.expenses.subtotal} sign="-">
             {report.expenses.items.map((i) => (
@@ -545,6 +594,8 @@ function IncomeStatementTab() {
           <TotalRow
             label="LABA / RUGI BERSIH"
             value={report.netIncome}
+            prevValue={prevReport?.netIncome}
+            prevLabel={compareLabel}
             emphasis
           />
         </div>
@@ -1116,6 +1167,29 @@ function monthRangeFor(d: Date): { from: string; to: string } {
   return { from: first, to: last };
 }
 
+/**
+ * Compute the comparison-period range relative to a base range.
+ * - "prev_month": shift both endpoints back by 1 calendar month
+ * - "prev_year":  shift both endpoints back by 1 calendar year
+ * Both forms preserve the day-of-month modulo end-of-month clamping (e.g.,
+ * Mar 31 prev_month → Feb 28/29). Done with Date constructors which already
+ * clamp gracefully.
+ */
+function prevRangeFor(
+  current: { from: string; to: string },
+  mode: "prev_month" | "prev_year",
+): { from: string; to: string } {
+  const shift = (iso: string): string => {
+    const [y, m, d] = iso.split("-").map(Number);
+    const dt =
+      mode === "prev_month"
+        ? new Date(y, m - 2, d)
+        : new Date(y - 1, m - 1, d);
+    return dt.toISOString().slice(0, 10);
+  };
+  return { from: shift(current.from), to: shift(current.to) };
+}
+
 function Section({
   title,
   subtotal,
@@ -1179,25 +1253,64 @@ function TotalRow({
   label,
   value,
   emphasis,
+  prevValue,
+  prevLabel,
 }: {
   label: string;
   value: number;
   emphasis?: boolean;
+  /** Previous-period value untuk comparison. Render delta beside main value. */
+  prevValue?: number;
+  /** Label of comparison period (e.g. "Bulan sebelumnya"). */
+  prevLabel?: string | null;
 }) {
+  const hasCompare = prevValue !== undefined && prevLabel;
+  const delta = hasCompare ? value - prevValue : 0;
+  // Pct change: protect against div-by-zero. Use |prev| as denominator for
+  // sign-correct percentages even kalau prev negatif (unusual untuk
+  // pendapatan tapi possible untuk netIncome).
+  const pct =
+    hasCompare && prevValue !== 0
+      ? (delta / Math.abs(prevValue)) * 100
+      : null;
+  const deltaPositive = delta > 0;
+  const deltaNegative = delta < 0;
+
   return (
     <div
       className={cn(
-        "flex items-center justify-between border-t border-neutral-200 px-2 py-2",
+        "flex flex-wrap items-center justify-between gap-x-3 border-t border-neutral-200 px-2 py-2",
         emphasis &&
           "border-y-2 border-mahakan-green-700 bg-mahakan-green-50/50 font-bold",
       )}
     >
       <span>{label}</span>
-      <span className={cn("font-mono", value < 0 && "text-danger-500")}>
-        {value < 0 ? "(" : ""}
-        {formatRupiah(Math.abs(value))}
-        {value < 0 ? ")" : ""}
-      </span>
+      <div className="flex items-baseline gap-3">
+        {hasCompare ? (
+          <span
+            className={cn(
+              "font-mono text-xs",
+              deltaPositive
+                ? "text-success-500"
+                : deltaNegative
+                  ? "text-danger-500"
+                  : "text-neutral-500",
+            )}
+            title={`${prevLabel}: ${formatRupiah(prevValue)}`}
+          >
+            {deltaPositive ? "↑ +" : deltaNegative ? "↓ " : ""}
+            {pct !== null
+              ? `${pct >= 0 ? "" : ""}${pct.toFixed(1)}%`
+              : "—"}{" "}
+            <span className="text-neutral-500">vs {prevLabel}</span>
+          </span>
+        ) : null}
+        <span className={cn("font-mono", value < 0 && "text-danger-500")}>
+          {value < 0 ? "(" : ""}
+          {formatRupiah(Math.abs(value))}
+          {value < 0 ? ")" : ""}
+        </span>
+      </div>
     </div>
   );
 }
