@@ -51,6 +51,16 @@ export interface CloseShiftInput {
   gofoodSettlement?: number | null;
   grabfoodSettlement?: number | null;
   shopeefoodSettlement?: number | null;
+  /** Phase 2.4 (sesi AB) — Inter-Cash setoran ke owner. Kalau > 0,
+   * closeShift auto-create cash_deposit row dengan status pending_verification.
+   * Owner verify nanti via Admin → Keuangan → Setoran Tunai. */
+  depositAmount?: number | null;
+  /** Tujuan setoran (e.g. "Owner Tunai", "BCA Owner 12345"). Free-form
+   * sampai bank account master ada (Phase Q deferred). */
+  depositBankDestination?: string | null;
+  /** Catatan setoran — alasan kalau setor < kas drawer (e.g. "kasir bawa
+   * pulang dulu, kembalian kurang"). */
+  depositNotes?: string | null;
 }
 
 export interface ShiftSummary {
@@ -64,6 +74,10 @@ export interface ShiftSummary {
   voided: { count: number; totalAmount: number };
   refunded: { count: number; totalAmount: number };
   expectedCash: number;
+  /** Phase 2.4 — set kalau kasir input setoran ke owner saat tutup shift,
+   * dan cash_deposit pending sukses dibuat. UI bisa surface "menunggu
+   * verifikasi" toast. */
+  depositId?: string | null;
 }
 
 export interface CloseShiftResult {

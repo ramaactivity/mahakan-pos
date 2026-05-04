@@ -68,6 +68,10 @@ export function CloseShiftModal({
   const [grabfood, setGrabfood] = useState("");
   const [shopeefood, setShopeefood] = useState("");
   const [handoverMessage, setHandoverMessage] = useState("");
+  // Phase 2.4 — setoran ke owner saat tutup shift
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositBank, setDepositBank] = useState("");
+  const [depositNotes, setDepositNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -83,6 +87,9 @@ export function CloseShiftModal({
     setGrabfood("");
     setShopeefood("");
     setHandoverMessage("");
+    setDepositAmount("");
+    setDepositBank("");
+    setDepositNotes("");
     setError(null);
     setSubmitting(false);
 
@@ -191,6 +198,7 @@ export function CloseShiftModal({
       }
     };
 
+    const parsedDeposit = tryParse(depositAmount);
     const res = await closeShift({
       shiftId: shift.id,
       actualCash: parsedCash,
@@ -200,6 +208,9 @@ export function CloseShiftModal({
       gofoodSettlement: tryParse(gofood),
       grabfoodSettlement: tryParse(grabfood),
       shopeefoodSettlement: tryParse(shopeefood),
+      depositAmount: parsedDeposit,
+      depositBankDestination: depositBank.trim() || null,
+      depositNotes: depositNotes.trim() || null,
     });
     if (!isOk(res)) {
       setError(res.error.message);
@@ -214,8 +225,21 @@ export function CloseShiftModal({
     } else {
       toast.success("Shift ditutup, kas pas!");
     }
+    if (res.data.summary.depositId) {
+      toast.info(
+        `Setoran ${formatRupiah(parsedDeposit ?? 0)} pending verifikasi owner`,
+      );
+    }
     onClosed();
   }
+
+  const parsedDepositPreview = (() => {
+    try {
+      return depositAmount.trim().length > 0 ? parseRupiah(depositAmount) : 0;
+    } catch {
+      return 0;
+    }
+  })();
 
   const blockedByOpenBills = openBills.length > 0;
 
@@ -446,10 +470,62 @@ export function CloseShiftModal({
                 />
               ) : null}
               <p className="text-xs text-neutral-500">
-                Catatan otomatis dari Petty Cash di tab Pengaturan.
+                Catatan otomatis dari Petty Cash di tab Petty Cash.
               </p>
             </div>
           ) : null}
+
+          <div className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4">
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-neutral-900">
+                Setor ke Owner (opsional)
+              </p>
+              <p className="text-xs text-neutral-500">
+                Kalau kasir setor sebagian/seluruh kas drawer ke owner saat
+                tutup shift, catat di sini. Auto-buat entri{" "}
+                <strong>Setoran Tunai pending</strong> untuk diverifikasi
+                owner di tab Keuangan.
+              </p>
+            </div>
+            <NumericInput
+              label="Jumlah Setor"
+              value={depositAmount}
+              onChange={setDepositAmount}
+              prefix="Rp"
+              hint={
+                parsedDepositPreview > 0
+                  ? `Preview: ${formatRupiah(parsedDepositPreview)}`
+                  : `Kosongkan kalau tidak setor (kas tetap di drawer)`
+              }
+              disabled={submitting}
+            />
+            {parsedDepositPreview > 0 ? (
+              <>
+                <Input
+                  label="Tujuan Setoran"
+                  type="text"
+                  value={depositBank}
+                  onChange={(e) => setDepositBank(e.target.value)}
+                  placeholder="Owner Tunai / BCA Owner / dll"
+                  disabled={submitting}
+                />
+                <Input
+                  label="Catatan Setoran (opsional)"
+                  type="text"
+                  value={depositNotes}
+                  onChange={(e) => setDepositNotes(e.target.value)}
+                  placeholder="Misal: kembalian belum tersetor, sisa di drawer Rp 200rb"
+                  disabled={submitting}
+                />
+                {parsedCash > 0 && parsedDepositPreview > parsedCash ? (
+                  <p className="text-xs font-medium text-warning-500">
+                    ⚠ Setoran lebih besar dari kas aktual. Pastikan jumlah
+                    benar sebelum simpan.
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+          </div>
 
           <Input
             label="Catatan (opsional)"

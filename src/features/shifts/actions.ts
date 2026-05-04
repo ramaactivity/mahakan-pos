@@ -50,6 +50,26 @@ const closeShiftSchema = z.object({
   gofoodSettlement: moneyOptional,
   grabfoodSettlement: moneyOptional,
   shopeefoodSettlement: moneyOptional,
+  // Phase 2.4 (sesi AB) — setoran ke owner.
+  depositAmount: z
+    .number()
+    .int()
+    .min(0)
+    .max(99_999_999)
+    .nullish()
+    .transform((n) => (typeof n === "number" && n > 0 ? n : null)),
+  depositBankDestination: z
+    .string()
+    .trim()
+    .max(120)
+    .nullish()
+    .transform((s) => (s && s.length > 0 ? s : null)),
+  depositNotes: z
+    .string()
+    .trim()
+    .max(500)
+    .nullish()
+    .transform((s) => (s && s.length > 0 ? s : null)),
 });
 
 async function requireSession() {
@@ -271,6 +291,39 @@ export async function closeShift(
     );
   }
 
+  // Phase 2.4 (sesi AB) — auto-create pending cash_deposit kalau kasir
+  // input setoran ke owner. Owner verify nanti di Admin → Setoran Tunai.
+  // Best-effort: kalau gagal, log warning tapi shift close tetap success.
+  let autoDepositId: string | null = null;
+  if (v.depositAmount && v.depositAmount > 0) {
+    try {
+      const { createCashDeposit } = await import("@/features/finance/actions");
+      const isoDate = (d: Date | string | null | undefined): string => {
+        if (!d) return new Date().toISOString().slice(0, 10);
+        const dt = typeof d === "string" ? new Date(d) : d;
+        return dt.toISOString().slice(0, 10);
+      };
+      const closedDate = isoDate(updated.closedAt);
+      const openedDate = isoDate(current.openedAt);
+      const depRes = await createCashDeposit({
+        depositDate: closedDate,
+        amount: v.depositAmount,
+        bankDestination: v.depositBankDestination ?? "Owner Tunai",
+        referenceNo: `SHIFT-${updated.id.slice(0, 8)}`,
+        notes: v.depositNotes,
+        coversFromDate: openedDate,
+        coversToDate: closedDate,
+      });
+      if (depRes.ok) {
+        autoDepositId = depRes.data.id;
+      } else {
+        console.warn("[closeShift auto-deposit failed]", depRes.error);
+      }
+    } catch (e) {
+      console.warn("[closeShift auto-deposit threw]", e);
+    }
+  }
+
   return ok({
     shift: updated,
     summary: {
@@ -279,6 +332,7 @@ export async function closeShift(
       voided: { count: voidedCount, totalAmount: voidedAmount },
       refunded: { count: refundedCount, totalAmount: refundedAmount },
       expectedCash,
+      depositId: autoDepositId,
     },
   });
 }
