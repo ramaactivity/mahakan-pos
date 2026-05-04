@@ -63,6 +63,7 @@ import { OpenPriceModal } from "@/features/pos/components/OpenPriceModal";
 import { OpenShiftModal } from "@/features/pos/components/OpenShiftModal";
 import { OrderQueuePanel } from "@/features/pos/components/OrderQueuePanel";
 import { PosLeftNav, type PosTab } from "@/features/pos/components/PosLeftNav";
+import { PettyCashPanel } from "@/features/pos/components/PettyCashPanel";
 import { PosSettingsPanel } from "@/features/pos/components/PosSettingsPanel";
 import { PrintStationButtons } from "@/features/pos/components/PrintStationButtons";
 import { ShiftPanel } from "@/features/pos/components/ShiftPanel";
@@ -921,6 +922,8 @@ export function PosShell() {
             onRequestOpenShift={() => setOpenShiftOpen(true)}
             onRequestCloseShift={() => setCloseShiftOpen(true)}
           />
+        ) : tab === "petty_cash" ? (
+          <PettyCashPanel />
         ) : (
           <PosSettingsPanel
             shift={shift}

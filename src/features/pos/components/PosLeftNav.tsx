@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   ClipboardList,
+  Coins,
   FileText,
   History,
   LayoutGrid,
@@ -21,6 +22,7 @@ export type PosTab =
   | "queue"
   | "history"
   | "shifts"
+  | "petty_cash"
   | "settings";
 
 interface PosLeftNavProps {
@@ -41,6 +43,7 @@ const TABS: Array<{ key: PosTab; label: string; Icon: LucideIcon }> = [
   { key: "queue", label: "Pesanan", Icon: ClipboardList },
   { key: "history", label: "Riwayat", Icon: History },
   { key: "shifts", label: "Shift", Icon: Wallet },
+  { key: "petty_cash", label: "Petty Cash", Icon: Coins },
   { key: "settings", label: "Pengaturan", Icon: Settings },
 ];
 
