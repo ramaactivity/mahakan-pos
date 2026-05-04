@@ -17,8 +17,11 @@ import {
   Card,
   CardContent,
   CardHeader,
+  compareBy,
   Skeleton,
+  SortableHeader,
   toast,
+  useColumnSort,
 } from "@/components/ui";
 import {
   deleteEmployee,
@@ -104,11 +107,27 @@ export function EmployeesSection() {
     return byStatus;
   }, [items]);
 
+  const sort = useColumnSort("hr.employees", "name", "asc");
+
   // Apply tenure-bucket filter client-side (server filter is status+search).
-  const filteredItems = useMemo(
-    () => items.filter((e) => matchesTenureBucket(e, tenureFilter)),
-    [items, tenureFilter],
-  );
+  const filteredItems = useMemo(() => {
+    const matched = items.filter((e) => matchesTenureBucket(e, tenureFilter));
+    const getValue = (e: EmployeeWithLink) => {
+      switch (sort.key) {
+        case "name":
+          return e.fullName;
+        case "position":
+          return [e.position ?? "", e.department ?? ""].join(" · ");
+        case "type":
+          return [e.employmentType ?? "", e.salaryAmount ?? 0].join(" · ");
+        case "status":
+          return e.status ?? "";
+        default:
+          return e.fullName;
+      }
+    };
+    return [...matched].sort(compareBy(sort.dir, getValue));
+  }, [items, tenureFilter, sort.key, sort.dir]);
 
   async function handleExportCsv() {
     if (exporting) return;
@@ -294,11 +313,23 @@ export function EmployeesSection() {
               <table className="w-full text-sm">
                 <thead className="border-y border-neutral-200 bg-neutral-50 text-left text-xs uppercase tracking-wider text-neutral-500">
                   <tr>
-                    <th className="px-4 py-2">Nama</th>
-                    <th className="px-4 py-2">Posisi · Departemen</th>
-                    <th className="px-4 py-2">Tipe · Gaji</th>
+                    <SortableHeader columnKey="name" label="Nama" sort={sort} />
+                    <SortableHeader
+                      columnKey="position"
+                      label="Posisi · Departemen"
+                      sort={sort}
+                    />
+                    <SortableHeader
+                      columnKey="type"
+                      label="Tipe · Gaji"
+                      sort={sort}
+                    />
                     <th className="px-4 py-2">Akun POS</th>
-                    <th className="px-4 py-2">Status</th>
+                    <SortableHeader
+                      columnKey="status"
+                      label="Status"
+                      sort={sort}
+                    />
                     <th className="px-4 py-2">Dokumen</th>
                     <th className="px-4 py-2 text-right">Aksi</th>
                   </tr>

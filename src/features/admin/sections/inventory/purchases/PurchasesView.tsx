@@ -16,12 +16,15 @@ import {
   CardContent,
   CardHeader,
   Combobox,
+  compareBy,
   DateRangePicker,
   Input,
   Modal,
   Select,
   Skeleton,
+  SortableHeader,
   toast,
+  useColumnSort,
   type ComboboxGroup,
   type DateRangeValue,
 } from "@/components/ui";
@@ -109,6 +112,28 @@ export function PurchasesView() {
     : false;
 
   const [items, setItems] = useState<PurchaseListItem[]>([]);
+  const sort = useColumnSort("purchases.view", "purchaseDate", "desc");
+  const sortedItems = useMemo(() => {
+    const getValue = (p: PurchaseListItem) => {
+      switch (sort.key) {
+        case "purchaseDate":
+          return p.purchaseDate;
+        case "supplierName":
+          return p.supplierName ?? "";
+        case "paymentMethod":
+          return p.paymentMethod ?? "";
+        case "itemCount":
+          return p.itemCount ?? 0;
+        case "totalAmount":
+          return p.totalAmount ?? 0;
+        case "status":
+          return p.status ?? "";
+        default:
+          return p.purchaseDate;
+      }
+    };
+    return [...items].sort(compareBy(sort.dir, getValue));
+  }, [items, sort.key, sort.dir]);
   const [suppliersList, setSuppliersList] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -309,21 +334,43 @@ export function PurchasesView() {
               <table className="w-full text-sm">
                 <thead className="border-b border-neutral-200 bg-neutral-50 text-xs uppercase tracking-wider text-neutral-500">
                   <tr>
-                    <th className="px-4 py-2 text-left font-medium">Tgl</th>
-                    <th className="px-4 py-2 text-left font-medium">
-                      Supplier
-                    </th>
-                    <th className="px-4 py-2 text-left font-medium">
-                      Metode
-                    </th>
-                    <th className="px-4 py-2 text-right font-medium">Item</th>
-                    <th className="px-4 py-2 text-right font-medium">Total</th>
-                    <th className="px-4 py-2 text-left font-medium">Status</th>
+                    <SortableHeader
+                      columnKey="purchaseDate"
+                      label="Tgl"
+                      sort={sort}
+                    />
+                    <SortableHeader
+                      columnKey="supplierName"
+                      label="Supplier"
+                      sort={sort}
+                    />
+                    <SortableHeader
+                      columnKey="paymentMethod"
+                      label="Metode"
+                      sort={sort}
+                    />
+                    <SortableHeader
+                      columnKey="itemCount"
+                      label="Item"
+                      sort={sort}
+                      align="right"
+                    />
+                    <SortableHeader
+                      columnKey="totalAmount"
+                      label="Total"
+                      sort={sort}
+                      align="right"
+                    />
+                    <SortableHeader
+                      columnKey="status"
+                      label="Status"
+                      sort={sort}
+                    />
                     <th className="px-4 py-2 text-right font-medium">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
-                  {items.map((p) => (
+                  {sortedItems.map((p) => (
                     <tr key={p.id} className="hover:bg-neutral-50">
                       <td className="px-4 py-3 font-mono text-xs">
                         {p.purchaseDate}

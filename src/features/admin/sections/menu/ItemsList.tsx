@@ -16,11 +16,14 @@ import {
   Card,
   CardContent,
   CardHeader,
+  compareBy,
   Input,
   Modal,
   Select,
   Skeleton,
+  SortableHeader,
   toast,
+  useColumnSort,
 } from "@/components/ui";
 import { MenuItemFormModal } from "./MenuItemFormModal";
 import { BulkActionsBar } from "./BulkActionsBar";
@@ -80,9 +83,11 @@ export function ItemsList() {
     return m;
   }, [categories]);
 
+  const sort = useColumnSort("menu.items", "name", "asc");
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
-    return items.filter((i) => {
+    const matched = items.filter((i) => {
       if (categoryFilter !== "all" && i.categoryId !== categoryFilter)
         return false;
       if (statusFilter === "available" && i.isSoldOut) return false;
@@ -91,7 +96,24 @@ export function ItemsList() {
       if (q && !i.name.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [items, search, categoryFilter, statusFilter]);
+    const getValue = (i: MenuItem) => {
+      switch (sort.key) {
+        case "name":
+          return i.name;
+        case "category":
+          return categoryById[i.categoryId]?.name ?? "";
+        case "type":
+          return i.priceFixed !== null ? "Tunggal" : "Hot/Iced";
+        case "price":
+          return i.priceFixed ?? i.priceHot ?? i.priceIced ?? 0;
+        case "status":
+          return i.isSoldOut ? "Habis" : "Tersedia";
+        default:
+          return i.name;
+      }
+    };
+    return [...matched].sort(compareBy(sort.dir, getValue));
+  }, [items, search, categoryFilter, statusFilter, sort.key, sort.dir, categoryById]);
 
   const counts = useMemo(() => {
     let available = 0;
@@ -352,11 +374,29 @@ export function ItemsList() {
                         className="size-4 rounded border-neutral-300"
                       />
                     </th>
-                    <th className="px-4 py-2 text-left font-medium">Nama</th>
-                    <th className="px-4 py-2 text-left font-medium">Kategori</th>
-                    <th className="px-4 py-2 text-left font-medium">Tipe</th>
-                    <th className="px-4 py-2 text-right font-medium">Harga</th>
-                    <th className="px-4 py-2 text-center font-medium">Status</th>
+                    <SortableHeader columnKey="name" label="Nama" sort={sort} />
+                    <SortableHeader
+                      columnKey="category"
+                      label="Kategori"
+                      sort={sort}
+                    />
+                    <SortableHeader
+                      columnKey="type"
+                      label="Tipe"
+                      sort={sort}
+                    />
+                    <SortableHeader
+                      columnKey="price"
+                      label="Harga"
+                      sort={sort}
+                      align="right"
+                    />
+                    <SortableHeader
+                      columnKey="status"
+                      label="Status"
+                      sort={sort}
+                      align="center"
+                    />
                     <th className="px-4 py-2 text-right font-medium">Aksi</th>
                   </tr>
                 </thead>

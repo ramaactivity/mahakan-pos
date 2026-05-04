@@ -8,10 +8,13 @@ import {
   Card,
   CardContent,
   CardHeader,
+  compareBy,
   Input,
   Modal,
   Skeleton,
+  SortableHeader,
   toast,
+  useColumnSort,
 } from "@/components/ui";
 import {
   deleteSupplier,
@@ -61,7 +64,24 @@ export function SuppliersList() {
     };
   }, [refreshKey, search, showInactive]);
 
-  const filtered = useMemo(() => items, [items]);
+  const sort = useColumnSort("suppliers.list", "name", "asc");
+  const filtered = useMemo(() => {
+    const getValue = (s: Supplier) => {
+      switch (sort.key) {
+        case "name":
+          return s.name;
+        case "category":
+          return s.category ?? "";
+        case "contact":
+          return s.contact ?? "";
+        case "defaultPaymentTermDays":
+          return s.defaultPaymentTermDays ?? 0;
+        default:
+          return s.name;
+      }
+    };
+    return [...items].sort(compareBy(sort.dir, getValue));
+  }, [items, sort.key, sort.dir]);
   const activeCount = useMemo(
     () => items.filter((s) => s.isActive).length,
     [items],
@@ -166,16 +186,23 @@ export function SuppliersList() {
               <table className="w-full text-sm">
                 <thead className="border-b border-neutral-200 bg-neutral-50 text-xs uppercase tracking-wider text-neutral-500">
                   <tr>
-                    <th className="px-4 py-2 text-left font-medium">Nama</th>
-                    <th className="px-4 py-2 text-left font-medium">
-                      Kategori
-                    </th>
-                    <th className="px-4 py-2 text-left font-medium">
-                      Kontak
-                    </th>
-                    <th className="px-4 py-2 text-right font-medium">
-                      Default TOP
-                    </th>
+                    <SortableHeader columnKey="name" label="Nama" sort={sort} />
+                    <SortableHeader
+                      columnKey="category"
+                      label="Kategori"
+                      sort={sort}
+                    />
+                    <SortableHeader
+                      columnKey="contact"
+                      label="Kontak"
+                      sort={sort}
+                    />
+                    <SortableHeader
+                      columnKey="defaultPaymentTermDays"
+                      label="Default TOP"
+                      sort={sort}
+                      align="right"
+                    />
                     <th className="px-4 py-2 text-right font-medium">Aksi</th>
                   </tr>
                 </thead>

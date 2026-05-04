@@ -18,10 +18,13 @@ import {
   Card,
   CardContent,
   CardHeader,
+  compareBy,
   Input,
   Modal,
   Skeleton,
+  SortableHeader,
   toast,
+  useColumnSort,
 } from "@/components/ui";
 import {
   deleteIngredient,
@@ -143,10 +146,33 @@ export function IngredientsList() {
     [lowStock],
   );
 
-  const visible = useMemo(
+  const filtered = useMemo(
     () => (lowOnly ? ingredients.filter((i) => lowStockIds.has(i.id)) : ingredients),
     [ingredients, lowStockIds, lowOnly],
   );
+
+  const sort = useColumnSort("inventory.ingredients", "name", "asc");
+  const visible = useMemo(() => {
+    const getValue = (i: Ingredient) => {
+      switch (sort.key) {
+        case "name":
+          return i.name;
+        case "section":
+          return i.section ? (SECTION_BADGE[i.section]?.label ?? "") : "";
+        case "currentStock":
+          return i.currentStock ?? 0;
+        case "unit":
+          return i.unit ?? "";
+        case "costPerUnit":
+          return i.costPerUnit ?? 0;
+        case "reorderThreshold":
+          return i.reorderThreshold ?? 0;
+        default:
+          return i.name;
+      }
+    };
+    return [...filtered].sort(compareBy(sort.dir, getValue));
+  }, [filtered, sort.key, sort.dir]);
 
   const totalStockValue = useMemo(
     () =>
@@ -334,16 +360,37 @@ export function IngredientsList() {
                         />
                       </th>
                     ) : null}
-                    <th className="px-4 py-2 text-left font-medium">Nama</th>
-                    <th className="px-4 py-2 text-left font-medium">
-                      Section
-                    </th>
-                    <th className="px-4 py-2 text-right font-medium">Stok</th>
-                    <th className="px-4 py-2 text-left font-medium">Unit</th>
+                    <SortableHeader columnKey="name" label="Nama" sort={sort} />
+                    <SortableHeader
+                      columnKey="section"
+                      label="Section"
+                      sort={sort}
+                    />
+                    <SortableHeader
+                      columnKey="currentStock"
+                      label="Stok"
+                      sort={sort}
+                      align="right"
+                    />
+                    <SortableHeader
+                      columnKey="unit"
+                      label="Unit"
+                      sort={sort}
+                    />
                     {canSeeCost ? (
-                      <th className="px-4 py-2 text-right font-medium">Cost / Unit</th>
+                      <SortableHeader
+                        columnKey="costPerUnit"
+                        label="Cost / Unit"
+                        sort={sort}
+                        align="right"
+                      />
                     ) : null}
-                    <th className="px-4 py-2 text-right font-medium">Threshold</th>
+                    <SortableHeader
+                      columnKey="reorderThreshold"
+                      label="Threshold"
+                      sort={sort}
+                      align="right"
+                    />
                     <th className="px-4 py-2 text-right font-medium">Aksi</th>
                   </tr>
                 </thead>

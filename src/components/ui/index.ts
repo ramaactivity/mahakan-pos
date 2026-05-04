@@ -42,6 +42,13 @@ export { QuantityStepper } from "./QuantityStepper";
 
 export { Skeleton } from "./Skeleton";
 
+export {
+  SortableHeader,
+  useColumnSort,
+  compareBy,
+  type SortDir,
+} from "./SortableHeader";
+
 export { Spinner } from "./Spinner";
 
 export { Toaster, toast } from "./Toast";
