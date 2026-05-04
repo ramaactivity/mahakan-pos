@@ -32,6 +32,7 @@ import type {
   TicketSection,
 } from "@/lib/printer/print-transaction";
 import { formatRupiah } from "@/lib/format";
+import { paymentMethodLabel } from "@/lib/payment-method";
 import { formatIndonesianDateTime, toJakartaDateOnly } from "@/lib/date";
 import type { Role } from "@/lib/auth";
 
@@ -407,11 +408,9 @@ export function HistoryDetailModal({
                 value={
                   trx.paymentMethod === "cash"
                     ? `Tunai ${formatRupiah(trx.cashReceived ?? 0)} · kembali ${formatRupiah(trx.cashChange ?? 0)}`
-                    : trx.paymentMethod === "qris"
-                      ? "QRIS"
-                      : trx.paymentMethod === "card_bca"
-                        ? "Kartu BCA"
-                        : `Split (${splitBreakdown?.splits.length ?? 0}x)`
+                    : trx.paymentMethod === "split"
+                      ? `Split (${splitBreakdown?.splits.length ?? 0}x)`
+                      : paymentMethodLabel(trx.paymentMethod)
                 }
                 muted
               />

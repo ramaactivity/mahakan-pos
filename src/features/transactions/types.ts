@@ -50,7 +50,33 @@ export interface AddSplitPaymentInput {
 
 export type Variant = "hot" | "iced";
 export type DiscountType = "percent" | "fixed";
-export type PaymentMethod = "cash" | "qris" | "card_bca" | "split";
+export type PaymentMethod =
+  | "cash"
+  | "qris"
+  | "card_bca"
+  | "card_bni"
+  | "card_mandiri"
+  | "card_bri"
+  | "card_other"
+  | "split";
+
+/**
+ * All concrete card EDC methods (excludes "split" composite). Used by code
+ * that needs to enumerate the bank-card variants for filtering, summing,
+ * accounting routing, etc.
+ */
+export const CARD_PAYMENT_METHODS = [
+  "card_bca",
+  "card_bni",
+  "card_mandiri",
+  "card_bri",
+  "card_other",
+] as const;
+export type CardPaymentMethod = (typeof CARD_PAYMENT_METHODS)[number];
+
+export function isCardPayment(m: string): m is CardPaymentMethod {
+  return (CARD_PAYMENT_METHODS as readonly string[]).includes(m);
+}
 export type OrderType = "dine_in" | "takeaway";
 export type TransactionStatus =
   | "paid"

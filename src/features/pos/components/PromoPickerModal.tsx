@@ -20,7 +20,16 @@ interface PromoPickerModalProps {
   subtotal: number;
   cartLines: CartLineItem[];
   orderType: "dine_in" | "takeaway";
-  paymentMethod: "cash" | "qris" | "card_bca" | "split" | null;
+  paymentMethod:
+    | "cash"
+    | "qris"
+    | "card_bca"
+    | "card_bni"
+    | "card_mandiri"
+    | "card_bri"
+    | "card_other"
+    | "split"
+    | null;
   /** When set, current draft already has a promo applied — modal lets user
    * remove it (alternative to picking a new one). */
   appliedPromoId: string | null;

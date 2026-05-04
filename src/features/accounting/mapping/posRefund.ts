@@ -22,11 +22,29 @@ export type PosRefundInput = {
   /** Date refund posted (YYYY-MM-DD WIB). */
   entryDate: string;
   /** Original payment method — determines kas/piutang account. */
-  originalPaymentMethod: "cash" | "qris" | "card_bca" | "split";
+  originalPaymentMethod:
+    | "cash"
+    | "qris"
+    | "card_bca"
+    | "card_bni"
+    | "card_mandiri"
+    | "card_bri"
+    | "card_other"
+    | "split";
   /** Total refunded amount (may be partial). */
   refundedAmount: number;
   /** For split — breakdown of which methods to reverse, sum = refundedAmount. */
-  splits?: { paymentMethod: "cash" | "qris" | "card_bca"; amount: number }[];
+  splits?: {
+    paymentMethod:
+      | "cash"
+      | "qris"
+      | "card_bca"
+      | "card_bni"
+      | "card_mandiri"
+      | "card_bri"
+      | "card_other";
+    amount: number;
+  }[];
   /** Items refunded (for COGS reversal). amount + cogs per line. */
   items?: AggregatedItem[];
   /** Reverse COGS movement back to persediaan. Default false (barang habis). */
@@ -34,12 +52,22 @@ export type PosRefundInput = {
 };
 
 const PAYMENT_METHOD_TO_ACCOUNT: Record<
-  "cash" | "qris" | "card_bca",
+  | "cash"
+  | "qris"
+  | "card_bca"
+  | "card_bni"
+  | "card_mandiri"
+  | "card_bri"
+  | "card_other",
   string
 > = {
   cash: "1101",
   qris: "1120",
   card_bca: "1121",
+  card_bni: "1125",
+  card_mandiri: "1126",
+  card_bri: "1127",
+  card_other: "1128",
 };
 
 export function mapPosRefund(input: PosRefundInput): JournalLineInput[] {

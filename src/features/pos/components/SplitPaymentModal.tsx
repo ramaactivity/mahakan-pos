@@ -24,7 +24,14 @@ import { printTickets } from "@/lib/printer/print-transaction";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type PaymentMethod = "cash" | "qris" | "card_bca";
+type PaymentMethod =
+  | "cash"
+  | "qris"
+  | "card_bca"
+  | "card_bni"
+  | "card_mandiri"
+  | "card_bri"
+  | "card_other";
 
 interface SplitPaymentModalProps {
   open: boolean;
@@ -373,12 +380,16 @@ export function SplitPaymentModal({
             <p className="mb-2 text-sm font-medium text-neutral-900">
               Metode Pembayaran
             </p>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
               {(
                 [
                   { value: "cash" as const, label: "Tunai", Icon: Banknote },
                   { value: "qris" as const, label: "QRIS", Icon: Wallet },
-                  { value: "card_bca" as const, label: "Kartu BCA", Icon: Wallet },
+                  { value: "card_bca" as const, label: "BCA", Icon: Wallet },
+                  { value: "card_bni" as const, label: "BNI", Icon: Wallet },
+                  { value: "card_mandiri" as const, label: "Mandiri", Icon: Wallet },
+                  { value: "card_bri" as const, label: "BRI", Icon: Wallet },
+                  { value: "card_other" as const, label: "Lainnya", Icon: Wallet },
                 ]
               ).map((opt) => (
                 <button

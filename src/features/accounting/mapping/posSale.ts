@@ -22,11 +22,26 @@
 import type { JournalLineInput } from "../posting";
 import { aggregateByCategory, type AggregatedItem } from "./categoryMapper";
 
-export type PosSalePaymentMethod = "cash" | "qris" | "card_bca" | "split";
+export type PosSalePaymentMethod =
+  | "cash"
+  | "qris"
+  | "card_bca"
+  | "card_bni"
+  | "card_mandiri"
+  | "card_bri"
+  | "card_other"
+  | "split";
 
 export type SplitPaymentRow = {
   /** Each split row's actual cash receipt method. */
-  paymentMethod: "cash" | "qris" | "card_bca";
+  paymentMethod:
+    | "cash"
+    | "qris"
+    | "card_bca"
+    | "card_bni"
+    | "card_mandiri"
+    | "card_bri"
+    | "card_other";
   amount: number;
 };
 
@@ -53,12 +68,22 @@ export type PosSaleInput = {
 };
 
 const PAYMENT_METHOD_TO_ACCOUNT: Record<
-  "cash" | "qris" | "card_bca",
+  | "cash"
+  | "qris"
+  | "card_bca"
+  | "card_bni"
+  | "card_mandiri"
+  | "card_bri"
+  | "card_other",
   string
 > = {
   cash: "1101", // Kas Tunai (Drawer POS)
   qris: "1120", // Piutang QRIS
   card_bca: "1121", // Piutang EDC BCA
+  card_bni: "1125", // Piutang EDC BNI
+  card_mandiri: "1126", // Piutang EDC Mandiri
+  card_bri: "1127", // Piutang EDC BRI
+  card_other: "1128", // Piutang EDC Lainnya (catch-all)
 };
 
 export function mapPosSale(input: PosSaleInput): JournalLineInput[] {

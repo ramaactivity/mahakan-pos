@@ -123,7 +123,18 @@ export async function postJournalForPosSale(args: {
   }
 
   // Regular POS sale
-  let splitsInput: { paymentMethod: "cash" | "qris" | "card_bca"; amount: number }[] | undefined;
+  const VALID_SETTLE_METHODS = [
+    "cash",
+    "qris",
+    "card_bca",
+    "card_bni",
+    "card_mandiri",
+    "card_bri",
+    "card_other",
+  ] as const;
+  type SettleMethod = (typeof VALID_SETTLE_METHODS)[number];
+
+  let splitsInput: { paymentMethod: SettleMethod; amount: number }[] | undefined;
   if (trx.paymentMethod === "split") {
     const splits = await db
       .select()
@@ -131,10 +142,12 @@ export async function postJournalForPosSale(args: {
       .where(eq(splitPayments.transactionId, args.transactionId));
     splitsInput = splits
       .filter((s) =>
-        ["cash", "qris", "card_bca"].includes(s.paymentMethod ?? ""),
+        (VALID_SETTLE_METHODS as readonly string[]).includes(
+          s.paymentMethod ?? "",
+        ),
       )
       .map((s) => ({
-        paymentMethod: s.paymentMethod as "cash" | "qris" | "card_bca",
+        paymentMethod: s.paymentMethod as SettleMethod,
         amount: Number(s.amount),
       }));
   }
@@ -144,7 +157,7 @@ export async function postJournalForPosSale(args: {
     transactionNumber: trx.transactionNumber,
     outletId: trx.outletId,
     entryDate,
-    paymentMethod: trx.paymentMethod as "cash" | "qris" | "card_bca" | "split",
+    paymentMethod: trx.paymentMethod as SettleMethod | "split",
     total: Number(trx.total),
     subtotal: Number(trx.subtotal),
     discountAmount: Number(trx.discountAmount ?? 0),
@@ -204,9 +217,21 @@ export async function postJournalForPosRefund(args: {
     const splitTotal = splits.reduce((s, sp) => s + Number(sp.amount), 0);
     if (splitTotal > 0) {
       let allocated = 0;
+      const VALID_REFUND_METHODS = [
+        "cash",
+        "qris",
+        "card_bca",
+        "card_bni",
+        "card_mandiri",
+        "card_bri",
+        "card_other",
+      ] as const;
+      type RefundMethod = (typeof VALID_REFUND_METHODS)[number];
       const allocs = splits
         .filter((s) =>
-          ["cash", "qris", "card_bca"].includes(s.paymentMethod ?? ""),
+          (VALID_REFUND_METHODS as readonly string[]).includes(
+            s.paymentMethod ?? "",
+          ),
         )
         .map((s, idx, arr) => {
           const isLast = idx === arr.length - 1;
@@ -217,7 +242,7 @@ export async function postJournalForPosRefund(args: {
               );
           allocated += amt;
           return {
-            paymentMethod: s.paymentMethod as "cash" | "qris" | "card_bca",
+            paymentMethod: s.paymentMethod as RefundMethod,
             amount: amt,
           };
         });
@@ -234,6 +259,10 @@ export async function postJournalForPosRefund(args: {
       | "cash"
       | "qris"
       | "card_bca"
+      | "card_bni"
+      | "card_mandiri"
+      | "card_bri"
+      | "card_other"
       | "split",
     refundedAmount: args.refundedAmount,
     splits: splitsInput,

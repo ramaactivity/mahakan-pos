@@ -183,6 +183,13 @@
       "when": 1777811987610,
       "tag": "0025_purchase_receipt_url",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1777880895090,
+      "tag": "0026_add_edc_card_accounts",
+      "breakpoints": true
     }
   ]
 }

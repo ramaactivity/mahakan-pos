@@ -4,7 +4,16 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const orderTypeSchema = z.enum(["dine_in", "takeaway"]);
-const paymentMethodSchema = z.enum(["cash", "qris", "card_bca", "split"]);
+const paymentMethodSchema = z.enum([
+  "cash",
+  "qris",
+  "card_bca",
+  "card_bni",
+  "card_mandiri",
+  "card_bri",
+  "card_other",
+  "split",
+]);
 
 const basePromoFields = {
   name: z.string().min(1, "Nama wajib").max(120, "Nama maks 120 karakter").trim(),

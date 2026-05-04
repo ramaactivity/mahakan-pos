@@ -126,6 +126,10 @@ const PAYMENT_LABEL: Record<string, string> = {
   cash: "Tunai",
   qris: "QRIS",
   card_bca: "Kartu BCA",
+  card_bni: "Kartu BNI",
+  card_mandiri: "Kartu Mandiri",
+  card_bri: "Kartu BRI",
+  card_other: "Kartu Lainnya",
 };
 
 export function exportDailySalesPdf(

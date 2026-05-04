@@ -50,7 +50,16 @@ export const transactions = pgTable(
     total: bigint("total", { mode: "number" }).notNull(),
 
     paymentMethod: text("payment_method", {
-      enum: ["cash", "qris", "card_bca", "split"],
+      enum: [
+        "cash",
+        "qris",
+        "card_bca",
+        "card_bni",
+        "card_mandiri",
+        "card_bri",
+        "card_other",
+        "split",
+      ],
     }).notNull(),
     cashReceived: bigint("cash_received", { mode: "number" }),
     cashChange: bigint("cash_change", { mode: "number" }),

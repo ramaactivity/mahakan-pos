@@ -7,6 +7,7 @@
 
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
+import { paymentMethodReceiptLabel } from "@/lib/payment-method";
 import {
   align,
   bold,
@@ -71,7 +72,15 @@ export interface ReceiptData {
   discountAmount: number;
   discountReason: string | null;
   total: number;
-  paymentMethod: "cash" | "qris" | "card_bca" | "split";
+  paymentMethod:
+    | "cash"
+    | "qris"
+    | "card_bca"
+    | "card_bni"
+    | "card_mandiri"
+    | "card_bri"
+    | "card_other"
+    | "split";
   cashReceived: number | null;
   cashChange: number | null;
   status: "paid" | "voided" | "refunded" | "open" | "partially_refunded";
@@ -219,14 +228,8 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
     parts.push(
       dualLine("KEMBALI", formatRupiah(d.cashChange ?? 0), COLS),
     );
-  } else if (d.paymentMethod === "qris") {
-    parts.push(text("BAYAR : QRIS\n"));
-  } else if (d.paymentMethod === "card_bca") {
-    parts.push(text("BAYAR : KARTU BCA\n"));
   } else {
-    // split — final aggregate receipt notes that the bill was paid via
-    // multiple split events; per-split detail prints separately.
-    parts.push(text("BAYAR : SPLIT (multi-payer)\n"));
+    parts.push(text(`BAYAR : ${paymentMethodReceiptLabel(d.paymentMethod)}\n`));
   }
   parts.push(bold(false));
 

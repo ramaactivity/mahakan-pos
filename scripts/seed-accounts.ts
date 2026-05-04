@@ -1,5 +1,5 @@
 /**
- * `npm run seed:accounts` — idempotent seed of 52 default Chart of Accounts
+ * `npm run seed:accounts` — idempotent seed of 56 default Chart of Accounts
  * sesuai docs/10-ACCOUNTING-DESIGN.md §2.
  *
  * Code 4-digit sebagai natural key. Re-run safe — skips existing.
@@ -37,7 +37,7 @@ interface DefaultAccount {
 }
 
 /**
- * 52 default accounts. Display order grouped per type, ascending dalam type.
+ * 56 default accounts. Display order grouped per type, ascending dalam type.
  * System accounts (isSystem=true) wajib ada untuk auto-journal hooks sesi T+.
  */
 const DEFAULTS: DefaultAccount[] = [
@@ -52,6 +52,10 @@ const DEFAULTS: DefaultAccount[] = [
   { code: "1122", name: "Piutang GoFood", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 12, notes: "Sale via GoFood channel → settle weekly" },
   { code: "1123", name: "Piutang GrabFood", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 13, notes: "Sale via GrabFood channel" },
   { code: "1124", name: "Piutang ShopeeFood", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 14, notes: "Sale via ShopeeFood channel" },
+  { code: "1125", name: "Piutang EDC BNI", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 15, notes: "POS card_bni sale → settle T+1" },
+  { code: "1126", name: "Piutang EDC Mandiri", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 16, notes: "POS card_mandiri sale → settle T+1" },
+  { code: "1127", name: "Piutang EDC BRI", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 17, notes: "POS card_bri sale → settle T+1" },
+  { code: "1128", name: "Piutang EDC Lainnya", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 18, notes: "POS card_other sale → settle T+1 (catch-all bank lain: HSBC, OCBC, dll)" },
   { code: "1130", name: "Piutang Karyawan (Kasbon)", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: false, displayOrder: 20, notes: "Manual entry untuk advance gaji karyawan" },
   { code: "1140", name: "Persediaan Bahan Baku — Kitchen", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 30, notes: "Mirror ingredients.section='kitchen' value (sum current_stock × cost_per_unit)" },
   { code: "1141", name: "Persediaan Bahan Baku — Bar", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 31, notes: "Mirror section='bar'" },

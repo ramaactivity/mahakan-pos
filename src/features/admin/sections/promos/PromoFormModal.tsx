@@ -68,7 +68,16 @@ export function PromoFormModal({
   const [minSubtotal, setMinSubtotal] = useState("");
   const [orderTypes, setOrderTypes] = useState<Array<"dine_in" | "takeaway">>([]);
   const [paymentMethods, setPaymentMethods] = useState<
-    Array<"cash" | "qris" | "card_bca" | "split">
+    Array<
+      | "cash"
+      | "qris"
+      | "card_bca"
+      | "card_bni"
+      | "card_mandiri"
+      | "card_bri"
+      | "card_other"
+      | "split"
+    >
   >([]);
   const [requiresApproval, setRequiresApproval] = useState(false);
 
@@ -129,7 +138,14 @@ export function PromoFormModal({
       );
       setPaymentMethods(
         (initial.applicablePaymentMethods ?? []) as Array<
-          "cash" | "qris" | "card_bca" | "split"
+          | "cash"
+          | "qris"
+          | "card_bca"
+          | "card_bni"
+          | "card_mandiri"
+          | "card_bri"
+          | "card_other"
+          | "split"
         >,
       );
       setRequiresApproval(initial.requiresApproval);
@@ -245,7 +261,15 @@ export function PromoFormModal({
   }
 
   function togglePaymentMethod(
-    m: "cash" | "qris" | "card_bca" | "split",
+    m:
+      | "cash"
+      | "qris"
+      | "card_bca"
+      | "card_bni"
+      | "card_mandiri"
+      | "card_bri"
+      | "card_other"
+      | "split",
   ) {
     setPaymentMethods((prev) =>
       prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m],
@@ -451,12 +475,24 @@ export function PromoFormModal({
                 { value: "cash", label: "Tunai" },
                 { value: "qris", label: "QRIS" },
                 { value: "card_bca", label: "Kartu BCA" },
+                { value: "card_bni", label: "Kartu BNI" },
+                { value: "card_mandiri", label: "Kartu Mandiri" },
+                { value: "card_bri", label: "Kartu BRI" },
+                { value: "card_other", label: "Kartu Lainnya" },
                 { value: "split", label: "Split" },
               ]}
               selected={paymentMethods}
               onToggle={(v) =>
                 togglePaymentMethod(
-                  v as "cash" | "qris" | "card_bca" | "split",
+                  v as
+                    | "cash"
+                    | "qris"
+                    | "card_bca"
+                    | "card_bni"
+                    | "card_mandiri"
+                    | "card_bri"
+                    | "card_other"
+                    | "split",
                 )
               }
               hint="Kosong = berlaku untuk semua"

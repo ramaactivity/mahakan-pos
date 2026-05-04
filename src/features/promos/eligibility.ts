@@ -17,7 +17,16 @@ export interface CartContext {
   lines: Array<{ categoryId: string | null; lineSubtotal: number }>;
   orderType: "dine_in" | "takeaway";
   /** Optional planned payment method (modal can preview before staff picks). */
-  paymentMethod?: "cash" | "qris" | "card_bca" | "split" | null;
+  paymentMethod?:
+    | "cash"
+    | "qris"
+    | "card_bca"
+    | "card_bni"
+    | "card_mandiri"
+    | "card_bri"
+    | "card_other"
+    | "split"
+    | null;
   /** Reference time — pass `new Date()` at call site. Allows deterministic
    *  testing. Server should use server time, client should use client time
    *  (close enough for window-eligibility). */

@@ -48,7 +48,16 @@ export interface CreatePromoInput {
   scopeCategoryIds?: string[] | null;
   minSubtotal?: number | null;
   applicableOrderTypes?: Array<"dine_in" | "takeaway"> | null;
-  applicablePaymentMethods?: Array<"cash" | "qris" | "card_bca" | "split"> | null;
+  applicablePaymentMethods?: Array<
+    | "cash"
+    | "qris"
+    | "card_bca"
+    | "card_bni"
+    | "card_mandiri"
+    | "card_bri"
+    | "card_other"
+    | "split"
+  > | null;
   startDate?: string | null;
   endDate?: string | null;
   daysOfWeek?: number[] | null;

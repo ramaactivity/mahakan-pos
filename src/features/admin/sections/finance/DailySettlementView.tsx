@@ -11,6 +11,10 @@ import { cn } from "@/lib/utils";
 const CHANNEL_LABEL: Record<string, string> = {
   cash: "Tunai",
   card_bca: "EDC BCA",
+  card_bni: "EDC BNI",
+  card_mandiri: "EDC Mandiri",
+  card_bri: "EDC BRI",
+  card_other: "EDC Lainnya",
   qris: "QRIS",
   edc: "EDC BCA",
   gofood: "GoFood",

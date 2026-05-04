@@ -45,7 +45,15 @@ export const splitPayments = pgTable(
 
     amount: bigint("amount", { mode: "number" }).notNull(),
     paymentMethod: text("payment_method", {
-      enum: ["cash", "qris", "card_bca"],
+      enum: [
+        "cash",
+        "qris",
+        "card_bca",
+        "card_bni",
+        "card_mandiri",
+        "card_bri",
+        "card_other",
+      ],
     }).notNull(),
     cashReceived: bigint("cash_received", { mode: "number" }),
     cashChange: bigint("cash_change", { mode: "number" }),

@@ -135,7 +135,7 @@ export function CloseOpenBillModal({
         <div className="space-y-1.5">
           <p className="text-sm font-medium text-neutral-900">Metode Bayar</p>
           <div
-            className="grid grid-cols-3 gap-2"
+            className="grid grid-cols-3 gap-2 sm:grid-cols-4"
             role="radiogroup"
             aria-label="Metode pembayaran"
           >
@@ -154,7 +154,31 @@ export function CloseOpenBillModal({
             <MethodButton
               active={paymentMethod === "card_bca"}
               onClick={() => setPaymentMethod("card_bca")}
-              label="Kartu BCA"
+              label="BCA"
+              Icon={CreditCard}
+            />
+            <MethodButton
+              active={paymentMethod === "card_bni"}
+              onClick={() => setPaymentMethod("card_bni")}
+              label="BNI"
+              Icon={CreditCard}
+            />
+            <MethodButton
+              active={paymentMethod === "card_mandiri"}
+              onClick={() => setPaymentMethod("card_mandiri")}
+              label="Mandiri"
+              Icon={CreditCard}
+            />
+            <MethodButton
+              active={paymentMethod === "card_bri"}
+              onClick={() => setPaymentMethod("card_bri")}
+              label="BRI"
+              Icon={CreditCard}
+            />
+            <MethodButton
+              active={paymentMethod === "card_other"}
+              onClick={() => setPaymentMethod("card_other")}
+              label="Lainnya"
               Icon={CreditCard}
             />
           </div>

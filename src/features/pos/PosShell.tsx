@@ -1732,7 +1732,7 @@ function PayingPanel({
         </div>
 
         <div
-          className="grid grid-cols-3 gap-2"
+          className="grid grid-cols-3 gap-2 sm:grid-cols-4"
           role="radiogroup"
           aria-label="Metode pembayaran"
         >
@@ -1751,7 +1751,31 @@ function PayingPanel({
           <MethodButton
             active={paymentMethod === "card_bca"}
             onClick={() => setPaymentMethod("card_bca")}
-            label="Kartu"
+            label="BCA"
+            Icon={CreditCard}
+          />
+          <MethodButton
+            active={paymentMethod === "card_bni"}
+            onClick={() => setPaymentMethod("card_bni")}
+            label="BNI"
+            Icon={CreditCard}
+          />
+          <MethodButton
+            active={paymentMethod === "card_mandiri"}
+            onClick={() => setPaymentMethod("card_mandiri")}
+            label="Mandiri"
+            Icon={CreditCard}
+          />
+          <MethodButton
+            active={paymentMethod === "card_bri"}
+            onClick={() => setPaymentMethod("card_bri")}
+            label="BRI"
+            Icon={CreditCard}
+          />
+          <MethodButton
+            active={paymentMethod === "card_other"}
+            onClick={() => setPaymentMethod("card_other")}
+            label="Lainnya"
             Icon={CreditCard}
           />
         </div>
