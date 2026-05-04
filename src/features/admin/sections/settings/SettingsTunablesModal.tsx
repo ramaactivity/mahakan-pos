@@ -5,6 +5,7 @@ import { Button, Input, Modal, toast } from "@/components/ui";
 import {
   isOk,
   updateApproval,
+  updateAttendanceSettings,
   updateFeatures,
   updateReceiptSettings,
   updateThresholds,
@@ -35,6 +36,11 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     return [];
   })();
 
+  // Phase 4 (sesi AB) — default GPS = Mahakan Coffee & Space (Cisarua).
+  // Owner bisa override per outlet via UI di bawah.
+  const DEFAULT_GPS = { lat: -6.6753234, lng: 106.9298715, radiusMeters: 50 };
+  const existingGps = outlet.settings?.attendance?.gpsCenter;
+
   const initial = {
     footerText: outlet.settings?.receipt?.footerText ?? "Terima kasih, sampai jumpa!",
     showQrRating: outlet.settings?.receipt?.showQrRating ?? false,
@@ -43,6 +49,10 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     accountingAutoJournal:
       outlet.settings?.features?.accounting_auto_journal ?? false,
     defaultMarkupPct: outlet.settings?.features?.defaultMarkupPct ?? 250,
+    lateGraceMinutes: outlet.settings?.attendance?.lateGraceMinutes ?? 5,
+    gpsLat: existingGps?.lat ?? DEFAULT_GPS.lat,
+    gpsLng: existingGps?.lng ?? DEFAULT_GPS.lng,
+    gpsRadius: existingGps?.radiusMeters ?? DEFAULT_GPS.radiusMeters,
     voidMode: outlet.settings?.approval?.voidMode === "code" ? "code" : "pin",
     refundMode: outlet.settings?.approval?.refundMode === "code" ? "code" : "pin",
     notifyEmails: initialEmails,
@@ -57,6 +67,12 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
   const [defaultMarkupPct, setDefaultMarkupPct] = useState(
     String(initial.defaultMarkupPct),
   );
+  const [lateGraceMinutes, setLateGraceMinutes] = useState(
+    String(initial.lateGraceMinutes),
+  );
+  const [gpsLat, setGpsLat] = useState(String(initial.gpsLat));
+  const [gpsLng, setGpsLng] = useState(String(initial.gpsLng));
+  const [gpsRadius, setGpsRadius] = useState(String(initial.gpsRadius));
   const [voidCodeMode, setVoidCodeMode] = useState(initial.voidMode === "code");
   const [refundCodeMode, setRefundCodeMode] = useState(
     initial.refundMode === "code",
@@ -75,6 +91,10 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setShowHpp(initial.showHpp);
     setAccountingAutoJournal(initial.accountingAutoJournal);
     setDefaultMarkupPct(String(initial.defaultMarkupPct));
+    setLateGraceMinutes(String(initial.lateGraceMinutes));
+    setGpsLat(String(initial.gpsLat));
+    setGpsLng(String(initial.gpsLng));
+    setGpsRadius(String(initial.gpsRadius));
     setVoidCodeMode(initial.voidMode === "code");
     setRefundCodeMode(initial.refundMode === "code");
     setNotifyEmails(initial.notifyEmails);
@@ -193,6 +213,51 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
         return;
       }
       last = r3b.data;
+    }
+
+    // Phase 4 — attendance settings (lateGraceMinutes + GPS center)
+    const parsedGrace = parseInt(lateGraceMinutes, 10);
+    const parsedLat = parseFloat(gpsLat);
+    const parsedLng = parseFloat(gpsLng);
+    const parsedRadius = parseInt(gpsRadius, 10);
+    const attendanceChanged =
+      parsedGrace !== initial.lateGraceMinutes ||
+      parsedLat !== initial.gpsLat ||
+      parsedLng !== initial.gpsLng ||
+      parsedRadius !== initial.gpsRadius;
+    if (attendanceChanged) {
+      if (
+        !Number.isFinite(parsedGrace) ||
+        parsedGrace < 0 ||
+        parsedGrace > 60
+      ) {
+        setError("Late grace minutes harus 0-60");
+        setSubmitting(false);
+        return;
+      }
+      if (
+        !Number.isFinite(parsedLat) ||
+        !Number.isFinite(parsedLng) ||
+        !Number.isFinite(parsedRadius)
+      ) {
+        setError("GPS coords / radius tidak valid");
+        setSubmitting(false);
+        return;
+      }
+      const r3c = await updateAttendanceSettings({
+        lateGraceMinutes: parsedGrace,
+        gpsCenter: {
+          lat: parsedLat,
+          lng: parsedLng,
+          radiusMeters: parsedRadius,
+        },
+      });
+      if (!isOk(r3c)) {
+        setError(r3c.error.message);
+        setSubmitting(false);
+        return;
+      }
+      last = r3c.data;
     }
 
     const wantVoidMode = voidCodeMode ? "code" : "pin";
@@ -321,6 +386,64 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
               "Contoh: COGS Rp 5.000 × markup 250% → suggested Rp 17.500. Range 0-500%, default 250%."
             }
           />
+        </section>
+
+        <section>
+          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-mahakan-green-900">
+            Absensi Mobile (Phase 4)
+          </h3>
+          <p className="mb-2 text-xs text-neutral-500">
+            Karyawan absensi via{" "}
+            <code className="rounded bg-neutral-100 px-1 font-mono text-[11px]">
+              /absenkaryawan
+            </code>
+            . Wajib selfie (kamera depan) + GPS dalam radius dari kedai. Owner
+            set PIN per karyawan via tab Karyawan.
+          </p>
+          <div className="space-y-3">
+            <Input
+              label="Late Grace Menit"
+              type="text"
+              inputMode="numeric"
+              value={lateGraceMinutes}
+              onChange={(e) =>
+                setLateGraceMinutes(e.target.value.replace(/[^\d]/g, ""))
+              }
+              hint="Range 0-60. Clock-in dalam grace dari schedule start tidak di-flag late."
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <Input
+                label="GPS Latitude"
+                type="text"
+                inputMode="decimal"
+                value={gpsLat}
+                onChange={(e) => setGpsLat(e.target.value)}
+                hint="Mahakan default: -6.6753234"
+              />
+              <Input
+                label="GPS Longitude"
+                type="text"
+                inputMode="decimal"
+                value={gpsLng}
+                onChange={(e) => setGpsLng(e.target.value)}
+                hint="Mahakan default: 106.9298715"
+              />
+            </div>
+            <Input
+              label="Radius Meter"
+              type="text"
+              inputMode="numeric"
+              value={gpsRadius}
+              onChange={(e) =>
+                setGpsRadius(e.target.value.replace(/[^\d]/g, ""))
+              }
+              hint="Range 10-500m. Karyawan di luar radius = absen ditolak. Default 50m."
+            />
+            <p className="rounded-md bg-info-100 p-2 text-[11px] text-info-500">
+              💡 Cara dapat lat/lng dari Google Maps: buka maps.google.com →
+              cari kedai → right-click pin → klik koordinat untuk copy.
+            </p>
+          </div>
         </section>
 
         <section>

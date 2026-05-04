@@ -29,6 +29,8 @@ export {
   listEmployeeDocuments,
   listEmployees,
   listExpiringDocuments,
+  resetAttendancePin,
+  setAttendancePin,
   updateEmployee,
   updateEmployeeDocument,
 } from "./actions";

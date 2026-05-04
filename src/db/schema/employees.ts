@@ -75,6 +75,13 @@ export const employees = pgTable(
 
     notes: text("notes"),
 
+    /** Phase 4 (sesi AB) — bcrypt hash PIN untuk absensi mobile route
+     * `/absenkaryawan`. Terpisah dari users.pin (POS staff PIN) supaya
+     * karyawan kitchen/cleaning yang tidak punya akun POS tetap bisa
+     * absensi. NULL = belum di-set; karyawan tidak bisa absen sampai
+     * Owner/Manager set via Karyawan tab. */
+    attendancePinHash: text("attendance_pin_hash"),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

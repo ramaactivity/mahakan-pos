@@ -61,13 +61,20 @@ export type OutletSettings = {
      * first active Owner's user.email. */
     notifyEmails?: string[];
   };
-  /** HR attendance config (Sesi D). Read by attendance/actions.ts when
-   * computing late_minutes — clock_in events within `lateGraceMinutes`
-   * of schedule start aren't flagged late. */
+  /** HR attendance config (Sesi D + Phase 4 sesi AB). */
   attendance?: {
     /** Minutes after schedule start_time before late detection trips.
      * Default 5 if unset. Range 0..60. */
     lateGraceMinutes?: number;
+    /** Phase 4 — outlet GPS center untuk validasi radius mobile absensi.
+     * Karyawan harus dalam radius `radiusMeters` dari (lat,lng) saat
+     * clock-in/out via `/absenkaryawan`. Kalau tidak di-set, fallback
+     * ke default Mahakan Coffee & Space (-6.6753234, 106.9298715, 50m). */
+    gpsCenter?: {
+      lat: number;
+      lng: number;
+      radiusMeters: number;
+    };
   };
   /** Payroll formula auto-fill (Sesi E). When set, computePayrollLines
    * derives late_deduction + overtime_pay from these rates × the

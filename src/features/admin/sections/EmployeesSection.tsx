@@ -5,6 +5,7 @@ import {
   AlertCircle,
   Download,
   FileText as FileTextIcon,
+  KeyRound,
   Pencil,
   Plus,
   Search,
@@ -35,6 +36,9 @@ import {
 } from "@/features/employees";
 import { EmployeeFormModal } from "./employees/EmployeeFormModal";
 import { EmployeeDocsModal } from "./employees/EmployeeDocsModal";
+import { EmployeeAttendancePinModal } from "./employees/EmployeeAttendancePinModal";
+import { useSession } from "@/features/auth/SessionProvider";
+import { hasPermission } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -76,6 +80,11 @@ export function EmployeesSection() {
   const [formOpen, setFormOpen] = useState(false);
   const [formInitial, setFormInitial] = useState<Employee | null>(null);
   const [docsFor, setDocsFor] = useState<Employee | null>(null);
+  const [pinTarget, setPinTarget] = useState<EmployeeWithLink | null>(null);
+  const { session } = useSession();
+  const canManagePin = session
+    ? hasPermission(session.user.role, "employee.attendance_pin.manage")
+    : false;
 
   useEffect(() => {
     let cancelled = false;
@@ -412,6 +421,28 @@ export function EmployeesSection() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex justify-end gap-1">
+                            {canManagePin ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setPinTarget(emp)}
+                                title={
+                                  emp.attendancePinHash
+                                    ? "PIN absensi sudah di-set — tap untuk update/reset"
+                                    : "Set PIN absensi mobile"
+                                }
+                              >
+                                <KeyRound
+                                  className={cn(
+                                    "size-3.5",
+                                    emp.attendancePinHash
+                                      ? "text-mahakan-green-700"
+                                      : "text-neutral-400",
+                                  )}
+                                  aria-hidden
+                                />
+                              </Button>
+                            ) : null}
                             <Button
                               size="sm"
                               variant="outline"
@@ -454,6 +485,16 @@ export function EmployeesSection() {
         employee={docsFor}
         onClose={() => setDocsFor(null)}
         onChanged={() => setRefreshKey((k) => k + 1)}
+      />
+
+      <EmployeeAttendancePinModal
+        open={pinTarget !== null}
+        employee={pinTarget}
+        onClose={() => setPinTarget(null)}
+        onSaved={() => {
+          setPinTarget(null);
+          setRefreshKey((k) => k + 1);
+        }}
       />
     </div>
   );

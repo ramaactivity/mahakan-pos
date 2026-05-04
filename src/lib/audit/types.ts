@@ -93,6 +93,13 @@ export const AUDIT_EVENT_TYPES = [
   // HR (Sesi C-7) — Attendance.
   "attendance.clock_in",
   "attendance.clock_out",
+  // HR Phase 4 (sesi AB) — Mobile absensi PIN + outlet GPS config.
+  "employee.attendance_pin.set",
+  "employee.attendance_pin.reset",
+  "outlet.attendance_gps.update",
+  "attendance.mobile_clock_in",
+  "attendance.mobile_clock_out",
+  "attendance.mobile_rejected",
   // HR (Sesi C-8) — Schedule + Payroll.
   "schedule.upsert",
   "schedule.copy_week",

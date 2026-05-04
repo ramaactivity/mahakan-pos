@@ -609,6 +609,109 @@ export async function deleteCareerHistoryEntry(
   return ok({ id });
 }
 
+// ---------- Phase 4 (sesi AB) — Attendance PIN management ----------
+
+/**
+ * Set or update the bcrypt-hashed attendance PIN for a karyawan. PIN dipakai
+ * untuk login mobile route `/absenkaryawan`. Validate 4-6 digit angka. Audit
+ * logged tanpa expose hash.
+ */
+export async function setAttendancePin(
+  employeeId: string,
+  pin: string,
+): Promise<ApiResult<{ employeeId: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "employee.attendance_pin.manage")) {
+    return fail("FORBIDDEN", "Tidak punya hak set PIN absensi");
+  }
+
+  if (!/^\d{4,6}$/.test(pin)) {
+    return fail("VALIDATION", "PIN harus 4-6 digit angka");
+  }
+
+  const emp = await fetchEmployeeById(employeeId);
+  if (!emp) return fail("NOT_FOUND", "Karyawan tidak ditemukan");
+  if (emp.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Karyawan dari outlet lain");
+  }
+  if (emp.deletedAt !== null) {
+    return fail("EMPLOYEE_DELETED", "Karyawan sudah dihapus");
+  }
+
+  const bcrypt = (await import("bcryptjs")).default;
+  const hash = await bcrypt.hash(pin, 10);
+
+  await db
+    .update(employees)
+    .set({
+      attendancePinHash: hash,
+      updatedAt: new Date(),
+      updatedBy: session.user.id,
+    })
+    .where(eq(employees.id, employeeId));
+
+  await logAudit({
+    eventType: "employee.attendance_pin.set",
+    userId: session.user.id,
+    entityType: "employee",
+    entityId: employeeId,
+    payload: {
+      summary: `Set PIN absensi untuk ${emp.fullName}`,
+      // Tidak expose PIN atau hash di audit log — security
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  }).catch((e) => console.error("[audit attendance_pin.set]", e));
+
+  return ok({ employeeId });
+}
+
+/**
+ * Reset (clear) attendance PIN. Karyawan tidak bisa absen sampai PIN baru
+ * di-set. Dipakai saat PIN ke-leak / karyawan resign / lupa PIN.
+ */
+export async function resetAttendancePin(
+  employeeId: string,
+): Promise<ApiResult<{ employeeId: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "employee.attendance_pin.manage")) {
+    return fail("FORBIDDEN", "Tidak punya hak reset PIN absensi");
+  }
+
+  const emp = await fetchEmployeeById(employeeId);
+  if (!emp) return fail("NOT_FOUND", "Karyawan tidak ditemukan");
+  if (emp.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Karyawan dari outlet lain");
+  }
+
+  await db
+    .update(employees)
+    .set({
+      attendancePinHash: null,
+      updatedAt: new Date(),
+      updatedBy: session.user.id,
+    })
+    .where(eq(employees.id, employeeId));
+
+  await logAudit({
+    eventType: "employee.attendance_pin.reset",
+    userId: session.user.id,
+    entityType: "employee",
+    entityId: employeeId,
+    payload: {
+      summary: `Reset PIN absensi untuk ${emp.fullName}`,
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  }).catch((e) => console.error("[audit attendance_pin.reset]", e));
+
+  return ok({ employeeId });
+}
+
 // ---------- CSV Export — Sesi M ----------
 
 /** Export all employees to CSV (UTF-8 BOM for Excel). Includes tenure

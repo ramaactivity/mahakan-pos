@@ -231,7 +231,17 @@ const featuresSchema = z.object({
 });
 
 const attendanceSettingsSchema = z.object({
-  lateGraceMinutes: z.number().int().min(0).max(60),
+  lateGraceMinutes: z.number().int().min(0).max(60).optional(),
+  /** Phase 4 (sesi AB) — outlet GPS center untuk validasi mobile absensi.
+   * Karyawan harus dalam radius dari (lat,lng) saat clock-in/out.
+   * Indonesia bbox: lat -11..6, lng 95..141. */
+  gpsCenter: z
+    .object({
+      lat: z.number().min(-11).max(6),
+      lng: z.number().min(95).max(141),
+      radiusMeters: z.number().int().min(10).max(500),
+    })
+    .optional(),
 });
 
 const payrollSettingsSchema = z.object({

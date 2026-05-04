@@ -99,6 +99,11 @@ export const permissions = {
   // attendance via the kiosk; the device's logged-in user is the actor.
   "attendance.view": ["owner", "manager"],
   "attendance.record": ["owner", "manager", "staff"],
+  /** Phase 4 (sesi AB) — set/reset attendance PIN per karyawan via
+   * Admin → Karyawan. Owner+Manager. */
+  "employee.attendance_pin.manage": ["owner", "manager"],
+  /** Phase 4 — set GPS center coords for mobile absensi via Settings. */
+  "outlet.attendance_gps.manage": ["owner", "manager"],
 
   // HR — Schedule + Payroll (Sesi C-8).
   "schedule.view": ["owner", "manager"],

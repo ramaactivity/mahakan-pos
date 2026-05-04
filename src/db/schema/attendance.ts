@@ -6,6 +6,7 @@ import {
   timestamp,
   integer,
   date,
+  doublePrecision,
   index,
   uniqueIndex,
   check,
@@ -23,6 +24,10 @@ import { employees } from "./employees";
  * Open record = clock_out_at IS NULL (employee still on the floor).
  * Same employee can't have two open records on the same date — enforced
  * by partial-unique index.
+ *
+ * Phase 4 (sesi AB) — extended dengan selfie + GPS metadata + idempotency
+ * untuk mobile flow `/absenkaryawan`. Legacy kiosk records dari sesi C7
+ * leave these NULL.
  */
 export const attendanceRecords = pgTable(
   "attendance_records",
@@ -60,6 +65,23 @@ export const attendanceRecords = pgTable(
 
     notes: text("notes"),
 
+    /** Phase 4 (sesi AB) — selfie URL/ID dari Drive ABSENSI/{Nama}/{date}/.
+     * NULL untuk legacy records dari kiosk admin (sesi C7) atau mobile flow
+     * yang gagal upload Drive. */
+    selfieDriveUrl: text("selfie_drive_url"),
+    selfieDriveFileId: text("selfie_drive_file_id"),
+
+    /** Phase 4 — GPS coords karyawan saat absen (mobile flow only).
+     * Distance dihitung saat insert pakai haversine vs outlet center;
+     * disimpan untuk audit trail. */
+    gpsLat: doublePrecision("gps_lat"),
+    gpsLng: doublePrecision("gps_lng"),
+    gpsDistanceMeters: integer("gps_distance_meters"),
+
+    /** Phase 4 — idempotency token untuk mobile clock-in/out. Dedup window
+     * 60s server-side cegah double-tap dari karyawan. NULL untuk kiosk. */
+    clientRefId: uuid("client_ref_id"),
+
     /** User who tapped Clock In on the kiosk (typically Manager/Owner
      * stewarding the device, or the employee themselves if they have
      * their own login). */
@@ -78,6 +100,9 @@ export const attendanceRecords = pgTable(
   (t) => [
     index("idx_attendance_outlet_date").on(t.outletId, t.shiftDate),
     index("idx_attendance_employee_date").on(t.employeeId, t.shiftDate),
+    index("idx_attendance_client_ref")
+      .on(t.clientRefId)
+      .where(sql`${t.clientRefId} IS NOT NULL`),
     uniqueIndex("ux_attendance_open_per_employee_date")
       .on(t.employeeId, t.shiftDate)
       .where(sql`${t.clockOutAt} IS NULL`),
