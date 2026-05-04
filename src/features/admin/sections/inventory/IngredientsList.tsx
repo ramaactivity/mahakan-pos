@@ -374,7 +374,12 @@ export function IngredientsList() {
                             {!i.isActive ? (
                               <Badge variant="neutral">Non-aktif</Badge>
                             ) : null}
-                            {isLow ? (
+                            {i.currentStock < 0 ? (
+                              <Badge variant="danger">
+                                <AlertTriangle className="size-3" aria-hidden />{" "}
+                                Stok minus
+                              </Badge>
+                            ) : isLow ? (
                               <Badge variant="warning">
                                 <AlertTriangle className="size-3" aria-hidden />{" "}
                                 Stok rendah
@@ -398,7 +403,12 @@ export function IngredientsList() {
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right font-mono">
+                        <td
+                          className={cn(
+                            "px-4 py-3 text-right font-mono",
+                            i.currentStock < 0 ? "text-danger-700" : "",
+                          )}
+                        >
                           {i.currentStock.toLocaleString("id-ID")}
                         </td>
                         <td className="px-4 py-3 text-neutral-700">{i.unit}</td>

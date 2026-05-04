@@ -1,12 +1,10 @@
 import "server-only";
 
-import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   ingredients,
   inventoryMovements,
-  menuItems,
-  recipeIngredients,
   recipes,
 } from "@/db/schema";
 import { expandRecipeToAtomicLeaves } from "./preparation-flow";
@@ -348,121 +346,21 @@ export async function restoreStockForTransaction(
 /**
  * After a stock change, scan menu items whose recipes reference (transitively)
  * the given ingredient ids and flip is_sold_out=true if any variant can no
- * longer be fulfilled with current atomic stock. Best-effort — runs after the
- * main DB transaction commits so its failure can't roll the sale back.
+ * longer be fulfilled with current atomic stock.
  *
- * NOTE: this only auto-flips TO sold-out. Owner manually flips back to
- * available after restocking — preserves intent visibility.
+ * Phase 2.5 (sesi AB) — Owner directive: do NOT auto-disable menu when
+ * ingredient stock crosses 0. Menu items stay AVAILABLE even when stock is
+ * negative; reconciliation happens via opname (stock count). Admin still has
+ * manual "Habis" toggle in MenuItemFormModal kalau memang mau disable a menu.
+ * Negative stock is surfaced as a "Stok Minus" badge in admin Inventory
+ * (see IngredientsList) so reconciliation isn't blind.
+ *
+ * Function kept as a no-op so existing call sites stay valid; flip logic is
+ * intentionally removed.
  */
 export async function reevaluateSoldOutForIngredients(
-  affectedIngredientIds: string[],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _affectedIngredientIds: string[],
 ): Promise<void> {
-  if (affectedIngredientIds.length === 0) return;
-
-  // Step 1: find menu items whose recipe directly OR transitively references
-  // any affected atomic ingredient. We walk via recipe_ingredients twice (once
-  // direct, once via prep level) since Mahakan ≤ depth 2 in real data.
-  // Excludes preparation recipes from the menu candidate set.
-  const directMenuRows = await db
-    .selectDistinct({ menuItemId: recipes.menuItemId })
-    .from(recipes)
-    .innerJoin(recipeIngredients, eq(recipeIngredients.recipeId, recipes.id))
-    .where(
-      and(
-        inArray(recipeIngredients.ingredientId, affectedIngredientIds),
-        isNotNull(recipes.menuItemId),
-      ),
-    );
-
-  // Find prep ingredients that include any affected atomic — those preps may
-  // be referenced by menu recipes too.
-  const dependentPrepIds = await db
-    .selectDistinct({ prepId: recipes.ingredientId })
-    .from(recipes)
-    .innerJoin(recipeIngredients, eq(recipeIngredients.recipeId, recipes.id))
-    .where(
-      and(
-        inArray(recipeIngredients.ingredientId, affectedIngredientIds),
-        isNotNull(recipes.ingredientId),
-      ),
-    );
-  const prepIds = dependentPrepIds.map((r) => r.prepId).filter(
-    (id): id is string => id !== null,
-  );
-
-  let viaPrepMenuRows: Array<{ menuItemId: string | null }> = [];
-  if (prepIds.length > 0) {
-    viaPrepMenuRows = await db
-      .selectDistinct({ menuItemId: recipes.menuItemId })
-      .from(recipes)
-      .innerJoin(recipeIngredients, eq(recipeIngredients.recipeId, recipes.id))
-      .where(
-        and(
-          inArray(recipeIngredients.ingredientId, prepIds),
-          isNotNull(recipes.menuItemId),
-        ),
-      );
-  }
-
-  const menuItemIds = Array.from(
-    new Set(
-      [...directMenuRows, ...viaPrepMenuRows]
-        .map((r) => r.menuItemId)
-        .filter((id): id is string => id !== null),
-    ),
-  );
-  if (menuItemIds.length === 0) return;
-
-  // Step 2: for each menu item, expand each of its recipes to atomic leaves
-  // and check feasibility.
-  for (const menuItemId of menuItemIds) {
-    const menuRecipes = await db
-      .select({ id: recipes.id, outletId: recipes.outletId })
-      .from(recipes)
-      .where(
-        and(
-          eq(recipes.menuItemId, menuItemId),
-          eq(recipes.isActive, true),
-        ),
-      );
-
-    if (menuRecipes.length === 0) continue;
-
-    let anyInfeasible = false;
-    for (const r of menuRecipes) {
-      const leaves = await expandRecipeToAtomicLeaves(db, r.id, r.outletId);
-      if (leaves.size === 0) continue;
-
-      const leafIds = Array.from(leaves.keys());
-      const stockRows = await db
-        .select({ id: ingredients.id, currentStock: ingredients.currentStock })
-        .from(ingredients)
-        .where(inArray(ingredients.id, leafIds));
-      const stockById = new Map(
-        stockRows.map((s) => [s.id, s.currentStock] as const),
-      );
-
-      for (const [leafId, requiredQty] of leaves) {
-        const have = stockById.get(leafId) ?? 0;
-        if (have < requiredQty) {
-          anyInfeasible = true;
-          break;
-        }
-      }
-      if (anyInfeasible) break;
-    }
-
-    if (anyInfeasible) {
-      await db
-        .update(menuItems)
-        .set({ isSoldOut: true, updatedAt: new Date() })
-        .where(
-          and(
-            eq(menuItems.id, menuItemId),
-            eq(menuItems.isSoldOut, false),
-            isNull(menuItems.deletedAt),
-          ),
-        );
-    }
-  }
+  return;
 }
