@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Download, RefreshCw } from "lucide-react";
+import { Download, RefreshCw, ShoppingBag } from "lucide-react";
 import Papa from "papaparse";
 import {
   Button,
@@ -9,6 +9,7 @@ import {
   CardContent,
   CardHeader,
   DateRangePicker,
+  EmptyCard,
   Skeleton,
   toast,
   type DateRangeValue,
@@ -236,9 +237,11 @@ export function PurchaseRollupView() {
               ))}
             </div>
           ) : !report || report.cells.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Belum ada pembelian dalam periode ini.
-            </p>
+            <EmptyCard
+              icon={ShoppingBag}
+              title="Belum ada pembelian dalam periode ini"
+              description="Sesuaikan range tanggal — atau catat pembelian baru di tab Pembelian."
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

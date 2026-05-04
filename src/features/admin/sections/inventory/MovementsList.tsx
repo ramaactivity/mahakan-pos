@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, Filter, RefreshCw } from "lucide-react";
+import { ArrowLeftRight, Download, Filter, RefreshCw } from "lucide-react";
 import Papa from "papaparse";
 import {
   Badge,
@@ -11,6 +11,7 @@ import {
   CardHeader,
   Combobox,
   DatePicker,
+  EmptyCard,
   Select,
   Skeleton,
   toast,
@@ -293,9 +294,11 @@ export function MovementsList() {
               ))}
             </div>
           ) : movements.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Tidak ada pergerakan stok di range/filter ini.
-            </p>
+            <EmptyCard
+              icon={ArrowLeftRight}
+              title="Tidak ada pergerakan stok"
+              description="Sesuaikan filter tanggal/jenis di atas, atau tunggu ada penjualan / pembelian / opname masuk."
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

@@ -8,6 +8,7 @@ import {
   Card,
   CardContent,
   CardHeader,
+  EmptyCard,
   Input,
   Select,
   Skeleton,
@@ -192,9 +193,11 @@ export function RecipesList() {
               ))}
             </div>
           ) : itemsByCategory.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Tidak ada menu yang cocok dengan filter ini.
-            </p>
+            <EmptyCard
+              icon={ChefHat}
+              title="Tidak ada menu yang cocok"
+              description="Sesuaikan filter kategori/status — atau tambah menu+resep baru."
+            />
           ) : (
             <div className="space-y-6">
               {itemsByCategory.map(([catId, catItems]) => (

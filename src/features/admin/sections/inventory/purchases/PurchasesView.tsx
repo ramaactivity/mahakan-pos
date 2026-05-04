@@ -7,6 +7,7 @@ import {
   Plus,
   RefreshCw,
   ShoppingBag,
+  Truck,
   X,
 } from "lucide-react";
 import {
@@ -18,6 +19,7 @@ import {
   Combobox,
   compareBy,
   DateRangePicker,
+  EmptyCard,
   Input,
   Modal,
   Select,
@@ -326,9 +328,11 @@ export function PurchasesView() {
               ))}
             </div>
           ) : items.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Belum ada pembelian dalam range/filter ini.
-            </p>
+            <EmptyCard
+              icon={Truck}
+              title="Belum ada pembelian dalam range ini"
+              description="Sesuaikan filter tanggal/supplier/status di atas — atau catat pembelian baru."
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

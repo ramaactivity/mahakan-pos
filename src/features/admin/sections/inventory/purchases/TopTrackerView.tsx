@@ -8,6 +8,7 @@ import {
   Card,
   CardContent,
   CardHeader,
+  EmptyCard,
   Modal,
   Select,
   Skeleton,
@@ -190,9 +191,11 @@ export function TopTrackerView() {
               ))}
             </div>
           ) : filtered.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-500">
-              Tidak ada hutang dagang dalam filter ini ✓
-            </p>
+            <EmptyCard
+              icon={CheckCircle2}
+              title="Tidak ada hutang dagang dalam filter ini"
+              description="Semua bersih ✓ — atau ubah filter status di atas untuk lihat invoice paid/cancelled."
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
