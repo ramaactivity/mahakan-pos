@@ -201,7 +201,7 @@ export function PurchaseRequestsSection() {
 
       {loading ? (
         <div className="flex justify-center py-12">
-          <Spinner />
+          <Spinner className="size-8 text-mahakan-green-700" />
         </div>
       ) : error ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
