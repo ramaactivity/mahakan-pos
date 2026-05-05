@@ -172,6 +172,13 @@ export const permissions = {
   "purchase.cancel": ["owner", "manager"],
   "purchase.mark_paid": ["owner", "manager"],
 
+  // Purchase Requests (Phase 6.5+6.6, sesi AC-3) — list belanja dari kasir
+  // saat tutup shift; admin receive di "Permintaan Belanja" section.
+  "purchase_request.view": ["owner", "manager"],
+  "purchase_request.create": ["owner", "manager", "staff"],
+  "purchase_request.receive": ["owner", "manager"],
+  "purchase_request.cancel": ["owner", "manager"],
+
   // Reports HPP + Purchase rollup (Sesi O). HPP = COGS by ingredient,
   // owner-only karena cost-sensitive. Purchase rollup OK for manager.
   "report.hpp.view": ["owner"],

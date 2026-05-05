@@ -11,6 +11,7 @@ import { CashSection } from "@/features/admin/sections/CashSection";
 import { FinanceSection } from "@/features/admin/sections/FinanceSection";
 import { AccountingSection } from "@/features/admin/sections/AccountingSection";
 import { PromoSection } from "@/features/admin/sections/PromoSection";
+import { PurchaseRequestsSection } from "@/features/admin/sections/PurchaseRequestsSection";
 import { CustomersSection } from "@/features/admin/sections/CustomersSection";
 import { DashboardHome } from "@/features/admin/sections/DashboardHome";
 import { EmployeesSection } from "@/features/admin/sections/EmployeesSection";
@@ -50,6 +51,8 @@ export function AdminShell() {
           <InventorySection onNavigate={setSection} />
         ) : section === "suppliers" ? (
           <SuppliersSection />
+        ) : section === "purchase_requests" ? (
+          <PurchaseRequestsSection />
         ) : section === "customers" ? (
           <CustomersSection />
         ) : section === "staff" ? (

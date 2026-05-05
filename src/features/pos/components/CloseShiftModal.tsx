@@ -16,8 +16,12 @@ import {
 import { isOk, closeShift, type Shift } from "@/features/shifts";
 import { listTransactions } from "@/features/transactions";
 import { getDailyCashSummary } from "@/features/cash";
+import { listLowStockIngredients } from "@/features/purchase-requests/actions";
+import type { LowStockIngredient } from "@/features/purchase-requests/types";
+import { getOwnOutlet } from "@/features/outlets";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { BelanjaSubmissionModal } from "./BelanjaSubmissionModal";
 
 const VARIANCE_THRESHOLD = 10_000;
 
@@ -74,6 +78,11 @@ export function CloseShiftModal({
   const [depositNotes, setDepositNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Phase 6.5 (sesi AC-3) — belanja submission step setelah closeShift sukses.
+  const [belanjaOpen, setBelanjaOpen] = useState(false);
+  const [lowStock, setLowStock] = useState<LowStockIngredient[]>([]);
+  const [ownerPhone, setOwnerPhone] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -230,6 +239,32 @@ export function CloseShiftModal({
         `Setoran ${formatRupiah(parsedDeposit ?? 0)} pending verifikasi owner`,
       );
     }
+
+    // Phase 6.5 — fetch low-stock ingredients + owner phone, lalu kalau ada
+    // tampilkan Belanja modal sebelum onClosed(). Kalau gagal fetch atau
+    // tidak ada low-stock, langsung close.
+    const [lowStockRes, outletRes] = await Promise.all([
+      listLowStockIngredients(),
+      getOwnOutlet(),
+    ]);
+    const lowStockItems =
+      lowStockRes.success && lowStockRes.data.length > 0
+        ? lowStockRes.data
+        : [];
+    if (lowStockItems.length > 0) {
+      setLowStock(lowStockItems);
+      setOwnerPhone(outletRes.success ? outletRes.data.phone : null);
+      setBelanjaOpen(true);
+      // Don't call onClosed() yet — wait for belanja modal to close.
+      setSubmitting(false);
+      return;
+    }
+
+    onClosed();
+  }
+
+  function handleBelanjaClose() {
+    setBelanjaOpen(false);
     onClosed();
   }
 
@@ -244,6 +279,7 @@ export function CloseShiftModal({
   const blockedByOpenBills = openBills.length > 0;
 
   return (
+    <>
     <Modal
       open={open}
       onClose={onClose}
@@ -562,6 +598,14 @@ export function CloseShiftModal({
         </div>
       )}
     </Modal>
+    <BelanjaSubmissionModal
+      open={belanjaOpen}
+      lowStock={lowStock}
+      shiftId={shift.id}
+      ownerPhone={ownerPhone}
+      onClose={handleBelanjaClose}
+    />
+    </>
   );
 }
 

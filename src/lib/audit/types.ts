@@ -81,6 +81,11 @@ export const AUDIT_EVENT_TYPES = [
   "purchase.cancel",
   "purchase.mark_paid",
   "purchase.unmark_paid",
+  // Purchase Requests (Phase 6.5+6.6, sesi AC-3)
+  "purchase_request.create",
+  "purchase_request.receive",
+  "purchase_request.cancel",
+  "purchase_request.whatsapp_sent",
   // Customers / Loyalty — Phase 2 Tier 1.3 (M29)
   "customer.create",
   "customer.update",
@@ -182,6 +187,8 @@ export type AuditEntityType =
   | "stock_opname_session"
   | "supplier"
   | "purchase"
+  | "purchase_request"
+  | "purchase_request_item"
   | "cash_deposit"
   | "aggregator_settlement"
   | "chart_of_accounts"

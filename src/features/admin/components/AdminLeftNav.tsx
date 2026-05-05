@@ -5,6 +5,7 @@ import {
   BarChart3,
   BookOpen,
   Briefcase,
+  ClipboardList,
   Clock,
   Coffee,
   Heart,
@@ -28,6 +29,7 @@ export type AdminSection =
   | "menu"
   | "inventory"
   | "suppliers"
+  | "purchase_requests"
   | "customers"
   | "staff"
   | "employees"
@@ -82,6 +84,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "inventory", label: "Inventory", Icon: Package },
       { key: "suppliers", label: "Supplier", Icon: Truck },
+      { key: "purchase_requests", label: "Permintaan Belanja", Icon: ClipboardList },
     ],
   },
   {
