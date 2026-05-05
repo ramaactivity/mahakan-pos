@@ -1,18 +1,24 @@
 # 🔐 ROLES & RBAC — Mahakan Coffee & Space
 
 **Role-Based Access Control Specification**
-**Version:** 1.0
+**Version:** 1.2 (sesi AC-5d, 2026-05-05)
 **Depends on:** `01-PRD.md`, `02-FSD.md`, `03-TSD.md`
 **Status:** ✅ APPROVED
+
+> **Canonical source:** `src/lib/auth/rbac.ts`. Doc ini menjelaskan WHO + WHY;
+> permission map yang exact selalu di kode. Mismatch antara doc dan kode →
+> kode menang. Saat tambah/ubah perm key di kode, sebutkan di Section 10
+> Changelog di sini.
 
 ---
 
 ## 1. Overview
 
-Phase 1 system has **3 roles** with strict, non-overlapping responsibilities. This document is the definitive reference for:
+Phase 1 system has **4 roles** dengan responsibilities yang jelas. Doc ini
+adalah definitive reference untuk:
 
-- Who can do what
-- How permission is enforced (code patterns)
+- Who can do what (high-level matrix; exact perm di rbac.ts)
+- How permission is enforced (code patterns — tiga layer)
 - How PIN override (supervisor approval) works
 - Which events are audit-logged
 
@@ -49,7 +55,51 @@ Phase 1 system has **3 roles** with strict, non-overlapping responsibilities. Th
 - Cannot edit business info (name, address, logo)
 - Cannot see financial P&L report
 
-### 2.3 Staff 🔵
+### 2.3 Supervisor 🟡 (sesi AC-4, Phase 8.1 Option B)
+
+**Identity:** Shift lead — kepercayaan owner untuk pegang ops sehari-hari
+tapi tidak boleh master data / financial commitment. "Manager-lite".
+
+**Primary device:** Tablet POS untuk hands-on, occasional laptop untuk
+review reports operational.
+
+**Login method:** PIN 4-6 digit (default). Owner bisa add email + password
+manual untuk back-office access kalau perlu.
+
+**Scope:** Semua POS ops + shift management + view reports operational +
+receive belanja + reset PIN staff. TIDAK punya master data CRUD,
+TIDAK punya payroll/accounting, TIDAK punya destructive ops.
+
+**Created via:** Owner/Manager → Admin → Staff Management → Tambah User
+→ pilih role "Supervisor" (PIN-based, no email required initially).
+
+**Restrictions:**
+- ❌ Master data CRUD: tidak bisa create/update/delete menu, ingredient,
+  recipe, supplier, modifier
+- ❌ Irreversible ops: tidak bisa cancel purchase, finalize opname,
+  delete expense/income, deactivate user
+- ❌ Financial commitment: tidak bisa mark purchase paid, verify cash
+  deposit, cancel settlement
+- ❌ Sensitive: tidak bisa lihat payroll lines, tidak bisa lihat
+  accounting (COA/journal/period/reports), tidak bisa lihat HPP/cost,
+  tidak bisa lihat P&L
+- ❌ Settings master: tidak bisa edit business info, hours, thresholds,
+  features. HANYA settings.printer.pair/.test (operational device)
+- ❌ User CRUD: tidak bisa create/update/deactivate user. HANYA
+  reset_pin.staff (helps unblock kasir mid-shift)
+
+**Allowed (yang special):**
+- ✅ Void/refund POS tanpa approval code (level Manager)
+- ✅ Tutup shift, view all shifts hari ini
+- ✅ Receive purchase request items (operasional shift)
+- ✅ Create purchase, expense, income (data entry)
+- ✅ Reset PIN staff
+- ✅ Mark menu available/sold-out
+
+**Session duration:** 12h (frontline, sama dengan Staff). Login PIN long
+session untuk avoid mid-shift logout.
+
+### 2.4 Staff 🔵
 
 **Identity:** Barista who doubles as cashier.
 
@@ -60,7 +110,7 @@ Phase 1 system has **3 roles** with strict, non-overlapping responsibilities. Th
 **Scope:** POS transactions + own shift. Nothing else.
 
 **Restrictions:**
-- Cannot void/refund/discount without Manager/Owner PIN approval
+- Cannot void/refund/discount without Manager/Owner/Supervisor PIN approval
 - Cannot see any financial or operational reports
 - Cannot access menu CRUD (can only mark sold-out, which is temporary operational flag)
 - Cannot access user management, settings, expenses
@@ -68,103 +118,152 @@ Phase 1 system has **3 roles** with strict, non-overlapping responsibilities. Th
 
 ---
 
-## 3. Complete Permission Matrix
+## 3. High-Level Permission Matrix
+
+> **Catatan:** Matrix ini SUMMARY 4-role. Untuk daftar lengkap 100+ permission
+> keys + perubahan per sesi, lihat `src/lib/auth/rbac.ts` (canonical).
+> Ditambah sejak v1.0: Supervisor role (kolom baru), purchase_request.*,
+> settlement_log.*, accounting.*, modifier.*, employee.attendance_pin.manage,
+> outlet.attendance_gps.manage, user.reset_pin.manager.
 
 Legend:
 - ✅ = Full access, no approval needed
-- 🔑 = Can perform **with PIN override from Manager/Owner**
+- 🔑 = Can perform **with PIN override from Manager/Owner/Supervisor**
 - ⚠️ = Conditional access (see notes)
 - ❌ = No access; UI hides feature entirely
 
-| Resource / Action | Owner | Manager | Staff |
-|---|:---:|:---:|:---:|
-| **AUTH** | | | |
-| Login via email+password | ✅ | ✅ | ❌ |
-| Login via PIN | ✅ | ✅ | ✅ |
-| Reset own password | ✅ | ✅ | ❌ |
-| Reset own PIN | ❌ | ❌ | ⚠️ Through Manager/Owner |
-| Logout | ✅ | ✅ | ✅ |
-| **POS — Transactions** | | | |
-| Create new order | ✅ | ✅ | ✅ |
-| Add/edit items in draft | ✅ | ✅ | ✅ |
-| Apply modifiers | ✅ | ✅ | ✅ |
-| Input open-price for Manual Brew | ✅ | ✅ | ✅ |
-| Process payment (cash/QRIS/card) | ✅ | ✅ | ✅ |
-| Print receipt | ✅ | ✅ | ✅ |
-| Reprint receipt | ✅ | ✅ | ✅ |
-| Apply order discount | ✅ | ✅ | 🔑 |
-| Void transaction (same-shift) | ✅ | ✅ | 🔑 |
-| Refund transaction (same-day, cash) | ✅ | ✅ | 🔑 |
-| Mark order "Selesai" (served) | ✅ | ✅ | ✅ |
-| **POS — Menu** | | | |
-| View menu | ✅ | ✅ | ✅ |
-| Mark item "Sold Out" | ✅ | ✅ | ✅ |
-| Mark item "Available" (un-sold-out) | ✅ | ✅ | ❌ |
-| **SHIFT** | | | |
-| Open own shift | ✅ | ✅ | ✅ |
-| Close own shift | ✅ | ✅ | ✅ |
-| View own shift history | ✅ | ✅ | ✅ |
-| View all shifts | ✅ | ✅ | ❌ |
-| Force close someone else's shift (emergency) | ✅ | ❌ | ❌ |
-| **MENU MANAGEMENT (Back office)** | | | |
-| Create menu item | ✅ | ✅ | ❌ |
-| Edit menu item (name, desc, price, category) | ✅ | ✅ | ❌ |
-| Delete menu item (soft) | ✅ | ✅ | ❌ |
-| Bulk adjust prices | ✅ | ✅ | ❌ |
-| Export menu CSV | ✅ | ❌ | ❌ |
-| Create/edit/delete category | ✅ | ✅ | ❌ |
-| Edit modifier prices (extra shot, extra topping) | ✅ | ✅ | ❌ |
-| **CASH & EXPENSES** | | | |
-| Create expense entry | ✅ | ✅ | ❌ |
-| Edit expense (within 24h after create) | ✅ | ✅ | ❌ |
-| Edit expense (anytime) | ✅ | ❌ | ❌ |
-| Delete expense | ✅ | ❌ | ❌ |
-| Create/edit expense categories | ✅ | ⚠️ Add only, no edit/delete | ❌ |
-| Create income (manual, non-POS) | ✅ | ✅ | ❌ |
-| Edit income | ✅ | ⚠️ Within 24h | ❌ |
-| Delete income | ✅ | ❌ | ❌ |
-| View daily cash summary | ✅ | ✅ | ❌ |
-| **REPORTS** | | | |
-| Daily sales report | ✅ | ✅ | ❌ |
-| Weekly/monthly sales report | ✅ | ✅ | ❌ |
-| Item performance report | ✅ | ✅ | ❌ |
-| Shift report (all staff) | ✅ | ✅ | ❌ |
-| Simple P&L report | ✅ | ❌ | ❌ |
-| HPP/margin/cost visibility | ✅ | ❌ | ❌ |
-| Export PDF reports | ✅ | ⚠️ Operational only (no P&L) | ❌ |
-| **USER MANAGEMENT** | | | |
-| View list of users (all) | ✅ | ⚠️ Can see Staff only; managers are hidden | ❌ |
-| Create Staff user | ✅ | ✅ | ❌ |
-| Create Manager user | ✅ | ❌ | ❌ |
-| Create Owner user | ✅ | ❌ | ❌ |
-| Edit Staff (name, PIN, status) | ✅ | ✅ | ❌ |
-| Edit Manager | ✅ | ❌ | ❌ |
-| Edit Owner | ✅ | ❌ | ❌ |
-| Deactivate Staff | ✅ | ✅ | ❌ |
-| Deactivate Manager | ✅ | ❌ | ❌ |
-| Reset Staff PIN | ✅ | ✅ | ❌ |
-| Reset Manager password | ✅ | ❌ | ❌ |
-| View audit log | ✅ | ⚠️ Own actions + Staff only | ❌ |
-| **SYSTEM SETTINGS** | | | |
-| Edit business info (name, address, phone, logo) | ✅ | ❌ | ❌ |
-| Pair/unpair thermal printer | ✅ | ✅ | ❌ |
-| Test print | ✅ | ✅ | ✅ |
-| Edit operational hours | ✅ | ❌ | ❌ |
-| Toggle receipt settings (footer, QR) | ✅ | ❌ | ❌ |
-| Edit variance alert threshold | ✅ | ❌ | ❌ |
-| Change feature flags (Phase 2+ enablement) | ✅ | ❌ | ❌ |
+| Resource / Action | Owner | Manager | Supervisor | Staff |
+|---|:---:|:---:|:---:|:---:|
+| **AUTH** | | | | |
+| Login via email+password | ✅ | ✅ | ⚠️ Optional setup | ❌ |
+| Login via PIN | ✅ | ✅ | ✅ | ✅ |
+| Reset own password | ✅ | ✅ | ❌ | ❌ |
+| Reset own PIN | ❌ | ❌ | ❌ | ⚠️ Via Manager/Owner/Supervisor |
+| Reset Staff PIN | ✅ | ✅ | ✅ | ❌ |
+| Reset Manager PIN/password | ✅ | ❌ | ❌ | ❌ |
+| Logout | ✅ | ✅ | ✅ | ✅ |
+| **POS — Transactions** | | | | |
+| Create new order | ✅ | ✅ | ✅ | ✅ |
+| Add/edit items in draft | ✅ | ✅ | ✅ | ✅ |
+| Apply modifiers | ✅ | ✅ | ✅ | ✅ |
+| Input open-price for Manual Brew | ✅ | ✅ | ✅ | ✅ |
+| Process payment | ✅ | ✅ | ✅ | ✅ |
+| Print/reprint receipt | ✅ | ✅ | ✅ | ✅ |
+| Apply order discount | ✅ | ✅ | ✅ | 🔑 |
+| Void transaction | ✅ | ✅ | ✅ | 🔑 |
+| Refund transaction | ✅ | ✅ | ✅ | 🔑 |
+| Mark "Selesai" (served) | ✅ | ✅ | ✅ | ✅ |
+| **POS — Menu** | | | | |
+| View menu | ✅ | ✅ | ✅ | ✅ |
+| Mark item Sold Out | ✅ | ✅ | ✅ | ✅ |
+| Mark item Available | ✅ | ✅ | ✅ | ❌ |
+| **SHIFT** | | | | |
+| Open/close own shift | ✅ | ✅ | ✅ | ✅ |
+| View all shifts | ✅ | ✅ | ✅ | ❌ |
+| Force close someone's shift | ✅ | ❌ | ❌ | ❌ |
+| **MENU MANAGEMENT** | | | | |
+| Create/edit/delete menu item | ✅ | ✅ | ❌ | ❌ |
+| Bulk adjust prices | ✅ | ✅ | ❌ | ❌ |
+| Export menu CSV | ✅ | ❌ | ❌ | ❌ |
+| Modifier CRUD | ✅ | ✅ (delete owner-only) | ❌ | ❌ |
+| **CASH & EXPENSES** | | | | |
+| Create expense/income | ✅ | ✅ | ✅ | ❌ |
+| Edit within 24h | ✅ | ✅ | ✅ | ❌ |
+| Edit anytime / delete | ✅ | ❌ | ❌ | ❌ |
+| View daily cash summary | ✅ | ✅ | ✅ | ✅ |
+| **REPORTS** | | | | |
+| Sales / items / shift reports | ✅ | ✅ | ✅ | ❌ |
+| P&L report | ✅ | ❌ | ❌ | ❌ |
+| HPP/margin/cost visibility | ✅ | ❌ | ❌ | ❌ |
+| Export operational | ✅ | ✅ | ✅ | ❌ |
+| Export financial | ✅ | ❌ | ❌ | ❌ |
+| **USER MANAGEMENT** | | | | |
+| View user list (all) | ✅ | ⚠️ no Owner/Manager | ⚠️ no Owner/Manager | ❌ |
+| Create Staff | ✅ | ✅ | ❌ | ❌ |
+| Create Supervisor | ✅ | ✅ | ❌ | ❌ |
+| Create Manager | ✅ | ❌ | ❌ | ❌ |
+| Create Owner | ✅ | ❌ | ❌ | ❌ |
+| Edit/Deactivate Staff/Supervisor | ✅ | ✅ | ❌ | ❌ |
+| Edit/Deactivate Manager | ✅ | ❌ | ❌ | ❌ |
+| View audit log | ✅ | ⚠️ Own + Staff | ⚠️ Own + Staff | ❌ |
+| **HR (Karyawan)** | | | | |
+| View employees | ✅ | ✅ | ✅ | ❌ |
+| Create/edit employee | ✅ | ✅ | ❌ | ❌ |
+| Delete employee | ✅ | ❌ | ❌ | ❌ |
+| Set/reset attendance PIN | ✅ | ✅ | ❌ | ❌ |
+| View attendance | ✅ | ✅ | ✅ | ❌ |
+| Record attendance (kiosk) | ✅ | ✅ | ✅ | ✅ |
+| View schedule | ✅ | ✅ | ✅ | ❌ |
+| Update schedule | ✅ | ✅ | ❌ | ❌ |
+| View payroll | ✅ | ✅ | ❌ | ❌ |
+| Manage payroll (compute/finalize/mark paid) | ✅ | ❌ | ❌ | ❌ |
+| **INVENTORY** | | | | |
+| View ingredients/recipes/movements | ✅ | ✅ | ✅ | ❌ |
+| Create/edit ingredient/recipe | ✅ | ✅ | ❌ | ❌ |
+| Delete ingredient/recipe | ✅ | ❌ | ❌ | ❌ |
+| Receive stock | ✅ | ✅ | ✅ | ❌ |
+| Adjust stock | ✅ | ❌ | ❌ | ❌ |
+| Record waste | ✅ | ✅ | ✅ | ❌ |
+| View cost/HPP | ✅ | ❌ | ❌ | ❌ |
+| Stock opname (start/count) | ✅ | ✅ | ✅ | ✅ |
+| Stock opname finalize/cancel | ✅ | ✅ | ❌ | ❌ |
+| **SUPPLIERS & PURCHASES** | | | | |
+| View suppliers | ✅ | ✅ | ✅ | ❌ |
+| Supplier CRUD | ✅ | ✅ (delete owner) | ❌ | ❌ |
+| View purchases | ✅ | ✅ | ✅ | ❌ |
+| Create purchase | ✅ | ✅ | ✅ | ✅ |
+| Update/cancel/mark paid purchase | ✅ | ✅ | ❌ | ❌ |
+| **PURCHASE REQUESTS (Phase 6.5+6.6)** | | | | |
+| View requests | ✅ | ✅ | ✅ | ❌ |
+| Create request (saat tutup shift) | ✅ | ✅ | ✅ | ✅ |
+| Receive items | ✅ | ✅ | ✅ | ❌ |
+| Cancel request | ✅ | ✅ | ❌ | ❌ |
+| **FINANCE / KEUANGAN** | | | | |
+| Dashboard + daily settlement view | ✅ | ✅ | ✅ | ❌ |
+| Cash deposit view + create | ✅ | ✅ | ✅ | ❌ |
+| Cash deposit verify | ✅ | ❌ | ❌ | ❌ |
+| Aggregator settlement view + create | ✅ | ✅ | ✅ | ❌ |
+| Cash flow ledger | ✅ | ❌ | ❌ | ❌ |
+| **SETTLEMENT LOGS (Phase 6.1, mutasi bank)** | | | | |
+| View settlement logs | ✅ | ✅ | ✅ | ❌ |
+| Create/update log | ✅ | ✅ | ❌ | ❌ |
+| Delete log | ✅ | ❌ | ❌ | ❌ |
+| **ACCOUNTING (Sesi S+)** | | | | |
+| View COA / journal / period / report | ✅ | ✅ | ❌ | ❌ |
+| Manage COA / draft journal | ✅ | ⚠️ draft only | ❌ | ❌ |
+| Post / reverse journal | ✅ | ❌ | ❌ | ❌ |
+| Close / reopen / lock period | ✅ | ❌ | ❌ | ❌ |
+| Export accounting / opening balance | ✅ | ❌ | ❌ | ❌ |
+| **PROMOS** | | | | |
+| View promo | ✅ | ✅ | ✅ | ❌ |
+| Manage promo (create/update/archive) | ✅ | ✅ | ❌ | ❌ |
+| Apply promo at checkout | ✅ | ✅ | ✅ | ✅ |
+| **CUSTOMERS / LOYALTY** | | | | |
+| Lookup customer (POS) | ✅ | ✅ | ✅ | ✅ |
+| View customer list | ✅ | ✅ | ✅ | ❌ |
+| Create customer | ✅ | ✅ | ✅ | ✅ |
+| Update customer | ✅ | ✅ | ❌ | ❌ |
+| **SYSTEM SETTINGS** | | | | |
+| Edit business info | ✅ | ❌ | ❌ | ❌ |
+| Pair printer / test print | ✅ | ✅ | ✅ | ✅ |
+| Edit hours / receipt / thresholds / features | ✅ | ❌ (receipt = manager+owner) | ❌ | ❌ |
+| Set attendance GPS center | ✅ | ✅ | ❌ | ❌ |
+| Approval mode (code/pin) | ✅ | ❌ | ❌ | ❌ |
 
 ---
 
 ## 4. Implementation: Permission Enum
 
-All permission checks in code reference this enum from `src/lib/auth/rbac.ts`:
+All permission checks in code reference `src/lib/auth/rbac.ts` (canonical).
+Doc snippet di bawah hanya **excerpt** untuk illustrate pattern; rbac.ts
+sekarang punya 100+ keys. Saat tambah key di kode, update Section 10
+Changelog di sini supaya stakeholder bisa trace perubahan.
 
 ```typescript
 export const permissions = {
   // Auth
-  'auth.password_login': ['owner', 'manager'],
-  'auth.pin_login': ['owner', 'manager', 'staff'],
+  'auth.password_login': ['owner', 'manager', 'supervisor'],
+  'auth.pin_login': ['owner', 'manager', 'supervisor', 'staff'],
 
   // POS - Transactions
   'pos.transaction.create': ['owner', 'manager', 'staff'],
@@ -229,7 +328,10 @@ export const permissions = {
   'user.update.owner': ['owner'],
   'user.deactivate.staff': ['owner', 'manager'],
   'user.deactivate.manager': ['owner'],
-  'user.reset_pin.staff': ['owner', 'manager'],
+  'user.reset_pin.staff': ['owner', 'manager', 'supervisor'],
+  // Sesi AC-5c: bug fix — sebelumnya kedua branch resetPin map ke
+  // user.reset_pin.staff sehingga manager bisa reset Owner PIN.
+  'user.reset_pin.manager': ['owner'],
   'user.reset_password.manager': ['owner'],
   'audit.view.all': ['owner'],
   'audit.view.staff_actions': ['owner', 'manager'],
@@ -242,7 +344,43 @@ export const permissions = {
   'settings.receipt.update': ['owner'],
   'settings.thresholds.update': ['owner'],
   'settings.features.update': ['owner'],
+
+  // ... [TRUNCATED — see src/lib/auth/rbac.ts untuk full list]
+  // Highlights yang ditambah sejak v1.0:
+  //   purchase_request.{view,create,receive,cancel}      (Phase 6.5+6.6)
+  //   settlement_log.{view,create,update,delete}         (Phase 6.1)
+  //   accounting.{coa,journal,period,report}.*           (Sesi S+)
+  //   employee.attendance_pin.manage                     (Phase 4)
+  //   outlet.attendance_gps.manage                       (Phase 4)
+  //   modifier.{create,delete}                           (Phase 7.1)
+  //   schedule.{view,update}, payroll.{view,manage}      (Sesi C-8)
+  //   inventory.preparation.{view,create,update,delete}  (M23)
+  //   inventory.opname.{view,start,count,finalize,cancel} (Sesi N)
+  //   supplier.*, purchase.*, report.purchase_rollup.view (Sesi O)
+  //   customer.{lookup,view,create,update}               (M29 Loyalty)
+  //   pos.transaction.{void,refund}.{request,code}       (Sesi B-2)
+  //   approval_code.{view,revoke}                        (Sesi B-2)
+  //   finance.dashboard.view, cash_deposit.*, etc        (Sesi Q)
+  //   promo.{view,manage}, pos.promo.apply               (Sesi K)
 } as const satisfies Record<string, ReadonlyArray<Role>>;
+```
+
+### 4.1 Hierarchy Helper — canActOnRole
+
+`canActOnRole(actor, target)` adalah defense-in-depth gate yang dipakai
+di action layer SEBELUM permission check. Mencegah privilege escalation
+walau ada bug di permission key mapping (regression: sesi AC-5c bug
+resetPin).
+
+```typescript
+// owner → boleh act on semua role
+// manager → boleh act on supervisor + staff
+// supervisor → tidak boleh act on user role apapun
+// staff → tidak boleh act on user role apapun
+canActOnRole('owner', 'manager') === true;
+canActOnRole('manager', 'owner') === false;   // blocks bug
+canActOnRole('manager', 'supervisor') === true;
+canActOnRole('supervisor', 'staff') === false;
 ```
 
 ---
@@ -393,9 +531,17 @@ Staff triggers a 🔑 action. System requires Manager or Owner to provide their 
 ### 6.4 Security Considerations
 
 - Tokens are **narrow-scoped**: one token unlocks exactly one action on one entity
-- Tokens **single-use**: consumed after first validation
+- Tokens **single-use**: consumed after first validation via atomic
+  `INSERT ... ON CONFLICT DO NOTHING` ke `consumed_approver_tokens` table.
+  ON CONFLICT returns 0 rows = token already used = throw error. Multi-
+  instance Vercel serverless safe (PG primary key uniqueness).
 - Tokens **short-lived**: 5 min so they can't be stored for later
 - Audit log captures both parties so abuse is traceable
+- **Brute-force lockout (sesi AC-5c):** `/api/v1/auth/verify-approver`
+  share lockout dengan login flow via `@/lib/auth/lockout.ts`. 5 PIN
+  fail = 15 menit lock. `failedAttempts` + `lockedUntil` columns di
+  `users` table. Sebelumnya tidak ter-track di approver endpoint = bcrypt
+  brute-force theoretical (1M kombinasi 6-digit × ~100ms ≈ 28 jam).
 
 ### 6.5 Same-Session Special Case
 
@@ -489,7 +635,10 @@ async function verifyApproverToken(token: string, expectedAction: string, expect
 }
 ```
 
-**JTI blacklist:** Phase 1 can use an in-memory `Map<string, number>` (jti → exp) with periodic cleanup. Phase 2 upgrade to Redis/KV for multi-instance safety. Since Phase 1 is 1 outlet + low concurrent override, in-memory is acceptable.
+**JTI blacklist (sesi T+):** Sudah upgrade dari in-memory Map ke
+DB-backed `consumed_approver_tokens` table. Atomic INSERT dengan
+ON CONFLICT DO NOTHING handle multi-instance Vercel race. Probabilistic
+GC (1% rate per consume) cleanup expired rows.
 
 ---
 
@@ -647,4 +796,6 @@ These should be E2E tested (see `09-TESTING-STRATEGY.md`):
 
 | Version | Date | Changes |
 |---|---|---|
-| 1.0 | 2026-04-20 | Initial RBAC spec for Phase 1 |
+| 1.0 | 2026-04-20 | Initial RBAC spec for Phase 1 (3 roles: Owner / Manager / Staff) |
+| 1.1 | 2026-04-25 | Sesi C-6/C-7/C-8: HR perms (employee.*, attendance.*, schedule.*, payroll.*). Sesi N: opname.*. Sesi O: supplier.*, purchase.*, report.purchase_rollup. Sesi K: promo.*. Sesi B-2: approval_code.*, pos.transaction.{void,refund}.{request,code}. Sesi M29: customer.*. Sesi Q: finance.*. Sesi S+: accounting.*. |
+| 1.2 | 2026-05-05 | Sesi AC. Phase 4: employee.attendance_pin.manage + outlet.attendance_gps.manage. Phase 6.1: settlement_log.{view,create,update,delete}. Phase 6.5+6.6: purchase_request.{view,create,receive,cancel}. Phase 7.1: modifier.create + modifier.delete. Phase 8.1 Option B: **Supervisor role** added between Manager and Staff (PIN-based, "Manager-lite shift lead"). createSupervisor action. Sesi AC-5c security: user.reset_pin.manager perm baru (owner-only) — fix privilege escalation bug; lockout extracted ke @/lib/auth/lockout.ts dengan reuse di approver endpoint; markServed atomic UPDATE dengan outlet+status guard; @/lib/server-error logAndSanitize untuk DB error sanitization (25 catch blocks). canActOnRole hierarchy gate documented (4.1). |
