@@ -16,12 +16,33 @@
  *   - DRIFT: list migration yang ada di local journal tapi belum di DB,
  *     atau sebaliknya
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Pool } from "@neondatabase/serverless";
+
+// Raw .env.local loader — no `$variable` expansion (Neon passwords kadang
+// punya `$` yang dotenv salah-expand jadi empty). Mirror scripts/migrate.ts.
+function loadEnvRaw(path: string): void {
+  if (!existsSync(path)) return;
+  const content = readFileSync(path, "utf-8");
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq < 1) continue;
+    const key = line.slice(0, eq).trim();
+    if (!/^[A-Z_][A-Z0-9_]*$/i.test(key)) continue;
+    let value = line.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (!process.env[key]) process.env[key] = value;
+  }
+}
+loadEnvRaw(resolve(process.cwd(), ".env.local"));
 
 interface JournalEntry {
   idx: number;
