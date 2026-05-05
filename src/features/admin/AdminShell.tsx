@@ -5,11 +5,8 @@ import {
   AdminLeftNav,
   type AdminSection,
 } from "@/features/admin/components/AdminLeftNav";
-import { AttendanceSection } from "@/features/admin/sections/AttendanceSection";
 import { AuditLogSection } from "@/features/admin/sections/AuditLogSection";
-import { HrReportsSection } from "@/features/admin/sections/HrReportsSection";
-import { PayrollSection } from "@/features/admin/sections/PayrollSection";
-import { SchedulesSection } from "@/features/admin/sections/SchedulesSection";
+import { HrOperationsSection } from "@/features/admin/sections/HrOperationsSection";
 import { CashSection } from "@/features/admin/sections/CashSection";
 import { FinanceSection } from "@/features/admin/sections/FinanceSection";
 import { AccountingSection } from "@/features/admin/sections/AccountingSection";
@@ -62,14 +59,8 @@ export function AdminShell() {
           />
         ) : section === "employees" ? (
           <EmployeesSection />
-        ) : section === "attendance" ? (
-          <AttendanceSection />
-        ) : section === "schedules" ? (
-          <SchedulesSection />
-        ) : section === "payroll" ? (
-          <PayrollSection viewerRole={session.user.role} />
-        ) : section === "hr_reports" ? (
-          <HrReportsSection />
+        ) : section === "hr_operations" ? (
+          <HrOperationsSection viewerRole={session.user.role} />
         ) : section === "shifts" ? (
           <ShiftsSection />
         ) : section === "cash" ? (

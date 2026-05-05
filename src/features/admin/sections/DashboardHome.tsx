@@ -50,6 +50,7 @@ import type {
 import { formatRupiah } from "@/lib/format";
 import { paymentMethodLabel } from "@/lib/payment-method";
 import type { AdminSection } from "@/features/admin/components/AdminLeftNav";
+import { setHrOperationsInitialTab } from "./HrOperationsSection";
 import { OpnameMonthlyBanner } from "./inventory/opname/OpnameMonthlyBanner";
 
 interface DashboardHomeProps {
@@ -229,12 +230,19 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
             done={done}
             belum={belum}
             onTap={
-              onNavigate ? () => onNavigate("attendance") : undefined
+              onNavigate ? () => onNavigate("hr_operations") : undefined
             }
           />
           <HrPayrollCard
             period={activePeriod}
-            onTap={onNavigate ? () => onNavigate("payroll") : undefined}
+            onTap={
+              onNavigate
+                ? () => {
+                    setHrOperationsInitialTab("payroll");
+                    onNavigate("hr_operations");
+                  }
+                : undefined
+            }
           />
         </div>
       </section>

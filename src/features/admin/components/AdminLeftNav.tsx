@@ -5,10 +5,8 @@ import {
   BarChart3,
   BookOpen,
   Briefcase,
-  CalendarDays,
   Clock,
   Coffee,
-  DollarSign,
   Heart,
   LayoutDashboard,
   LogOut,
@@ -33,10 +31,7 @@ export type AdminSection =
   | "customers"
   | "staff"
   | "employees"
-  | "attendance"
-  | "schedules"
-  | "payroll"
-  | "hr_reports"
+  | "hr_operations"
   | "shifts"
   | "cash"
   | "finance"
@@ -102,10 +97,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "staff", label: "Staff", Icon: Users },
       { key: "employees", label: "Karyawan", Icon: Briefcase },
-      { key: "attendance", label: "Absensi", Icon: Clock },
-      { key: "schedules", label: "Jadwal", Icon: CalendarDays },
-      { key: "payroll", label: "Payroll", Icon: DollarSign },
-      { key: "hr_reports", label: "Laporan HR", Icon: BarChart3 },
+      { key: "hr_operations", label: "HR Operations", Icon: Clock },
     ],
   },
   {
