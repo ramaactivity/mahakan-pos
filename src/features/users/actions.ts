@@ -23,6 +23,7 @@ import {
   type CreateManagerInput,
   type CreateOwnerInput,
   type CreateStaffInput,
+  type CreateSupervisorInput,
   type ListUsersOptions,
   type Paginated,
   type PublicUser,
@@ -35,6 +36,11 @@ const pinSchema = z
   .refine(isValidPinFormat, "PIN harus 4-6 digit angka");
 
 const createStaffSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  pin: pinSchema,
+});
+
+const createSupervisorSchema = z.object({
   name: z.string().trim().min(1).max(80),
   pin: pinSchema,
 });
@@ -136,6 +142,54 @@ export async function createStaff(
     entityId: row.id,
     payload: {
       summary: `Tambah staff ${row.name}`,
+      after: { name: row.name, role: row.role, status: row.status },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+  return ok(toPublicUser(row));
+}
+
+/**
+ * Phase 8.1 Option B (sesi AC-4) — create Supervisor user. PIN-based seperti
+ * Staff (login via /pin di POS). Untuk akses back-office password-based,
+ * Owner update email + password-hash via update flow nanti. Manager+Owner
+ * bisa create (reuse user.create.staff perm).
+ */
+export async function createSupervisor(
+  input: CreateSupervisorInput,
+): Promise<ApiResult<PublicUser>> {
+  const session = await requirePerm("user.create.staff");
+
+  const parsed = createSupervisorSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+  const pinHash = await hashPin(v.pin);
+
+  const [row] = await db
+    .insert(users)
+    .values({
+      outletId: session.user.outletId,
+      name: v.name,
+      email: null,
+      passwordHash: null,
+      pinHash,
+      role: "supervisor",
+      status: "active",
+      createdBy: session.user.id,
+    })
+    .returning();
+  await logAudit({
+    eventType: "user.create",
+    userId: session.user.id,
+    entityType: "user",
+    entityId: row.id,
+    payload: {
+      summary: `Tambah supervisor ${row.name}`,
       after: { name: row.name, role: row.role, status: row.status },
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },

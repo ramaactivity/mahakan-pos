@@ -9,7 +9,7 @@ import { FullscreenToggle } from "@/features/pos/components/FullscreenToggle";
 
 export default function PosLayout({ children }: { children: ReactNode }) {
   return (
-    <RequireAuth allowRoles={["owner", "manager", "staff"]} loginRedirect="/pin">
+    <RequireAuth allowRoles={["owner", "manager", "supervisor", "staff"]} loginRedirect="/pin">
       <PosOuterShell>{children}</PosOuterShell>
     </RequireAuth>
   );

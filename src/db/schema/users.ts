@@ -24,7 +24,9 @@ export const users = pgTable(
     passwordHash: text("password_hash"),
     pinHash: text("pin_hash"),
 
-    role: text("role", { enum: ["owner", "manager", "staff"] }).notNull(),
+    role: text("role", {
+      enum: ["owner", "manager", "supervisor", "staff"],
+    }).notNull(),
     status: text("status", { enum: ["active", "inactive"] })
       .notNull()
       .default("active"),

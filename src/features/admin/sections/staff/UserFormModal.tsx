@@ -7,13 +7,14 @@ import {
   createManager,
   createOwner,
   createStaff,
+  createSupervisor,
   isOk,
   updateUser,
 } from "@/features/users";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
-type CreateRole = "staff" | "manager" | "owner";
+type CreateRole = "staff" | "supervisor" | "manager" | "owner";
 
 type Mode = { kind: "create" } | { kind: "edit"; userId: string; name: string };
 
@@ -91,6 +92,21 @@ export function UserFormModal({
       return;
     }
 
+    if (createRole === "supervisor") {
+      const res = await createSupervisor({
+        name: name.trim(),
+        pin,
+      });
+      if (!isOk(res)) {
+        setError(res.error.message);
+        setSubmitting(false);
+        return;
+      }
+      toast.success(`Supervisor ${name} ditambahkan`);
+      onSaved();
+      return;
+    }
+
     if (createRole === "owner") {
       const res = await createOwner({
         name: name.trim(),
@@ -155,7 +171,7 @@ export function UserFormModal({
             <div
               className={cn(
                 "grid gap-2",
-                canCreateOwner ? "grid-cols-3" : "grid-cols-2",
+                canCreateOwner ? "grid-cols-4" : "grid-cols-3",
               )}
               role="radiogroup"
               aria-label="Role user"
@@ -165,6 +181,12 @@ export function UserFormModal({
                 hint="PIN"
                 active={createRole === "staff"}
                 onClick={() => setCreateRole("staff")}
+              />
+              <RoleButton
+                label="Supervisor"
+                hint="PIN"
+                active={createRole === "supervisor"}
+                onClick={() => setCreateRole("supervisor")}
               />
               <RoleButton
                 label="Manager"

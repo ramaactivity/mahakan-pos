@@ -8,7 +8,7 @@ import { useSession } from "@/features/auth/SessionProvider";
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
   return (
-    <RequireAuth allowRoles={["owner", "manager"]}>
+    <RequireAuth allowRoles={["owner", "manager", "supervisor"]}>
       <AdminOuterShell>{children}</AdminOuterShell>
     </RequireAuth>
   );

@@ -81,13 +81,17 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
           </h1>
           <p className="text-sm text-neutral-700">
             {viewerRole === "owner"
-              ? "Owner melihat semua user. Bisa create Manager + Staff."
-              : "Manager hanya bisa create + manage Staff."}
+              ? "Owner melihat semua user. Bisa create Manager + Supervisor + Staff."
+              : viewerRole === "manager"
+                ? "Manager bisa create + manage Supervisor + Staff."
+                : "Supervisor bisa lihat staff list + reset PIN saja."}
           </p>
         </div>
-        <Button onClick={() => setFormMode({ kind: "create" })}>
-          <Plus className="size-4" aria-hidden /> Tambah User
-        </Button>
+        {viewerRole === "owner" || viewerRole === "manager" ? (
+          <Button onClick={() => setFormMode({ kind: "create" })}>
+            <Plus className="size-4" aria-hidden /> Tambah User
+          </Button>
+        ) : null}
       </header>
 
       <Card>
@@ -269,5 +273,7 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
 function RoleBadge({ role }: { role: Role }) {
   if (role === "owner") return <Badge variant="signature">Owner</Badge>;
   if (role === "manager") return <Badge variant="info">Manager</Badge>;
+  if (role === "supervisor")
+    return <Badge variant="warning">Supervisor</Badge>;
   return <Badge variant="neutral">Staff</Badge>;
 }

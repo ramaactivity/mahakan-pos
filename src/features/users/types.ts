@@ -63,6 +63,11 @@ export interface CreateStaffInput {
   pin: string;
 }
 
+export interface CreateSupervisorInput {
+  name: string;
+  pin: string;
+}
+
 export interface CreateManagerInput {
   name: string;
   email: string;

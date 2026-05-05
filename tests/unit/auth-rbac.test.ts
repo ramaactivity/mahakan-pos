@@ -73,13 +73,20 @@ describe("canActOnRole", () => {
   it("Owner can act on any role", () => {
     expect(canActOnRole("owner", "owner")).toBe(true);
     expect(canActOnRole("owner", "manager")).toBe(true);
+    expect(canActOnRole("owner", "supervisor")).toBe(true);
     expect(canActOnRole("owner", "staff")).toBe(true);
   });
 
-  it("Manager only on staff", () => {
+  it("Manager on supervisor + staff (not manager/owner)", () => {
+    expect(canActOnRole("manager", "supervisor")).toBe(true);
     expect(canActOnRole("manager", "staff")).toBe(true);
     expect(canActOnRole("manager", "manager")).toBe(false);
     expect(canActOnRole("manager", "owner")).toBe(false);
+  });
+
+  it("Supervisor cannot act on any role (no user CRUD perm)", () => {
+    expect(canActOnRole("supervisor", "staff")).toBe(false);
+    expect(canActOnRole("supervisor", "manager")).toBe(false);
   });
 
   it("Staff cannot act on others", () => {
@@ -93,11 +100,68 @@ describe("sessionMaxAgeSeconds (C2=A)", () => {
     expect(sessionMaxAgeSeconds("staff")).toBe(12 * 3600);
   });
 
+  it("Supervisor = 12h (frontline)", () => {
+    expect(sessionMaxAgeSeconds("supervisor")).toBe(12 * 3600);
+  });
+
   it("Owner = 2h", () => {
     expect(sessionMaxAgeSeconds("owner")).toBe(2 * 3600);
   });
 
   it("Manager = 2h", () => {
     expect(sessionMaxAgeSeconds("manager")).toBe(2 * 3600);
+  });
+});
+
+describe("Supervisor (Phase 8.1 Option B, sesi AC-4)", () => {
+  it("can do POS basics + shift ops + reports", () => {
+    expect(hasPermission("supervisor", "pos.transaction.create")).toBe(true);
+    expect(hasPermission("supervisor", "pos.transaction.void")).toBe(true);
+    expect(hasPermission("supervisor", "pos.transaction.refund")).toBe(true);
+    expect(hasPermission("supervisor", "shift.open_own")).toBe(true);
+    expect(hasPermission("supervisor", "shift.view_all")).toBe(true);
+    expect(hasPermission("supervisor", "report.sales.view")).toBe(true);
+    expect(hasPermission("supervisor", "purchase_request.receive")).toBe(true);
+    expect(hasPermission("supervisor", "user.reset_pin.staff")).toBe(true);
+  });
+
+  it("CANNOT touch master data (menu / inventory CRUD / supplier)", () => {
+    expect(hasPermission("supervisor", "menu.item.create")).toBe(false);
+    expect(hasPermission("supervisor", "menu.item.delete")).toBe(false);
+    expect(hasPermission("supervisor", "inventory.ingredient.create")).toBe(
+      false,
+    );
+    expect(hasPermission("supervisor", "supplier.create")).toBe(false);
+    expect(hasPermission("supervisor", "inventory.adjust")).toBe(false);
+  });
+
+  it("CANNOT do irreversible / financial commitment actions", () => {
+    expect(hasPermission("supervisor", "purchase.cancel")).toBe(false);
+    expect(hasPermission("supervisor", "purchase.mark_paid")).toBe(false);
+    expect(hasPermission("supervisor", "purchase_request.cancel")).toBe(false);
+    expect(hasPermission("supervisor", "cash_deposit.verify")).toBe(false);
+    expect(hasPermission("supervisor", "inventory.opname.finalize")).toBe(
+      false,
+    );
+    expect(hasPermission("supervisor", "expense.delete")).toBe(false);
+    expect(hasPermission("supervisor", "user.deactivate.staff")).toBe(false);
+  });
+
+  it("CANNOT view payroll or accounting (sensitive)", () => {
+    expect(hasPermission("supervisor", "payroll.view")).toBe(false);
+    expect(hasPermission("supervisor", "payroll.manage")).toBe(false);
+    expect(hasPermission("supervisor", "accounting.coa.view")).toBe(false);
+    expect(hasPermission("supervisor", "accounting.journal.view")).toBe(false);
+    expect(hasPermission("supervisor", "report.pnl.view")).toBe(false);
+    expect(hasPermission("supervisor", "report.cost_visibility")).toBe(false);
+  });
+
+  it("CANNOT touch settings except printer pair/test", () => {
+    expect(hasPermission("supervisor", "settings.business.update")).toBe(false);
+    expect(hasPermission("supervisor", "settings.printer.pair")).toBe(true);
+    expect(hasPermission("supervisor", "settings.printer.test")).toBe(true);
+    expect(hasPermission("supervisor", "settings.thresholds.update")).toBe(
+      false,
+    );
   });
 });
