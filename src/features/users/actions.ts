@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission, type Permission } from "@/lib/auth";
+import { canActOnRole } from "@/lib/auth/rbac";
 import { hashPassword } from "@/lib/auth/password";
 import { hashPin, isValidPinFormat } from "@/lib/auth/pin";
 import { diffShallow, logAudit } from "@/lib/audit/logger";
@@ -398,8 +399,22 @@ export async function resetPin(
   const target = await fetchUserById(parsed.data.userId);
   if (!target) return fail("NOT_FOUND", "User tidak ditemukan");
 
+  // Hierarchy gate FIRST — actor must be authorized to act on target's role.
+  // canActOnRole: owner→all, manager→supervisor+staff, supervisor/staff→none.
+  // This blocks the prior bug where both branches mapped ke "user.reset_pin.staff"
+  // sehingga manager bisa reset PIN owner.
+  if (!canActOnRole(session.user.role, target.role)) {
+    return fail(
+      "FORBIDDEN",
+      "Tidak bisa reset PIN user dengan role yang sama atau lebih tinggi",
+    );
+  }
+
+  // Permission check per target role tier.
   const perm: Permission =
-    target.role === "staff" ? "user.reset_pin.staff" : "user.reset_pin.staff";
+    target.role === "staff" || target.role === "supervisor"
+      ? "user.reset_pin.staff"
+      : "user.reset_pin.manager";
   if (!hasPermission(session.user.role, perm)) {
     return fail("FORBIDDEN", "Tidak punya hak reset PIN");
   }

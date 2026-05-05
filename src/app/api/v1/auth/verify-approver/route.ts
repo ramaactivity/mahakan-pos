@@ -6,6 +6,11 @@ import { users } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { issueApproverToken } from "@/lib/auth/approver";
 import { hasPermission, type Permission } from "@/lib/auth";
+import {
+  clearFailedAttempts,
+  isLocked,
+  recordFailedAttempt,
+} from "@/lib/auth/lockout";
 import { verifyPin, isValidPinFormat } from "@/lib/auth/pin";
 
 const APPROVER_ACTIONS: ReadonlyArray<Permission> = [
@@ -71,9 +76,37 @@ export async function POST(req: Request) {
     );
   }
 
+  // Lockout gate (sesi AC-5b ramaactivity/code-review #2):
+  // verify-approver dulu tidak track failed PIN attempts → approver PIN
+  // bisa di-brute-force unlimited (bcrypt ~100ms × 1M kombinasi 6-digit
+  // = 28 jam). Reuse same lockout (5 attempts → 15 menit lock) yang
+  // dipakai login flow.
+  if (isLocked(approver.lockedUntil)) {
+    return err(
+      "APPROVER_LOCKED",
+      "Approver di-lock karena terlalu banyak PIN salah. Coba lagi setelah 15 menit.",
+      429,
+    );
+  }
+
   const ok = await verifyPin(pin, approver.pinHash!);
   if (!ok) {
+    const lockResult = await recordFailedAttempt(
+      approver.id,
+      approver.failedAttempts,
+    );
+    if (lockResult.locked) {
+      return err(
+        "APPROVER_LOCKED",
+        "Approver di-lock 15 menit setelah terlalu banyak PIN salah.",
+        429,
+      );
+    }
     return err("INVALID_PIN", "PIN salah", 401);
+  }
+  // PIN benar — clear failed attempts kalau ada residual.
+  if (approver.failedAttempts > 0 || approver.lockedUntil) {
+    await clearFailedAttempts(approver.id);
   }
 
   const token = await issueApproverToken({

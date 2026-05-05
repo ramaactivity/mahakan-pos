@@ -13,6 +13,7 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { logAndSanitize } from "@/lib/server-error";
 import {
   cancelPurchaseSchema,
   createPurchaseSchema,
@@ -311,12 +312,15 @@ export async function createPurchase(
     resultId = result.created.id;
     totalAmount = result.total;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Database error";
+    const msg = e instanceof Error ? e.message : "";
     if (msg === "INGREDIENT_NOT_FOUND")
       return fail("NOT_FOUND", "Salah satu bahan tidak ditemukan / non-aktif");
     if (msg === "OUTLET_MISMATCH")
       return fail("FORBIDDEN", "Bahan dari outlet lain — kontak admin");
-    return fail("DB_ERROR", msg);
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "purchases.create", "Gagal menyimpan pembelian"),
+    );
   }
 
   await logAudit({
@@ -492,7 +496,7 @@ export async function cancelPurchase(
       }
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Database error";
+    const msg = e instanceof Error ? e.message : "";
     if (msg === "NOT_FOUND")
       return fail("NOT_FOUND", "Pembelian tidak ditemukan");
     if (msg === "BAD_STATE")
@@ -504,7 +508,10 @@ export async function cancelPurchase(
         `Cancel akan bikin stok ${name} negatif. Stok sudah terpakai untuk transaksi/waste.`,
       );
     }
-    return fail("DB_ERROR", msg);
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "purchases.cancel", "Gagal membatalkan pembelian"),
+    );
   }
 
   await logAudit({
@@ -664,7 +671,7 @@ export async function markPurchasePaid(
         .where(eq(purchases.id, v.id));
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Database error";
+    const msg = e instanceof Error ? e.message : "";
     if (msg === "NOT_FOUND")
       return fail("NOT_FOUND", "Pembelian tidak ditemukan");
     if (msg === "BAD_STATE")
@@ -672,7 +679,10 @@ export async function markPurchasePaid(
         "BAD_STATE",
         "Pembelian tidak dalam status pending_payment",
       );
-    return fail("DB_ERROR", msg);
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "purchases.markPaid", "Gagal menandai pembelian paid"),
+    );
   }
 
   await logAudit({

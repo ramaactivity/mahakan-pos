@@ -6,6 +6,7 @@ import { suppliers } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { logAndSanitize } from "@/lib/server-error";
 import { fetchSupplierById, fetchSuppliers } from "./queries";
 import {
   createSupplierSchema,
@@ -103,7 +104,7 @@ export async function createSupplier(
         "name",
       );
     }
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "suppliers", "Operasi database gagal"));
   }
 }
 
@@ -175,7 +176,7 @@ export async function updateSupplier(
     if (msg.includes("ux_suppliers_outlet_name_active")) {
       return fail("CONFLICT", "Nama supplier sudah dipakai", "name");
     }
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "suppliers", "Operasi database gagal"));
   }
 }
 

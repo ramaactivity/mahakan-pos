@@ -92,6 +92,12 @@ export const permissions = {
   "user.deactivate.staff": ["owner", "manager"],
   "user.deactivate.manager": ["owner"],
   "user.reset_pin.staff": ["owner", "manager", "supervisor"],
+  /** Reset PIN untuk manager+owner — owner-only. Bug fix sesi AC-5b
+   * (ramaactivity/code-review): sebelumnya kedua branch di resetPin action
+   * salah-map ke user.reset_pin.staff, akibatnya manager bisa reset PIN
+   * owner = privilege escalation. canActOnRole hierarchy gate juga added
+   * sebagai defense in depth. */
+  "user.reset_pin.manager": ["owner"],
   "user.reset_password.manager": ["owner"],
   "audit.view.all": ["owner"],
   "audit.view.staff_actions": ["owner", "manager", "supervisor"],

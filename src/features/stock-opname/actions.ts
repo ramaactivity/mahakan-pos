@@ -11,6 +11,7 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { logAndSanitize } from "@/lib/server-error";
 import { jakartaMonthLabel } from "./cadence";
 import { computeDiffStats } from "./diff-stats";
 import {
@@ -232,7 +233,7 @@ export async function startOpname(
         "Sesi opname aktif sudah ada — refresh dan coba lagi.",
       );
     }
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "stock-opname", "Operasi database gagal"));
   }
 
   await logAudit({
@@ -352,7 +353,7 @@ export async function saveOpnameCount(
       );
     if (msg === "LINE_NOT_FOUND")
       return fail("NOT_FOUND", "Bahan tidak ada di sesi ini");
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "stock-opname", "Operasi database gagal"));
   }
 }
 
@@ -450,7 +451,7 @@ export async function saveOpnameCountBatch(
         "BAD_STATE",
         "Sesi sudah disubmit / selesai — tidak bisa edit count.",
       );
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "stock-opname", "Operasi database gagal"));
   }
 }
 
@@ -567,7 +568,7 @@ export async function submitOpname(
         `Masih ada ${n} bahan belum dihitung. Lengkapi atau pilih opsi auto-fill.`,
       );
     }
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "stock-opname", "Operasi database gagal"));
   } finally {
     // Audit outside the txn so we don't roll back the session move on log fail.
     if (true) {
@@ -767,7 +768,7 @@ export async function finalizeOpname(
         `Finalize akan bikin stok ${name} negatif. Cek input count.`,
       );
     }
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "stock-opname", "Operasi database gagal"));
   }
 
   await logAudit({
@@ -904,7 +905,7 @@ export async function cancelOpname(
         "BAD_STATE",
         "Sesi sudah completed / cancelled, tidak bisa di-cancel.",
       );
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "stock-opname", "Operasi database gagal"));
   }
 
   await logAudit({
@@ -974,7 +975,7 @@ export async function reopenOpname(
     if (msg === "NOT_FOUND") return fail("NOT_FOUND", "Sesi tidak ditemukan");
     if (msg === "BAD_STATE")
       return fail("BAD_STATE", "Sesi tidak dalam status pending_review.");
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "stock-opname", "Operasi database gagal"));
   }
 
   return ok({ sessionId: v.sessionId });

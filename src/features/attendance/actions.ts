@@ -6,6 +6,7 @@ import { attendanceRecords, employees, outlets } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { logAndSanitize } from "@/lib/server-error";
 import { todayWibIso } from "@/features/cash/helpers";
 import { fetchScheduleByEmployeeAndDate } from "@/features/schedules/queries";
 
@@ -218,7 +219,7 @@ export async function clockIn(
         "Karyawan ini sudah clock-in tapi belum clock-out",
       );
     }
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "attendance", "Operasi database gagal"));
   }
 }
 

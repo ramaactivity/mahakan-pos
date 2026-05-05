@@ -113,6 +113,29 @@ describe("sessionMaxAgeSeconds (C2=A)", () => {
   });
 });
 
+describe("user.reset_pin per-target (sesi AC-5b regression #1)", () => {
+  it("staff target → manager+supervisor allowed", () => {
+    expect(hasPermission("manager", "user.reset_pin.staff")).toBe(true);
+    expect(hasPermission("supervisor", "user.reset_pin.staff")).toBe(true);
+  });
+
+  it("manager/owner target → only owner allowed", () => {
+    expect(hasPermission("owner", "user.reset_pin.manager")).toBe(true);
+    expect(hasPermission("manager", "user.reset_pin.manager")).toBe(false);
+    expect(hasPermission("supervisor", "user.reset_pin.manager")).toBe(false);
+    expect(hasPermission("staff", "user.reset_pin.manager")).toBe(false);
+  });
+
+  it("canActOnRole gates manager from acting on owner", () => {
+    // Defense-in-depth gate at action layer (resetPin) — even kalau perm
+    // lookup salah, hierarchy gate blocks privilege escalation.
+    expect(canActOnRole("manager", "owner")).toBe(false);
+    expect(canActOnRole("manager", "manager")).toBe(false);
+    expect(canActOnRole("manager", "supervisor")).toBe(true);
+    expect(canActOnRole("manager", "staff")).toBe(true);
+  });
+});
+
 describe("Supervisor (Phase 8.1 Option B, sesi AC-4)", () => {
   it("can do POS basics + shift ops + reports", () => {
     expect(hasPermission("supervisor", "pos.transaction.create")).toBe(true);

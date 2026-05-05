@@ -13,6 +13,7 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { logAndSanitize } from "@/lib/server-error";
 import {
   createAccountSchema,
   deactivateAccountSchema,
@@ -542,8 +543,7 @@ export async function postOpeningBalance(
       },
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Database error";
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "accounting", "Operasi database gagal"));
   }
 
   // Auto-lock the period the opening balance was posted to.
@@ -714,8 +714,7 @@ export async function closeAccountingPeriod(
       actorId: session.user.id,
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Database error";
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "accounting", "Operasi database gagal"));
   }
 
   // Update period status
@@ -887,8 +886,7 @@ export async function reopenAccountingPeriod(
           })
           .where(eq(journalEntries.id, closingEntry.id));
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Database error";
-        return fail("DB_ERROR", msg);
+        return fail("DB_ERROR", logAndSanitize(e, "accounting", "Operasi database gagal"));
       }
     }
   }
@@ -1040,8 +1038,7 @@ export async function saveManualJournal(
       actorId: session.user.id,
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Database error";
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "accounting", "Operasi database gagal"));
   }
 
   await logAudit({
@@ -1098,8 +1095,7 @@ export async function reverseJournalEntry(
       metadata: { reversesEntryId: original.id, reason },
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Database error";
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "accounting", "Operasi database gagal"));
   }
 
   // Mark original

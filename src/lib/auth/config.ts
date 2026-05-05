@@ -30,28 +30,8 @@ const pinSchema = z.object({
  */
 const COOKIE_MAX_AGE_SECONDS = 12 * 60 * 60;
 
-/** After this many consecutive failed attempts, lock the account briefly. */
-const MAX_FAILED_ATTEMPTS = 5;
-/** Lock duration applied when failedAttempts hits the cap. */
-const LOCK_DURATION_MS = 15 * 60 * 1000;
-
-async function recordFailedAttempt(userId: string, currentAttempts: number) {
-  const next = currentAttempts + 1;
-  const lockedUntil =
-    next >= MAX_FAILED_ATTEMPTS ? new Date(Date.now() + LOCK_DURATION_MS) : null;
-  await db
-    .update(users)
-    .set({ failedAttempts: next, lockedUntil })
-    .where(eq(users.id, userId));
-  return { attempts: next, locked: !!lockedUntil };
-}
-
-async function clearFailedAttempts(userId: string) {
-  await db
-    .update(users)
-    .set({ failedAttempts: 0, lockedUntil: null })
-    .where(eq(users.id, userId));
-}
+// Lockout helpers extracted to ./lockout for reuse oleh approver endpoint.
+import { recordFailedAttempt, clearFailedAttempts } from "./lockout";
 
 export const authConfig: NextAuthConfig = {
   session: {

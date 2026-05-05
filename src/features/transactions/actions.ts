@@ -1297,16 +1297,40 @@ export async function refundTransactionPartial(
 
 // ---------- markServed ----------
 
+/**
+ * Mark transaction as served (food/drink delivered ke pelanggan). Idempotent.
+ * Sesi AC-5b hardening (ramaactivity/code-review): sebelumnya tidak ada
+ * outlet boundary check + tidak ada permission check + bisa markServed
+ * voided/refunded transaksi. UPDATE WHERE id=? tanpa outletId →
+ * cross-outlet bleed risk.
+ */
 export async function markServed(
   id: string,
 ): Promise<ApiResult<Transaction>> {
-  await requireSession();
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "pos.transaction.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak mark served");
+  }
+
+  // Atomic UPDATE with outlet boundary + status guard.
+  // Only paid/open transactions are servable; voided/refunded irrelevant.
   const [row] = await db
     .update(transactions)
     .set({ servedAt: new Date(), updatedAt: new Date() })
-    .where(eq(transactions.id, id))
+    .where(
+      and(
+        eq(transactions.id, id),
+        eq(transactions.outletId, session.user.outletId),
+        inArray(transactions.status, ["paid", "open"]),
+      ),
+    )
     .returning();
-  if (!row) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+  if (!row) {
+    return fail(
+      "NOT_FOUND",
+      "Transaksi tidak ditemukan atau status tidak valid",
+    );
+  }
   return ok(row);
 }
 
