@@ -10,6 +10,7 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { logAndSanitize } from "@/lib/server-error";
 import {
   mapCapitalizeAsset,
   mapMonthlyDepreciation,
@@ -684,8 +685,7 @@ export async function postMonthlyDepreciation(
     });
     entryId = result.entryId;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Database error";
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "accounting", "Operasi database gagal"));
   }
 
   // Update lastDepreciatedMonth per asset

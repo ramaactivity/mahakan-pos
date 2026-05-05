@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { shifts, transactions } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
+import { logAndSanitize } from "@/lib/server-error";
 import {
   fetchActiveShiftForUser,
   fetchLastClosedShiftForOutlet,
@@ -151,7 +152,7 @@ export async function openShift(
     if (/ux_shifts_user_active|unique/i.test(msg)) {
       return fail("ALREADY_OPEN", "Kamu masih punya shift aktif");
     }
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "shifts", "Operasi database gagal"));
   }
 }
 

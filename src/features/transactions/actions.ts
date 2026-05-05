@@ -17,6 +17,7 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { consumeApproverToken } from "@/lib/auth/approver";
 import { logAudit } from "@/lib/audit/logger";
+import { logAndSanitize } from "@/lib/server-error";
 import {
   applyStockDeductions,
   computeStockFlowForOrder,
@@ -750,8 +751,7 @@ export async function createTransaction(
         "Saldo poin member berubah saat checkout. Coba ulang dengan jumlah lebih kecil.",
       );
     }
-    const msg = e instanceof Error ? e.message : "Database error";
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "transactions", "Operasi database gagal"));
   }
 }
 
@@ -2073,8 +2073,7 @@ export async function addSplitPayment(
       }
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "DB error";
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "transactions", "Operasi database gagal"));
   }
 
   // Audit (best-effort, mirrors createTransaction pattern).

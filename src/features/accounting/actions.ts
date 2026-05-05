@@ -518,8 +518,7 @@ export async function postOpeningBalance(
       saldoLaba: input.saldoLaba,
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Mapping error";
-    return fail("VALIDATION", msg);
+    return fail("VALIDATION", logAndSanitize(e, "accounting", "Validasi gagal"));
   }
 
   let result;
@@ -698,8 +697,7 @@ export async function closeAccountingPeriod(
       balances: periodCloseBalances,
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Mapping error";
-    return fail("VALIDATION", msg);
+    return fail("VALIDATION", logAndSanitize(e, "accounting", "Validasi gagal"));
   }
 
   let result;

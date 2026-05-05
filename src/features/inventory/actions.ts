@@ -14,6 +14,7 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { diffShallow, logAudit } from "@/lib/audit/logger";
+import { logAndSanitize } from "@/lib/server-error";
 import {
   cascadeCostUpdate,
   detectCycleForRecipeUpsert,
@@ -586,7 +587,7 @@ export async function receiveStock(
     if (msg === "INGREDIENT_NOT_FOUND") {
       return fail("NOT_FOUND", "Bahan tidak ditemukan");
     }
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "inventory", "Operasi database gagal"));
   }
 }
 
@@ -646,7 +647,7 @@ export async function adjustStock(
     if (msg === "INGREDIENT_NOT_FOUND") {
       return fail("NOT_FOUND", "Bahan tidak ditemukan");
     }
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "inventory", "Operasi database gagal"));
   }
 }
 
@@ -749,7 +750,7 @@ export async function recordWaste(
         "Stok bahan tidak cukup untuk dicatat sebagai waste",
       );
     }
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "inventory", "Operasi database gagal"));
   }
 }
 
@@ -1051,7 +1052,7 @@ export async function createRecipe(
         "Preparation ini sudah punya resep",
       );
     }
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "inventory", "Operasi database gagal"));
   }
 }
 
@@ -1201,7 +1202,7 @@ export async function updateRecipe(
         "Resep untuk menu+variant ini sudah ada",
       );
     }
-    return fail("DB_ERROR", msg);
+    return fail("DB_ERROR", logAndSanitize(e, "inventory", "Operasi database gagal"));
   }
 }
 

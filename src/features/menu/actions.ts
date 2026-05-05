@@ -52,37 +52,46 @@ async function requireOwnerOrManager(perm: Parameters<typeof hasPermission>[1]) 
 }
 
 // ---------- Reads ----------
+// Sesi AC-5d (security sweep): semua read action tetap perlu requireSession.
+// Page sudah RequireAuth-gated tapi server action sendiri callable via direct
+// POST /dashboard tanpa session cookie kalau attacker craft. Defense-in-depth.
 
 export async function listMenuItems(
   opts: ListMenuItemsOptions = {},
 ): Promise<ApiResult<Paginated<MenuItem>>> {
+  await requireSession();
   const result = await fetchMenuItems(opts);
   return ok(result);
 }
 
 export async function getMenuItem(id: string): Promise<ApiResult<MenuItem>> {
+  await requireSession();
   const row = await fetchMenuItemById(id);
   if (!row) return fail("NOT_FOUND", "Menu item tidak ditemukan");
   return ok(row);
 }
 
 export async function listCategories(): Promise<ApiResult<Paginated<Category>>> {
+  await requireSession();
   return ok(await fetchCategories());
 }
 
 export async function listAllCategories(): Promise<
   ApiResult<Paginated<Category>>
 > {
+  await requireSession();
   return ok(await fetchAllCategories());
 }
 
 export async function listModifiers(): Promise<ApiResult<Paginated<Modifier>>> {
+  await requireSession();
   return ok(await fetchModifiers());
 }
 
 export async function listModifiersForCategory(
   categoryId: string,
 ): Promise<ApiResult<Paginated<Modifier>>> {
+  await requireSession();
   return ok(await fetchModifiersForCategory(categoryId));
 }
 
