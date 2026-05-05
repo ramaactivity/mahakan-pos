@@ -21,5 +21,6 @@ export * from "./purchases";
 export * from "./purchase_requests";
 export * from "./cash_deposits";
 export * from "./aggregator_settlements";
+export * from "./settlement_logs";
 export * from "./accounting";
 export * from "./fixed_assets";

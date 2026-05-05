@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Banknote } from "lucide-react";
+import { BankSettlementView } from "./finance/BankSettlementView";
 import { CashOnHandTile } from "./finance/CashOnHandTile";
 import { DailySettlementView } from "./finance/DailySettlementView";
 import { SetoranTunaiView } from "./finance/SetoranTunaiView";
@@ -14,6 +15,7 @@ import { cn } from "@/lib/utils";
 
 type FinanceTab =
   | "settlement"
+  | "bank"
   | "deposits"
   | "cashflow"
   | "reconcile"
@@ -24,7 +26,8 @@ const TABS: Array<{
   label: string;
   ownerOnly?: boolean;
 }> = [
-  { key: "settlement", label: "Settlement Harian" },
+  { key: "settlement", label: "Ringkasan Shift" },
+  { key: "bank", label: "Mutasi Bank" },
   { key: "deposits", label: "Setoran Tunai" },
   { key: "cashflow", label: "Arus Kas", ownerOnly: true },
   { key: "reconcile", label: "Rekonsiliasi" },
@@ -84,6 +87,8 @@ export function FinanceSection({ viewerRole }: FinanceSectionProps) {
       <div>
         {tab === "settlement" ? (
           <DailySettlementView />
+        ) : tab === "bank" ? (
+          <BankSettlementView viewerRole={viewerRole} />
         ) : tab === "deposits" ? (
           <SetoranTunaiView viewerRole={viewerRole} />
         ) : tab === "cashflow" ? (

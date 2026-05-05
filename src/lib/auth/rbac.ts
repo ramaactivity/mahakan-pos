@@ -235,6 +235,15 @@ export const permissions = {
   "aggregator_settlement.create": ["owner", "manager", "supervisor"],
   "settings.cash_threshold.update": ["owner"],
 
+  // Settlement Log per channel per hari (Phase 6.1, sesi AC-5).
+  // Owner input mutasi bank actual + variance log. Supervisor view-only
+  // (compare expected vs actual saat shift), tidak input atau hapus
+  // (financial entry — owner+manager only).
+  "settlement_log.view": ["owner", "manager", "supervisor"],
+  "settlement_log.create": ["owner", "manager"],
+  "settlement_log.update": ["owner", "manager"],
+  "settlement_log.delete": ["owner"],
+
   // Accounting / Buku Besar — Supervisor TIDAK terlibat akuntansi
   // (sensitif, post/close period commits financial state).
   "accounting.coa.view": ["owner", "manager"],

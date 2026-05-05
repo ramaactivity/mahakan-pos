@@ -86,6 +86,10 @@ export const AUDIT_EVENT_TYPES = [
   "purchase_request.receive",
   "purchase_request.cancel",
   "purchase_request.whatsapp_sent",
+  // Settlement Logs (Phase 6.1, sesi AC-5)
+  "settlement_log.create",
+  "settlement_log.update",
+  "settlement_log.delete",
   // Customers / Loyalty — Phase 2 Tier 1.3 (M29)
   "customer.create",
   "customer.update",
@@ -189,6 +193,7 @@ export type AuditEntityType =
   | "purchase"
   | "purchase_request"
   | "purchase_request_item"
+  | "settlement_log"
   | "cash_deposit"
   | "aggregator_settlement"
   | "chart_of_accounts"
