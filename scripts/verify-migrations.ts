@@ -20,25 +20,49 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Pool } from "@neondatabase/serverless";
 
-// Raw .env.local loader — no `$variable` expansion (Neon passwords kadang
-// punya `$` yang dotenv salah-expand jadi empty). Mirror scripts/migrate.ts.
+// Raw .env.local loader — no `$variable` expansion + multi-line value aware.
+// Mirror scripts/migrate.ts loadEnvRaw.
 function loadEnvRaw(path: string): void {
   if (!existsSync(path)) return;
   const content = readFileSync(path, "utf-8");
+  let pending: { key: string; value: string; quote: '"' | "'" } | null = null;
+  const entries: Array<[string, string]> = [];
+
   for (const rawLine of content.split("\n")) {
+    if (pending) {
+      const closeIdx = rawLine.indexOf(pending.quote);
+      if (closeIdx >= 0) {
+        pending.value += "\n" + rawLine.slice(0, closeIdx);
+        entries.push([pending.key, pending.value]);
+        pending = null;
+      } else {
+        pending.value += "\n" + rawLine;
+      }
+      continue;
+    }
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#")) continue;
     const eq = line.indexOf("=");
     if (eq < 1) continue;
     const key = line.slice(0, eq).trim();
     if (!/^[A-Z_][A-Z0-9_]*$/i.test(key)) continue;
-    let value = line.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
+    let value = line.slice(eq + 1);
+    if (value.startsWith('"') || value.startsWith("'")) {
+      const quote = value[0] as '"' | "'";
+      const inner = value.slice(1);
+      const closeIdx = inner.lastIndexOf(quote);
+      if (closeIdx >= 0 && /^\s*$/.test(inner.slice(closeIdx + 1))) {
+        value = inner.slice(0, closeIdx);
+      } else {
+        pending = { key, value: inner, quote };
+        continue;
+      }
+    } else {
+      value = value.trim();
     }
+    entries.push([key, value]);
+  }
+  for (const [key, value] of entries) {
     if (!process.env[key]) process.env[key] = value;
   }
 }
