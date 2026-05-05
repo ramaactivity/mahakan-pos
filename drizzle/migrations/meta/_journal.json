@@ -197,6 +197,13 @@
       "when": 1777907070635,
       "tag": "0027_phase4_attendance_mobile",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1777996800000,
+      "tag": "0028_payroll_potongan_account",
+      "breakpoints": true
     }
   ]
 }

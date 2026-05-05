@@ -298,12 +298,16 @@ describe("mapPosCompliment", () => {
 // ============================================================
 
 describe("mapPayrollPaid", () => {
-  it("transfer → Dr 6101 Cr 1110", () => {
+  it("transfer base-only → Dr 6101 Cr 1110", () => {
     const lines = mapPayrollPaid({
       payrollPeriodId: "p-1",
       periodLabel: "Mei 2026",
       outletId: "outlet-1",
       entryDate: "2026-05-31",
+      totalBaseSalary: 5_000_000,
+      totalOvertimePay: 0,
+      totalBonus: 0,
+      totalDeductions: 0,
       totalNetPay: 5_000_000,
       paymentMethod: "transfer",
     });
@@ -312,25 +316,72 @@ describe("mapPayrollPaid", () => {
     expect(lines.find((l) => l.accountCode === "1110")?.credit).toBe(5000000);
   });
 
-  it("cash → Cr 1101 instead of 1110", () => {
+  it("cash base-only → Cr 1101 instead of 1110", () => {
     const lines = mapPayrollPaid({
       payrollPeriodId: "p-2",
       periodLabel: "Apr 2026",
       outletId: "outlet-1",
       entryDate: "2026-04-30",
+      totalBaseSalary: 1_000_000,
+      totalOvertimePay: 0,
+      totalBonus: 0,
+      totalDeductions: 0,
       totalNetPay: 1_000_000,
       paymentMethod: "cash",
     });
     expect(lines.find((l) => l.accountCode === "1101")?.credit).toBe(1000000);
   });
 
-  it("zero throws", () => {
+  it("full breakdown → emits 5 lines balanced (Dr 6101/6103/6102, Cr 6105/1110)", () => {
+    const lines = mapPayrollPaid({
+      payrollPeriodId: "p-4",
+      periodLabel: "Jun 2026",
+      outletId: "outlet-1",
+      entryDate: "2026-06-30",
+      totalBaseSalary: 5_000_000,
+      totalOvertimePay: 800_000,
+      totalBonus: 300_000,
+      totalDeductions: 100_000,
+      totalNetPay: 6_000_000, // 5M + 800k + 300k - 100k
+      paymentMethod: "transfer",
+    });
+    expect(isBalanced(lines)).toBe(true);
+    expect(lines).toHaveLength(5);
+    expect(lines.find((l) => l.accountCode === "6101")?.debit).toBe(5_000_000);
+    expect(lines.find((l) => l.accountCode === "6103")?.debit).toBe(800_000);
+    expect(lines.find((l) => l.accountCode === "6102")?.debit).toBe(300_000);
+    expect(lines.find((l) => l.accountCode === "6105")?.credit).toBe(100_000);
+    expect(lines.find((l) => l.accountCode === "1110")?.credit).toBe(6_000_000);
+  });
+
+  it("breakdown sum mismatch with netPay → throws", () => {
+    expect(() =>
+      mapPayrollPaid({
+        payrollPeriodId: "p-5",
+        periodLabel: "Test",
+        outletId: "outlet-1",
+        entryDate: "2026-06-30",
+        totalBaseSalary: 5_000_000,
+        totalOvertimePay: 0,
+        totalBonus: 0,
+        totalDeductions: 0,
+        totalNetPay: 4_000_000, // mismatch (expected 5M)
+        paymentMethod: "transfer",
+      }),
+    ).toThrow();
+  });
+
+  it("zero net throws", () => {
     expect(() =>
       mapPayrollPaid({
         payrollPeriodId: "p-3",
         periodLabel: "Test",
         outletId: "outlet-1",
         entryDate: "2026-04-30",
+        totalBaseSalary: 0,
+        totalOvertimePay: 0,
+        totalBonus: 0,
+        totalDeductions: 0,
         totalNetPay: 0,
         paymentMethod: "transfer",
       }),

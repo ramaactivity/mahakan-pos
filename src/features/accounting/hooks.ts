@@ -293,6 +293,10 @@ export async function postJournalForPayrollPaid(args: {
   outletId: string;
   payrollPeriodId: string;
   periodLabel: string;
+  totalBaseSalary: number;
+  totalOvertimePay: number;
+  totalBonus: number;
+  totalDeductions: number;
   totalNetPay: number;
   paymentMethod: "cash" | "transfer";
   entryDate: string;
@@ -306,6 +310,10 @@ export async function postJournalForPayrollPaid(args: {
     periodLabel: args.periodLabel,
     outletId: args.outletId,
     entryDate: args.entryDate,
+    totalBaseSalary: args.totalBaseSalary,
+    totalOvertimePay: args.totalOvertimePay,
+    totalBonus: args.totalBonus,
+    totalDeductions: args.totalDeductions,
     totalNetPay: args.totalNetPay,
     paymentMethod: args.paymentMethod,
   });

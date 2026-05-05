@@ -97,10 +97,11 @@ const DEFAULTS: DefaultAccount[] = [
   { code: "5103", name: "HPP — Lain", type: "cogs", normalBalance: "debit", parentCode: "5100", isSystem: false, displayOrder: 3, notes: "Merchandise COGS" },
 
   // ============ 6xxx BEBAN OPERASIONAL — 61xx Personalia ============
-  { code: "6101", name: "Gaji Karyawan", type: "expense", normalBalance: "debit", parentCode: "6100", isSystem: true, displayOrder: 1, notes: "Auto-debit saat payroll mark-paid (sourced dari payroll_lines.netPay)" },
-  { code: "6102", name: "Tunjangan & Bonus", type: "expense", normalBalance: "debit", parentCode: "6100", isSystem: false, displayOrder: 2, notes: "Manual atau payroll component breakdown (Phase 3)" },
-  { code: "6103", name: "Lembur", type: "expense", normalBalance: "debit", parentCode: "6100", isSystem: false, displayOrder: 3, notes: "Manual atau payroll OT component (Phase 3)" },
+  { code: "6101", name: "Gaji Karyawan", type: "expense", normalBalance: "debit", parentCode: "6100", isSystem: true, displayOrder: 1, notes: "Auto-debit saat payroll mark-paid (sourced dari payroll_lines.baseSalary, sesi AC-2)" },
+  { code: "6102", name: "Tunjangan & Bonus", type: "expense", normalBalance: "debit", parentCode: "6100", isSystem: true, displayOrder: 2, notes: "Auto-debit saat payroll mark-paid (sourced dari payroll_lines.bonus, sesi AC-2)" },
+  { code: "6103", name: "Lembur", type: "expense", normalBalance: "debit", parentCode: "6100", isSystem: true, displayOrder: 3, notes: "Auto-debit saat payroll mark-paid (sourced dari payroll_lines.overtimePay, sesi AC-2)" },
   { code: "6104", name: "BPJS / Asuransi Karyawan", type: "expense", normalBalance: "debit", parentCode: "6100", isSystem: false, displayOrder: 4, notes: "Manual entry bulanan" },
+  { code: "6105", name: "Potongan Karyawan", type: "expense", normalBalance: "credit", parentCode: "6100", isContra: true, isSystem: true, displayOrder: 5, notes: "Kontra-expense. Auto-credit saat payroll mark-paid (sum lateDeduction + otherDeductions, sesi AC-2). Mengurangi total beban gaji efektif." },
 
   // ============ 62xx Sewa & Utilitas ============
   { code: "6201", name: "Sewa Tempat", type: "expense", normalBalance: "debit", parentCode: "6200", isSystem: true, displayOrder: 10, notes: "Manual expense → mapped ke akun ini lewat selector" },

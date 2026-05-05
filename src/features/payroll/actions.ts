@@ -496,14 +496,26 @@ export async function markPayrollPaid(
       .where(eq(expenses.payrollPeriodId, periodId))
       .limit(1);
 
-    // Sum net pay for the period.
+    // Sum payroll components for the period — Phase 5.2 (sesi AC-2)
+    // breakdown for accounting auto-journal multi-line emission.
     const [sumRow] = await tx
       .select({
-        total: sql<string>`COALESCE(SUM(${payrollLines.netPay}), 0)`,
+        baseSalary: sql<string>`COALESCE(SUM(${payrollLines.baseSalary}), 0)`,
+        overtimePay: sql<string>`COALESCE(SUM(${payrollLines.overtimePay}), 0)`,
+        bonus: sql<string>`COALESCE(SUM(${payrollLines.bonus}), 0)`,
+        lateDeduction: sql<string>`COALESCE(SUM(${payrollLines.lateDeduction}), 0)`,
+        otherDeductions: sql<string>`COALESCE(SUM(${payrollLines.otherDeductions}), 0)`,
+        netPay: sql<string>`COALESCE(SUM(${payrollLines.netPay}), 0)`,
       })
       .from(payrollLines)
       .where(eq(payrollLines.periodId, periodId));
-    const totalNet = Number(sumRow?.total ?? 0);
+    const totalBaseSalary = Number(sumRow?.baseSalary ?? 0);
+    const totalOvertimePay = Number(sumRow?.overtimePay ?? 0);
+    const totalBonus = Number(sumRow?.bonus ?? 0);
+    const totalDeductions =
+      Number(sumRow?.lateDeduction ?? 0) +
+      Number(sumRow?.otherDeductions ?? 0);
+    const totalNet = Number(sumRow?.netPay ?? 0);
 
     const [row] = await tx
       .update(payrollPeriods)
@@ -540,7 +552,15 @@ export async function markPayrollPaid(
       expenseId = inserted.id;
     }
 
-    return { row, expenseId, totalNet };
+    return {
+      row,
+      expenseId,
+      totalNet,
+      totalBaseSalary,
+      totalOvertimePay,
+      totalBonus,
+      totalDeductions,
+    };
   });
 
   logAudit({
@@ -585,6 +605,7 @@ export async function markPayrollPaid(
   }
 
   // Sesi T — Accounting auto-journal hook (payroll paid).
+  // Phase 5.2 (sesi AC-2): pass per-component breakdown for multi-line emission.
   if (result.totalNet > 0) {
     const { fireJournalHook, postJournalForPayrollPaid } = await import(
       "@/features/accounting/hooks"
@@ -596,6 +617,10 @@ export async function markPayrollPaid(
           outletId: session.user.outletId,
           payrollPeriodId: periodId,
           periodLabel: result.row.label,
+          totalBaseSalary: result.totalBaseSalary,
+          totalOvertimePay: result.totalOvertimePay,
+          totalBonus: result.totalBonus,
+          totalDeductions: result.totalDeductions,
           totalNetPay: result.totalNet,
           paymentMethod: paymentMethod === "cash" ? "cash" : "transfer",
           entryDate: todayWib,
