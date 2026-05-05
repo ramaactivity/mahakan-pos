@@ -83,14 +83,25 @@ export function PurchaseRequestsSection() {
     setError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
     void (async () => {
-      const res = await listPurchaseRequests({
-        status: filter,
-        limit: 50,
-      });
-      if (cancelled) return;
-      if (isOk(res)) setRequests(res.data);
-      else setError(res.error.message);
-      setLoading(false);
+      try {
+        const res = await listPurchaseRequests({
+          status: filter,
+          limit: 50,
+        });
+        if (cancelled) return;
+        if (isOk(res)) setRequests(res.data);
+        else setError(res.error.message);
+      } catch (e) {
+        if (cancelled) return;
+        console.error("[PurchaseRequests] load failed", e);
+        setError(
+          e instanceof Error
+            ? e.message
+            : "Gagal memuat permintaan belanja",
+        );
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
     return () => {
       cancelled = true;
