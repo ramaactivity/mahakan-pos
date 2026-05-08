@@ -253,7 +253,7 @@ export function AuditLogSection() {
             <Skeleton className="h-10 w-full" />
           </div>
         ) : !rows || rows.length === 0 ? (
-          <div className="p-12 text-center text-sm text-neutral-500">
+          <div className="p-12 text-center text-sm text-neutral-600">
             Belum ada catatan untuk filter ini.
           </div>
         ) : (
@@ -330,7 +330,7 @@ function auditColumns(
           {r.userName ? (
             <>
               <div className="font-medium">{r.userName}</div>
-              <div className="text-[11px] text-neutral-500">{r.userRole}</div>
+              <div className="text-[11px] text-neutral-600">{r.userRole}</div>
             </>
           ) : (
             <span className="text-neutral-400">—</span>

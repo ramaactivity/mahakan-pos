@@ -299,7 +299,7 @@ export function PurchaseRequestsSection() {
                 onChange={setReceiveQty}
                 allowDecimal={false}
               />
-              <p className="mt-1 text-xs text-neutral-500">
+              <p className="mt-1 text-xs text-neutral-600">
                 Isi total qty kumulatif (bukan tambahan). Maks{" "}
                 {Number(receiveTarget.item.requestedQty).toLocaleString(
                   "id-ID",
@@ -383,7 +383,7 @@ function RequestCard({ request, onReceive, onCancel }: RequestCardProps) {
           <CardTitle className="text-base">
             {formatRequestLabel(request)}
           </CardTitle>
-          <p className="text-xs text-neutral-500">
+          <p className="text-xs text-neutral-600">
             Dibuat oleh {request.createdByName ?? "—"} ·{" "}
             {request.createdAt.toLocaleString("id-ID", {
               dateStyle: "medium",
@@ -398,7 +398,7 @@ function RequestCard({ request, onReceive, onCancel }: RequestCardProps) {
           <Badge variant={STATUS_VARIANT[request.status]}>
             {STATUS_LABEL[request.status]}
           </Badge>
-          <p className="text-xs text-neutral-500">
+          <p className="text-xs text-neutral-600">
             {totalReceived.toLocaleString("id-ID")} /{" "}
             {totalRequested.toLocaleString("id-ID")}
           </p>
@@ -484,7 +484,7 @@ function purchaseRequestItemColumns(): ResponsiveColumn<PurchaseRequestItem>[] {
             {it.ingredientNameSnapshot}
           </p>
           {it.notes ? (
-            <p className="text-xs text-neutral-500">{it.notes}</p>
+            <p className="text-xs text-neutral-600">{it.notes}</p>
           ) : null}
         </div>
       ),

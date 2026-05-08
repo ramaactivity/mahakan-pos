@@ -1,10 +1,22 @@
 # 🎨 UI DESIGN SYSTEM — Mahakan Coffee & Space
 
 **Design System & Component Guidelines**
-**Version:** 1.0
+**Version:** 1.2 (sesi AD-2 — impeccable + ui-ux-pro-max alignment)
 **Depends on:** `01-PRD.md`, `02-FSD.md`
 **Status:** ✅ APPROVED
 **Framework:** Tailwind CSS v4, React 19, lucide-react icons
+
+**Reference skills installed at `~/.claude/skills/`** — these inform every UI decision:
+
+| Skill | Purpose | Path |
+|---|---|---|
+| `impeccable` | 7-domain design references + 23 commands + 27 deterministic anti-patterns | `~/.claude/skills/impeccable/` ([source](https://github.com/pbakaus/impeccable)) |
+| `ui-ux-pro-max` | 161 product types, 99 UX guidelines, 50+ styles, priority rule categories | `~/.claude/skills/ui-ux-pro-max/` ([source](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill)) |
+| `ui-ux-design`, `ui-ux-styling`, `ui-ux-brand`, `ui-ux-banner-design` | Sub-skills for design exec + brand register | (symlinked from above repo) |
+| `ui-skills` | Design Engineer skill catalog ([ui-skills.com](http://ui-skills.com)) | `~/.claude/skills/ui-skills/` |
+| `aso-skills` | App Store Optimization (mobile marketing) — **not relevant for web POS UI**, kept for future loyalty/marketing app | `~/.claude/skills/aso-skills/` |
+
+When designing a new surface, invoke `/impeccable shape` then `/impeccable craft`. For audit, `/impeccable audit` runs deterministic anti-pattern checks.
 
 ---
 
@@ -17,12 +29,32 @@
 3. **Cozy, warm, grounded.** Mahakan is "a homely space". Not aseptic SaaS gray. Not neon cyberpunk. Think: soft greens, warm off-whites, unhurried typography.
 4. **Clarity > cleverness.** Bahasa Indonesia copy must be natural and direct. No jargon. If a barista can't understand a button label, it's wrong.
 5. **Consistent before custom.** Reuse components. Don't invent variations unless essential.
+6. **Match implementation to vision.** Maximalism needs elaborate code, minimalism needs precision. Don't reflexively reach for the "Restrained" palette on a brand surface or "Drenched" on a data dashboard. Pick the register first ([impeccable](https://github.com/pbakaus/impeccable) calls these *brand* vs *product*; Mahakan is **product** by default — design SERVES the workflow). Brand surfaces (landing, marketing pages) can elevate to *brand* register.
+7. **Vary, don't converge.** Mahakan's UI shouldn't look like every other AI-generated SaaS template. Hue, font, spacing rhythm, motion curves — make project-specific choices.
 
 ### 1.2 What This System Is NOT
 
 - ❌ A pixel-perfect Figma-to-code replica. The system is loose enough for AI coding assistants to make reasonable choices.
 - ❌ An exhaustive Storybook catalog. Phase 1 scope; extend organically.
 - ❌ A branding guideline. Focused on functional UI.
+
+### 1.3 Anti-pattern Blacklist (impeccable hard bans)
+
+**Match-and-refuse.** If you're about to write any of these, rewrite the element with different structure. Audit (`/impeccable audit`) flags these deterministically.
+
+| Anti-pattern | What it is | Replace with |
+|---|---|---|
+| **Side-stripe borders** | `border-l-2/4` colored accent on cards/lists/alerts | Full borders, background tints, leading numbers/icons, or nothing |
+| **Gradient text** | `bg-gradient-to-r ... bg-clip-text text-transparent` | Single solid color. Emphasis via weight or size |
+| **Glassmorphism as default** | Decorative `backdrop-blur-*` everywhere | Reserve for floated overlays only (modal backdrop, dropdown). Never on resting cards |
+| **Hero-metric template** | Big number + tiny uppercase label + supporting stats SaaS cliché | Information density via integration, not isolated tiles |
+| **Identical card grids** | Same-sized cards `icon + heading + text` repeated in `grid-cols-3/4` | Vary card sizes, group by purpose, use a list when uniformity matters |
+| **Modal as first thought** | Modal for simple inline action (single field edit, toggle) | Inline edit, popover, or progressive disclosure first; modal last |
+| **`transition-all`** | Animates every property including layout (width/height/padding) — causes layout thrashing | `transition-colors`, `transition-shadow`, or `transition` (Tailwind shorthand for safe subset) |
+| **Pure black or white** | `text-black`, `bg-black`, `#000`, `#fff`, `#ffffff` | `text-neutral-900`, `bg-white` (which we tint subtly via theme), or `bg-neutral-50` |
+| **Raw hex in components** | `style={{ color: "#3D7557" }}` or `bg-[#3D7557]` | Use Tailwind utility from theme (`bg-mahakan-green-700`) so theme changes propagate |
+| **Cards nested in cards** | `<Card>` inside `<Card>` | Use spacing + dividers + typography for hierarchy within a card |
+| **Wrapping non-content in `max-w-*`** | Containers around already-constrained content | Only wrap free-flowing text/forms; let admin tables span their parent |
 
 ---
 
@@ -80,17 +112,30 @@ Logo color `#539371` (green-600) has contrast 3.64:1 on white — BELOW WCAG AA 
 - ✅ Use `green-800` / `green-900` for: body text with brand color, headings
 - ❌ Never use `green-600` for body text on white — always upgrade to `green-700`+
 
-**Neutral palette — Warm:**
+**Neutral palette — Warm (tinted, no pure gray):**
 
-| Token | Hex | Usage |
-|---|---|---|
-| `neutral-50` | `#FAFAF7` | App background (warm off-white, matches Mahakan cozy vibe) |
-| `neutral-100` | `#F2F1EC` | Card backgrounds, hover surfaces |
-| `neutral-200` | `#E5E3DB` | Borders, dividers |
-| `neutral-300` | `#CFCBBF` | Disabled borders |
-| `neutral-500` | `#8A8578` | Muted text |
-| `neutral-700` | `#514E45` | Secondary text |
-| `neutral-900` | `#1F1D17` | Primary text |
+Per impeccable's rule: pure gray (`oklch(50% 0 0)`) feels lifeless next to a colored brand. Mahakan's neutrals all carry a faint warm tint (chroma ~0.005-0.01, hued toward the sage green). Subconscious cohesion between brand color and UI surfaces.
+
+| Token | Hex | Contrast on `bg-neutral-50` | Usage |
+|---|---|---|---|
+| `neutral-50` | `#FAFAF7` | — | App background (warm off-white) |
+| `neutral-100` | `#F2F1EC` | — | Card backgrounds, hover surfaces |
+| `neutral-200` | `#E5E3DB` | 1.18:1 | Borders, dividers |
+| `neutral-300` | `#CFCBBF` | 1.62:1 | Disabled borders, very-light decoration |
+| `neutral-400` | `#A8A396` | 2.62:1 | Placeholder text only (intentional sub-AA) |
+| `neutral-500` | `#8A8578` | **3.58:1** | ❌ NOT body text. ✅ Uppercase tracking labels, inactive tab labels at rest, decorative dividers (passes 3:1 large-text bar) |
+| `neutral-600` | `#6D685C` | **4.87:1 ✅** | **Default secondary text** — list metadata, helper text, captions ≥12px |
+| `neutral-700` | `#514E45` | 7.92:1 ✅ | Body text (primary, 14-16px) |
+| `neutral-800` | `#34322D` | 12.05:1 ✅ | Emphasized body, secondary headings |
+| `neutral-900` | `#1F1D17` | 16.21:1 ✅ AAA | Primary headings, max emphasis |
+
+**⚠️ Accessibility — `neutral-500` is below WCAG AA for body text.**
+- ❌ `<p className="text-xs text-neutral-500">{metadata}</p>` — 3.58:1 fails 4.5:1 normal text bar
+- ✅ `<p className="text-xs text-neutral-600">{metadata}</p>` — 4.87:1 passes
+- ✅ `<span className="text-xs uppercase tracking-wider text-neutral-500">{LABEL}</span>` — uppercase tracking-wider qualifies as decorative emphasis, 3.58:1 acceptable here per WCAG large-text rules
+- ✅ `<button className="...text-neutral-500 hover:text-neutral-900">` — inactive tab states, hover lifts to compliant; 3.58:1 at rest is acceptable for non-essential UI text
+
+**Migration note (sesi AD-2):** several `text-xs text-neutral-500` body text instances were upgraded to `-600` in PayrollSection, PurchaseRequestsSection, AuditLogSection. Repeat the pattern in new code.
 
 **Semantic palette:**
 
@@ -188,11 +233,24 @@ Keep shadows soft and warm (default Tailwind shadows work). No neon glow.
 - **Default:** `duration-200` (200ms) — modal fade, accordion
 - **Slow:** `duration-300` (300ms) — page transitions, success state animations
 
-**Easing:**
+**Easing (per impeccable):**
 
-- Default: `ease-out` (most UI)
+- Default: `ease-out` (exponential ease — UI feels lighter)
 - Exit: `ease-in` (closing modals)
-- Bouncy (sparingly): `cubic-bezier(0.34, 1.56, 0.64, 1)` for delight moments (e.g., success checkmark)
+- ❌ **No bounce, no elastic.** Use exponential ease-out (`ease-out-quart`/`quint`/`expo`). Bouncy springs feel cheap on a POS surface.
+
+**Property selection — never `transition-all`:**
+
+`transition-all` animates EVERY property change including `width`, `height`, `padding`, `margin` — causes layout thrashing per frame. Pick specific properties:
+
+| Tailwind class | Properties animated | Use case |
+|---|---|---|
+| `transition-colors` | color, bg, border, text-decoration, fill, stroke | Tab/chip toggle, hover state |
+| `transition-shadow` | box-shadow | Card lift on hover |
+| `transition-opacity` | opacity | Fade in/out |
+| `transition-transform` | transform (translate, scale, rotate) | Press feedback `active:scale-95` |
+| `transition` (Tailwind shorthand) | all of the above (NOT layout) | Multi-property safe default |
+| ❌ `transition-all` | EVERYTHING incl. layout | Banned — causes layout recalc per frame |
 
 **Reduced motion:**
 
@@ -202,7 +260,7 @@ Keep shadows soft and warm (default Tailwind shadows work). No neon glow.
 }
 ```
 
-Respect user preferences.
+Already in `globals.css`. Respect user preferences automatically.
 
 ---
 
@@ -710,9 +768,18 @@ If A7 Lite is ever used outside the kiosk role (e.g. management browsing reports
 ### 6.1 Contrast
 
 - Text on light bg: minimum 4.5:1 (WCAG AA)
-- Large text (≥18px): minimum 3:1
+- Large text (≥18px or ≥14px bold): minimum 3:1
 - Interactive elements: 3:1 contrast for borders
-- Verify with tools like Contrast Finder or Stark plugin
+- Verify with tools like [WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/) or Chrome DevTools → Rendering → Emulate vision deficiencies
+
+**Pre-computed for Mahakan tokens** (see §2.1 neutral palette table for full ratios):
+- `text-neutral-900` on `bg-neutral-50` = 16.21:1 ✅ AAA
+- `text-neutral-700` on `bg-neutral-50` = 7.92:1 ✅ AA body
+- `text-neutral-600` on `bg-neutral-50` = 4.87:1 ✅ AA body — **default for secondary text/metadata**
+- `text-neutral-500` on `bg-neutral-50` = 3.58:1 — large text only (uppercase labels, decorative)
+- `text-neutral-400` on `bg-neutral-50` = 2.62:1 — placeholder only (intentional sub-AA)
+- `text-mahakan-green-700` on `bg-white` = 5.41:1 ✅ AA — primary CTAs
+- `text-mahakan-green-600` (LOGO) on white = 3.64:1 — large/bold text only (NOT body)
 
 ### 6.2 Keyboard Navigation
 
@@ -733,9 +800,14 @@ If A7 Lite is ever used outside the kiosk role (e.g. management browsing reports
 
 ### 6.4 Touch Targets
 
-- Minimum 44×44px for touch (iOS HIG / Material)
+- Minimum 44×44px for touch (iOS HIG / Material / WCAG 2.5.5)
 - 60×60px recommended for POS primary actions
 - Spacing between targets: minimum 8px
+
+**Component-level guarantees:**
+- `<Button size="sm">`: 32px on desktop, **bumped to 44px on `(pointer: coarse)`** via `touch:h-11` (sesi AD-2 fix). Row-action icons in admin tables now hit floor on Galaxy A7 Lite.
+- `<Button size="md/lg/xl">`: 40/48/60px — already compliant.
+- Global rule via globals.css: `@media (pointer: coarse) { button, a, [role="button"] { min-height: 44px } }` enforces baseline even for ad-hoc buttons.
 
 ### 6.5 Language
 
@@ -1017,4 +1089,31 @@ amount:       'font-mono font-semibold'
 
 | Version | Date | Changes |
 |---|---|---|
+| 1.2 | 2026-05-08 | **Sesi AD-2:** Aligned with `impeccable` + `ui-ux-pro-max` skills. Added §1.3 anti-pattern blacklist. Updated §2.1 neutrals with WCAG ratios per token. Updated §2.6 motion with `transition-all` ban + property-specific guidance. Updated §6.1 contrast with pre-computed Mahakan ratios. Updated §6.4 Button.sm `touch:h-11` for WCAG 2.5.5. Skill installs documented in header. |
+| 1.1 | 2026-05-08 | **Sesi AD-1:** Tablet-aware breakpoints (`touch:`/`pointer:`/`tablet-landscape:`), Modal `fullscreen` variant, ResponsiveTable primitive, viewport hardening (overflow-x clip, overscroll-behavior contain, pinch-zoom disable). |
 | 1.0 | 2026-04-20 | Initial design system |
+
+---
+
+## 18. Audit Backlog (sesi AD-2 findings)
+
+Anti-pattern audit per `impeccable` rules ran 2026-05-08 (sesi AD-2). Codebase generally clean — most CRITICAL/HIGH already fixed. Remaining items deferred (low impact, no blocker).
+
+### Already shipped (sesi AD-2)
+- ✅ `<Button size="sm">` touch:h-11 for WCAG 2.5.5 (Button.tsx)
+- ✅ `text-neutral-500` → `-600` body text in PayrollSection, PurchaseRequestsSection, AuditLogSection
+- ✅ `transition-all` → `transition-colors` in EmployeesSection (filter chips), CategoryTabs, ItemModifierModal, AttendanceSection
+
+### Backlog — low priority polish
+- 🟢 **`transition-all` cleanup** — ~15 remaining instances in form modals (IncomeFormModal, ExpenseFormModal, MenuItemFormModal, UserFormModal, SplitPaymentModal, DiscountModal, PromoPickerModal, MenuListRow, MenuTile, HistoryPanel, PosLeftNav). Replace with `transition-colors` or `transition-shadow` per actual animated property. Bundle into next polish sesi.
+- 🟢 **`text-neutral-500` audit pass 2** — 12+ remaining instances in admin sections. Spot-check each for body-text vs label semantics; upgrade body-text instances to `-600`.
+- 🟢 **`backdrop-blur` decoration** — 1 instance in landing page (`page.tsx:78`) on resting card. Either keep as intentional landing-only decoration, or simplify to solid `bg-white`.
+- 🟢 **Empty state standardization** — DashboardHome.tsx:306 uses generic `<p>` empty state instead of `<EmptyCard>` primitive. Migrate when revisiting dashboard.
+- 🟢 **`max-w-prose` constraints** — long body paragraphs in dashboard cards lack max-width. Add `max-w-prose` or `max-w-2xl` for readable line lengths (65-75ch).
+- 🟢 **OKLCH migration** — current palette uses hex. Per impeccable, OKLCH is perceptually uniform. Future rev: migrate `globals.css` to OKLCH `@theme` (`--color-mahakan-green-700: oklch(...)`). No functional change but more deterministic palette generation.
+
+### Out of scope (separate sesi)
+- Mobile portrait optimization (800×1340) for ad-hoc tablet rotation
+- Dark mode (separate roadmap, large scope)
+- Animation polish / delight micro-interactions (separate sesi UX-feel)
+- Inline edit refactor (replace simple-action modals with inline editing) — UX research first

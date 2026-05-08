@@ -611,7 +611,7 @@ function KioskCard({
   return (
     <div
       className={cn(
-        "flex flex-col items-center gap-3 rounded-xl border-2 p-4 transition-all",
+        "flex flex-col items-center gap-3 rounded-xl border-2 p-4 transition-colors",
         isOnFloor
           ? "border-success-500/50 bg-success-100/20"
           : isDone

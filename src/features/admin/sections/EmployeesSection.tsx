@@ -260,7 +260,7 @@ export function EmployeesSection() {
                   type="button"
                   onClick={() => setStatusFilter(f.value)}
                   className={cn(
-                    "rounded-md border px-3 py-1.5 text-xs font-medium transition-all",
+                    "rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
                     statusFilter === f.value
                       ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
                       : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50",
@@ -276,7 +276,7 @@ export function EmployeesSection() {
                   type="button"
                   onClick={() => setTenureFilter(f.value)}
                   className={cn(
-                    "rounded-md border px-3 py-1.5 text-xs font-medium transition-all",
+                    "rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
                     tenureFilter === f.value
                       ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
                       : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50",

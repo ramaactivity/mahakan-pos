@@ -32,9 +32,12 @@ const variantStyles: Record<ButtonVariant, string> = {
     "border border-neutral-300 text-neutral-900 hover:bg-neutral-100 active:bg-neutral-200",
 };
 
+// `sm` bumps to h-11 on touch devices so row-action icons in admin tables
+// hit the WCAG 2.5.5 / Apple HIG / Material 44px tap-target floor on Galaxy
+// A7 Lite. Desktop stays h-8 for dense table density.
 const sizeStyles: Record<ButtonSize, string> = {
-  sm: "h-8 text-sm px-3 rounded-md gap-1.5",
-  md: "h-10 text-base px-4 rounded-md gap-2",
+  sm: "h-8 touch:h-11 text-sm px-3 touch:px-3.5 rounded-md gap-1.5",
+  md: "h-10 touch:h-11 text-base px-4 rounded-md gap-2",
   lg: "h-12 text-base px-5 rounded-lg gap-2",
   xl: "min-h-[60px] text-lg px-6 py-4 rounded-lg gap-2.5 font-semibold",
 };

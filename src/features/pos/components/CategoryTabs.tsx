@@ -59,7 +59,7 @@ function CategoryButton({
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-medium transition-all",
+        "inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700 focus-visible:ring-offset-2",
         active
           ? "border-mahakan-green-700 bg-mahakan-green-700 text-white"

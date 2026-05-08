@@ -359,10 +359,10 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
                           </span>
                           <Badge variant={status.variant}>{status.label}</Badge>
                         </div>
-                        <div className="mt-0.5 text-xs text-neutral-500">
+                        <div className="mt-0.5 text-xs text-neutral-600">
                           {p.periodStart} → {p.periodEnd}
                         </div>
-                        <div className="text-xs text-neutral-500">
+                        <div className="text-xs text-neutral-600">
                           {p.lineCount} karyawan ·{" "}
                           {formatRupiah(p.netPayTotal)}
                         </div>
@@ -388,17 +388,17 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
                     <h2 className="text-lg font-semibold text-neutral-900">
                       {selectedPeriod.label}
                     </h2>
-                    <p className="text-xs text-neutral-500">
+                    <p className="text-xs text-neutral-600">
                       {selectedPeriod.periodStart} → {selectedPeriod.periodEnd}
                     </p>
                     {selectedPeriod.finalizedAt ? (
-                      <p className="text-xs text-neutral-500">
+                      <p className="text-xs text-neutral-600">
                         Finalized{" "}
                         {formatIndonesianDateTime(selectedPeriod.finalizedAt)}
                       </p>
                     ) : null}
                     {selectedPeriod.paidAt ? (
-                      <p className="text-xs text-neutral-500">
+                      <p className="text-xs text-neutral-600">
                         Paid {formatIndonesianDateTime(selectedPeriod.paidAt)}
                       </p>
                     ) : null}

@@ -227,7 +227,7 @@ export function ItemModifierModal({
                     setSelections((s) => ({ ...s, [mod.slug]: !on }))
                   }
                   className={cn(
-                    "flex w-full items-center justify-between rounded-md border px-4 py-3 text-sm font-medium transition-all",
+                    "flex w-full items-center justify-between rounded-md border px-4 py-3 text-sm font-medium transition-colors",
                     on
                       ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
                       : "border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-100",
