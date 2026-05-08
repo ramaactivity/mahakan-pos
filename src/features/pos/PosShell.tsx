@@ -1045,54 +1045,64 @@ export function PosShell() {
 
       {/* RIGHT COLUMN — order panel. Width adaptif: tablet kecil (~10")
        * pakai 320px supaya middle column dapat ruang lebih untuk grid menu;
-       * desktop tetap 400px. */}
-      <aside className="flex w-[280px] shrink-0 flex-col overflow-hidden border-l border-neutral-200 bg-white sm:w-[320px] tablet-landscape:w-[300px] lg:w-[360px] xl:w-[380px]">
-        {rightPanel.kind === "idle" ? (
-          <IdlePanel
-            drafts={drafts}
-            shiftActive={shift !== null}
-            onNewOrder={() => setNewOrderOpen(true)}
-            onSelectDraft={openDraft}
-            userName={session.user.name}
-            userRole={session.user.role}
-          />
-        ) : (rightPanel.kind === "cart" || rightPanel.kind === "paying") &&
-          activeDraft ? (
-          <CartPanel
-            draft={activeDraft}
-            subtotal={subtotal}
-            discountAmount={discountAmount}
-            total={total}
-            onUpdateQty={(id, qty) =>
-              updateQuantity(activeDraft.id, id, qty)
-            }
-            onRemoveItem={(id) => removeItem(activeDraft.id, id)}
-            onEditNote={(id) => setNoteEditingId(id)}
-            onOpenDiscount={() => setPromoPickerOpen(true)}
-            onOpenCompliment={() => setComplimentModalOpen(true)}
-            onOpenRedeem={handleOpenRedeem}
-            redeemLoading={redeemLoading}
-            onSaveAsOpenBill={handleSaveAsOpenBill}
-            onProceedToPayment={handleProceedToPayment}
-            onCancel={handleCancelOrder}
-            onSwitchDraft={() => setRightPanel({ kind: "idle" })}
-            onSetBillNote={(note) => setBillNote(activeDraft.id, note)}
-          />
-        ) : rightPanel.kind === "paid" ? (
-          // sesi AD-4 — right panel reverts to Idle while
-          // TransactionSuccessModal owns the success UX. Cart visually
-          // resets to "ready for next order" so kasir can start typing
-          // the next customer immediately after closing the modal.
-          <IdlePanel
-            drafts={drafts}
-            shiftActive={shift !== null}
-            onNewOrder={() => setNewOrderOpen(true)}
-            onSelectDraft={openDraft}
-            userName={session.user.name}
-            userRole={session.user.role}
-          />
-        ) : null}
-      </aside>
+       * desktop tetap 400px.
+       *
+       * sesi AD-6 — only render aside on Kasir tab. Other tabs (Bill
+       * Aktif, Pesanan, Riwayat, Shift, Petty Cash, Settings) get full
+       * viewport width since they don't need the cart/order panel.
+       * Cart state (rightPanel.kind === "cart"/"paying") preserved when
+       * user switches away — they can resume the draft when they come
+       * back to Kasir.
+       */}
+      {tab === "cashier" ? (
+        <aside className="flex w-[280px] shrink-0 flex-col overflow-hidden border-l border-neutral-200 bg-white sm:w-[320px] tablet-landscape:w-[300px] lg:w-[360px] xl:w-[380px]">
+          {rightPanel.kind === "idle" ? (
+            <IdlePanel
+              drafts={drafts}
+              shiftActive={shift !== null}
+              onNewOrder={() => setNewOrderOpen(true)}
+              onSelectDraft={openDraft}
+              userName={session.user.name}
+              userRole={session.user.role}
+            />
+          ) : (rightPanel.kind === "cart" || rightPanel.kind === "paying") &&
+            activeDraft ? (
+            <CartPanel
+              draft={activeDraft}
+              subtotal={subtotal}
+              discountAmount={discountAmount}
+              total={total}
+              onUpdateQty={(id, qty) =>
+                updateQuantity(activeDraft.id, id, qty)
+              }
+              onRemoveItem={(id) => removeItem(activeDraft.id, id)}
+              onEditNote={(id) => setNoteEditingId(id)}
+              onOpenDiscount={() => setPromoPickerOpen(true)}
+              onOpenCompliment={() => setComplimentModalOpen(true)}
+              onOpenRedeem={handleOpenRedeem}
+              redeemLoading={redeemLoading}
+              onSaveAsOpenBill={handleSaveAsOpenBill}
+              onProceedToPayment={handleProceedToPayment}
+              onCancel={handleCancelOrder}
+              onSwitchDraft={() => setRightPanel({ kind: "idle" })}
+              onSetBillNote={(note) => setBillNote(activeDraft.id, note)}
+            />
+          ) : rightPanel.kind === "paid" ? (
+            // sesi AD-4 — right panel reverts to Idle while
+            // TransactionSuccessModal owns the success UX. Cart visually
+            // resets to "ready for next order" so kasir can start typing
+            // the next customer immediately after closing the modal.
+            <IdlePanel
+              drafts={drafts}
+              shiftActive={shift !== null}
+              onNewOrder={() => setNewOrderOpen(true)}
+              onSelectDraft={openDraft}
+              userName={session.user.name}
+              userRole={session.user.role}
+            />
+          ) : null}
+        </aside>
+      ) : null}
 
       {/* sesi AD-4 — Post-payment success owned by dedicated 2-column modal
        * instead of inline right-column panel. Receipt gets ~60% width for
