@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
-  CheckCircle2,
   FileText,
   Gift,
   MoreHorizontal,
@@ -53,13 +52,13 @@ import { NewOrderModal } from "@/features/pos/components/NewOrderModal";
 import { OpenBillPanel } from "@/features/pos/components/OpenBillPanel";
 import { OrderMetadataModal } from "@/features/pos/components/OrderMetadataModal";
 import { PostActionPrintModal } from "@/features/pos/components/PostActionPrintModal";
+import { TransactionSuccessModal } from "@/features/pos/components/TransactionSuccessModal";
 import { OpenPriceModal } from "@/features/pos/components/OpenPriceModal";
 import { OpenShiftModal } from "@/features/pos/components/OpenShiftModal";
 import { OrderQueuePanel } from "@/features/pos/components/OrderQueuePanel";
 import { PosLeftNav, type PosTab } from "@/features/pos/components/PosLeftNav";
 import { PettyCashPanel } from "@/features/pos/components/PettyCashPanel";
 import { PosSettingsPanel } from "@/features/pos/components/PosSettingsPanel";
-import { PrintStationButtons } from "@/features/pos/components/PrintStationButtons";
 import { ShiftPanel } from "@/features/pos/components/ShiftPanel";
 import { buildLineItem, useCartStore } from "@/features/pos/cartStore";
 import { useSession } from "@/features/auth/SessionProvider";
@@ -93,10 +92,8 @@ import {
 import { getPrinterClient } from "@/lib/printer/bluetooth";
 import type { Discount } from "@/lib/money";
 import { formatRupiah } from "@/lib/format";
-import { paymentMethodLabel } from "@/lib/payment-method";
 import {
   combineJakartaDateAndTime,
-  formatIndonesianDateTime,
   jakartaDowKey,
   toJakartaDateOnly,
 } from "@/lib/date";
@@ -1082,15 +1079,36 @@ export function PosShell() {
             onSetBillNote={(note) => setBillNote(activeDraft.id, note)}
           />
         ) : rightPanel.kind === "paid" ? (
-          <PaidPanel
-            trx={rightPanel.trx}
-            cashierName={session!.user.name ?? "Kasir"}
-            receiptConfig={receiptConfig}
-            onFinish={handleFinishOrder}
-            onOpenSettings={() => setTab("settings")}
+          // sesi AD-4 — right panel reverts to Idle while
+          // TransactionSuccessModal owns the success UX. Cart visually
+          // resets to "ready for next order" so kasir can start typing
+          // the next customer immediately after closing the modal.
+          <IdlePanel
+            drafts={drafts}
+            shiftActive={shift !== null}
+            onNewOrder={() => setNewOrderOpen(true)}
+            onSelectDraft={openDraft}
+            userName={session.user.name}
+            userRole={session.user.role}
           />
         ) : null}
       </aside>
+
+      {/* sesi AD-4 — Post-payment success owned by dedicated 2-column modal
+       * instead of inline right-column panel. Receipt gets ~60% width for
+       * legibility, action buttons (cetak tiket / selesai) get ~40% with
+       * bigger tap targets. Right cart panel reverts to Idle so kasir can
+       * start the next customer the moment they tap "Selesai". */}
+      {rightPanel.kind === "paid" ? (
+        <TransactionSuccessModal
+          open
+          trx={rightPanel.trx}
+          cashierName={session!.user.name ?? "Kasir"}
+          receiptConfig={receiptConfig}
+          onFinish={handleFinishOrder}
+          onOpenSettings={() => setTab("settings")}
+        />
+      ) : null}
 
       {/* Phase 3.1+3.2 — full-viewport PaymentModal overlay menggantikan
        * PayingPanel di kolom kanan. Cart tetap visible di balik modal supaya
@@ -1797,156 +1815,10 @@ function CartPanelImpl({
   );
 }
 
-interface PaidPanelProps {
-  trx: TransactionWithItems;
-  cashierName: string;
-  receiptConfig: ReceiptConfig | null;
-  onFinish: () => void;
-  onOpenSettings: () => void;
-}
-
-function PaidPanel({
-  trx,
-  cashierName,
-  receiptConfig,
-  onFinish,
-  onOpenSettings,
-}: PaidPanelProps) {
-  const isCash = trx.paymentMethod === "cash";
-  const cashChange = trx.cashChange ?? 0;
-  return (
-    <>
-      <header className="space-y-2 border-b border-neutral-200 bg-gradient-to-b from-success-100/60 to-white p-4">
-        <div className="flex flex-col items-center gap-2">
-          <div className="flex size-12 items-center justify-center rounded-full bg-success-500/15 ring-4 ring-success-500/20">
-            <CheckCircle2
-              className="size-7 text-success-500"
-              aria-hidden
-            />
-          </div>
-          <p className="text-base font-bold text-neutral-900">
-            Transaksi Berhasil
-          </p>
-          <p className="font-mono text-xs text-neutral-500">
-            {trx.transactionNumber}
-          </p>
-        </div>
-        {isCash && cashChange > 0 ? (
-          <div className="mt-1 flex items-center justify-between rounded-md border border-success-500 bg-success-100 px-3 py-2">
-            <span className="text-xs font-semibold text-success-500">
-              Kembalian
-            </span>
-            <span className="font-mono text-lg font-bold tabular-nums text-success-500">
-              {formatRupiah(cashChange)}
-            </span>
-          </div>
-        ) : null}
-      </header>
-
-      <div className="flex-1 overflow-y-auto p-3">
-        <div className="rounded-md bg-neutral-50 p-3 font-mono text-[10px] leading-relaxed text-neutral-900">
-          <div className="text-center">
-            <p className="font-bold">Mahakan Coffee &amp; Space</p>
-            <p>Puncak Rd KM 22, Cisarua</p>
-            <p>0838-1977-5665</p>
-          </div>
-          <div className="my-2 border-t border-dashed border-neutral-300" />
-          <Line
-            left={trx.transactionNumber}
-            right={trx.orderType === "dine_in" ? "Dine-in" : "Takeaway"}
-          />
-          {trx.pagerNumber !== null ? (
-            <Line left="Pager" right={String(trx.pagerNumber)} />
-          ) : null}
-          {trx.customerName ? (
-            <Line left="Nama" right={trx.customerName} />
-          ) : null}
-          <Line left="Waktu" right={formatIndonesianDateTime(trx.createdAt)} />
-          <div className="my-2 border-t border-dashed border-neutral-300" />
-          <div className="space-y-1">
-            {trx.items.map((item) => (
-              <div key={item.id}>
-                <Line
-                  left={`${item.quantity}× ${item.itemName}${
-                    item.variant
-                      ? ` (${item.variant === "hot" ? "Hot" : "Iced"})`
-                      : ""
-                  }`}
-                  right={formatRupiah(item.subtotal)}
-                />
-                {item.modifiers.length > 0 ? (
-                  <p className="pl-3 text-[9px] text-neutral-600">
-                    {item.modifiers
-                      .map((m) => m.selectedValue ?? m.modifierSlug)
-                      .join(", ")}
-                  </p>
-                ) : null}
-                {item.openPriceNote ? (
-                  <p className="pl-3 text-[9px] italic text-neutral-700">
-                    {item.openPriceNote}
-                  </p>
-                ) : null}
-                {item.note ? (
-                  <p className="pl-3 text-[9px] italic text-neutral-600">
-                    &ldquo;{item.note}&rdquo;
-                  </p>
-                ) : null}
-              </div>
-            ))}
-          </div>
-          <div className="my-2 border-t border-dashed border-neutral-300" />
-          <Line label="Subtotal" value={formatRupiah(trx.subtotal)} />
-          {trx.discountAmount > 0 ? (
-            <Line
-              label={`Diskon ${
-                trx.discountType === "percent" ? `${trx.discountValue}%` : ""
-              }`}
-              value={`- ${formatRupiah(trx.discountAmount)}`}
-            />
-          ) : null}
-          <Line label="TOTAL" value={formatRupiah(trx.total)} bold />
-          <div className="my-1 border-t border-dashed border-neutral-300" />
-          <Line
-            label="Bayar"
-            value={
-              isCash
-                ? `${paymentMethodLabel(trx.paymentMethod)} ${formatRupiah(trx.cashReceived ?? 0)}`
-                : paymentMethodLabel(trx.paymentMethod)
-            }
-          />
-          {isCash ? (
-            <Line label="Kembali" value={formatRupiah(cashChange)} />
-          ) : null}
-          <div className="mt-3 text-center">
-            <p className="text-[9px]">Terima kasih, sampai jumpa!</p>
-          </div>
-        </div>
-      </div>
-
-      <footer className="space-y-3 border-t border-neutral-200 p-4">
-        <div className="space-y-1.5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            Cetak Tiket
-          </p>
-          <PrintStationButtons
-            trx={trx}
-            cashierName={cashierName}
-            receiptConfig={receiptConfig}
-            onOpenSettings={onOpenSettings}
-            size="sm"
-          />
-          <p className="text-[11px] text-neutral-500">
-            Struk customer otomatis tercetak. Cetak Dapur / Bar saat siap call
-            order.
-          </p>
-        </div>
-        <Button size="lg" fullWidth onClick={onFinish}>
-          Selesai (Order Disiapkan)
-        </Button>
-      </footer>
-    </>
-  );
-}
+// sesi AD-4 — PaidPanel removed; success state now owned by
+// TransactionSuccessModal (dedicated 2-column popup). Right panel
+// reverts to IdlePanel after payment so kasir can immediately start
+// the next order.
 
 // ============================================================================
 // Tiny helpers
@@ -1985,30 +1857,4 @@ function Row({
   );
 }
 
-function Line({
-  left,
-  right,
-  label,
-  value,
-  bold,
-}: {
-  left?: string;
-  right?: string;
-  label?: string;
-  value?: string;
-  bold?: boolean;
-}) {
-  const l = left ?? label ?? "";
-  const r = right ?? value ?? "";
-  return (
-    <div
-      className={`flex items-start justify-between gap-2 ${
-        bold ? "font-bold" : ""
-      }`}
-    >
-      <span className="break-words flex-1 min-w-0">{l}</span>
-      <span className="shrink-0">{r}</span>
-    </div>
-  );
-}
 
