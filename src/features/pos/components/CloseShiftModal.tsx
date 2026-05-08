@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Receipt, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  Receipt,
+  RefreshCw,
+} from "lucide-react";
 import {
   Badge,
   Button,
-  Card,
-  CardContent,
   Input,
   Modal,
   NumericInput,
@@ -24,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { BelanjaSubmissionModal } from "./BelanjaSubmissionModal";
 
 const VARIANCE_THRESHOLD = 10_000;
+const QUICK_AMOUNTS = [50_000, 100_000, 200_000, 500_000];
 
 interface SummaryPreview {
   paid: { count: number; cash: number; qris: number; cardBca: number };
@@ -48,6 +53,26 @@ interface CloseShiftModalProps {
   onClosed: () => void;
 }
 
+/**
+ * Close-shift form — sesi AD-8b redesign.
+ *
+ * OLD: size="lg" centered with all sections stacked vertically. NumericInput
+ * popups stack on top of each other when filled. Kasir scroll banyak.
+ *
+ * NEW: size="fullscreen" 2-col mirror of PaymentModal pattern.
+ *   LEFT 5fr (~558px on tablet 1340): always-visible summary +
+ *     variance indicator. Kasir bisa pantau Kas Harusnya + Variance
+ *     selalu visible saat ngetik kas aktual.
+ *   RIGHT 7fr (~782px): input form
+ *     - "Kas Aktual" hero panel with big display + custom numpad 3x4
+ *       + quick amounts (mirror PaymentModal CashInputPanel)
+ *     - Settlement Channel 2x2 grid (compact NumericInputs)
+ *     - Setoran Owner collapsible
+ *     - Notes + Handover textarea at bottom
+ *
+ * Open bills blocker: takes over LEFT column with full warning + bill
+ * list, RIGHT column hidden. Mirror old behavior.
+ */
 export function CloseShiftModal({
   open,
   shift,
@@ -65,7 +90,7 @@ export function CloseShiftModal({
   >([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [actualCash, setActualCash] = useState("0");
+  const [actualCash, setActualCash] = useState("");
   const [notes, setNotes] = useState("");
   const [edc, setEdc] = useState("");
   const [gofood, setGofood] = useState("");
@@ -73,6 +98,7 @@ export function CloseShiftModal({
   const [shopeefood, setShopeefood] = useState("");
   const [handoverMessage, setHandoverMessage] = useState("");
   // Phase 2.4 — setoran ke owner saat tutup shift
+  const [depositOpen, setDepositOpen] = useState(false);
   const [depositAmount, setDepositAmount] = useState("");
   const [depositBank, setDepositBank] = useState("");
   const [depositNotes, setDepositNotes] = useState("");
@@ -87,20 +113,22 @@ export function CloseShiftModal({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    /* eslint-disable react-hooks/set-state-in-effect */
     setLoading(true);
-    setActualCash("0");
+    setActualCash("");
     setNotes("");
     setEdc("");
     setGofood("");
     setGrabfood("");
     setShopeefood("");
     setHandoverMessage("");
+    setDepositOpen(false);
     setDepositAmount("");
     setDepositBank("");
     setDepositNotes("");
     setError(null);
     setSubmitting(false);
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     async function load() {
       const [trxRes, cashRes] = await Promise.all([
@@ -113,8 +141,6 @@ export function CloseShiftModal({
         return;
       }
       const items = trxRes.data.items;
-      // Phase 2.1 — surface open bills before close shift; if any exist, kasir
-      // must finish them or block the close-shift action server-side anyway.
       const open = items
         .filter((t) => t.status === "open")
         .map((t) => ({
@@ -176,16 +202,27 @@ export function CloseShiftModal({
     };
   }, [open, shift, refreshKey]);
 
-  let parsedCash = 0;
-  try {
-    parsedCash = parseRupiah(actualCash);
-  } catch {
-    parsedCash = 0;
-  }
+  const parsedCash = useMemo(() => {
+    try {
+      return parseRupiah(actualCash || "0");
+    } catch {
+      return 0;
+    }
+  }, [actualCash]);
 
   const variance = summary ? parsedCash - summary.expectedCash : 0;
   const varianceFlag =
     Math.abs(variance) > VARIANCE_THRESHOLD ? "warn" : "ok";
+
+  const parsedDepositPreview = useMemo(() => {
+    try {
+      return depositAmount.trim().length > 0
+        ? parseRupiah(depositAmount)
+        : 0;
+    } catch {
+      return 0;
+    }
+  }, [depositAmount]);
 
   async function onSubmit() {
     if (submitting || !summary) return;
@@ -240,9 +277,6 @@ export function CloseShiftModal({
       );
     }
 
-    // Phase 6.5 — fetch low-stock ingredients + owner phone, lalu kalau ada
-    // tampilkan Belanja modal sebelum onClosed(). Kalau gagal fetch atau
-    // tidak ada low-stock, langsung close.
     const [lowStockRes, outletRes] = await Promise.all([
       listLowStockIngredients(),
       getOwnOutlet(),
@@ -255,7 +289,6 @@ export function CloseShiftModal({
       setLowStock(lowStockItems);
       setOwnerPhone(outletRes.success ? outletRes.data.phone : null);
       setBelanjaOpen(true);
-      // Don't call onClosed() yet — wait for belanja modal to close.
       setSubmitting(false);
       return;
     }
@@ -268,92 +301,93 @@ export function CloseShiftModal({
     onClosed();
   }
 
-  const parsedDepositPreview = (() => {
-    try {
-      return depositAmount.trim().length > 0 ? parseRupiah(depositAmount) : 0;
-    } catch {
-      return 0;
-    }
-  })();
-
   const blockedByOpenBills = openBills.length > 0;
 
   return (
     <>
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Tutup Shift"
-      description={
-        blockedByOpenBills
-          ? "Ada bill belum dibayar — selesaikan dulu sebelum tutup shift."
-          : "Hitung kas fisik di laci, lalu input untuk verifikasi."
-      }
-      size="lg"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose} disabled={submitting}>
-            {blockedByOpenBills ? "Tutup" : "Batal"}
-          </Button>
-          {blockedByOpenBills ? (
-            <Button
-              variant="outline"
-              size="lg"
-              onClick={() => setRefreshKey((k) => k + 1)}
-              disabled={loading}
-            >
-              <RefreshCw className="size-4" /> Cek Ulang
-            </Button>
+      <Modal
+        open={open}
+        onClose={onClose}
+        title="Tutup Shift"
+        description={
+          blockedByOpenBills
+            ? "Ada bill belum dibayar — selesaikan dulu sebelum tutup shift."
+            : "Hitung kas fisik di laci, bandingkan dengan Kas Harusnya."
+        }
+        size="fullscreen"
+        bodyPadding="none"
+        disableEscClose={submitting}
+        footer={
+          blockedByOpenBills ? (
+            <div className="flex w-full items-center justify-between gap-3">
+              <Button variant="ghost" onClick={onClose} disabled={loading}>
+                Tutup
+              </Button>
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={() => setRefreshKey((k) => k + 1)}
+                disabled={loading}
+              >
+                <RefreshCw className="size-4" /> Cek Ulang
+              </Button>
+            </div>
           ) : (
-            <Button
-              onClick={onSubmit}
-              loading={submitting}
-              disabled={loading}
-              size="lg"
-            >
-              Tutup Shift
-            </Button>
-          )}
-        </>
-      }
-    >
-      {loading ? (
-        <div className="flex h-32 items-center justify-center">
-          <Spinner className="size-6 text-mahakan-green-700" />
-        </div>
-      ) : blockedByOpenBills ? (
-        <Card className="border-warning-300 bg-warning-100">
-          <CardContent className="space-y-4 px-5 py-4">
-            <div className="flex items-start gap-3">
-              <AlertTriangle
-                className="mt-0.5 size-5 text-warning-500"
-                aria-hidden
-              />
-              <div className="space-y-1">
-                <p className="text-sm font-semibold text-warning-500">
-                  {openBills.length} bill belum dibayar
-                </p>
-                <p className="text-xs text-neutral-700">
-                  Tutup shift di-block sampai bill ini diselesaikan
-                  (bayar) atau dibatalkan. Cek tab <strong>Bill Aktif</strong>{" "}
-                  di POS untuk lanjut bayar.
-                </p>
+            <div className="flex w-full items-center justify-between gap-3">
+              <Button variant="ghost" onClick={onClose} disabled={submitting}>
+                Batal
+              </Button>
+              <Button
+                onClick={onSubmit}
+                loading={submitting}
+                disabled={loading || actualCash.trim().length === 0}
+                size="xl"
+                className="!h-12 min-w-[200px] touch:min-w-[260px] !text-base"
+              >
+                {submitting ? "Memproses…" : "Tutup Shift"}
+              </Button>
+            </div>
+          )
+        }
+      >
+        {loading ? (
+          <div className="flex h-full items-center justify-center">
+            <Spinner className="size-6 text-mahakan-green-700" />
+          </div>
+        ) : blockedByOpenBills ? (
+          <div className="flex h-full flex-col gap-4 overflow-y-auto p-5">
+            <div className="rounded-xl border border-warning-300 bg-warning-100 p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle
+                  className="mt-0.5 size-5 text-warning-500"
+                  aria-hidden
+                />
+                <div className="space-y-1">
+                  <p className="text-sm font-bold text-warning-500">
+                    {openBills.length} bill belum dibayar
+                  </p>
+                  <p className="text-xs text-neutral-700">
+                    Tutup shift di-block sampai bill ini diselesaikan (bayar)
+                    atau dibatalkan. Cek tab <strong>Bill Aktif</strong> di
+                    POS untuk lanjut bayar.
+                  </p>
+                </div>
               </div>
             </div>
             <ul className="space-y-2">
               {openBills.map((b) => (
                 <li
                   key={b.id}
-                  className="flex items-center justify-between rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm"
+                  className="flex items-center justify-between rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm"
                 >
                   <span className="flex items-center gap-2 font-medium text-neutral-900">
-                    <Receipt className="size-4 text-neutral-500" aria-hidden />
+                    <Receipt className="size-4 text-neutral-600" aria-hidden />
                     {b.transactionNumber}
-                    {b.pagerNumber ? (
+                    {b.pagerNumber !== null ? (
                       <Badge variant="neutral">Pager {b.pagerNumber}</Badge>
                     ) : null}
                   </span>
-                  <span className="font-mono text-neutral-700">
+                  <span className="font-mono font-semibold text-neutral-900">
                     {formatRupiah(b.total)}
                   </span>
                 </li>
@@ -363,273 +397,465 @@ export function CloseShiftModal({
               Sudah selesai semua? Tap <strong>Cek Ulang</strong> di footer
               untuk refresh status.
             </p>
-          </CardContent>
-        </Card>
-      ) : !summary ? (
-        <p className="text-sm text-danger-500">Gagal load summary</p>
-      ) : (
-        <div className="space-y-4">
-          <div className="space-y-2 rounded-lg border border-neutral-200 bg-white p-4">
-            <Row label="Kas Awal" value={formatRupiah(shift.openingCash)} />
-            <Row
-              label={`Penjualan Tunai (${summary.paid.count} trx)`}
-              value={`+ ${formatRupiah(summary.paid.cash)}`}
-            />
-            <Row label="QRIS" value={formatRupiah(summary.paid.qris)} muted />
-            <Row
-              label="Kartu BCA"
-              value={formatRupiah(summary.paid.cardBca)}
-              muted
-            />
-            {summary.voided.count > 0 ? (
-              <Row
-                label={`Void (${summary.voided.count} trx)`}
-                value={formatRupiah(summary.voided.totalAmount)}
-                muted
-              />
-            ) : null}
-            {summary.refunded.count > 0 ? (
-              <Row
-                label={`Refund Tunai (${summary.refunded.count} trx)`}
-                value={`- ${formatRupiah(summary.refunded.totalAmount)}`}
-              />
-            ) : null}
-            <div className="my-2 border-t border-dashed border-neutral-200" />
-            <Row
-              label="Kas Harusnya"
-              value={formatRupiah(summary.expectedCash)}
-              bold
-            />
           </div>
+        ) : !summary ? (
+          <p className="p-5 text-sm text-danger-500">Gagal load summary</p>
+        ) : (
+          <div className="grid h-full divide-y divide-neutral-200 lg:grid-cols-[5fr_7fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
+            {/* ============================================================ */}
+            {/* LEFT — Summary + variance                                    */}
+            {/* ============================================================ */}
+            <aside className="flex flex-col gap-3 overflow-y-auto bg-neutral-50 p-4 touch:p-3">
+              <section className="rounded-xl border border-neutral-200 bg-white p-4">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-600">
+                  Ringkasan Shift
+                </h3>
+                <div className="space-y-1.5 text-sm">
+                  <SummaryRow
+                    label="Kas Awal"
+                    value={formatRupiah(shift.openingCash)}
+                  />
+                  <SummaryRow
+                    label={`Penjualan Tunai (${summary.paid.count} trx)`}
+                    value={`+ ${formatRupiah(summary.paid.cash)}`}
+                  />
+                  <SummaryRow
+                    label="QRIS"
+                    value={formatRupiah(summary.paid.qris)}
+                    muted
+                  />
+                  <SummaryRow
+                    label="Kartu BCA"
+                    value={formatRupiah(summary.paid.cardBca)}
+                    muted
+                  />
+                  {summary.voided.count > 0 ? (
+                    <SummaryRow
+                      label={`Void (${summary.voided.count} trx)`}
+                      value={formatRupiah(summary.voided.totalAmount)}
+                      muted
+                    />
+                  ) : null}
+                  {summary.refunded.count > 0 ? (
+                    <SummaryRow
+                      label={`Refund Tunai (${summary.refunded.count} trx)`}
+                      value={`- ${formatRupiah(summary.refunded.totalAmount)}`}
+                    />
+                  ) : null}
+                  <div className="my-2 border-t border-dashed border-neutral-200" />
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-sm font-bold text-neutral-900">
+                      Kas Harusnya
+                    </span>
+                    <span className="font-mono text-xl font-bold text-mahakan-green-900">
+                      {formatRupiah(summary.expectedCash)}
+                    </span>
+                  </div>
+                </div>
+              </section>
 
-          <NumericInput
-            label="Kas Aktual (hitung manual)"
-            value={actualCash}
-            onChange={setActualCash}
-            prefix="Rp"
-            hint={`Preview: ${formatRupiah(parsedCash)}`}
-            required
-            disabled={submitting}
-          />
+              {/* Variance live indicator */}
+              <section
+                className={cn(
+                  "flex items-center gap-2 rounded-xl border-2 p-3 text-sm",
+                  parsedCash <= 0
+                    ? "border-neutral-200 bg-neutral-100 text-neutral-600"
+                    : variance === 0
+                      ? "border-success-500 bg-success-100 text-success-500"
+                      : varianceFlag === "warn"
+                        ? "border-danger-500 bg-danger-100 text-danger-500"
+                        : "border-warning-500 bg-warning-100 text-warning-500",
+                )}
+              >
+                {parsedCash <= 0 ? (
+                  <span className="flex w-full items-center justify-between">
+                    <span>Selisih</span>
+                    <span className="font-mono italic">
+                      Isi kas aktual dulu
+                    </span>
+                  </span>
+                ) : (
+                  <>
+                    {variance === 0 ? (
+                      <CheckCircle2 className="size-5" />
+                    ) : (
+                      <AlertTriangle className="size-5" />
+                    )}
+                    <span className="flex flex-1 items-baseline justify-between">
+                      <span className="font-semibold">
+                        {variance === 0
+                          ? "Pas, kas seimbang"
+                          : variance > 0
+                            ? "Selisih plus"
+                            : "Selisih minus"}
+                      </span>
+                      <span className="font-mono text-base font-bold">
+                        {variance >= 0 ? "+" : ""}
+                        {formatRupiah(variance)}
+                      </span>
+                    </span>
+                  </>
+                )}
+              </section>
 
-          {parsedCash > 0 ? (
-            <div
-              className={cn(
-                "flex items-center gap-2 rounded-lg p-3 text-sm font-medium",
-                variance === 0
-                  ? "bg-success-100 text-success-500"
-                  : varianceFlag === "warn"
-                    ? "bg-danger-100 text-danger-500"
-                    : "bg-warning-100 text-warning-500",
-              )}
-            >
-              {variance === 0 ? (
-                <CheckCircle2 className="size-5" />
-              ) : (
-                <AlertTriangle className="size-5" />
-              )}
-              <span>
-                Selisih:{" "}
-                <span className="font-mono font-bold">
-                  {variance >= 0 ? "+" : ""}
-                  {formatRupiah(variance)}
-                </span>
-                {varianceFlag === "warn" ? (
-                  <Badge variant="danger" className="ml-2">
-                    Di luar batas Rp{" "}
-                    {VARIANCE_THRESHOLD.toLocaleString("id-ID")}
-                  </Badge>
-                ) : null}
-              </span>
-            </div>
-          ) : null}
-
-          <div className="space-y-2 rounded-lg border border-neutral-200 bg-white p-4">
-            <p className="text-sm font-semibold text-neutral-900">
-              Settlement Channel (opsional)
-            </p>
-            <p className="text-xs text-neutral-500">
-              Total expected dari masing-masing channel hari ini. Diisi
-              kalau outlet pakai EDC / aggregator online — kosongkan kalau
-              gak relevan.
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <NumericInput
-                label="EDC (BCA card)"
-                value={edc}
-                onChange={setEdc}
-                prefix="Rp"
-                hint={summary.paid.cardBca > 0
-                  ? `POS catat: ${formatRupiah(summary.paid.cardBca)}`
-                  : undefined}
-                disabled={submitting}
-              />
-              <NumericInput
-                label="GoFood"
-                value={gofood}
-                onChange={setGofood}
-                prefix="Rp"
-                disabled={submitting}
-              />
-              <NumericInput
-                label="GrabFood"
-                value={grabfood}
-                onChange={setGrabfood}
-                prefix="Rp"
-                disabled={submitting}
-              />
-              <NumericInput
-                label="ShopeeFood"
-                value={shopeefood}
-                onChange={setShopeefood}
-                prefix="Rp"
-                disabled={submitting}
-              />
-            </div>
-          </div>
-
-          {summary.petty.expensesCount > 0 || summary.petty.incomesCount > 0 ? (
-            <div className="space-y-2 rounded-lg border border-neutral-200 bg-white p-4">
-              <p className="text-sm font-semibold text-neutral-900">
-                Petty Cash Hari Ini
-              </p>
-              {summary.petty.incomesCount > 0 ? (
-                <Row
-                  label={`Pemasukan (${summary.petty.incomesCount}x)`}
-                  value={`+ ${formatRupiah(summary.petty.incomesTotal)}`}
-                />
+              {varianceFlag === "warn" && parsedCash > 0 ? (
+                <p className="text-[11px] text-danger-500">
+                  ⚠ Selisih lebih dari{" "}
+                  {formatRupiah(VARIANCE_THRESHOLD)}. Recheck jumlah cash
+                  drawer atau catat alasan di bawah.
+                </p>
               ) : null}
-              {summary.petty.expensesCount > 0 ? (
-                <Row
-                  label={`Pengeluaran (${summary.petty.expensesCount}x)`}
-                  value={`- ${formatRupiah(summary.petty.expensesTotal)}`}
-                />
-              ) : null}
-              <p className="text-xs text-neutral-500">
-                Catatan otomatis dari Petty Cash di tab Petty Cash.
-              </p>
-            </div>
-          ) : null}
 
-          <div className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4">
-            <div className="space-y-1">
-              <p className="text-sm font-semibold text-neutral-900">
-                Setor ke Owner (opsional)
-              </p>
-              <p className="text-xs text-neutral-500">
-                Kalau kasir setor sebagian/seluruh kas drawer ke owner saat
-                tutup shift, catat di sini. Auto-buat entri{" "}
-                <strong>Setoran Tunai pending</strong> untuk diverifikasi
-                owner di tab Keuangan.
-              </p>
-            </div>
-            <NumericInput
-              label="Jumlah Setor"
-              value={depositAmount}
-              onChange={setDepositAmount}
-              prefix="Rp"
-              hint={
-                parsedDepositPreview > 0
-                  ? `Preview: ${formatRupiah(parsedDepositPreview)}`
-                  : `Kosongkan kalau tidak setor (kas tetap di drawer)`
-              }
-              disabled={submitting}
-            />
-            {parsedDepositPreview > 0 ? (
-              <>
-                <Input
-                  label="Tujuan Setoran"
-                  type="text"
-                  value={depositBank}
-                  onChange={(e) => setDepositBank(e.target.value)}
-                  placeholder="Owner Tunai / BCA Owner / dll"
-                  disabled={submitting}
-                />
-                <Input
-                  label="Catatan Setoran (opsional)"
-                  type="text"
-                  value={depositNotes}
-                  onChange={(e) => setDepositNotes(e.target.value)}
-                  placeholder="Misal: kembalian belum tersetor, sisa di drawer Rp 200rb"
-                  disabled={submitting}
-                />
-                {parsedCash > 0 && parsedDepositPreview > parsedCash ? (
-                  <p className="text-xs font-medium text-warning-500">
-                    ⚠ Setoran lebih besar dari kas aktual. Pastikan jumlah
-                    benar sebelum simpan.
+              {summary.petty.expensesCount > 0 ||
+              summary.petty.incomesCount > 0 ? (
+                <section className="rounded-xl border border-neutral-200 bg-white p-3">
+                  <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-600">
+                    Petty Cash Hari Ini
+                  </h3>
+                  {summary.petty.incomesCount > 0 ? (
+                    <SummaryRow
+                      label={`Pemasukan (${summary.petty.incomesCount}×)`}
+                      value={`+ ${formatRupiah(summary.petty.incomesTotal)}`}
+                    />
+                  ) : null}
+                  {summary.petty.expensesCount > 0 ? (
+                    <SummaryRow
+                      label={`Pengeluaran (${summary.petty.expensesCount}×)`}
+                      value={`- ${formatRupiah(summary.petty.expensesTotal)}`}
+                    />
+                  ) : null}
+                  <p className="mt-1 text-[11px] text-neutral-600">
+                    Otomatis dari Petty Cash tab.
                   </p>
+                </section>
+              ) : null}
+            </aside>
+
+            {/* ============================================================ */}
+            {/* RIGHT — Input form                                           */}
+            {/* ============================================================ */}
+            <div className="flex flex-col gap-3 overflow-y-auto p-4 touch:gap-3 touch:p-3">
+              {/* Kas Aktual hero panel with custom numpad */}
+              <section className="rounded-xl border-2 border-mahakan-green-700/30 bg-white p-4">
+                <h3 className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-mahakan-green-900">
+                  <span>Kas Aktual</span>
+                  <span className="text-[10px] text-neutral-600 normal-case tracking-normal">
+                    (hitung manual di laci)
+                  </span>
+                </h3>
+
+                {/* Big amount display */}
+                <div
+                  className={cn(
+                    "mb-3 flex h-14 items-center justify-end rounded-xl border-2 px-4 transition-colors touch:h-12",
+                    submitting && "opacity-60",
+                    parsedCash === 0
+                      ? "border-neutral-300 bg-neutral-50"
+                      : variance === 0
+                        ? "border-success-500 bg-success-100"
+                        : varianceFlag === "warn"
+                          ? "border-danger-500 bg-danger-100"
+                          : "border-warning-500 bg-warning-100",
+                  )}
+                >
+                  {parsedCash > 0 ? (
+                    <span className="font-mono text-3xl font-bold tabular-nums text-neutral-900 touch:text-2xl">
+                      {formatRupiah(parsedCash)}
+                    </span>
+                  ) : (
+                    <span className="font-mono text-base text-neutral-400 touch:text-sm">
+                      Tap angka untuk input
+                    </span>
+                  )}
+                </div>
+
+                {/* Quick amounts + Pas */}
+                <div className="mb-2 grid grid-cols-3 gap-1.5 sm:grid-cols-5">
+                  {QUICK_AMOUNTS.map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setActualCash(String(amt))}
+                      disabled={submitting}
+                      className={cn(
+                        "rounded-lg border border-neutral-300 bg-white py-1.5 text-sm font-medium transition-colors",
+                        "hover:bg-neutral-100 active:scale-95",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                        "disabled:cursor-not-allowed disabled:opacity-50",
+                      )}
+                    >
+                      {formatRupiah(amt).replace("Rp ", "")}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActualCash(String(summary.expectedCash))
+                    }
+                    disabled={submitting}
+                    className={cn(
+                      "rounded-lg border-2 border-mahakan-green-700 bg-mahakan-green-50 py-1.5 text-sm font-bold text-mahakan-green-900 transition-colors",
+                      "hover:bg-mahakan-green-100 active:scale-95",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                      "disabled:cursor-not-allowed disabled:opacity-50",
+                    )}
+                  >
+                    Pas
+                  </button>
+                </div>
+
+                {/* Numpad 3x4 */}
+                <div className="grid grid-cols-3 gap-1.5">
+                  {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
+                    <NumKey
+                      key={d}
+                      label={d}
+                      onPress={() => setActualCash((s) => s + d)}
+                      disabled={submitting}
+                    />
+                  ))}
+                  <NumKey
+                    label="C"
+                    onPress={() => setActualCash("")}
+                    disabled={submitting}
+                    variant="muted"
+                  />
+                  <NumKey
+                    label="0"
+                    onPress={() => setActualCash((s) => s + "0")}
+                    disabled={submitting}
+                  />
+                  <NumKey
+                    label="⌫"
+                    onPress={() =>
+                      setActualCash((s) => s.slice(0, -1))
+                    }
+                    disabled={submitting}
+                    variant="muted"
+                  />
+                </div>
+              </section>
+
+              {/* Settlement Channel */}
+              <section className="rounded-xl border border-neutral-200 bg-white p-3">
+                <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-600">
+                  Settlement Channel
+                </h3>
+                <p className="mb-2 text-[11px] text-neutral-600">
+                  Total expected per channel hari ini. Kosongkan kalau gak
+                  pakai.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <NumericInput
+                    label="EDC (BCA)"
+                    value={edc}
+                    onChange={setEdc}
+                    prefix="Rp"
+                    hint={
+                      summary.paid.cardBca > 0
+                        ? `POS catat: ${formatRupiah(summary.paid.cardBca)}`
+                        : undefined
+                    }
+                    disabled={submitting}
+                  />
+                  <NumericInput
+                    label="GoFood"
+                    value={gofood}
+                    onChange={setGofood}
+                    prefix="Rp"
+                    disabled={submitting}
+                  />
+                  <NumericInput
+                    label="GrabFood"
+                    value={grabfood}
+                    onChange={setGrabfood}
+                    prefix="Rp"
+                    disabled={submitting}
+                  />
+                  <NumericInput
+                    label="ShopeeFood"
+                    value={shopeefood}
+                    onChange={setShopeefood}
+                    prefix="Rp"
+                    disabled={submitting}
+                  />
+                </div>
+              </section>
+
+              {/* Setoran ke Owner — collapsible */}
+              <section className="rounded-xl border border-neutral-200 bg-white">
+                <button
+                  type="button"
+                  onClick={() => setDepositOpen((v) => !v)}
+                  className="flex w-full items-center justify-between p-3 text-left transition-colors hover:bg-neutral-50"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-600">
+                      Setor ke Owner
+                    </h3>
+                    <span className="text-[11px] text-neutral-600">
+                      {parsedDepositPreview > 0
+                        ? formatRupiah(parsedDepositPreview)
+                        : "(opsional)"}
+                    </span>
+                  </div>
+                  <ChevronDown
+                    className={cn(
+                      "size-4 text-neutral-600 transition-transform",
+                      depositOpen && "rotate-180",
+                    )}
+                    aria-hidden
+                  />
+                </button>
+                {depositOpen ? (
+                  <div className="space-y-2 border-t border-neutral-200 p-3">
+                    <p className="text-[11px] text-neutral-600">
+                      Auto-buat entri{" "}
+                      <strong>Setoran Tunai pending</strong> untuk
+                      diverifikasi owner di tab Keuangan.
+                    </p>
+                    <NumericInput
+                      label="Jumlah Setor"
+                      value={depositAmount}
+                      onChange={setDepositAmount}
+                      prefix="Rp"
+                      disabled={submitting}
+                    />
+                    {parsedDepositPreview > 0 ? (
+                      <>
+                        <Input
+                          label="Tujuan Setoran"
+                          type="text"
+                          value={depositBank}
+                          onChange={(e) => setDepositBank(e.target.value)}
+                          placeholder="Owner Tunai / BCA Owner / dll"
+                          disabled={submitting}
+                        />
+                        <Input
+                          label="Catatan (opsional)"
+                          type="text"
+                          value={depositNotes}
+                          onChange={(e) => setDepositNotes(e.target.value)}
+                          placeholder="Sisa di drawer Rp 200rb, dll"
+                          disabled={submitting}
+                        />
+                        {parsedCash > 0 && parsedDepositPreview > parsedCash ? (
+                          <p className="text-xs font-medium text-warning-500">
+                            ⚠ Setoran lebih besar dari kas aktual.
+                          </p>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </div>
                 ) : null}
-              </>
-            ) : null}
+              </section>
+
+              {/* Notes + Handover */}
+              <section className="space-y-2 rounded-xl border border-neutral-200 bg-white p-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-600">
+                  Catatan
+                </h3>
+                <Input
+                  label="Catatan tutup shift (opsional)"
+                  type="text"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Misal: kembalian kurang pas"
+                  disabled={submitting}
+                />
+                <div>
+                  <label className="block text-sm font-medium text-neutral-900">
+                    Pesan untuk Shift Berikutnya (opsional)
+                  </label>
+                  <textarea
+                    value={handoverMessage}
+                    onChange={(e) =>
+                      setHandoverMessage(e.target.value.slice(0, 500))
+                    }
+                    maxLength={500}
+                    rows={2}
+                    placeholder="Misal: kopi house blend habis, supplier pesan besok pagi"
+                    className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+                    disabled={submitting}
+                  />
+                  <p className="mt-1 text-[11px] text-neutral-600">
+                    Tampil saat kasir buka shift berikutnya di outlet ini.
+                  </p>
+                </div>
+              </section>
+
+              {error ? (
+                <p
+                  role="alert"
+                  className="rounded-md border border-danger-300 bg-danger-100 px-3 py-2 text-sm font-medium text-danger-700"
+                >
+                  {error}
+                </p>
+              ) : null}
+            </div>
           </div>
-
-          <Input
-            label="Catatan (opsional)"
-            type="text"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Misal: kembalian kurang pas"
-            disabled={submitting}
-          />
-
-          <div>
-            <label className="block text-sm font-medium text-neutral-900">
-              Pesan untuk Shift Berikutnya (opsional)
-            </label>
-            <textarea
-              value={handoverMessage}
-              onChange={(e) => setHandoverMessage(e.target.value.slice(0, 500))}
-              maxLength={500}
-              rows={2}
-              placeholder="Misal: kopi house blend habis, supplier pesan besok pagi"
-              className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
-              disabled={submitting}
-            />
-            <p className="mt-1 text-xs text-neutral-500">
-              Tampil saat kasir buka shift selanjutnya di outlet ini.
-            </p>
-          </div>
-
-          {error ? (
-            <p role="alert" className="text-sm font-medium text-danger-500">
-              {error}
-            </p>
-          ) : null}
-        </div>
-      )}
-    </Modal>
-    <BelanjaSubmissionModal
-      open={belanjaOpen}
-      lowStock={lowStock}
-      shiftId={shift.id}
-      ownerPhone={ownerPhone}
-      onClose={handleBelanjaClose}
-    />
+        )}
+      </Modal>
+      <BelanjaSubmissionModal
+        open={belanjaOpen}
+        lowStock={lowStock}
+        shiftId={shift.id}
+        ownerPhone={ownerPhone}
+        onClose={handleBelanjaClose}
+      />
     </>
   );
 }
 
-function Row({
+function SummaryRow({
   label,
   value,
   muted,
-  bold,
 }: {
   label: string;
   value: string;
   muted?: boolean;
-  bold?: boolean;
 }) {
   return (
     <div
       className={cn(
         "flex items-center justify-between text-sm",
-        muted ? "text-neutral-500" : "text-neutral-900",
-        bold ? "text-base font-semibold" : "",
+        muted ? "text-neutral-600" : "text-neutral-900",
       )}
     >
       <span>{label}</span>
       <span className="font-mono">{value}</span>
     </div>
+  );
+}
+
+function NumKey({
+  label,
+  onPress,
+  disabled,
+  variant,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  variant?: "muted";
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onPress}
+      disabled={disabled}
+      className={cn(
+        "flex h-12 items-center justify-center rounded-lg border font-mono text-xl font-semibold transition-colors touch:h-11 touch:text-lg",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+        "active:scale-95 active:shadow-inner",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        variant === "muted"
+          ? "border-neutral-200 bg-neutral-50 text-neutral-600 hover:bg-neutral-100"
+          : "border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50",
+      )}
+    >
+      {label}
+    </button>
   );
 }
