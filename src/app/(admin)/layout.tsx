@@ -5,11 +5,14 @@ import { OfflineBanner } from "@/components/ui/OfflineBanner";
 import { WorkspaceSwitcher } from "@/components/ui/WorkspaceSwitcher";
 import { RequireAuth } from "@/features/auth/RequireAuth";
 import { useSession } from "@/features/auth/SessionProvider";
+import { QueryProvider } from "@/features/_shared/QueryProvider";
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
   return (
     <RequireAuth allowRoles={["owner", "manager", "supervisor"]}>
-      <AdminOuterShell>{children}</AdminOuterShell>
+      <QueryProvider>
+        <AdminOuterShell>{children}</AdminOuterShell>
+      </QueryProvider>
     </RequireAuth>
   );
 }

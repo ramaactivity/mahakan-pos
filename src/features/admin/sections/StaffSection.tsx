@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Pencil, Plus, Power, Users } from "lucide-react";
 import {
   Badge,
@@ -33,9 +34,18 @@ interface StaffSectionProps {
 type FormMode = { kind: "create" } | { kind: "edit"; userId: string; name: string };
 
 export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
-  const [users, setUsers] = useState<PublicUser[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const queryClient = useQueryClient();
+  const {
+    data: users = [],
+    isLoading: loading,
+  } = useQuery({
+    queryKey: ["admin", "users", { viewerRole }],
+    queryFn: async () => {
+      const res = await listUsers();
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data.items;
+    },
+  });
 
   const [formMode, setFormMode] = useState<FormMode | null>(null);
   const [resetPinFor, setResetPinFor] = useState<PublicUser | null>(null);
@@ -44,19 +54,8 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
   );
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      const res = await listUsers();
-      if (cancelled) return;
-      if (isOk(res)) setUsers(res.data.items);
-      setLoading(false);
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey, viewerRole]);
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
 
   async function handleDeactivate() {
     if (!pendingDeactivate || submitting) return;
@@ -70,7 +69,7 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
     toast.success(`${pendingDeactivate.name} dinonaktifkan`);
     setPendingDeactivate(null);
     setSubmitting(false);
-    setRefreshKey((k) => k + 1);
+    void refresh();
   }
 
   return (
@@ -170,7 +169,7 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
         onClose={() => setFormMode(null)}
         onSaved={() => {
           setFormMode(null);
-          setRefreshKey((k) => k + 1);
+          void refresh();
         }}
       />
 
@@ -182,7 +181,7 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
         onClose={() => setResetPinFor(null)}
         onReset={() => {
           setResetPinFor(null);
-          setRefreshKey((k) => k + 1);
+          void refresh();
         }}
       />
 

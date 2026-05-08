@@ -1089,6 +1089,7 @@ amount:       'font-mono font-semibold'
 
 | Version | Date | Changes |
 |---|---|---|
+| 1.3 | 2026-05-08 | **Sesi AD-3:** Performance — TanStack Query infrastructure (already in package.json, never used until now). 7 admin sections converted from useEffect→setLoading→fetch pattern to useQuery (Staff, Employees, AuditLog, PurchaseRequests, Payroll, FixedAssets, Ingredients). Added §19 Data Fetching Pattern with migration playbook. localStorage cache layer (cache-store.ts) for static reference data (cleared on logout). 300ms search debounce via useDebouncedValue hook. |
 | 1.2 | 2026-05-08 | **Sesi AD-2:** Aligned with `impeccable` + `ui-ux-pro-max` skills. Added §1.3 anti-pattern blacklist. Updated §2.1 neutrals with WCAG ratios per token. Updated §2.6 motion with `transition-all` ban + property-specific guidance. Updated §6.1 contrast with pre-computed Mahakan ratios. Updated §6.4 Button.sm `touch:h-11` for WCAG 2.5.5. Skill installs documented in header. |
 | 1.1 | 2026-05-08 | **Sesi AD-1:** Tablet-aware breakpoints (`touch:`/`pointer:`/`tablet-landscape:`), Modal `fullscreen` variant, ResponsiveTable primitive, viewport hardening (overflow-x clip, overscroll-behavior contain, pinch-zoom disable). |
 | 1.0 | 2026-04-20 | Initial design system |
@@ -1117,3 +1118,190 @@ Anti-pattern audit per `impeccable` rules ran 2026-05-08 (sesi AD-2). Codebase g
 - Dark mode (separate roadmap, large scope)
 - Animation polish / delight micro-interactions (separate sesi UX-feel)
 - Inline edit refactor (replace simple-action modals with inline editing) — UX research first
+
+---
+
+## 19. Data Fetching Pattern (sesi AD-3)
+
+Sebelum sesi AD-3, every admin section pakai pattern naive: `useEffect` → `setLoading(true)` → `await listX()` → `setLoading(false)`. Akibatnya: pindah Karyawan → Akuntansi → Karyawan = full re-fetch tiap kali (component remount, state hilang). Skeleton spinner muncul setiap masuk halaman. Owner+staff lapor "loading lama".
+
+Solusinya: TanStack Query (`@tanstack/react-query` ^5.100.1, sudah ke-install dari awal) wraps every fetch with memory cache + staleTime + automatic dedup. Combo dengan localStorage cache layer untuk static reference data yang survive page reload.
+
+### 19.1 Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Component A: useQuery(["employees"])                   │
+│  Component B: useQuery(["employees"]) ← dedup, same key │
+└────────────────────┬────────────────────────────────────┘
+                     │
+            ┌────────▼─────────┐
+            │  TanStack Query  │  ← in-memory cache
+            │  staleTime: 5min │     gcTime: 30min
+            │  Provider per layout (admin / pos)
+            └────────┬─────────┘
+                     │ stale → background refetch
+            ┌────────▼─────────┐
+            │  Server Action   │  ← e.g. listEmployees()
+            │  Drizzle / Neon  │
+            └──────────────────┘
+
+Static reference data (suppliers, COA, categories):
+            ┌──────────────────────────┐
+            │ cache-store.ts           │  ← localStorage layer
+            │ TTL 24h, cleared on logout│
+            └──────────────────────────┘
+```
+
+### 19.2 Files added (sesi AD-3)
+
+| File | Purpose |
+|---|---|
+| [src/lib/query-client.ts](../src/lib/query-client.ts) | `createQueryClient()` factory with Mahakan-tuned defaults (5min stale, 30min gc, no refetch-on-focus) |
+| [src/features/_shared/QueryProvider.tsx](../src/features/_shared/QueryProvider.tsx) | Client component wrapper around `QueryClientProvider` |
+| [src/lib/cache-store.ts](../src/lib/cache-store.ts) | `setCache/getCache/clearCache` localStorage helpers + `CACHE_KEYS` constants |
+| [src/lib/use-debounced-value.ts](../src/lib/use-debounced-value.ts) | `useDebouncedValue<T>(value, delayMs)` for search inputs |
+
+Wired in admin layout ([src/app/(admin)/layout.tsx](../src/app/(admin)/layout.tsx)) and POS layout ([src/app/(pos)/layout.tsx](../src/app/(pos)/layout.tsx)) — every descendant section can use `useQuery`/`useMutation`/`useQueryClient` directly.
+
+`clearCache()` invoked on logout in [SessionProvider.logout](../src/features/auth/SessionProvider.tsx).
+
+### 19.3 Migration playbook (useEffect → useQuery)
+
+**Before:**
+
+```tsx
+const [items, setItems] = useState<Employee[]>([]);
+const [loading, setLoading] = useState(true);
+const [refreshKey, setRefreshKey] = useState(0);
+
+useEffect(() => {
+  let cancelled = false;
+  setLoading(true);
+  void (async () => {
+    const res = await listEmployees({ status: filter });
+    if (cancelled) return;
+    if (isOk(res)) setItems(res.data.items);
+    setLoading(false);
+  })();
+  return () => { cancelled = true; };
+}, [refreshKey, filter]);
+
+// Trigger refresh after mutation:
+setRefreshKey((k) => k + 1);
+```
+
+**After:**
+
+```tsx
+const queryClient = useQueryClient();
+const {
+  data: items = [],
+  isLoading: loading,
+} = useQuery({
+  queryKey: ["admin", "employees", { filter }],
+  queryFn: async () => {
+    const res = await listEmployees({ status: filter });
+    if (!isOk(res)) throw new Error(res.error.message);
+    return res.data.items;
+  },
+});
+
+const refresh = () =>
+  queryClient.invalidateQueries({ queryKey: ["admin", "employees"] });
+
+// After mutation:
+void refresh();
+```
+
+**Key changes:**
+1. **Drop `useState` + `useEffect`** for items/loading/refreshKey
+2. **Query key** convention: `["admin"|"pos", <domain>, { ...params }]` — params object enables auto-refetch on filter change
+3. **Throw on error** in queryFn — TanStack handles error state via `error` + `isError`
+4. **`refresh()`** = `invalidateQueries` — TanStack triggers background refetch + updates all subscribers
+5. **`enabled: <condition>`** for dependent queries (e.g. lines depend on selectedPeriodId)
+
+### 19.4 Search input pattern
+
+```tsx
+const [search, setSearch] = useState("");
+const debouncedSearch = useDebouncedValue(search.trim(), 300);
+
+const { data } = useQuery({
+  queryKey: ["admin", "employees", { search: debouncedSearch }],
+  queryFn: () => listEmployees({ search: debouncedSearch }),
+});
+
+<Input value={search} onChange={(e) => setSearch(e.target.value)} />
+```
+
+User types "tunjangan" — `search` updates 9 times, but `debouncedSearch` only stabilizes once after 300ms idle → 1 fetch instead of 9.
+
+### 19.5 Cache strategy by data type
+
+| Data type | Strategy | Where |
+|---|---|---|
+| **Reference data** (COA, suppliers, categories, ingredients master) | TanStack `staleTime: 5min` + localStorage backup | TanStack handles in-memory; localStorage via `setCache(CACHE_KEYS.X)` survives reload |
+| **Real-time / shift data** (current shift, open bills, transactions) | TanStack `staleTime: 0` or short (10-30s) | In-memory only, no localStorage |
+| **List + search** (employees, audit log) | TanStack default `staleTime: 5min` + debounce | Same |
+| **Mutations** (create/update/delete) | `useMutation` + `invalidateQueries` on success | Triggers refetch on related queries |
+
+**❌ NEVER cache in localStorage:**
+- Money / transaction values (sensitive + real-time)
+- User PINs / auth tokens (security)
+- Any data that changes minute-by-minute (shift, cart, payments)
+
+**✅ SAFE to cache in localStorage:**
+- Chart of Accounts (immutable per period)
+- Supplier list (changes monthly, stale 24h OK)
+- Categories / modifiers / ingredient names (changes weekly)
+- User UI preferences (favorites, layout mode, sort)
+
+### 19.6 QueryClient defaults (Mahakan tuned)
+
+[src/lib/query-client.ts](../src/lib/query-client.ts):
+
+```ts
+{
+  queries: {
+    staleTime: 5 * 60 * 1000,        // 5min — most lists OK to be 5min stale
+    gcTime: 30 * 60 * 1000,          // keep cache 30min after unmount
+    refetchOnWindowFocus: false,      // POS staff alt-tab → POS — don't refetch
+    refetchOnReconnect: true,         // network back → re-validate
+    retry: 1,                         // 1 retry on network error
+  },
+  mutations: { retry: 0 },            // mutations never auto-retry (idempotency)
+}
+```
+
+Per-query overrides allowed (e.g. AuditLogSection uses `staleTime: 30s` for fresh-log feel).
+
+### 19.7 Sections converted in sesi AD-3
+
+| Section | File | Notes |
+|---|---|---|
+| Staff | [StaffSection.tsx](../src/features/admin/sections/StaffSection.tsx) | Simple list, no filter |
+| Employees | [EmployeesSection.tsx](../src/features/admin/sections/EmployeesSection.tsx) | Filter chips + debounced search |
+| Audit Log | [AuditLogSection.tsx](../src/features/admin/sections/AuditLogSection.tsx) | Pagination + date range, `staleTime: 30s` (fresh-log feel) |
+| Purchase Requests | [PurchaseRequestsSection.tsx](../src/features/admin/sections/PurchaseRequestsSection.tsx) | Filter tabs |
+| Payroll | [PayrollSection.tsx](../src/features/admin/sections/PayrollSection.tsx) | 2 queries (periods + lines), dependent via `enabled` |
+| Fixed Assets | [FixedAssetsView.tsx](../src/features/admin/sections/accounting/FixedAssetsView.tsx) | Sub-view of Akuntansi tab |
+| Ingredients | [IngredientsList.tsx](../src/features/admin/sections/inventory/IngredientsList.tsx) | Filter + debounced search + parallel low-stock query |
+
+**Remaining (deferred to AD-4 / future sesi):** CoaView, JournalView, PeriodsView, ReportsView (5 sub-tabs), MovementsList, PurchasesView, OpnameTab, RecipesList, MenuItemsView, CategoriesView, CashSection, FinanceSection (5 tabs), HrOperationsSection (4 inner tabs), Schedules, AttendanceSection, DashboardHome.
+
+### 19.8 Expected impact
+
+- **First visit per section**: same speed as before (still need to fetch)
+- **Revisit within 5min**: instant — cached, no spinner
+- **Filter/search change**: smaller payload (debounced) + cached for that param combo
+- **Cross-section navigation**: 70-80% faster on revisit (data still in memory)
+- **After mutation** (create/update): immediate UI feedback via optimistic + background refetch ensures consistency
+
+### 19.9 Future enhancements
+
+- **Optimistic updates**: pass `onMutate` in `useMutation` to update UI before server confirms (e.g. delete employee feels instant)
+- **Suspense integration**: when Next.js streaming + RSC mature, wrap queries in `<Suspense>` for declarative loading
+- **Persistent cache**: `@tanstack/query-async-storage-persister` to survive page reloads with full cache rehydration
+- **Prefetch on hover**: `queryClient.prefetchQuery` triggered on sidebar item hover
+- **Background sync**: `queryClient.refetchQueries` on `online` event for offline POS

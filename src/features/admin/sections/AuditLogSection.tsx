@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Download, RefreshCw } from "lucide-react";
 import Papa from "papaparse";
 import { Card } from "@/components/ui/Card";
@@ -90,9 +91,6 @@ const EVENT_TONE: Record<
 };
 
 export function AuditLogSection() {
-  const [rows, setRows] = useState<AuditLogRow[] | null>(null);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [eventType, setEventType] = useState<string>("all");
   const today = useMemo(() => todayWibIso(), []);
   const [fromDate, setFromDate] = useState<string>(() => {
@@ -105,29 +103,37 @@ export function AuditLogSection() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
+  const {
+    data,
+    isLoading: loading,
+  } = useQuery({
+    queryKey: [
+      "admin",
+      "audit-logs",
+      { eventType, fromDate, toDate, page },
+    ],
+    queryFn: async () => {
+      const r = await listAuditLogs({
+        eventType: eventType === "all" ? undefined : (eventType as never),
+        fromDate,
+        toDate,
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+      });
+      if (!r.ok) throw new Error("Gagal load audit logs");
+      return r.data;
+    },
+    // Audit log fast-changing — keep stale time short
+    staleTime: 30 * 1000,
+  });
+
+  const queryClient = useQueryClient();
+  const rows = data?.rows ?? null;
+  const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  async function load() {
-    setLoading(true);
-    const r = await listAuditLogs({
-      eventType: eventType === "all" ? undefined : (eventType as never),
-      fromDate,
-      toDate,
-      limit: PAGE_SIZE,
-      offset: page * PAGE_SIZE,
-    });
-    if (r.ok) {
-      setRows(r.data.rows);
-      setTotal(r.data.total);
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventType, fromDate, toDate, page]);
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: ["admin", "audit-logs"] });
 
   async function onExportCsv() {
     if (exporting) return;
@@ -195,7 +201,7 @@ export function AuditLogSection() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => load()}
+            onClick={() => refresh()}
             aria-label="Refresh"
           >
             <RefreshCw className="size-4" /> Refresh

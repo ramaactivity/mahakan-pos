@@ -6,11 +6,14 @@ import { WorkspaceSwitcher } from "@/components/ui/WorkspaceSwitcher";
 import { RequireAuth } from "@/features/auth/RequireAuth";
 import { useSession } from "@/features/auth/SessionProvider";
 import { FullscreenToggle } from "@/features/pos/components/FullscreenToggle";
+import { QueryProvider } from "@/features/_shared/QueryProvider";
 
 export default function PosLayout({ children }: { children: ReactNode }) {
   return (
     <RequireAuth allowRoles={["owner", "manager", "supervisor", "staff"]} loginRedirect="/pin">
-      <PosOuterShell>{children}</PosOuterShell>
+      <QueryProvider>
+        <PosOuterShell>{children}</PosOuterShell>
+      </QueryProvider>
     </RequireAuth>
   );
 }

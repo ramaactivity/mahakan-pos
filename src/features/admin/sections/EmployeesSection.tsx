@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   Download,
@@ -40,6 +41,7 @@ import { EmployeeAttendancePinModal } from "./employees/EmployeeAttendancePinMod
 import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
 
 const STATUS_FILTERS: Array<{ value: EmployeeStatus | "all"; label: string }> =
@@ -67,14 +69,13 @@ const EMPLOYMENT_TYPE_LABELS: Record<string, string> = {
 };
 
 export function EmployeesSection() {
-  const [items, setItems] = useState<EmployeeWithLink[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<EmployeeStatus | "all">(
     "all",
   );
   const [tenureFilter, setTenureFilter] = useState<TenureBucket>("all");
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
   const [exporting, setExporting] = useState(false);
 
   const [formOpen, setFormOpen] = useState(false);
@@ -86,24 +87,27 @@ export function EmployeesSection() {
     ? hasPermission(session.user.role, "employee.attendance_pin.manage")
     : false;
 
-  useEffect(() => {
-    let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setLoading(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void (async () => {
+  const {
+    data: items = [],
+    isLoading: loading,
+  } = useQuery({
+    queryKey: [
+      "admin",
+      "employees",
+      { statusFilter, search: debouncedSearch || undefined },
+    ],
+    queryFn: async () => {
       const res = await listEmployees({
         status: statusFilter,
-        search: search.trim() || undefined,
+        search: debouncedSearch || undefined,
       });
-      if (cancelled) return;
-      if (isOk(res)) setItems(res.data.items);
-      setLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey, statusFilter, search]);
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data.items;
+    },
+  });
+
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: ["admin", "employees"] });
 
   const counts = useMemo(() => {
     const byStatus: Record<EmployeeStatus, number> = {
@@ -194,7 +198,7 @@ export function EmployeesSection() {
       return;
     }
     toast.success(`${emp.fullName} dihapus`);
-    setRefreshKey((k) => k + 1);
+    void refresh();
   }
 
   return (
@@ -476,7 +480,7 @@ export function EmployeesSection() {
         onClose={() => setFormOpen(false)}
         onSaved={() => {
           setFormOpen(false);
-          setRefreshKey((k) => k + 1);
+          void refresh();
         }}
       />
 
@@ -484,7 +488,7 @@ export function EmployeesSection() {
         open={docsFor !== null}
         employee={docsFor}
         onClose={() => setDocsFor(null)}
-        onChanged={() => setRefreshKey((k) => k + 1)}
+        onChanged={() => void refresh()}
       />
 
       <EmployeeAttendancePinModal
@@ -493,7 +497,7 @@ export function EmployeesSection() {
         onClose={() => setPinTarget(null)}
         onSaved={() => {
           setPinTarget(null);
-          setRefreshKey((k) => k + 1);
+          void refresh();
         }}
       />
     </div>

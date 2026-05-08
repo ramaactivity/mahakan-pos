@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import {
   AlertTriangle,
   ArchiveX,
@@ -92,41 +94,66 @@ export function IngredientsList() {
     ? hasPermission(role, "inventory.section.bulk_assign")
     : false;
 
-  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
-  const [lowStock, setLowStock] = useState<Ingredient[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [showInactive, setShowInactive] = useState(false);
   const [sectionFilter, setSectionFilter] = useState<SectionFilter>("all");
-  const [refreshKey, setRefreshKey] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [target, setTarget] = useState<ActionTarget>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
   const [lowOnly, setLowOnly] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      const [listRes, lowRes] = await Promise.all([
-        listAtomicIngredients({
-          activeOnly: !showInactive,
-          search: search || undefined,
-          section: sectionFilter,
-        }),
-        listLowStockIngredients(),
-      ]);
-      if (cancelled) return;
-      if (isOk(listRes)) setIngredients(listRes.data.items);
-      if (isOk(lowRes)) setLowStock(lowRes.data);
-      setLoading(false);
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey, search, showInactive, sectionFilter]);
+  const {
+    data: ingredientsData,
+    isLoading: ingredientsLoading,
+  } = useQuery({
+    queryKey: [
+      "admin",
+      "inventory",
+      "ingredients",
+      { showInactive, search: debouncedSearch, sectionFilter },
+    ],
+    queryFn: async () => {
+      const res = await listAtomicIngredients({
+        activeOnly: !showInactive,
+        search: debouncedSearch || undefined,
+        section: sectionFilter,
+      });
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data.items;
+    },
+  });
+
+  const { data: lowStockData } = useQuery({
+    queryKey: ["admin", "inventory", "low-stock"],
+    queryFn: async () => {
+      const res = await listLowStockIngredients();
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+
+  // useMemo to keep stable reference across renders — TanStack Query
+  // returns a new array reference each time the query refetches, even if
+  // data is identical. Stabilizing here prevents downstream useMemos from
+  // re-running unnecessarily.
+  const ingredients: Ingredient[] = useMemo(
+    () => ingredientsData ?? [],
+    [ingredientsData],
+  );
+  const lowStock: Ingredient[] = useMemo(
+    () => lowStockData ?? [],
+    [lowStockData],
+  );
+  const loading = ingredientsLoading;
+
+  const refresh = () => {
+    queryClient.invalidateQueries({
+      queryKey: ["admin", "inventory"],
+    });
+  };
 
   function toggleSelected(id: string) {
     setSelectedIds((prev) => {
@@ -182,10 +209,6 @@ export function IngredientsList() {
       ),
     [ingredients],
   );
-
-  function refresh() {
-    setRefreshKey((k) => k + 1);
-  }
 
   async function handleConfirmDelete() {
     if (target?.kind !== "delete") return;

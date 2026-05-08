@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ClipboardList, MessageCircle, X } from "lucide-react";
 import {
   Badge,
@@ -59,11 +60,8 @@ const STATUS_VARIANT: Record<
 };
 
 export function PurchaseRequestsSection() {
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState<FilterTab>("open");
-  const [requests, setRequests] = useState<PurchaseRequestWithItems[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
 
   const [receiveTarget, setReceiveTarget] = useState<{
     item: PurchaseRequestItem;
@@ -78,37 +76,25 @@ export function PurchaseRequestsSection() {
   const [cancelReason, setCancelReason] = useState("");
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setLoading(true);
-    setError(null);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void (async () => {
-      try {
-        const res = await listPurchaseRequests({
-          status: filter,
-          limit: 50,
-        });
-        if (cancelled) return;
-        if (isOk(res)) setRequests(res.data);
-        else setError(res.error.message);
-      } catch (e) {
-        if (cancelled) return;
-        console.error("[PurchaseRequests] load failed", e);
-        setError(
-          e instanceof Error
-            ? e.message
-            : "Gagal memuat permintaan belanja",
-        );
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [filter, refreshKey]);
+  const {
+    data: requests = [],
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: ["admin", "purchase-requests", { filter }],
+    queryFn: async () => {
+      const res = await listPurchaseRequests({ status: filter, limit: 50 });
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+  const error =
+    queryError instanceof Error ? queryError.message : null;
+
+  const refresh = () =>
+    queryClient.invalidateQueries({
+      queryKey: ["admin", "purchase-requests"],
+    });
 
   function openReceive(
     item: PurchaseRequestItem,
@@ -147,7 +133,7 @@ export function PurchaseRequestsSection() {
         : "Qty diterima diperbarui",
     );
     setReceiveTarget(null);
-    setRefreshKey((k) => k + 1);
+    void refresh();
   }
 
   async function submitCancel() {
@@ -170,7 +156,7 @@ export function PurchaseRequestsSection() {
     toast.success("Permintaan belanja dibatalkan");
     setCancelTarget(null);
     setCancelReason("");
-    setRefreshKey((k) => k + 1);
+    void refresh();
   }
 
   return (

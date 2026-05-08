@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   DollarSign,
@@ -36,7 +37,6 @@ import {
   markPayrollPaid,
   updatePayrollLine,
   type PayrollLineWithEmployee,
-  type PayrollPeriodWithStats,
   type PayrollStatus,
 } from "@/features/payroll";
 import {
@@ -61,14 +61,10 @@ interface PayrollSectionProps {
 }
 
 export function PayrollSection({ viewerRole }: PayrollSectionProps) {
-  const [periods, setPeriods] = useState<PayrollPeriodWithStats[]>([]);
-  const [loadingPeriods, setLoadingPeriods] = useState(true);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const queryClient = useQueryClient();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(null);
-  const [lines, setLines] = useState<PayrollLineWithEmployee[]>([]);
-  const [loadingLines, setLoadingLines] = useState(false);
 
   const [editingLine, setEditingLine] =
     useState<PayrollLineWithEmployee | null>(null);
@@ -80,6 +76,36 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
   const [otPerMin, setOtPerMin] = useState<string>("");
 
   const canManage = viewerRole === "owner";
+
+  const {
+    data: periods = [],
+    isLoading: loadingPeriods,
+  } = useQuery({
+    queryKey: ["admin", "payroll", "periods"],
+    queryFn: async () => {
+      const res = await listPayrollPeriods();
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+
+  const {
+    data: lines = [],
+    isLoading: loadingLines,
+  } = useQuery({
+    queryKey: ["admin", "payroll", "lines", selectedPeriodId],
+    queryFn: async () => {
+      if (!selectedPeriodId) return [];
+      const res = await listPayrollLines(selectedPeriodId);
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+    enabled: selectedPeriodId !== null,
+  });
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["admin", "payroll"] });
+  };
 
   useEffect(() => {
     if (!canManage) return;
@@ -128,42 +154,6 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
     setSettingsOpen(false);
   }
 
-  useEffect(() => {
-    let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setLoadingPeriods(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void (async () => {
-      const res = await listPayrollPeriods();
-      if (cancelled) return;
-      if (isOk(res)) setPeriods(res.data);
-      setLoadingPeriods(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey]);
-
-  useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect */
-    if (!selectedPeriodId) {
-      setLines([]);
-      return;
-    }
-    let cancelled = false;
-    setLoadingLines(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void (async () => {
-      const res = await listPayrollLines(selectedPeriodId);
-      if (cancelled) return;
-      if (isOk(res)) setLines(res.data);
-      setLoadingLines(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedPeriodId, refreshKey]);
-
   const selectedPeriod = useMemo(
     () => periods.find((p) => p.id === selectedPeriodId) ?? null,
     [periods, selectedPeriodId],
@@ -178,7 +168,7 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
       return;
     }
     toast.success(`${res.data.lineCount} line di-compute`);
-    setRefreshKey((k) => k + 1);
+    refresh();
   }
 
   async function handleFinalize() {
@@ -191,7 +181,7 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
       return;
     }
     toast.success("Payroll di-finalize");
-    setRefreshKey((k) => k + 1);
+    refresh();
   }
 
   async function handleMarkPaid() {
@@ -203,7 +193,7 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
       return;
     }
     toast.success("Payroll ditandai paid");
-    setRefreshKey((k) => k + 1);
+    refresh();
   }
 
   async function handleDelete() {
@@ -216,7 +206,7 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
     }
     toast.success("Periode dihapus");
     setSelectedPeriodId(null);
-    setRefreshKey((k) => k + 1);
+    refresh();
   }
 
   return (
@@ -497,7 +487,7 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
         onCreated={(id) => {
           setCreateOpen(false);
           setSelectedPeriodId(id);
-          setRefreshKey((k) => k + 1);
+          refresh();
         }}
       />
 
@@ -506,7 +496,7 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
         onClose={() => setEditingLine(null)}
         onSaved={() => {
           setEditingLine(null);
-          setRefreshKey((k) => k + 1);
+          refresh();
         }}
       />
     </div>

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Boxes,
   Plus,
@@ -33,33 +34,36 @@ interface Props {
 }
 
 export function FixedAssetsView({ viewerRole }: Props) {
-  const [rows, setRows] = useState<FixedAssetRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [depOpen, setDepOpen] = useState(false);
 
   const canManage = hasPermission(viewerRole, "accounting.coa.manage");
 
-  async function load() {
-    setLoading(true);
-    const res = await listFixedAssets();
-    setLoading(false);
-    if (res.ok) setRows(res.data);
-    else toast.error(res.error.message);
-  }
+  const {
+    data: rows = [],
+    isLoading: loading,
+  } = useQuery({
+    queryKey: ["admin", "accounting", "fixed-assets"],
+    queryFn: async () => {
+      const res = await listFixedAssets();
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
-  }, []);
+  const refresh = () =>
+    queryClient.invalidateQueries({
+      queryKey: ["admin", "accounting", "fixed-assets"],
+    });
 
   async function onDeactivate(asset: FixedAssetRow) {
     if (!confirm(`Hapus aset "${asset.name}"? (soft delete, journal tetap intact)`)) return;
     const res = await deactivateFixedAsset(asset.id);
     if (res.ok) {
       toast.success(`Aset ${asset.name} di-hapus`);
-      void load();
+      void refresh();
     } else {
       toast.error(res.error.message);
     }
@@ -171,7 +175,7 @@ export function FixedAssetsView({ viewerRole }: Props) {
           onClose={() => setCreateOpen(false)}
           onSaved={() => {
             setCreateOpen(false);
-            void load();
+            void refresh();
           }}
         />
       ) : null}
@@ -182,7 +186,7 @@ export function FixedAssetsView({ viewerRole }: Props) {
           onClose={() => setDepOpen(false)}
           onPosted={() => {
             setDepOpen(false);
-            void load();
+            void refresh();
           }}
         />
       ) : null}
@@ -193,7 +197,7 @@ export function FixedAssetsView({ viewerRole }: Props) {
           onClose={() => setImportOpen(false)}
           onImported={() => {
             setImportOpen(false);
-            void load();
+            void refresh();
           }}
         />
       ) : null}
