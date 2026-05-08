@@ -30,7 +30,7 @@ import {
 import type { ReceiptConfig } from "@/lib/printer/print-transaction";
 import { CloseOpenBillModal } from "./CloseOpenBillModal";
 import { formatRupiah } from "@/lib/format";
-import { formatIndonesianTime, toJakartaDateOnly } from "@/lib/date";
+import { formatIndonesianTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
 interface OpenBillPanelProps {
@@ -89,10 +89,12 @@ export function OpenBillPanel({
     let cancelled = false;
     async function load() {
       if (!hasLoadedOnce.current) setLoading(true);
-      const today = toJakartaDateOnly(new Date());
+      // sesi AD-7 — fetch ALL open bills (no date filter) so cross-day
+      // bills (left over from yesterday or earlier) are visible AND
+      // actionable. Previously today-only filter hid old open bills,
+      // blocking shift close (server-side guard counted them but UI
+      // didn't show them). 100 limit handles up to ~100 stale bills.
       const res = await listTransactions({
-        from: `${today}T00:00:00.000Z`,
-        to: `${today}T23:59:59.999Z`,
         status: "open",
         limit: 100,
       });

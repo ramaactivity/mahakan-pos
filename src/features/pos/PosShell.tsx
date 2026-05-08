@@ -18,6 +18,7 @@ import {
   Button,
   Input,
   Skeleton,
+  Spinner,
   toast,
 } from "@/components/ui";
 import { ApproverOverrideModal } from "@/features/pos/components/ApproverOverrideModal";
@@ -1082,6 +1083,7 @@ export function PosShell() {
               onOpenRedeem={handleOpenRedeem}
               redeemLoading={redeemLoading}
               onSaveAsOpenBill={handleSaveAsOpenBill}
+              saveBillSubmitting={paymentSubmitting}
               onProceedToPayment={handleProceedToPayment}
               onCancel={handleCancelOrder}
               onSwitchDraft={() => setRightPanel({ kind: "idle" })}
@@ -1146,6 +1148,27 @@ export function PosShell() {
           }
           onSubmit={handleProcessPayment}
         />
+      ) : null}
+
+      {/* sesi AD-7 — screen-blocking overlay during Save Bill / Update Bill
+       * submission. Prevents kasir double-tapping the button while server
+       * action in flight (could create duplicate open bill entries). Only
+       * activated when payment modal is NOT showing (PaymentModal owns its
+       * own submitting indicator). */}
+      {paymentSubmitting && rightPanel.kind !== "paying" ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-neutral-900/30 backdrop-blur-sm"
+          role="status"
+          aria-live="polite"
+          aria-label="Menyimpan bill"
+        >
+          <div className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-5 py-4 shadow-lg">
+            <Spinner className="size-5 text-mahakan-green-700" />
+            <p className="text-sm font-medium text-neutral-900">
+              Menyimpan bill…
+            </p>
+          </div>
+        </div>
       ) : null}
 
       {/* MODALS */}
@@ -1542,6 +1565,9 @@ interface CartPanelPropsExtra {
   onSaveAsOpenBill: () => void;
   onOpenRedeem: () => void;
   redeemLoading: boolean;
+  /** sesi AD-7: drives loading state on Save Bill / Update Bill buttons,
+   *  prevents double-submit while server action is in flight. */
+  saveBillSubmitting: boolean;
 }
 
 interface CartPanelProps extends CartPanelPropsExtra {
@@ -1579,6 +1605,7 @@ function CartPanelImpl({
   onOpenRedeem,
   redeemLoading,
   onSaveAsOpenBill,
+  saveBillSubmitting,
   onProceedToPayment,
   onCancel,
   onSwitchDraft,
@@ -1791,10 +1818,12 @@ function CartPanelImpl({
                 variant="outline"
                 size="sm"
                 onClick={onSaveAsOpenBill}
-                disabled={draft.items.length === 0}
+                loading={saveBillSubmitting}
+                disabled={draft.items.length === 0 || saveBillSubmitting}
                 fullWidth
               >
-                <FileText className="size-3.5" aria-hidden /> Simpan sebagai Open Bill
+                <FileText className="size-3.5" aria-hidden />
+                {saveBillSubmitting ? "Menyimpan…" : "Simpan sebagai Open Bill"}
               </Button>
             ) : null}
           </div>
@@ -1805,10 +1834,12 @@ function CartPanelImpl({
           <Button
             size="lg"
             onClick={onSaveAsOpenBill}
-            disabled={draft.items.length === 0}
+            loading={saveBillSubmitting}
+            disabled={draft.items.length === 0 || saveBillSubmitting}
             fullWidth
           >
-            <FileText className="size-4" aria-hidden /> Update Bill
+            <FileText className="size-4" aria-hidden />
+            {saveBillSubmitting ? "Menyimpan bill…" : "Update Bill"}
           </Button>
         ) : (
           <Button
