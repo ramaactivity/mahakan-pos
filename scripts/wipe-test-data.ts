@@ -62,7 +62,11 @@ async function main() {
       (SELECT count(*) FROM transactions) AS transactions,
       (SELECT count(*) FROM transaction_items) AS items,
       (SELECT count(*) FROM transaction_item_modifiers) AS modifiers,
+      (SELECT count(*) FROM refund_event_items) AS refund_event_items,
+      (SELECT count(*) FROM refund_events) AS refund_events,
+      (SELECT count(*) FROM split_payment_items) AS split_payment_items,
       (SELECT count(*) FROM split_payments) AS splits,
+      (SELECT count(*) FROM approval_codes WHERE target_transaction_id IS NOT NULL) AS approval_codes,
       (SELECT count(*) FROM promo_usages) AS promo_usages,
       (SELECT count(*) FROM expenses WHERE source_type = 'refund') AS refund_expenses,
       (SELECT count(*) FROM journal_entries WHERE source_type IN ('pos_sale','pos_refund','pos_compliment')) AS journal_entries,
@@ -74,7 +78,11 @@ async function main() {
   console.log(`  transactions:              ${c.transactions}`);
   console.log(`  transaction_items:         ${c.items}`);
   console.log(`  transaction_item_modifiers:${c.modifiers}`);
+  console.log(`  refund_event_items:        ${c.refund_event_items}`);
+  console.log(`  refund_events:             ${c.refund_events}`);
+  console.log(`  split_payment_items:       ${c.split_payment_items}`);
   console.log(`  split_payments:            ${c.splits}`);
+  console.log(`  approval_codes (trx):      ${c.approval_codes}`);
   console.log(`  promo_usages:              ${c.promo_usages}`);
   console.log(`  refund expenses:           ${c.refund_expenses}`);
   console.log(`  POS journal entries:       ${c.journal_entries}`);
@@ -102,19 +110,41 @@ async function main() {
     await tx.execute(sql`DELETE FROM transaction_item_modifiers`);
     console.log("  ✓ transaction_item_modifiers cleared");
 
-    // 2. Items (FK to transactions)
-    await tx.execute(sql`DELETE FROM transaction_items`);
-    console.log("  ✓ transaction_items cleared");
+    // 2. Refund event items (FK to transaction_items + refund_events)
+    //    MUST be deleted BEFORE transaction_items (FK constraint).
+    await tx.execute(sql`DELETE FROM refund_event_items`);
+    console.log("  ✓ refund_event_items cleared");
 
-    // 3. Split payments (FK to transactions)
+    // 3. Refund events (FK to transactions)
+    await tx.execute(sql`DELETE FROM refund_events`);
+    console.log("  ✓ refund_events cleared");
+
+    // 4. Split payment items (FK to transaction_items + split_payments)
+    await tx.execute(sql`DELETE FROM split_payment_items`);
+    console.log("  ✓ split_payment_items cleared");
+
+    // 5. Split payments (FK to transactions)
     await tx.execute(sql`DELETE FROM split_payments`);
     console.log("  ✓ split_payments cleared");
 
-    // 4. Promo usages (FK to transactions)
+    // 6. Approval codes consumed by transactions (FK to transactions)
+    //    Only delete trx-linked codes; keep unconsumed ones for active
+    //    approver flow.
+    await tx.execute(
+      sql`DELETE FROM approval_codes WHERE target_transaction_id IS NOT NULL`,
+    );
+    console.log("  ✓ approval_codes (trx-linked) cleared");
+
+    // 7. Items (FK to transactions) — now safe after refund_event_items
+    //    + split_payment_items cleared
+    await tx.execute(sql`DELETE FROM transaction_items`);
+    console.log("  ✓ transaction_items cleared");
+
+    // 8. Promo usages (FK to transactions)
     await tx.execute(sql`DELETE FROM promo_usages`);
     console.log("  ✓ promo_usages cleared");
 
-    // 5. Refund expenses (linked via refunded_transaction_id)
+    // 9. Refund expenses (linked via refunded_transaction_id)
     await tx.execute(sql`
       DELETE FROM expenses
       WHERE source_type = 'refund'
@@ -122,7 +152,7 @@ async function main() {
     `);
     console.log("  ✓ refund expenses cleared");
 
-    // 6a. Journal lines for POS journal entries
+    // 10a. Journal lines for POS journal entries
     await tx.execute(sql`
       DELETE FROM journal_lines
       WHERE journal_entry_id IN (
@@ -132,20 +162,20 @@ async function main() {
     `);
     console.log("  ✓ POS journal_lines cleared");
 
-    // 6b. Journal entries POS-linked
+    // 10b. Journal entries POS-linked
     await tx.execute(sql`
       DELETE FROM journal_entries
       WHERE source_type IN ('pos_sale','pos_refund','pos_compliment','shift_variance')
     `);
     console.log("  ✓ POS journal_entries cleared");
 
-    // 7. Audit logs for transactions
+    // 11. Audit logs for transactions
     await tx.execute(sql`
       DELETE FROM audit_logs WHERE entity_type = 'transaction'
     `);
     console.log("  ✓ transaction audit_logs cleared");
 
-    // 8. Transactions themselves
+    // 12. Transactions themselves
     await tx.execute(sql`DELETE FROM transactions`);
     console.log("  ✓ transactions cleared");
 
