@@ -9,7 +9,14 @@ import {
   Info,
   Upload,
 } from "lucide-react";
-import { Badge, Button, Skeleton, toast } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  ResponsiveTable,
+  Skeleton,
+  toast,
+  type ResponsiveColumn,
+} from "@/components/ui";
 import {
   deactivateFixedAsset,
   listFixedAssets,
@@ -137,98 +144,25 @@ export function FixedAssetsView({ viewerRole }: Props) {
           </p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-md border border-neutral-200">
-          <table className="min-w-full text-sm">
-            <thead className="bg-neutral-50">
-              <tr>
-                <th className="px-3 py-2 text-left text-xs font-medium uppercase text-neutral-500">
-                  Nama
-                </th>
-                <th className="px-3 py-2 text-left text-xs font-medium uppercase text-neutral-500">
-                  Kategori
-                </th>
-                <th className="px-3 py-2 text-right text-xs font-medium uppercase text-neutral-500">
-                  Cost
-                </th>
-                <th className="px-3 py-2 text-center text-xs font-medium uppercase text-neutral-500">
-                  Useful Life
-                </th>
-                <th className="px-3 py-2 text-left text-xs font-medium uppercase text-neutral-500">
-                  Acquired
-                </th>
-                <th className="px-3 py-2 text-right text-xs font-medium uppercase text-neutral-500">
-                  Akum Dep
-                </th>
-                <th className="px-3 py-2 text-right text-xs font-medium uppercase text-neutral-500">
-                  NBV
-                </th>
-                <th className="px-3 py-2 text-left text-xs font-medium uppercase text-neutral-500">
-                  Status
-                </th>
-                <th className="px-3 py-2"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100">
-              {rows.map((r) => {
-                const fullyDepreciated =
-                  r.lastDepreciatedMonth !== null &&
-                  r.accumulatedDepreciation >= r.cost - r.salvageValue;
-                return (
-                  <tr key={r.id} className="hover:bg-neutral-50">
-                    <td className="px-3 py-2">
-                      <div className="font-medium">{r.name}</div>
-                      <div className="font-mono text-xs text-neutral-500">
-                        {r.assetAccountCode} → dep {r.depreciationAccountCode}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-xs text-neutral-700">
-                      {r.category ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono">
-                      {formatRupiah(r.cost)}
-                    </td>
-                    <td className="px-3 py-2 text-center text-xs">
-                      {r.usefulLifeMonths} bln
-                    </td>
-                    <td className="px-3 py-2 text-xs">
-                      {r.acquiredDate}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-xs text-neutral-600">
-                      {formatRupiah(r.accumulatedDepreciation)}
-                      <div className="text-xs text-neutral-400">
-                        {r.lastDepreciatedMonth ?? "belum mulai"}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono font-medium">
-                      {formatRupiah(r.netBookValue)}
-                    </td>
-                    <td className="px-3 py-2">
-                      {fullyDepreciated ? (
-                        <Badge variant="neutral">Lunas</Badge>
-                      ) : r.lastDepreciatedMonth ? (
-                        <Badge variant="success">Aktif</Badge>
-                      ) : (
-                        <Badge variant="warning">Baru</Badge>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {canManage ? (
-                        <button
-                          type="button"
-                          onClick={() => onDeactivate(r)}
-                          className="rounded p-1 text-neutral-400 hover:bg-danger-100 hover:text-danger-500"
-                          aria-label={`Hapus ${r.name}`}
-                        >
-                          <Trash2 className="size-4" />
-                        </button>
-                      ) : null}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <ResponsiveTable<FixedAssetRow>
+          rows={rows}
+          rowKey={(r) => r.id}
+          columns={fixedAssetColumns()}
+          rowActions={
+            canManage
+              ? (r) => (
+                  <button
+                    type="button"
+                    onClick={() => onDeactivate(r)}
+                    className="rounded p-1 text-neutral-400 hover:bg-danger-100 hover:text-danger-500"
+                    aria-label={`Hapus ${r.name}`}
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
+                )
+              : undefined
+          }
+        />
       )}
 
       {createOpen ? (
@@ -308,4 +242,86 @@ function SummaryTile({
       </div>
     </div>
   );
+}
+
+function fixedAssetColumns(): ResponsiveColumn<FixedAssetRow>[] {
+  return [
+    {
+      key: "name",
+      label: "Nama",
+      primary: true,
+      render: (r) => (
+        <div>
+          <div className="font-medium">{r.name}</div>
+          <div className="font-mono text-xs text-neutral-500">
+            {r.assetAccountCode} → dep {r.depreciationAccountCode}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "category",
+      label: "Kategori",
+      render: (r) => (
+        <span className="text-xs text-neutral-700">{r.category ?? "—"}</span>
+      ),
+    },
+    {
+      key: "cost",
+      label: "Cost",
+      align: "right",
+      mono: true,
+      render: (r) => formatRupiah(r.cost),
+    },
+    {
+      key: "usefulLife",
+      label: "Useful Life",
+      align: "center",
+      render: (r) => (
+        <span className="text-xs">{r.usefulLifeMonths} bln</span>
+      ),
+    },
+    {
+      key: "acquired",
+      label: "Acquired",
+      desktopOnly: true,
+      render: (r) => <span className="text-xs">{r.acquiredDate}</span>,
+    },
+    {
+      key: "accumDep",
+      label: "Akum Dep",
+      align: "right",
+      desktopOnly: true,
+      render: (r) => (
+        <span className="font-mono text-xs text-neutral-600">
+          {formatRupiah(r.accumulatedDepreciation)}
+          <div className="text-xs text-neutral-400">
+            {r.lastDepreciatedMonth ?? "belum mulai"}
+          </div>
+        </span>
+      ),
+    },
+    {
+      key: "nbv",
+      label: "NBV",
+      align: "right",
+      mono: true,
+      render: (r) => (
+        <span className="font-medium">{formatRupiah(r.netBookValue)}</span>
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      render: (r) => {
+        const fullyDepreciated =
+          r.lastDepreciatedMonth !== null &&
+          r.accumulatedDepreciation >= r.cost - r.salvageValue;
+        if (fullyDepreciated) return <Badge variant="neutral">Lunas</Badge>;
+        if (r.lastDepreciatedMonth)
+          return <Badge variant="success">Aktif</Badge>;
+        return <Badge variant="warning">Baru</Badge>;
+      },
+    },
+  ];
 }

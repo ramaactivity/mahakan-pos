@@ -7,7 +7,14 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { Select, DatePicker, toast, type SelectGroup } from "@/components/ui";
+import {
+  Select,
+  DatePicker,
+  ResponsiveTable,
+  toast,
+  type ResponsiveColumn,
+  type SelectGroup,
+} from "@/components/ui";
 import { listAuditLogs } from "@/features/audit";
 import type { AuditLogRow } from "@/lib/audit";
 import { AUDIT_EVENT_TYPES } from "@/lib/audit";
@@ -250,79 +257,12 @@ export function AuditLogSection() {
             Belum ada catatan untuk filter ini.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-600">
-                <tr>
-                  <th className="w-40 px-4 py-3 font-medium">Waktu</th>
-                  <th className="w-44 px-4 py-3 font-medium">Event</th>
-                  <th className="w-44 px-4 py-3 font-medium">Pelaku</th>
-                  <th className="px-4 py-3 font-medium">Ringkasan</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => {
-                  const tone = EVENT_TONE[r.eventType] ?? "info";
-                  const summary =
-                    (r.payload?.summary as string | undefined) ?? r.eventType;
-                  const isOpen = expanded === r.id;
-                  return (
-                    <tr
-                      key={r.id}
-                      className="border-t border-neutral-100 hover:bg-neutral-50"
-                    >
-                      <td className="px-4 py-3 align-top text-xs text-neutral-600">
-                        {formatDateTime(r.createdAt)}
-                      </td>
-                      <td className="px-4 py-3 align-top">
-                        <Badge variant={tone}>{r.eventType}</Badge>
-                      </td>
-                      <td className="px-4 py-3 align-top text-xs text-neutral-700">
-                        {r.userName ? (
-                          <>
-                            <div className="font-medium">{r.userName}</div>
-                            <div className="text-[11px] text-neutral-500">
-                              {r.userRole}
-                            </div>
-                          </>
-                        ) : (
-                          <span className="text-neutral-400">—</span>
-                        )}
-                        {r.approverName && (
-                          <div className="mt-1 text-[11px] text-mahakan-green-700">
-                            ✓ approved by {r.approverName}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 align-top">
-                        <div className="text-neutral-900">{summary}</div>
-                        {Boolean(r.payload?.diff || r.payload?.context) && (
-                          <button
-                            type="button"
-                            onClick={() => setExpanded(isOpen ? null : r.id)}
-                            className="mt-1 text-xs text-mahakan-green-700 hover:underline"
-                          >
-                            {isOpen ? "Sembunyikan detail" : "Lihat detail"}
-                          </button>
-                        )}
-                        {isOpen && (
-                          <pre className="mt-2 max-h-64 overflow-auto rounded bg-neutral-50 p-2 text-[11px] leading-relaxed text-neutral-700">
-                            {JSON.stringify(
-                              {
-                                payload: r.payload,
-                                metadata: r.metadata,
-                              },
-                              null,
-                              2,
-                            )}
-                          </pre>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="px-3 py-3 pointer:px-0 pointer:py-0">
+            <ResponsiveTable<AuditLogRow>
+              rows={rows}
+              rowKey={(r) => r.id}
+              columns={auditColumns(expanded, setExpanded)}
+            />
           </div>
         )}
 
@@ -354,4 +294,87 @@ export function AuditLogSection() {
       </Card>
     </div>
   );
+}
+
+function auditColumns(
+  expanded: string | null,
+  setExpanded: (id: string | null) => void,
+): ResponsiveColumn<AuditLogRow>[] {
+  return [
+    {
+      key: "createdAt",
+      label: "Waktu",
+      width: "w-40",
+      render: (r) => (
+        <span className="text-xs text-neutral-600">
+          {formatDateTime(r.createdAt)}
+        </span>
+      ),
+    },
+    {
+      key: "eventType",
+      label: "Event",
+      primary: true,
+      width: "w-44",
+      render: (r) => {
+        const tone = EVENT_TONE[r.eventType] ?? "info";
+        return <Badge variant={tone}>{r.eventType}</Badge>;
+      },
+    },
+    {
+      key: "actor",
+      label: "Pelaku",
+      width: "w-44",
+      render: (r) => (
+        <div className="text-xs text-neutral-700">
+          {r.userName ? (
+            <>
+              <div className="font-medium">{r.userName}</div>
+              <div className="text-[11px] text-neutral-500">{r.userRole}</div>
+            </>
+          ) : (
+            <span className="text-neutral-400">—</span>
+          )}
+          {r.approverName ? (
+            <div className="mt-1 text-[11px] text-mahakan-green-700">
+              ✓ approved by {r.approverName}
+            </div>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      key: "summary",
+      label: "Ringkasan",
+      render: (r) => {
+        const summary =
+          (r.payload?.summary as string | undefined) ?? r.eventType;
+        const isOpen = expanded === r.id;
+        const hasDetail = Boolean(r.payload?.diff || r.payload?.context);
+        return (
+          <div>
+            <div className="text-neutral-900">{summary}</div>
+            {hasDetail ? (
+              <button
+                type="button"
+                onClick={() => setExpanded(isOpen ? null : r.id)}
+                className="mt-1 text-xs text-mahakan-green-700 hover:underline"
+              >
+                {isOpen ? "Sembunyikan detail" : "Lihat detail"}
+              </button>
+            ) : null}
+            {isOpen ? (
+              <pre className="mt-2 max-h-64 overflow-auto rounded bg-neutral-50 p-2 text-[11px] leading-relaxed text-neutral-700">
+                {JSON.stringify(
+                  { payload: r.payload, metadata: r.metadata },
+                  null,
+                  2,
+                )}
+              </pre>
+            ) : null}
+          </div>
+        );
+      },
+    },
+  ];
 }

@@ -13,8 +13,10 @@ import {
   Input,
   Modal,
   NumericInput,
+  ResponsiveTable,
   Spinner,
   toast,
+  type ResponsiveColumn,
 } from "@/components/ui";
 import {
   cancelPurchaseRequest,
@@ -408,68 +410,29 @@ function RequestCard({ request, onReceive, onCancel }: RequestCardProps) {
         </div>
       </CardHeader>
       <CardContent className="px-6 pb-4 pt-0">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wide text-neutral-500">
-              <th className="py-1.5 pr-2 font-medium">Bahan</th>
-              <th className="py-1.5 px-2 text-right font-medium">Diminta</th>
-              <th className="py-1.5 px-2 text-right font-medium">Diterima</th>
-              <th className="py-1.5 px-2 text-right font-medium">Sisa</th>
-              <th className="py-1.5 pl-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {request.items.map((it) => {
-              const remaining =
-                Number(it.requestedQty) - Number(it.receivedQty);
-              const itemDone = remaining === 0;
-              return (
-                <tr key={it.id} className="border-b border-neutral-100">
-                  <td className="py-2 pr-2">
-                    <p className="font-medium text-neutral-900">
-                      {it.ingredientNameSnapshot}
-                    </p>
-                    {it.notes ? (
-                      <p className="text-xs text-neutral-500">{it.notes}</p>
-                    ) : null}
-                  </td>
-                  <td className="py-2 px-2 text-right text-neutral-900">
-                    {Number(it.requestedQty).toLocaleString("id-ID")}{" "}
-                    <span className="text-xs text-neutral-500">
-                      {it.unitSnapshot}
-                    </span>
-                  </td>
-                  <td className="py-2 px-2 text-right text-neutral-900">
-                    {Number(it.receivedQty).toLocaleString("id-ID")}
-                  </td>
-                  <td
-                    className={cn(
-                      "py-2 px-2 text-right",
-                      itemDone
-                        ? "text-emerald-700"
-                        : remaining > 0
-                          ? "text-amber-700"
-                          : "text-neutral-900",
-                    )}
-                  >
-                    {remaining.toLocaleString("id-ID")}
-                  </td>
-                  <td className="py-2 pl-2 text-right">
-                    {canEdit ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => onReceive(it, request.status)}
-                      >
-                        {itemDone ? "Edit" : "Terima"}
-                      </Button>
-                    ) : null}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <ResponsiveTable<PurchaseRequestItem>
+          rows={request.items}
+          rowKey={(it) => it.id}
+          columns={purchaseRequestItemColumns()}
+          rowActions={
+            canEdit
+              ? (it) => {
+                  const remaining =
+                    Number(it.requestedQty) - Number(it.receivedQty);
+                  const itemDone = remaining === 0;
+                  return (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onReceive(it, request.status)}
+                    >
+                      {itemDone ? "Edit" : "Terima"}
+                    </Button>
+                  );
+                }
+              : undefined
+          }
+        />
       </CardContent>
       {canEdit ? (
         <div className="flex justify-end gap-2 border-t border-neutral-100 px-6 py-3">
@@ -507,4 +470,63 @@ function formatRequestLabel(request: PurchaseRequestWithItems): string {
     month: "short",
     year: "numeric",
   })}`;
+}
+
+function purchaseRequestItemColumns(): ResponsiveColumn<PurchaseRequestItem>[] {
+  return [
+    {
+      key: "ingredient",
+      label: "Bahan",
+      primary: true,
+      render: (it) => (
+        <div>
+          <p className="font-medium text-neutral-900">
+            {it.ingredientNameSnapshot}
+          </p>
+          {it.notes ? (
+            <p className="text-xs text-neutral-500">{it.notes}</p>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      key: "requested",
+      label: "Diminta",
+      align: "right",
+      render: (it) => (
+        <span>
+          {Number(it.requestedQty).toLocaleString("id-ID")}{" "}
+          <span className="text-xs text-neutral-500">{it.unitSnapshot}</span>
+        </span>
+      ),
+    },
+    {
+      key: "received",
+      label: "Diterima",
+      align: "right",
+      render: (it) => Number(it.receivedQty).toLocaleString("id-ID"),
+    },
+    {
+      key: "remaining",
+      label: "Sisa",
+      align: "right",
+      render: (it) => {
+        const remaining = Number(it.requestedQty) - Number(it.receivedQty);
+        const itemDone = remaining === 0;
+        return (
+          <span
+            className={cn(
+              itemDone
+                ? "text-emerald-700"
+                : remaining > 0
+                  ? "text-amber-700"
+                  : "text-neutral-900",
+            )}
+          >
+            {remaining.toLocaleString("id-ID")}
+          </span>
+        );
+      },
+    },
+  ];
 }

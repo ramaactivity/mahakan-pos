@@ -3,6 +3,8 @@
 import { Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+export type QuantityStepperSize = "md" | "lg";
+
 interface QuantityStepperProps {
   value: number;
   onChange: (next: number) => void;
@@ -10,8 +12,15 @@ interface QuantityStepperProps {
   max?: number;
   disabled?: boolean;
   className?: string;
+  /** `md` = 36px (default), `lg` = 44px (touch-comfortable, POS cart). */
+  size?: QuantityStepperSize;
   "aria-label"?: string;
 }
+
+const sizeClasses = {
+  md: { btn: "h-9 w-9", value: "h-9 min-w-[2.5rem] text-sm" },
+  lg: { btn: "h-11 w-11", value: "h-11 min-w-[3rem] text-base" },
+} as const;
 
 export function QuantityStepper({
   value,
@@ -20,10 +29,12 @@ export function QuantityStepper({
   max = 99,
   disabled = false,
   className,
+  size = "md",
   "aria-label": ariaLabel = "Jumlah",
 }: QuantityStepperProps) {
   const canDec = !disabled && value > min;
   const canInc = !disabled && value < max;
+  const { btn, value: valueClass } = sizeClasses[size];
 
   return (
     <div
@@ -39,12 +50,18 @@ export function QuantityStepper({
         aria-label="Kurangi"
         onClick={() => canDec && onChange(value - 1)}
         disabled={!canDec}
-        className="flex h-9 w-9 items-center justify-center rounded-l-md text-neutral-700 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+        className={cn(
+          "flex items-center justify-center rounded-l-md text-neutral-700 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+          btn,
+        )}
       >
         <Minus className="size-4" aria-hidden />
       </button>
       <div
-        className="flex h-9 min-w-[2.5rem] items-center justify-center border-x border-neutral-200 px-2 font-mono text-sm font-medium tabular-nums text-neutral-900"
+        className={cn(
+          "flex items-center justify-center border-x border-neutral-200 px-2 font-mono font-medium tabular-nums text-neutral-900",
+          valueClass,
+        )}
         aria-live="polite"
       >
         {value}
@@ -54,7 +71,10 @@ export function QuantityStepper({
         aria-label="Tambah"
         onClick={() => canInc && onChange(value + 1)}
         disabled={!canInc}
-        className="flex h-9 w-9 items-center justify-center rounded-r-md text-neutral-700 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+        className={cn(
+          "flex items-center justify-center rounded-r-md text-neutral-700 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+          btn,
+        )}
       >
         <Plus className="size-4" aria-hidden />
       </button>

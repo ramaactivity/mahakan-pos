@@ -4,7 +4,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type ModalSize = "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "full";
+export type ModalSize = "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "full" | "fullscreen";
 
 interface ModalProps {
   open: boolean;
@@ -28,6 +28,9 @@ interface ModalProps {
   bodyPadding?: "default" | "compact" | "none";
 }
 
+// `fullscreen` = edge-to-edge on touch devices (POS tablet kiosk),
+// centered max-w-6xl on pointer:fine (desktop). The `touch:` variants
+// (defined in globals.css) flip layout for Galaxy A7 Lite operations.
 const sizeStyles: Record<ModalSize, string> = {
   sm: "max-w-sm",
   md: "max-w-md",
@@ -36,6 +39,8 @@ const sizeStyles: Record<ModalSize, string> = {
   "2xl": "max-w-3xl",
   "3xl": "max-w-4xl",
   full: "max-w-[min(95vw,80rem)]",
+  fullscreen:
+    "max-w-[min(95vw,72rem)] touch:!max-w-full touch:!h-screen touch:!max-h-screen touch:!rounded-none",
 };
 
 const bodyPaddingStyles = {
@@ -103,7 +108,10 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4"
+      className={cn(
+        "fixed inset-0 z-50 flex items-center justify-center",
+        size === "fullscreen" ? "p-4 touch:p-0" : "p-2 sm:p-4",
+      )}
       role="dialog"
       aria-modal="true"
       aria-labelledby={title ? "modal-title" : undefined}
@@ -122,13 +130,21 @@ export function Modal({
       <div
         ref={contentRef}
         className={cn(
-          "relative flex max-h-[92vh] w-full flex-col overflow-hidden rounded-xl bg-white shadow-xl",
+          "relative flex w-full flex-col overflow-hidden rounded-xl bg-white shadow-xl",
+          // fullscreen: tablet (touch:) overrides applied via sizeStyles (!max-w-full !h-screen !max-h-screen !rounded-none).
+          // pointer:fine fallback gets max-h-[92vh] like other sizes.
+          size === "fullscreen" ? "max-h-[92vh]" : "max-h-[92vh]",
           sizeStyles[size],
           className,
         )}
       >
         {title ? (
-          <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-neutral-200 bg-white px-6 py-4">
+          <header
+            className={cn(
+              "sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-neutral-200 bg-white",
+              size === "fullscreen" ? "px-4 py-3 touch:px-5 touch:py-2.5" : "px-6 py-4",
+            )}
+          >
             <div className="space-y-0.5">
               <h2
                 id="modal-title"
@@ -152,11 +168,24 @@ export function Modal({
             </button>
           </header>
         ) : null}
-        <div className={cn("flex-1 overflow-y-auto", bodyPaddingStyles[bodyPadding])}>
+        <div
+          className={cn(
+            "flex-1",
+            // fullscreen modals delegate scroll to inner panels (e.g. 2-col layouts).
+            // Other sizes use auto-scroll at body level for simple content.
+            size === "fullscreen" ? "overflow-hidden" : "overflow-y-auto",
+            bodyPaddingStyles[bodyPadding],
+          )}
+        >
           {children}
         </div>
         {footer ? (
-          <footer className="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 border-t border-neutral-200 bg-white px-6 py-3">
+          <footer
+            className={cn(
+              "sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 border-t border-neutral-200 bg-white",
+              size === "fullscreen" ? "px-4 py-2.5 touch:px-5 touch:py-2.5" : "px-6 py-3",
+            )}
+          >
             {footer}
           </footer>
         ) : null}

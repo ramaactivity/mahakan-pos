@@ -40,7 +40,23 @@
   /* Fonts — wired to next/font variables set in layout.tsx */
   --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+
+  /* Tablet-aware breakpoints. Built-in: sm:40rem md:48rem lg:64rem xl:80rem 2xl:96rem.
+     Galaxy A7 Lite landscape = 1340px sits between xl and 2xl by width, but width
+     alone is misleading (a 1340px desktop should not get tablet layout). Pair with
+     `touch:` custom variant below for accurate device targeting. */
+  --breakpoint-tablet: 48rem;     /* 768px — tablet portrait+ */
+  --breakpoint-tablet-lg: 80rem;  /* 1280px — tablet landscape baseline */
 }
+
+/* Touch-device variant — POS tablet, kiosk, mobile (pointer: coarse). */
+@custom-variant touch (@media (pointer: coarse));
+
+/* Pointer-precise variant — desktop with mouse / trackpad. */
+@custom-variant pointer (@media (pointer: fine));
+
+/* Tablet landscape — touch + landscape (Galaxy A7 Lite operational mode). */
+@custom-variant tablet-landscape (@media (pointer: coarse) and (orientation: landscape));
 
 body {
   background-color: var(--color-neutral-50);
@@ -50,12 +66,52 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Page-level horizontal scroll is always a bug — clip both axes at the root. */
+html,
+body {
+  overflow-x: clip;
+  overscroll-behavior: contain;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Safe-area inset tokens (no-op on Galaxy A7 Lite, future-proof for iOS PWAs). */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+
+/* POS kiosk surfaces: snappy taps, no double-tap zoom delay, no tap highlight.
+   Activate by adding `data-pos-kiosk` to a wrapper div (PosShell / login). */
+[data-pos-kiosk],
+[data-pos-kiosk] * {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* Minimum tap target for touch devices (iOS HIG / Material) */
 @media (pointer: coarse) {
   button,
   a,
   [role="button"] {
     min-height: 44px;
+  }
+
+  /* Slim native-app scrollbars on touch — out of the way, no hover state. */
+  *::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--color-neutral-300);
+    border-radius: 2px;
   }
 }
 

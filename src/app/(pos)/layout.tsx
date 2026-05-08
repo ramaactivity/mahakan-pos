@@ -22,12 +22,12 @@ function PosOuterShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen flex-col bg-neutral-50">
       <OfflineBanner />
-      <header className="flex h-16 items-center justify-between border-b border-neutral-200 bg-white px-6 shadow-sm">
-        <span className="text-lg font-bold text-mahakan-green-900">
+      <header className="flex h-16 items-center justify-between border-b border-neutral-200 bg-white px-6 shadow-sm touch:h-14 touch:px-4">
+        <span className="text-lg font-bold text-mahakan-green-900 touch:text-base">
           Mahakan POS
         </span>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-neutral-700">
+        <div className="flex items-center gap-3 touch:gap-2">
+          <span className="text-sm text-neutral-700 touch:text-xs">
             {session.user.name}{" "}
             <span className="text-neutral-500 capitalize">
               ({session.user.role})

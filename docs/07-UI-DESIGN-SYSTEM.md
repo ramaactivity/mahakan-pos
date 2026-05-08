@@ -360,21 +360,24 @@ Button.displayName = 'Button';
 
 ```typescript
 // src/components/ui/Input.tsx
-interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "size"> {
   label?: string;
   error?: string;
   hint?: string;
   leadingIcon?: React.ReactNode;
   trailingSlot?: React.ReactNode;
+  size?: "md" | "lg";  // md = 40px, lg = 48px (touch / POS payment)
 }
 ```
 
 Layout: label (if provided) → input → hint/error text.
 
-- Height: `h-10` default (40px), `h-12` for touch contexts
+- Height: `size="md"` (default, 40px), `size="lg"` (48px, POS payment / cash entry contexts)
 - Border: `border-neutral-300`, focus `border-mahakan-green-500`
 - Error: `border-danger-500` + error text below
 - Rupiah input variant: numeric keypad on mobile (`inputMode="numeric"`), auto-format display with thousand separators
+
+`<QuantityStepper>` exposes the same `size="md" | "lg"` API — `lg` (44px button + 44px value cell) is the POS cart default.
 
 ### 4.3 Card
 
@@ -392,13 +395,27 @@ Variants:
 
 ### 4.4 Modal / Dialog
 
-- Use headless pattern (Radix UI-style) or build custom with `<dialog>` element
-- Center on desktop, slide-up on mobile
+Custom primitive at [src/components/ui/Modal.tsx](../src/components/ui/Modal.tsx) — focus trap, body-scroll lock, sticky header/footer, backdrop click defaults to no-op (form-data safety on tablet POS).
+
+**Sizing variants (`size` prop):**
+
+| Size | Max width | Use case |
+|---|---|---|
+| `sm` | `max-w-sm` | Compact confirms, alerts |
+| `md` | `max-w-md` (default) | Most form modals |
+| `lg`–`3xl` | `max-w-lg` … `max-w-4xl` | Multi-section forms |
+| `full` | `min(95vw, 80rem)` | Wide layouts (e.g. fixed-asset matrix) |
+| `fullscreen` | Desktop centered `min(95vw, 72rem)`, **tablet edge-to-edge 100×100** | POS PaymentModal |
+
+The `fullscreen` variant flips behavior on `(pointer: coarse)`:
+- Desktop: centered modal with `max-h-[92vh]`, rounded corners
+- Tablet (touch): full viewport (100vw × 100vh), no rounded corners, no margin
+
+When using `fullscreen`, the body delegates scroll to its children (set `bodyPadding="none"` and use a 2-column grid with internal `overflow-y-auto`/`touch:overflow-hidden` per column). See [PaymentModal](../src/features/pos/components/PaymentModal.tsx) for reference.
+
 - Backdrop: `bg-neutral-900/50 backdrop-blur-sm`
-- Content: `bg-white rounded-xl shadow-xl max-w-md w-full p-6`
-- Close: top-right `ghost` button with X icon
-- Focus trap inside modal
-- ESC to close (unless destructive with confirmation state)
+- Close: top-right ghost button with X icon
+- ESC to close (unless `disableEscClose=true` or modal is mid-submit)
 
 ### 4.5 Toast / Notification
 
@@ -431,18 +448,48 @@ Styles:
 - Voided: `bg-neutral-200 text-neutral-500`
 - Refunded: `bg-warning-100 text-warning-500`
 
-### 4.7 Table (Admin)
+### 4.7 Table (Admin) — `<ResponsiveTable>`
 
-Use `@tanstack/react-table` for functionality (sort, filter, paginate).
+Primitive at [src/components/ui/ResponsiveTable.tsx](../src/components/ui/ResponsiveTable.tsx) renders pair-of-views from one column config:
 
-Visual:
-- Header: `bg-neutral-100 text-neutral-700 font-medium text-sm`
-- Row: hover `bg-neutral-50`, active row `bg-mahakan-green-50`
-- Cell: `px-4 py-3`, first/last cell pad extra
-- Row dividers: `divide-y divide-neutral-200`
-- Sticky header on long lists
+- **Desktop (`pointer:fine`):** native `<table>` with header row, hover state, optional `<tfoot>` summary
+- **Tablet (`pointer:coarse`):** vertical stack of cards. The `primary` column promotes to the card header; other visible columns render as label/value pairs in a 2-col `<dl>`. No horizontal scroll on Galaxy A7 Lite (1340×800), even at 9 columns.
 
-Empty state: centered illustration + message + CTA.
+Both views call the same `column.render(row)` so per-column formatting (badges, money, dates) stays consistent.
+
+```tsx
+import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui";
+
+const columns: ResponsiveColumn<Employee>[] = [
+  { key: "name", label: "Karyawan", primary: true, render: (e) => e.name },
+  { key: "role", label: "Role", render: (e) => <Badge>{e.role}</Badge> },
+  { key: "salary", label: "Gaji", align: "right", mono: true,
+    render: (e) => formatRupiah(e.salary) },
+  { key: "notes", label: "Notes", desktopOnly: true, render: (e) => e.notes },
+];
+
+<ResponsiveTable<Employee>
+  rows={employees}
+  rowKey={(e) => e.id}
+  columns={columns}
+  emptyState={<EmptyCard title="Belum ada karyawan" />}
+  rowActions={(e) => <Button onClick={() => edit(e)}>Edit</Button>}
+  footer={<div className="flex justify-between"><span>Total</span><span>{formatRupiah(total)}</span></div>}
+/>
+```
+
+**Column flags:**
+- `primary` — pin to card title row (use for the row's primary identifier)
+- `desktopOnly` — hide on tablet card layout (long notes, redundant detail)
+- `mono` — render value monospace (price, codes)
+- `align: "left" | "right" | "center"`
+- `width: "w-32"` — desktop column width hint
+
+**Footer:** pass plain content (`<div>Total: …</div>`), NOT `<tr>`/`<td>`. ResponsiveTable wraps it with `<tfoot><tr><td colSpan={N}>` on desktop and a card-style `<div>` on tablet.
+
+**Sortable headers:** existing `SortableHeader` + `useColumnSort` (sessionStorage-persisted) — pair manually if needed by setting column `label` to a `<SortableHeader />` element. Migration of sort-aware tables (HR, transactions) is a follow-up sesi.
+
+Empty state: pass `<EmptyCard ... />` via `emptyState` prop.
 
 ### 4.8 Form Field Group
 
@@ -598,7 +645,7 @@ Sidebar: collapsible, 240px wide. Active item: `bg-mahakan-green-100 text-mahaka
 
 ### 5.3 Responsive Breakpoints
 
-Tailwind defaults are fine:
+Tailwind defaults stay in place:
 
 - `sm: 640px` — phones landscape, small tablets
 - `md: 768px` — tablets portrait
@@ -606,8 +653,55 @@ Tailwind defaults are fine:
 - `xl: 1280px` — desktops
 - `2xl: 1536px` — large monitors
 
-**POS target:** `lg+` (tablet landscape 1024+)
-**Admin target:** `xl+` (laptops 1280+); usable down to `md`
+Plus tablet-aware extensions added in sesi AD (`globals.css` `@theme` + `@custom-variant`):
+
+| Variant | Media query | Use case |
+|---|---|---|
+| `touch:` | `@media (pointer: coarse)` | Any touch device — POS tablet, kiosk, mobile. Use for compact sizes, kiosk-only behavior, edge-to-edge modals. |
+| `pointer:` | `@media (pointer: fine)` | Desktop with mouse / trackpad. Use for hover-based affordances. |
+| `tablet-landscape:` | `@media (pointer: coarse) and (orientation: landscape)` | Galaxy A7 Lite operational mode (1340×800). Use for tablet-only column counts, side-panel widths. |
+
+**POS primary device:** Samsung Galaxy A7 Lite — 8.7", 1340×800 landscape, DPR ~1.0, touch input.
+**POS target:** `touch:` + `tablet-landscape:` variants govern layout; `lg+` width is incidental.
+**Admin target:** `xl+` (desktops 1280+); responsive down to `md` via `ResponsiveTable` (collapses tables to vertical cards on touch).
+
+#### Why width alone is not enough
+
+A 1340px desktop is `xl` by Tailwind defaults — same as a Galaxy A7 Lite landscape. They need different layouts. Pair width with `pointer:`/`touch:` variants to differentiate:
+
+```tsx
+// Wrong: kicks in for a 1340px laptop too
+<div className="xl:grid-cols-7">
+
+// Right: only on touch devices in landscape
+<div className="lg:grid-cols-5 tablet-landscape:grid-cols-5">
+```
+
+#### Page-level hardening (globals.css)
+
+```css
+html, body {
+  overflow-x: clip;             /* page-level horizontal scroll always a bug */
+  overscroll-behavior: contain; /* kill rubber-band wobble on left/right swipe */
+}
+
+[data-pos-kiosk],
+[data-pos-kiosk] * {
+  touch-action: manipulation;   /* no double-tap zoom, snappier taps */
+  -webkit-tap-highlight-color: transparent;
+}
+```
+
+Apply `data-pos-kiosk` to the POS shell wrapper and (optionally) auth pages.
+
+#### Pinch zoom
+
+Disabled globally via `viewport` export in `src/app/layout.tsx` (`maximumScale: 1, userScalable: false`). Trade-off: WCAG 1.4.4 violation (zoom up to 200% normally required). Justified for POS kiosk because:
+- Touch targets are explicitly ≥44px (`@media (pointer: coarse)` rule sets `min-height: 44px` on buttons/links)
+- POS is a fixed-purpose surface, not a content reader
+- Accidental zoom previously broke payment flow during ops
+
+If A7 Lite is ever used outside the kiosk role (e.g. management browsing reports), revisit this decision.
 
 ---
 

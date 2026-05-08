@@ -958,7 +958,10 @@ export function PosShell() {
   // ==================== Render ====================
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] w-full max-w-full overflow-hidden bg-neutral-50">
+    <div
+      data-pos-kiosk
+      className="flex h-[calc(100vh-4rem)] w-full max-w-full overflow-hidden bg-neutral-50 touch:h-[calc(100vh-3.5rem)]"
+    >
       <PosLeftNav
         activeTab={tab}
         onTabChange={setTab}
@@ -1046,7 +1049,7 @@ export function PosShell() {
       {/* RIGHT COLUMN — order panel. Width adaptif: tablet kecil (~10")
        * pakai 320px supaya middle column dapat ruang lebih untuk grid menu;
        * desktop tetap 400px. */}
-      <aside className="flex w-[320px] shrink-0 flex-col overflow-hidden border-l border-neutral-200 bg-white sm:w-[360px] lg:w-[400px]">
+      <aside className="flex w-[280px] shrink-0 flex-col overflow-hidden border-l border-neutral-200 bg-white sm:w-[320px] tablet-landscape:w-[300px] lg:w-[360px] xl:w-[380px]">
         {rightPanel.kind === "idle" ? (
           <IdlePanel
             drafts={drafts}

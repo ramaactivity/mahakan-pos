@@ -20,8 +20,10 @@ import {
   EmptyCard,
   Input,
   Modal,
+  ResponsiveTable,
   Skeleton,
   toast,
+  type ResponsiveColumn,
 } from "@/components/ui";
 import {
   computePayrollLines,
@@ -452,90 +454,36 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
                     description="Klik “Recompute” untuk generate line dari attendance periode ini."
                   />
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead className="border-y border-neutral-200 bg-neutral-50 text-left uppercase tracking-wider text-neutral-500">
-                        <tr>
-                          <th className="px-3 py-2">Karyawan</th>
-                          <th className="px-3 py-2 text-right">Hari</th>
-                          <th className="px-3 py-2 text-right">Telat (m)</th>
-                          <th className="px-3 py-2 text-right">OT (m)</th>
-                          <th className="px-3 py-2 text-right">Base</th>
-                          <th className="px-3 py-2 text-right">+ OT/Bonus</th>
-                          <th className="px-3 py-2 text-right">- Deduct</th>
-                          <th className="px-3 py-2 text-right">Net</th>
-                          {canManage ? <th /> : null}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {lines.map((l) => (
-                          <tr
-                            key={l.id}
-                            className="border-b border-neutral-100 last:border-0"
-                          >
-                            <td className="px-3 py-2">
-                              <div className="font-medium text-neutral-900">
-                                {l.employeeFullName}
-                              </div>
-                              {l.employeePosition ? (
-                                <div className="text-[10px] text-neutral-500">
-                                  {l.employeePosition}
-                                </div>
-                              ) : null}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono">
-                              {l.workDays}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono">
-                              {l.totalLateMinutes}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono">
-                              {l.totalOvertimeMinutes}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono">
-                              {formatRupiah(l.baseSalary)}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono text-success-500">
-                              {formatRupiah(l.overtimePay + l.bonus)}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono text-danger-500">
-                              {formatRupiah(
-                                l.lateDeduction + l.otherDeductions,
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono font-bold">
-                              {formatRupiah(l.netPay)}
-                            </td>
-                            {canManage ? (
-                              <td className="px-3 py-2 text-right">
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setEditingLine(l)}
-                                  disabled={selectedPeriod.status === "paid"}
-                                >
-                                  <Pencil className="size-3.5" aria-hidden />
-                                </Button>
-                              </td>
-                            ) : null}
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot className="border-t-2 border-neutral-300 bg-neutral-50 font-semibold">
-                        <tr>
-                          <td className="px-3 py-2" colSpan={7}>
-                            Total Net Pay
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono text-base">
-                            {formatRupiah(
-                              lines.reduce((s, l) => s + l.netPay, 0),
-                            )}
-                          </td>
-                          {canManage ? <td /> : null}
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
+                  <ResponsiveTable<PayrollLineWithEmployee>
+                    rows={lines}
+                    rowKey={(l) => l.id}
+                    columns={payrollLineColumns()}
+                    rowActions={
+                      canManage
+                        ? (l) => (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setEditingLine(l)}
+                              disabled={selectedPeriod.status === "paid"}
+                              aria-label={`Edit ${l.employeeFullName}`}
+                            >
+                              <Pencil className="size-3.5" aria-hidden />
+                            </Button>
+                          )
+                        : undefined
+                    }
+                    footer={
+                      <div className="flex items-center justify-between font-semibold">
+                        <span>Total Net Pay</span>
+                        <span className="font-mono text-base">
+                          {formatRupiah(
+                            lines.reduce((s, l) => s + l.netPay, 0),
+                          )}
+                        </span>
+                      </div>
+                    }
+                  />
                 )}
               </>
             )}
@@ -861,4 +809,87 @@ function EditLineDialog({
       </div>
     </Modal>
   );
+}
+
+function payrollLineColumns(): ResponsiveColumn<PayrollLineWithEmployee>[] {
+  return [
+    {
+      key: "employee",
+      label: "Karyawan",
+      primary: true,
+      render: (l) => (
+        <div>
+          <div className="font-medium text-neutral-900">
+            {l.employeeFullName}
+          </div>
+          {l.employeePosition ? (
+            <div className="text-[10px] text-neutral-500">
+              {l.employeePosition}
+            </div>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      key: "workDays",
+      label: "Hari",
+      align: "right",
+      mono: true,
+      render: (l) => l.workDays,
+    },
+    {
+      key: "lateMinutes",
+      label: "Telat (m)",
+      align: "right",
+      mono: true,
+      desktopOnly: true,
+      render: (l) => l.totalLateMinutes,
+    },
+    {
+      key: "otMinutes",
+      label: "OT (m)",
+      align: "right",
+      mono: true,
+      desktopOnly: true,
+      render: (l) => l.totalOvertimeMinutes,
+    },
+    {
+      key: "base",
+      label: "Base",
+      align: "right",
+      mono: true,
+      render: (l) => formatRupiah(l.baseSalary),
+    },
+    {
+      key: "plus",
+      label: "+ OT/Bonus",
+      align: "right",
+      mono: true,
+      render: (l) => (
+        <span className="text-success-500">
+          {formatRupiah(l.overtimePay + l.bonus)}
+        </span>
+      ),
+    },
+    {
+      key: "minus",
+      label: "- Deduct",
+      align: "right",
+      mono: true,
+      render: (l) => (
+        <span className="text-danger-500">
+          {formatRupiah(l.lateDeduction + l.otherDeductions)}
+        </span>
+      ),
+    },
+    {
+      key: "net",
+      label: "Net",
+      align: "right",
+      mono: true,
+      render: (l) => (
+        <span className="font-bold">{formatRupiah(l.netPay)}</span>
+      ),
+    },
+  ];
 }

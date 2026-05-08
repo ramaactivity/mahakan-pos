@@ -51,6 +51,9 @@ export {
   type SortDir,
 } from "./SortableHeader";
 
+export { ResponsiveTable } from "./ResponsiveTable";
+export type { ResponsiveColumn } from "./ResponsiveTable";
+
 export { Spinner } from "./Spinner";
 
 export { Toaster, toast } from "./Toast";

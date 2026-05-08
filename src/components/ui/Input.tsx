@@ -8,13 +8,17 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 
-interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+export type InputSize = "md" | "lg";
+
+interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "size"> {
   label?: string;
   error?: string;
   hint?: string;
   leadingIcon?: ReactNode;
   trailingSlot?: ReactNode;
   required?: boolean;
+  /** `md` = 40px (default, dense forms), `lg` = 48px (touch / POS payment). */
+  size?: InputSize;
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
@@ -28,6 +32,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     id,
     required,
     disabled,
+    size = "md",
     ...rest
   },
   ref,
@@ -35,6 +40,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   const reactId = useId();
   const inputId = id ?? reactId;
   const describedBy = error ? `${inputId}-error` : hint ? `${inputId}-hint` : undefined;
+  const heightClass = size === "lg" ? "h-12" : "h-10";
 
   return (
     <div className="space-y-1.5">
@@ -53,7 +59,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       ) : null}
       <div
         className={cn(
-          "flex h-10 items-center rounded-md border bg-white",
+          "flex items-center rounded-md border bg-white",
+          heightClass,
           error ? "border-danger-500" : "border-neutral-300",
           disabled && "cursor-not-allowed bg-neutral-100 opacity-60",
         )}

@@ -10,8 +10,10 @@ import {
   CardHeader,
   EmptyCard,
   Modal,
+  ResponsiveTable,
   Skeleton,
   toast,
+  type ResponsiveColumn,
 } from "@/components/ui";
 import { UserFormModal } from "./staff/UserFormModal";
 import { ResetPinModal } from "./staff/ResetPinModal";
@@ -22,7 +24,6 @@ import {
   type PublicUser,
 } from "@/features/users";
 import type { Role } from "@/lib/auth";
-import { cn } from "@/lib/utils";
 
 interface StaffSectionProps {
   viewerRole: Role;
@@ -103,106 +104,59 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
                 <Skeleton key={i} className="h-12 w-full" />
               ))}
             </div>
-          ) : users.length === 0 ? (
-            <EmptyCard
-              icon={Users}
-              title="Belum ada user"
-              description="Tambah staff/manager untuk akses POS dan back-office."
-            />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b border-neutral-200 bg-neutral-50 text-xs uppercase tracking-wider text-neutral-500">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium">Nama</th>
-                    <th className="px-4 py-2 text-left font-medium">Email</th>
-                    <th className="px-4 py-2 text-left font-medium">Role</th>
-                    <th className="px-4 py-2 text-center font-medium">Auth</th>
-                    <th className="px-4 py-2 text-center font-medium">Status</th>
-                    <th className="px-4 py-2 text-right font-medium">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-100">
-                  {users.map((u) => (
-                    <tr
-                      key={u.id}
-                      className={cn(
-                        "hover:bg-neutral-50",
-                        u.status === "inactive" && "opacity-50",
-                      )}
+            <div className="px-3 pb-3 pointer:px-0 pointer:pb-0">
+              <ResponsiveTable<PublicUser>
+                rows={users}
+                rowKey={(u) => u.id}
+                columns={staffColumns(viewerUserId)}
+                emptyState={
+                  <EmptyCard
+                    icon={Users}
+                    title="Belum ada user"
+                    description="Tambah staff/manager untuk akses POS dan back-office."
+                  />
+                }
+                rowActions={(u) => (
+                  <div className="flex items-center justify-end gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        setFormMode({
+                          kind: "edit",
+                          userId: u.id,
+                          name: u.name,
+                        })
+                      }
+                      aria-label={`Edit ${u.name}`}
                     >
-                      <td className="px-4 py-3 font-medium text-neutral-900">
-                        {u.name}
-                        {u.id === viewerUserId ? (
-                          <Badge variant="info" className="ml-2">
-                            Anda
-                          </Badge>
-                        ) : null}
-                      </td>
-                      <td className="px-4 py-3 text-neutral-700">
-                        {u.email ?? "—"}
-                      </td>
-                      <td className="px-4 py-3">
-                        <RoleBadge role={u.role} />
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          {u.hasPasswordSet ? (
-                            <Badge variant="neutral">Pwd</Badge>
-                          ) : null}
-                          {u.hasPinSet ? <Badge variant="info">PIN</Badge> : null}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {u.status === "active" ? (
-                          <Badge variant="success">Aktif</Badge>
-                        ) : (
-                          <Badge variant="voided">Nonaktif</Badge>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() =>
-                              setFormMode({
-                                kind: "edit",
-                                userId: u.id,
-                                name: u.name,
-                              })
-                            }
-                            aria-label={`Edit ${u.name}`}
-                          >
-                            <Pencil className="size-4" aria-hidden />
-                          </Button>
-                          {u.hasPinSet ? (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setResetPinFor(u)}
-                              aria-label={`Reset PIN ${u.name}`}
-                            >
-                              <KeyRound className="size-4" aria-hidden />
-                            </Button>
-                          ) : null}
-                          {u.status === "active" && u.id !== viewerUserId ? (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setPendingDeactivate(u)}
-                              aria-label={`Nonaktifkan ${u.name}`}
-                              className="text-danger-500 hover:bg-danger-100"
-                            >
-                              <Power className="size-4" aria-hidden />
-                            </Button>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      <Pencil className="size-4" aria-hidden />
+                    </Button>
+                    {u.hasPinSet ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setResetPinFor(u)}
+                        aria-label={`Reset PIN ${u.name}`}
+                      >
+                        <KeyRound className="size-4" aria-hidden />
+                      </Button>
+                    ) : null}
+                    {u.status === "active" && u.id !== viewerUserId ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setPendingDeactivate(u)}
+                        aria-label={`Nonaktifkan ${u.name}`}
+                        className="text-danger-500 hover:bg-danger-100"
+                      >
+                        <Power className="size-4" aria-hidden />
+                      </Button>
+                    ) : null}
+                  </div>
+                )}
+              />
             </div>
           )}
         </CardContent>
@@ -276,4 +230,61 @@ function RoleBadge({ role }: { role: Role }) {
   if (role === "supervisor")
     return <Badge variant="warning">Supervisor</Badge>;
   return <Badge variant="neutral">Staff</Badge>;
+}
+
+function staffColumns(viewerUserId: string): ResponsiveColumn<PublicUser>[] {
+  return [
+    {
+      key: "name",
+      label: "Nama",
+      primary: true,
+      render: (u) => (
+        <span>
+          {u.name}
+          {u.id === viewerUserId ? (
+            <Badge variant="info" className="ml-2">
+              Anda
+            </Badge>
+          ) : null}
+        </span>
+      ),
+    },
+    {
+      key: "email",
+      label: "Email",
+      render: (u) => (
+        <span className="text-neutral-700">{u.email ?? "—"}</span>
+      ),
+    },
+    {
+      key: "role",
+      label: "Role",
+      render: (u) => <RoleBadge role={u.role} />,
+    },
+    {
+      key: "auth",
+      label: "Auth",
+      align: "center",
+      render: (u) => (
+        <div className="flex items-center justify-center gap-1">
+          {u.hasPasswordSet ? <Badge variant="neutral">Pwd</Badge> : null}
+          {u.hasPinSet ? <Badge variant="info">PIN</Badge> : null}
+          {!u.hasPasswordSet && !u.hasPinSet ? (
+            <span className="text-xs text-neutral-400">—</span>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      align: "center",
+      render: (u) =>
+        u.status === "active" ? (
+          <Badge variant="success">Aktif</Badge>
+        ) : (
+          <Badge variant="voided">Nonaktif</Badge>
+        ),
+    },
+  ];
 }

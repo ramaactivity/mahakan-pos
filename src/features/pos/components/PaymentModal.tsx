@@ -123,7 +123,7 @@ export function PaymentModal({
       onClose={onCancel}
       title="Bayar Transaksi"
       description={headerSubtitle || undefined}
-      size="full"
+      size="fullscreen"
       bodyPadding="none"
       disableEscClose={submitting}
       footer={
@@ -133,7 +133,7 @@ export function PaymentModal({
           loading={submitting}
           disabled={!cashSufficient || submitting}
           fullWidth
-          className="!h-14 !text-base"
+          className="!h-14 !text-base touch:!h-12"
         >
           {submitting
             ? "Memvalidasi stok & mencatat transaksi…"
@@ -145,12 +145,12 @@ export function PaymentModal({
         </Button>
       }
     >
-      <div className="grid divide-y divide-neutral-200 lg:grid-cols-[2fr_3fr] lg:divide-x lg:divide-y-0">
+      <div className="grid h-full divide-y divide-neutral-200 lg:grid-cols-[2fr_3fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
         {/* ============================================================ */}
         {/* LEFT — Cart summary, full detail biar kasir verify sebelum   */}
         {/* konfirmasi (owner standard: full detail, no miss).           */}
         {/* ============================================================ */}
-        <div className="max-h-[calc(92vh-9rem)] space-y-3 overflow-y-auto p-4">
+        <div className="flex flex-col gap-3 overflow-y-auto p-4 touch:p-3 lg:max-h-[calc(92vh-9rem)] touch:max-h-none touch:min-h-0">
           <CustomerCard draft={draft} />
 
           <section>
@@ -222,13 +222,13 @@ export function PaymentModal({
         {/* ============================================================ */}
         {/* RIGHT — Payment method + amount / instruction               */}
         {/* ============================================================ */}
-        <div className="max-h-[calc(92vh-9rem)] space-y-3 overflow-y-auto p-4">
+        <div className="flex flex-col gap-2.5 overflow-y-auto p-4 touch:gap-2 touch:overflow-hidden touch:p-3 lg:max-h-[calc(92vh-9rem)] touch:max-h-none touch:min-h-0">
           <section>
             <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
               Metode Pembayaran
             </h3>
             <div
-              className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-4"
+              className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-4 touch:grid-cols-7 touch:gap-1.5"
               role="radiogroup"
               aria-label="Metode pembayaran"
             >
@@ -464,7 +464,7 @@ function CashInputPanel({
       {/* Big amount display */}
       <div
         className={cn(
-          "flex h-14 items-center justify-end rounded-xl border-2 px-4 transition-colors",
+          "flex h-14 items-center justify-end rounded-xl border-2 px-4 transition-colors touch:h-12",
           submitting && "opacity-60",
           cashReceived === 0
             ? "border-neutral-300 bg-white"
@@ -474,11 +474,11 @@ function CashInputPanel({
         )}
       >
         {cashReceived > 0 ? (
-          <span className="font-mono text-3xl font-bold tabular-nums text-neutral-900">
+          <span className="font-mono text-3xl font-bold tabular-nums text-neutral-900 touch:text-2xl">
             {formatRupiah(cashReceived)}
           </span>
         ) : (
-          <span className="font-mono text-base text-neutral-400">
+          <span className="font-mono text-base text-neutral-400 touch:text-sm">
             Tap angka atau quick amount
           </span>
         )}
@@ -636,7 +636,7 @@ function MethodTile({
       aria-checked={active}
       onClick={onClick}
       className={cn(
-        "flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 py-2 text-xs font-medium transition-all",
+        "flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 py-2 text-xs font-medium transition-all touch:py-1.5 touch:text-[11px]",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
         "active:scale-95",
         active
@@ -667,7 +667,7 @@ function NumpadKey({
       onClick={onPress}
       disabled={disabled}
       className={cn(
-        "flex h-12 items-center justify-center rounded-lg border font-mono text-xl font-semibold transition-all",
+        "flex h-12 items-center justify-center rounded-lg border font-mono text-xl font-semibold transition-all touch:h-11 touch:text-lg",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
         "active:scale-95 active:shadow-inner",
         "disabled:cursor-not-allowed disabled:opacity-50",
