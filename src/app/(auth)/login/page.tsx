@@ -76,22 +76,25 @@ function LoginContent() {
   return (
     <Card
       className={cn(
-        "p-4 sm:p-5",
+        "mx-auto max-w-md p-4 sm:p-5 lg:p-6",
         shake && "animate-shake",
       )}
     >
       <CardHeader className="mb-3 sm:mb-4">
-        <CardTitle className="text-lg sm:text-xl">Login Owner / Manager</CardTitle>
+        <CardTitle className="text-xl lg:text-2xl">
+          Login Owner / Manager
+        </CardTitle>
         <CardDescription className="text-sm">
           Masuk Back Office dengan email + password untuk akses dashboard,
           laporan, dan pengaturan.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={onSubmit} className="space-y-3 sm:space-y-4">
+        <form onSubmit={onSubmit} className="space-y-4">
           <Input
             label="Email"
             type="email"
+            size="lg"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="owner@mahakan.id"
@@ -103,6 +106,7 @@ function LoginContent() {
           <Input
             label="Password"
             type="password"
+            size="lg"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Password Anda"

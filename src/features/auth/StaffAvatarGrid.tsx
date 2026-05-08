@@ -16,6 +16,25 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+const ROLE_LABEL: Record<string, string> = {
+  owner: "Owner",
+  manager: "Manager",
+  supervisor: "Supervisor",
+  staff: "Staff",
+};
+
+/**
+ * Staff avatar selection grid — sesi AD-5 redesign.
+ *
+ * Old: 3 cols on all sizes, p-3 + size-14 avatar = ~120px tile height.
+ * 7 users → 3 rows = 360px+ which overflowed Galaxy A7 Lite's 800px
+ * viewport once stacked under header + switcher.
+ *
+ * New: responsive col count — 2 (phone) → 3 (tablet portrait) → 4
+ * (tablet landscape & desktop). Compact tile (p-2.5, size-12 avatar)
+ * = ~96px tile height. 7 users at lg:grid-cols-4 = 2 rows ≈ 200px.
+ * Comfortably fits in 60% width × ~600px height card on tablet.
+ */
 export function StaffAvatarGrid({
   users,
   selectedId,
@@ -24,7 +43,7 @@ export function StaffAvatarGrid({
 }: StaffAvatarGridProps) {
   if (users.length === 0) {
     return (
-      <p className="text-center text-sm text-neutral-500">
+      <p className="text-center text-sm text-neutral-600">
         Belum ada staff terdaftar.
       </p>
     );
@@ -33,10 +52,14 @@ export function StaffAvatarGrid({
     <div
       role="radiogroup"
       aria-label="Pilih user"
-      className={cn("grid grid-cols-3 gap-2 sm:gap-3", className)}
+      className={cn(
+        "grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-2.5 lg:grid-cols-4 lg:gap-3",
+        className,
+      )}
     >
       {users.map((u) => {
         const isSelected = u.id === selectedId;
+        const roleLabel = ROLE_LABEL[u.role] ?? u.role.toUpperCase();
         return (
           <button
             type="button"
@@ -45,17 +68,17 @@ export function StaffAvatarGrid({
             aria-checked={isSelected}
             onClick={() => onSelect(u.id)}
             className={cn(
-              "flex flex-col items-center gap-1.5 rounded-xl border p-2 transition-all sm:gap-2 sm:p-3",
+              "flex flex-col items-center gap-1.5 rounded-xl border bg-white p-2.5 transition-colors",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700 focus-visible:ring-offset-2",
-              "active:scale-95",
+              "active:scale-[0.97]",
               isSelected
                 ? "border-mahakan-green-700 bg-mahakan-green-50 shadow-sm"
-                : "border-neutral-200 bg-white hover:border-neutral-300",
+                : "border-neutral-200 hover:border-mahakan-green-300",
             )}
           >
             <div
               className={cn(
-                "flex size-10 sm:size-12 md:size-14 items-center justify-center rounded-full text-base sm:text-lg font-bold",
+                "flex size-12 items-center justify-center rounded-full text-base font-bold",
                 isSelected
                   ? "bg-mahakan-green-700 text-white"
                   : "bg-mahakan-green-100 text-mahakan-green-800",
@@ -63,11 +86,11 @@ export function StaffAvatarGrid({
             >
               {initials(u.name)}
             </div>
-            <span className="text-center text-sm font-medium text-neutral-900 line-clamp-2">
+            <span className="line-clamp-1 w-full text-center text-sm font-medium text-neutral-900">
               {u.name}
             </span>
-            <span className="text-xs uppercase tracking-wider text-neutral-500">
-              {u.role}
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
+              {roleLabel}
             </span>
           </button>
         );
