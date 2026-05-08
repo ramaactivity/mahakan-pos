@@ -17,6 +17,11 @@ import {
 import { Button, PinPad } from "@/components/ui";
 import { verifyAttendancePin, type VerifiedKaryawan } from "./actions";
 import { formatIndonesianDateTime } from "@/lib/date";
+import {
+  formatClockTimeWib,
+  formatDuration,
+  formatLateness,
+} from "@/lib/duration";
 import { haversineDistanceMeters } from "@/lib/haversine";
 
 type Mode = "in" | "out";
@@ -263,10 +268,10 @@ function ReadyStep({
         <div className="rounded-md border border-info-300 bg-info-100 p-3 text-xs text-info-500">
           <Clock className="mr-1.5 inline size-3.5" aria-hidden />
           Sudah clock-in pukul{" "}
-          {formatIndonesianDateTime(karyawan.openRecord.clockInAt)}
+          {formatClockTimeWib(karyawan.openRecord.clockInAt)}
           {karyawan.openRecord.isLate === "yes" ? (
             <span className="ml-1 font-semibold text-warning-500">
-              (telat {karyawan.openRecord.lateMinutes ?? 0} menit)
+              ({formatLateness(karyawan.openRecord.lateMinutes ?? 0)})
             </span>
           ) : null}
         </div>
@@ -619,12 +624,12 @@ function DoneStep({
         </p>
         {mode === "in" && isLate ? (
           <div className="mt-2 rounded-md bg-warning-100 px-3 py-1.5 text-xs font-semibold text-warning-500">
-            Telat {minutesLate ?? 0} menit
+            {formatLateness(minutesLate ?? 0)}
           </div>
         ) : null}
         {mode === "out" && typeof workMinutes === "number" ? (
           <div className="mt-2 rounded-md bg-info-100 px-3 py-1.5 text-xs font-semibold text-info-500">
-            Total kerja: {Math.floor(workMinutes / 60)}j {workMinutes % 60}m
+            Total kerja: {formatDuration(workMinutes * 60_000)}
           </div>
         ) : null}
       </div>

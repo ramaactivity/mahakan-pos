@@ -30,6 +30,7 @@ import {
 import type { ReceiptConfig } from "@/lib/printer/print-transaction";
 import { CloseOpenBillModal } from "./CloseOpenBillModal";
 import { formatRupiah } from "@/lib/format";
+import { formatDuration } from "@/lib/duration";
 import { formatIndonesianTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
@@ -294,6 +295,7 @@ function BillCard({
 }: BillCardProps) {
   const [printOpen, setPrintOpen] = useState(false);
   const { ageMinutes, isStale } = useBillAge(summary.createdAt, nowTick);
+  const ageHuman = formatDuration(ageMinutes * 60_000);
 
   const itemSummary =
     detail?.items
@@ -317,10 +319,10 @@ function BillCard({
                 {isStale ? (
                   <Badge variant="warning">
                     <AlertTriangle className="size-3" aria-hidden /> Lama (
-                    {ageMinutes}m)
+                    {ageHuman})
                   </Badge>
                 ) : (
-                  <Badge variant="info">Belum lunas ({ageMinutes}m)</Badge>
+                  <Badge variant="info">Belum lunas ({ageHuman})</Badge>
                 )}
               </div>
               <p className="text-xs text-neutral-500">
@@ -401,8 +403,8 @@ function BillCard({
 
         {isStale ? (
           <p className="rounded-md bg-warning-100/40 p-2 text-xs text-warning-500">
-            ⚠️ Bill ini sudah {Math.floor(ageMinutes / 60)} jam belum dibayar.
-            Tanyakan customer atau follow-up agar tidak terlewat.
+            ⚠️ Bill ini sudah {ageHuman} belum dibayar. Tanyakan customer
+            atau follow-up agar tidak terlewat.
           </p>
         ) : null}
       </CardContent>
