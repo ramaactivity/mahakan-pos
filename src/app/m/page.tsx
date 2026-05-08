@@ -97,51 +97,60 @@ export default function MobileLanding() {
 
 function ModuleCardLink({ module }: { module: ModuleCard }) {
   const isLive = module.status === "live";
+
+  // Soon modules render as static divs (no nav). Live modules render as
+  // Link. Server-component compatible — no onClick handlers.
+  const inner = (
+    <div className="flex items-start gap-3">
+      <div
+        className={
+          "flex size-12 shrink-0 items-center justify-center rounded-lg " +
+          (isLive
+            ? "bg-mahakan-green-100 text-mahakan-green-800"
+            : "bg-neutral-100 text-neutral-600")
+        }
+      >
+        {module.icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold text-neutral-900">
+            {module.title}
+          </h2>
+          {!isLive ? (
+            <span className="rounded-md bg-warning-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-warning-500">
+              Soon
+            </span>
+          ) : null}
+        </div>
+        <p className="mt-1 text-sm text-neutral-600">{module.description}</p>
+      </div>
+      {isLive ? (
+        <ChevronRight
+          className="mt-1 size-5 shrink-0 text-neutral-400"
+          aria-hidden
+        />
+      ) : null}
+    </div>
+  );
+
+  if (!isLive) {
+    return (
+      <div
+        aria-disabled
+        className="block rounded-xl border border-neutral-200 bg-white p-4 opacity-60"
+      >
+        {inner}
+      </div>
+    );
+  }
+
   return (
     <Link
-      href={isLive ? module.href : "#"}
-      aria-disabled={!isLive}
-      onClick={(e) => {
-        if (!isLive) e.preventDefault();
-      }}
-      className={
-        "block rounded-xl border bg-white p-4 transition-colors " +
-        (isLive
-          ? "border-neutral-200 hover:border-mahakan-green-700 active:scale-[0.99]"
-          : "cursor-not-allowed border-neutral-200 opacity-60")
-      }
+      href={module.href}
+      className="block rounded-xl border border-neutral-200 bg-white p-4 transition-colors hover:border-mahakan-green-700 active:scale-[0.99]"
     >
-      <div className="flex items-start gap-3">
-        <div
-          className={
-            "flex size-12 shrink-0 items-center justify-center rounded-lg " +
-            (isLive
-              ? "bg-mahakan-green-100 text-mahakan-green-800"
-              : "bg-neutral-100 text-neutral-600")
-          }
-        >
-          {module.icon}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold text-neutral-900">
-              {module.title}
-            </h2>
-            {!isLive ? (
-              <span className="rounded-md bg-warning-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-warning-500">
-                Soon
-              </span>
-            ) : null}
-          </div>
-          <p className="mt-1 text-sm text-neutral-600">{module.description}</p>
-        </div>
-        {isLive ? (
-          <ChevronRight
-            className="mt-1 size-5 shrink-0 text-neutral-400"
-            aria-hidden
-          />
-        ) : null}
-      </div>
+      {inner}
     </Link>
   );
 }
