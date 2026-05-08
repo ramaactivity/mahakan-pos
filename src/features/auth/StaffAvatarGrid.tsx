@@ -24,16 +24,20 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 /**
- * Staff avatar selection grid — sesi AD-5 redesign.
+ * Staff avatar selection grid — sesi AD-6b redesign.
  *
- * Old: 3 cols on all sizes, p-3 + size-14 avatar = ~120px tile height.
- * 7 users → 3 rows = 360px+ which overflowed Galaxy A7 Lite's 800px
- * viewport once stacked under header + switcher.
+ * Trigger 4-col layout via `landscape:md:` (≥768px landscape) which
+ * reliably matches Galaxy A7 Lite landscape (1340×800). Earlier `lg:`
+ * (1024) was inconsistent on Chrome Android.
  *
- * New: responsive col count — 2 (phone) → 3 (tablet portrait) → 4
- * (tablet landscape & desktop). Compact tile (p-2.5, size-12 avatar)
- * = ~96px tile height. 7 users at lg:grid-cols-4 = 2 rows ≈ 200px.
- * Comfortably fits in 60% width × ~600px height card on tablet.
+ * Responsive col count:
+ *   - 2 cols: phone portrait (default)
+ *   - 3 cols: phone landscape / tablet portrait (sm: ≥640)
+ *   - 4 cols: tablet landscape (landscape:md:) + desktop (lg:)
+ *
+ * Tile dims: p-2.5, size-12 avatar = ~96px height. 7 users at 4-col =
+ * 2 rows ≈ 210px. Fits in 60% card width × ~560px height on tablet
+ * landscape comfortably.
  */
 export function StaffAvatarGrid({
   users,
@@ -53,7 +57,7 @@ export function StaffAvatarGrid({
       role="radiogroup"
       aria-label="Pilih user"
       className={cn(
-        "grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-2.5 lg:grid-cols-4 lg:gap-3",
+        "grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-2.5 landscape:md:grid-cols-4 landscape:md:gap-2.5 lg:gap-3",
         className,
       )}
     >

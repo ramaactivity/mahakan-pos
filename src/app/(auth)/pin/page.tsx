@@ -43,17 +43,22 @@ function avatarInitials(name: string): string {
 }
 
 /**
- * PIN login flow — sesi AD-5 redesign.
+ * PIN login flow — sesi AD-6b redesign for Galaxy A7 Lite.
  *
- * 2 modes inside one Card:
- *   1. Avatar select (no user selected yet) — single column, grid
- *      avatar responsive (2 → 3 → 4 cols).
- *   2. PIN entry (user selected) — split 2-col on `lg:` for tablet
- *      landscape (Galaxy A7 Lite) so greeting+dots+back button fit
- *      LEFT, numpad+Masuk button fit RIGHT, all without scroll.
+ * Trigger split layout via `landscape:md:` (≥768px landscape) which
+ * reliably matches A7 Lite landscape (1340×800). Earlier `lg:` (1024)
+ * was inconsistent on Chrome Android.
  *
- * Below `lg:`, PIN entry stacks vertically (existing pattern, fits
- * mobile portrait fine).
+ * Height budget on tablet landscape (800px viewport):
+ *   - Header (logo + switcher): ~110px
+ *   - Card padding + outer gap: ~50px
+ *   - Available card content height: ~640px
+ *   - LEFT inner col: avatar 56 + greeting 80 + dots 32 + hint 32 +
+ *     Ganti User 48 + gaps = ~250px ✓
+ *   - RIGHT inner col: numpad 4 rows × 56 + gaps + Masuk 48 = ~290px ✓
+ *
+ * Avatar select mode: single-column with responsive grid (handled by
+ * StaffAvatarGrid).
  */
 export default function PinLoginPage() {
   const router = useRouter();
@@ -141,49 +146,49 @@ export default function PinLoginPage() {
   return (
     <Card
       className={cn(
-        "p-4 sm:p-5 lg:p-6",
+        "p-3 sm:p-4 landscape:md:p-4 lg:p-5",
         shake && "animate-shake",
       )}
     >
       {selectedUser ? (
         // ============================================================
-        // PIN entry — split 2-col on lg+
+        // PIN entry — split 2-col on landscape:md+ (Galaxy A7 Lite)
         // ============================================================
-        <div className="grid gap-5 lg:grid-cols-2 lg:gap-8">
+        <div className="grid gap-4 landscape:md:grid-cols-2 landscape:md:gap-5 lg:gap-6">
           {/* LEFT — greeting + dots + back */}
-          <div className="flex flex-col gap-4 lg:gap-5">
-            <CardHeader className="flex flex-col items-start gap-3">
+          <div className="flex flex-col gap-3 landscape:md:gap-3.5">
+            <CardHeader className="flex flex-col items-start gap-2 landscape:md:gap-2.5">
               <div
                 className={cn(
-                  "flex size-16 shrink-0 items-center justify-center rounded-full text-xl font-bold lg:size-20 lg:text-2xl",
+                  "flex size-14 shrink-0 items-center justify-center rounded-full text-lg font-bold landscape:md:size-14 lg:size-16 lg:text-xl",
                   "bg-mahakan-green-700 text-white shadow-sm",
                 )}
                 aria-hidden
               >
                 {avatarInitials(selectedUser.name)}
               </div>
-              <div className="space-y-1">
-                <CardTitle className="text-xl lg:text-2xl">
+              <div className="space-y-0.5">
+                <CardTitle className="text-lg landscape:md:text-lg lg:text-xl">
                   Halo, {selectedUser.name}
                 </CardTitle>
-                <CardDescription className="text-sm">
+                <CardDescription className="text-xs landscape:md:text-xs lg:text-sm">
                   Masukkan PIN 4–6 digit untuk masuk POS
                 </CardDescription>
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
                   {ROLE_LABEL[selectedUser.role]}
                 </p>
               </div>
             </CardHeader>
 
             <div
-              className="flex justify-center gap-2 lg:justify-start"
+              className="flex justify-center gap-2 landscape:md:justify-start"
               aria-live="polite"
             >
               {Array.from({ length: MAX_PIN_LENGTH }).map((_, i) => (
                 <span
                   key={i}
                   className={cn(
-                    "size-3 rounded-full transition-colors lg:size-3.5",
+                    "size-3 rounded-full transition-colors",
                     i < pin.length
                       ? "bg-mahakan-green-700"
                       : "bg-neutral-200",
@@ -195,19 +200,19 @@ export default function PinLoginPage() {
             {error ? (
               <p
                 role="alert"
-                className="text-center text-sm font-medium text-danger-500 lg:text-left"
+                className="text-center text-sm font-medium text-danger-500 landscape:md:text-left"
               >
                 {error}
               </p>
             ) : (
-              <p className="text-center text-xs text-neutral-600 lg:text-left">
-                PIN otomatis submit setelah 6 digit. Atau tap tombol Masuk.
+              <p className="text-center text-[11px] text-neutral-600 landscape:md:text-left">
+                PIN otomatis submit setelah 6 digit. Atau tap Masuk.
               </p>
             )}
 
             <Button
               variant="outline"
-              size="lg"
+              size="md"
               fullWidth
               onClick={() => {
                 setSelectedId(null);
@@ -215,14 +220,14 @@ export default function PinLoginPage() {
                 setError(null);
               }}
               disabled={submitting}
-              className="lg:mt-auto"
+              className="landscape:md:mt-auto"
             >
               <ArrowLeft className="size-4" aria-hidden /> Ganti User
             </Button>
           </div>
 
           {/* RIGHT — numpad + masuk */}
-          <CardContent className="flex flex-col gap-3 lg:gap-4">
+          <CardContent className="flex flex-col gap-2.5 landscape:md:gap-3">
             <PinPad
               value={pin}
               onChange={(next) => {
@@ -248,15 +253,17 @@ export default function PinLoginPage() {
         // Avatar select — single column, responsive grid
         // ============================================================
         <>
-          <CardHeader className="mb-3 sm:mb-4">
-            <CardTitle className="text-xl lg:text-2xl">Login Kasir</CardTitle>
-            <CardDescription className="text-sm">
+          <CardHeader className="mb-3 landscape:md:mb-3">
+            <CardTitle className="text-lg landscape:md:text-xl lg:text-2xl">
+              Login Kasir
+            </CardTitle>
+            <CardDescription className="text-xs landscape:md:text-sm">
               Pilih nama Anda untuk lanjut input PIN
             </CardDescription>
           </CardHeader>
           <CardContent>
             {loadingUsers ? (
-              <div className="flex h-40 items-center justify-center">
+              <div className="flex h-32 items-center justify-center landscape:md:h-40">
                 <Spinner className="size-6 text-mahakan-green-700" />
               </div>
             ) : users.length === 0 ? (

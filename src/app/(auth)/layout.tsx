@@ -3,69 +3,66 @@ import type { ReactNode } from "react";
 import { AuthPathSwitcher } from "@/features/auth/AuthPathSwitcher";
 
 /**
- * Auth shell — sesi AD-5 redesign per staff feedback.
+ * Auth shell — sesi AD-6b redesign.
  *
- * Old layout was vertically stacked (logo → switcher → card) inside
- * max-w-md. On Galaxy A7 Lite landscape (1340×800) the avatar grid
- * 3×3 + workspace switcher + logo header overflowed the 800px
- * viewport, forcing scroll.
+ * Galaxy A7 Lite landscape (1340×800, target device) awalnya stuck di
+ * single-column karena `lg:` (1024px) tidak konsisten trigger di Chrome
+ * Android tablet. Switched ke `landscape:md:` (orientation landscape +
+ * ≥768px) yang reliably matches the device.
  *
- * New layout: side-by-side on `lg:` and up (≥1024px catches A7 Lite
- * 1340 landscape + desktop), single-column stacked below `lg:` (phone
- * portrait + tablet portrait).
+ * Trigger logic:
+ *   landscape + ≥768 → split 2-col (tablet landscape, desktop)
+ *   portrait OR <768 → stacked single col (phone, tablet portrait)
  *
- *   LEFT (5fr): branding hero + workspace switcher + brand footer
- *   RIGHT (7fr): card content (avatar select / PIN entry / email form)
- *
- * `min-h-svh` accounts for iOS Safari URL-bar trap. Subtle radial
- * decoration in left column gives the "kiosk" feel without being
- * shouty.
+ * Compact-fit budget Galaxy A7 Lite landscape (1340×800):
+ *   - Total available height ~800px (PWA full-screen) or ~720px (with
+ *     Chrome chrome). Layout MUST fit within 720px to be safe.
+ *   - LEFT col 5fr (~558px wide): logo + brand + switcher + tagline
+ *   - RIGHT col 7fr (~782px wide): card content (avatar grid OR PIN
+ *     entry OR email form)
  */
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-svh w-full overflow-hidden bg-gradient-to-br from-mahakan-green-50/40 via-neutral-50 to-white">
-      <div className="grid w-full grid-cols-1 lg:grid-cols-[5fr_7fr]">
+      <div className="grid h-svh w-full grid-cols-1 landscape:md:grid-cols-[5fr_7fr]">
         {/* ============================================================ */}
         {/* LEFT — Brand + workspace switcher                            */}
         {/* ============================================================ */}
-        <aside className="relative flex flex-col items-center gap-6 px-6 py-8 lg:items-start lg:gap-8 lg:px-12 lg:py-12 xl:px-16">
-          {/* Decorative brand bloom — only on lg+ to avoid clutter on phone */}
+        <aside className="relative flex flex-col items-start gap-3 px-4 py-4 sm:px-6 landscape:md:gap-5 landscape:md:px-8 landscape:md:py-6 lg:px-12 lg:py-8 xl:px-16">
+          {/* Subtle decorative bloom — only on roomy viewports (xl+) */}
           <div
             aria-hidden
-            className="pointer-events-none absolute -left-24 -top-24 hidden size-96 rounded-full bg-mahakan-green-200/40 blur-3xl lg:block"
-          />
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -bottom-32 -left-32 hidden size-80 rounded-full bg-mahakan-green-100/40 blur-3xl lg:block"
+            className="pointer-events-none absolute -left-24 -top-24 hidden size-96 rounded-full bg-mahakan-green-200/30 blur-3xl xl:block"
           />
 
-          {/* Logo + brand mark */}
-          <div className="relative flex w-full items-center gap-3 lg:flex-col lg:items-start lg:gap-4">
+          {/* Logo + brand mark — compact horizontal on landscape tablet,
+              taller stacked layout on desktop */}
+          <div className="relative flex w-full items-center gap-3 landscape:md:gap-3 lg:flex-col lg:items-start lg:gap-4">
             <Image
               src="/assets/logo/Logo_Mahakan_Hijau_Transparent.png"
               alt="Mahakan Coffee & Space"
               width={120}
               height={170}
               priority
-              className="h-12 w-auto lg:h-20"
+              className="h-10 w-auto landscape:md:h-12 lg:h-16 xl:h-20"
             />
             <div className="lg:space-y-1">
-              <h1 className="text-base font-bold leading-tight text-mahakan-green-900 lg:text-3xl">
+              <h1 className="text-base font-bold leading-tight text-mahakan-green-900 landscape:md:text-lg lg:text-2xl xl:text-3xl">
                 Mahakan
               </h1>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-600 lg:text-xs">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-neutral-600 landscape:md:text-[11px] lg:text-xs">
                 Coffee &amp; Space
               </p>
             </div>
           </div>
 
           {/* Workspace switcher */}
-          <div className="relative w-full max-w-md lg:max-w-sm">
+          <div className="relative w-full max-w-md landscape:md:max-w-sm">
             <AuthPathSwitcher />
           </div>
 
-          {/* Tagline — only on lg+ as fill */}
-          <div className="relative hidden flex-1 flex-col justify-end gap-3 lg:flex">
+          {/* Tagline — only on lg+ as fill (tablet landscape too tight) */}
+          <div className="relative hidden flex-1 flex-col justify-end gap-2 lg:flex">
             <p className="max-w-xs text-sm leading-relaxed text-neutral-700">
               Sistem POS &amp; back office Mahakan Coffee &amp; Space.
               Login pakai PIN buat kasir cepat, atau email buat manage
@@ -80,8 +77,10 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
         {/* ============================================================ */}
         {/* RIGHT — Card content                                         */}
         {/* ============================================================ */}
-        <main className="flex w-full items-center justify-center px-4 py-6 sm:px-6 lg:px-12 lg:py-10 xl:px-16">
-          <div className="w-full max-w-md lg:max-w-2xl">{children}</div>
+        <main className="flex w-full items-center justify-center overflow-y-auto px-4 py-4 sm:px-6 landscape:md:px-6 landscape:md:py-4 lg:px-10 lg:py-6 xl:px-16">
+          <div className="w-full max-w-md landscape:md:max-w-2xl">
+            {children}
+          </div>
         </main>
       </div>
     </div>
