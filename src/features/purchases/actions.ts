@@ -181,10 +181,12 @@ export async function createPurchase(
         }
       }
 
-      // Compute total.
+      // Compute total. Sesi AE — qty boleh decimal (mis. 0.5 kg × Rp 10.000),
+      // jadi pakai floating math + round ke nearest rupiah di akhir per-line
+      // untuk konsistensi sama UI live preview.
       let total = 0;
       for (const item of v.items) {
-        total += item.qty * item.unitCost;
+        total += Math.round(item.qty * item.unitCost);
       }
 
       // Insert header.
@@ -211,12 +213,20 @@ export async function createPurchase(
       if (!created) throw new Error("INSERT_FAILED");
 
       // Per item: insert purchase_items + inventory_movements + update stock.
+      // Sesi AE — qty boleh decimal. Authoritative storage = qtyDecimal
+      // (numeric). Legacy `qty` bigint + inventoryMovements.qtyDelta + stock
+      // counter masih integer, jadi kita round ke nearest int (min 1 kalau
+      // decimal positif >0). Acknowledged lossy untuk inventory; total cost
+      // tetap akurat ke rupiah karena pakai decimal qty waktu hitung.
       for (const item of v.items) {
         const ing = ingById.get(item.ingredientId)!;
-        const totalCost = item.qty * item.unitCost;
+        const totalCost = Math.round(item.qty * item.unitCost);
+        const qtyLegacy = Math.max(1, Math.round(item.qty));
+        const qtyDecimalStr = item.qty.toFixed(4);
+        const unitOverride = item.unit?.trim() || null;
 
         // Update stock.
-        const newStock = ing.currentStock + item.qty;
+        const newStock = ing.currentStock + qtyLegacy;
         const updateValues: Record<string, unknown> = {
           currentStock: newStock,
           updatedAt: new Date(),
@@ -238,7 +248,7 @@ export async function createPurchase(
             outletId: session.user.outletId,
             ingredientId: item.ingredientId,
             kind: "purchase",
-            qtyDelta: item.qty,
+            qtyDelta: qtyLegacy,
             unitCostAtMovement: item.unitCost,
             referenceType: "manual",
             referenceId: created.id,
@@ -253,12 +263,14 @@ export async function createPurchase(
         await tx.insert(purchaseItems).values({
           purchaseId: created.id,
           ingredientId: item.ingredientId,
-          qty: item.qty,
+          qty: qtyLegacy,
+          qtyDecimal: qtyDecimalStr,
           unitCost: item.unitCost,
           totalCost,
           movementId: movement.id,
           ingredientNameSnapshot: ing.name,
           unitSnapshot: ing.unit,
+          unitOverride,
           sectionSnapshot: ing.section,
         });
 

@@ -118,6 +118,56 @@ describe("purchase zod schemas", () => {
       });
       expect(r.success).toBe(true);
     });
+
+    // Sesi AE — decimal qty + unit override
+    it("accepts decimal qty (0.5 kg)", () => {
+      const r = createPurchaseSchema.safeParse({
+        supplierId: null,
+        purchaseDate: "2026-04-30",
+        paymentMethod: "cash",
+        items: [{ ingredientId: validUuid, qty: 0.5, unitCost: 10000 }],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("accepts decimal qty (0.25)", () => {
+      const r = createPurchaseSchema.safeParse({
+        supplierId: null,
+        purchaseDate: "2026-04-30",
+        paymentMethod: "cash",
+        items: [{ ingredientId: validUuid, qty: 0.25, unitCost: 48000 }],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("accepts unit override per line", () => {
+      const r = createPurchaseSchema.safeParse({
+        supplierId: null,
+        purchaseDate: "2026-04-30",
+        paymentMethod: "cash",
+        items: [
+          {
+            ingredientId: validUuid,
+            qty: 500,
+            unitCost: 20,
+            unit: "gr",
+          },
+        ],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("accepts null unit override (fallback ke master)", () => {
+      const r = createPurchaseSchema.safeParse({
+        supplierId: null,
+        purchaseDate: "2026-04-30",
+        paymentMethod: "cash",
+        items: [
+          { ingredientId: validUuid, qty: 1, unitCost: 1000, unit: null },
+        ],
+      });
+      expect(r.success).toBe(true);
+    });
   });
 
   describe("cancelPurchaseSchema", () => {

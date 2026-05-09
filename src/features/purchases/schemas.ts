@@ -19,16 +19,29 @@ const paymentMethodEnum = z.enum([
 
 const purchaseItemSchema = z.object({
   ingredientId: z.uuid(),
+  // Sesi AE — accept decimal qty (mis. 0.5 kg, 0.25 L) supaya staff bisa
+  // input pecahan langsung di Catat Pembelian, mirror flow Google Sheets
+  // yang biasa dipake. Server simpan ke purchase_items.qty_decimal; legacy
+  // qty bigint tetap di-populate (round up) untuk backward-compat.
   qty: z
     .number()
-    .int()
     .positive("Qty harus > 0")
-    .max(10_000_000_000, "Qty terlalu besar"),
+    .max(10_000_000_000, "Qty terlalu besar")
+    .refine((v) => Number.isFinite(v), "Qty harus angka"),
   unitCost: z
     .number()
     .int()
     .nonnegative("Harga tidak boleh negatif")
     .max(999_999_999, "Harga terlalu besar"),
+  // Sesi AE — per-line unit override. NULL/undefined = pakai master
+  // ingredient unit. Snapshot text-only, no server-side conversion.
+  unit: z
+    .string()
+    .trim()
+    .min(1)
+    .max(20)
+    .nullable()
+    .optional(),
 });
 
 export const createPurchaseSchema = z

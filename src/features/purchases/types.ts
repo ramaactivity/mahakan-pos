@@ -8,8 +8,12 @@ export type PurchaseStatus = Purchase["status"];
 
 export interface PurchaseItemInput {
   ingredientId: string;
+  /** Decimal qty (e.g. 0.5 kg, 0.25 L). Sesi AE — boleh decimal. */
   qty: number;
   unitCost: number;
+  /** Sesi AE — per-line unit override. NULL/undefined = pakai master
+   * ingredient unit (unitSnapshot). Snapshot text-only. */
+  unit?: string | null;
 }
 
 export interface CreatePurchaseInput {

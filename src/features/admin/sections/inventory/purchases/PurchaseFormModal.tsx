@@ -48,6 +48,7 @@ interface ItemRow {
   id: string;
   ingredientId: string;
   qty: string;
+  unit: string;
   unitCost: string;
 }
 
@@ -56,8 +57,50 @@ function newRow(): ItemRow {
     id: Math.random().toString(36).slice(2),
     ingredientId: "",
     qty: "",
+    unit: "",
     unitCost: "",
   };
+}
+
+// Sesi AE — list satuan umum yang staff Mahakan biasa pakai. Master unit
+// dari ingredient akan otomatis pre-select; staff bisa override per-line
+// (mis. master "Kg", staff input "gr" untuk belanja kecil).
+const COMMON_UNITS = [
+  "Kg",
+  "gr",
+  "L",
+  "ml",
+  "Btl",
+  "Pcs",
+  "Packs",
+  "Bks",
+  "Krat",
+  "Lusin",
+  "Sdm",
+  "Sdt",
+  "Karton",
+] as const;
+
+function buildUnitOptions(
+  masterUnit: string | undefined,
+): Array<{ value: string; label: string }> {
+  const set = new Set<string>(COMMON_UNITS);
+  if (masterUnit) set.add(masterUnit);
+  return Array.from(set).map((u) => ({ value: u, label: u }));
+}
+
+function parseQtyDecimal(s: string): number {
+  // Accept koma OR titik sebagai decimal separator (staff Indo biasa pakai
+  // koma di Sheets). Strip whitespace + non-numeric kecuali separator.
+  const cleaned = s.trim().replace(/\s/g, "").replace(",", ".");
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function formatQtyForDisplay(n: number): string {
+  // Tampilan: integer tanpa decimal, decimal dipotong trailing zero.
+  if (Number.isInteger(n)) return String(n);
+  return String(parseFloat(n.toFixed(4)));
 }
 
 function todayJakartaIso(): string {
@@ -176,10 +219,10 @@ export function PurchaseFormModal({
   const total = useMemo(() => {
     let t = 0;
     for (const r of items) {
-      const qty = parseInt(r.qty, 10);
+      const qty = parseQtyDecimal(r.qty);
       const cost = parseRupiahSafe(r.unitCost);
       if (Number.isFinite(qty) && qty > 0 && cost >= 0) {
-        t += qty * cost;
+        t += Math.round(qty * cost);
       }
     }
     return t;
@@ -201,16 +244,20 @@ export function PurchaseFormModal({
 
   function onIngredientPick(rowId: string, ingredientId: string | null) {
     if (!ingredientId) {
-      updateRow(rowId, { ingredientId: "" });
+      updateRow(rowId, { ingredientId: "", unit: "" });
       return;
     }
     const ing = ingredientById.get(ingredientId);
     if (!ing) return;
-    // Auto-fill unit cost from master kalau row kosong (Owner masih bisa override).
     const row = items.find((r) => r.id === rowId);
     const patch: Partial<ItemRow> = { ingredientId };
+    // Auto-fill unit cost from master kalau row kosong.
     if (row && row.unitCost.trim() === "" && ing.costPerUnit > 0) {
       patch.unitCost = String(ing.costPerUnit);
+    }
+    // Auto-fill unit dari master kalau staff belum pilih.
+    if (row && !row.unit) {
+      patch.unit = ing.unit;
     }
     updateRow(rowId, patch);
   }
@@ -224,6 +271,7 @@ export function PurchaseFormModal({
       ingredientId: string;
       qty: number;
       unitCost: number;
+      unit: string | null;
     }> = [];
     for (const r of items) {
       if (!r.ingredientId && r.qty.trim() === "" && r.unitCost.trim() === "") {
@@ -233,7 +281,7 @@ export function PurchaseFormModal({
         setError("Setiap baris pembelian wajib pilih bahan");
         return;
       }
-      const qty = parseInt(r.qty, 10);
+      const qty = parseQtyDecimal(r.qty);
       if (!Number.isFinite(qty) || qty <= 0) {
         setError(`Qty tidak valid untuk salah satu bahan`);
         return;
@@ -243,10 +291,18 @@ export function PurchaseFormModal({
         setError("Harga tidak boleh negatif");
         return;
       }
+      const ing = ingredientById.get(r.ingredientId);
+      const masterUnit = ing?.unit ?? "";
+      const chosenUnit = r.unit?.trim() || masterUnit;
+      // Hanya simpan unit override kalau beda dari master — kalau sama,
+      // simpan NULL supaya display fallback ke unitSnapshot historis.
+      const unitOverride =
+        chosenUnit && chosenUnit !== masterUnit ? chosenUnit : null;
       validItems.push({
         ingredientId: r.ingredientId,
         qty,
         unitCost: cost,
+        unit: unitOverride,
       });
     }
     if (validItems.length === 0) {
@@ -312,7 +368,7 @@ export function PurchaseFormModal({
       open={open}
       onClose={onClose}
       title="Catat Pembelian"
-      description="Replace `Form Pembelanjaan Cash` + `Form TOP` lama. Pilih supplier reguler, atau toggle Pembelian Langsung untuk warung/Alfamart/pasar mendadak. Stok bahan auto-update; kalau Cash + 'Buat entry kas' aktif, expense kas otomatis dibuat."
+      description="Catat semua belanja bahan / supply hari ini. Kalau cash, langsung masuk laporan kas. Untuk belanja sekali ke warung / Alfamart / pasar, toggle ke 'Pembelian langsung'."
       size="2xl"
       footer={
         <>
@@ -320,7 +376,7 @@ export function PurchaseFormModal({
             Batal
           </Button>
           <Button onClick={onSubmit} loading={submitting}>
-            Simpan Purchase
+            Simpan Belanja
           </Button>
         </>
       }
@@ -455,88 +511,117 @@ export function PurchaseFormModal({
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-neutral-900">
-                Item Pembelian
+                Daftar Belanja
               </h3>
               <Button size="sm" variant="outline" onClick={addRow}>
-                <Plus className="size-4" aria-hidden /> Tambah Baris
+                <Plus className="size-4" aria-hidden /> Tambah Bahan
               </Button>
             </div>
-            <div className="space-y-2 rounded-md border border-neutral-200 p-2">
+            <p className="text-xs text-neutral-600">
+              Mirror Google Sheet — pilih bahan, isi QTY (boleh
+              <strong> 0.5</strong> kalau setengah), pilih satuan, isi harga
+              per unit. Total per baris hidup-update otomatis.
+            </p>
+            <div className="space-y-3 rounded-md border border-neutral-200 p-2">
               {items.map((row, idx) => {
                 const ing = row.ingredientId
                   ? ingredientById.get(row.ingredientId)
                   : null;
-                const qtyN = parseInt(row.qty, 10);
+                const qtyN = parseQtyDecimal(row.qty);
                 const costN = parseRupiahSafe(row.unitCost);
+                const hasQty = Number.isFinite(qtyN) && qtyN > 0;
                 const lineTotal =
-                  Number.isFinite(qtyN) && qtyN > 0 && costN >= 0
-                    ? qtyN * costN
-                    : 0;
+                  hasQty && costN >= 0 ? Math.round(qtyN * costN) : 0;
+                const unit = row.unit || ing?.unit || "";
+                const unitOptions = buildUnitOptions(ing?.unit);
                 return (
                   <div
                     key={row.id}
-                    className="grid gap-2 rounded-md bg-neutral-50 p-2 md:grid-cols-[1fr_90px_140px_100px_36px]"
+                    className="rounded-md bg-neutral-50 p-2"
                   >
-                    <Combobox
-                      ariaLabel={`Bahan ${idx + 1}`}
-                      placeholder="Pilih bahan…"
-                      searchPlaceholder="Cari bahan…"
-                      clearable={false}
-                      groups={[
-                        {
-                          label: "",
-                          options: ingredientList.map((i) => ({
-                            value: i.id,
-                            label: i.name,
-                            hint: i.unit,
-                            keywords: [i.section ?? "", i.unit],
-                          })),
-                        } satisfies ComboboxGroup,
-                      ]}
-                      value={row.ingredientId || null}
-                      onChange={(v) => onIngredientPick(row.id, v)}
-                    />
-                    <Input
-                      aria-label={`Qty ${idx + 1}`}
-                      placeholder={ing ? `Qty (${ing.unit})` : "Qty"}
-                      type="text"
-                      inputMode="numeric"
-                      value={row.qty}
-                      onChange={(e) =>
-                        updateRow(row.id, { qty: e.target.value })
-                      }
-                    />
-                    <Input
-                      aria-label={`Unit cost ${idx + 1}`}
-                      placeholder="Harga per unit (Rp)"
-                      type="text"
-                      inputMode="numeric"
-                      value={row.unitCost}
-                      onChange={(e) =>
-                        updateRow(row.id, { unitCost: e.target.value })
-                      }
-                    />
-                    <div className="flex items-center justify-end pr-2 text-xs font-mono">
-                      {lineTotal > 0 ? formatRupiah(lineTotal) : "—"}
+                    <div className="grid gap-2 md:grid-cols-[1.5fr_90px_100px_140px_36px]">
+                      <Combobox
+                        ariaLabel={`Bahan ${idx + 1}`}
+                        placeholder="Pilih bahan…"
+                        searchPlaceholder="Cari bahan…"
+                        clearable={false}
+                        groups={[
+                          {
+                            label: "",
+                            options: ingredientList.map((i) => ({
+                              value: i.id,
+                              label: i.name,
+                              hint: i.unit,
+                              keywords: [i.section ?? "", i.unit],
+                            })),
+                          } satisfies ComboboxGroup,
+                        ]}
+                        value={row.ingredientId || null}
+                        onChange={(v) => onIngredientPick(row.id, v)}
+                      />
+                      <Input
+                        aria-label={`QTY baris ${idx + 1}`}
+                        placeholder="QTY"
+                        type="text"
+                        inputMode="decimal"
+                        value={row.qty}
+                        onChange={(e) =>
+                          updateRow(row.id, { qty: e.target.value })
+                        }
+                      />
+                      <Select
+                        ariaLabel={`Satuan baris ${idx + 1}`}
+                        options={unitOptions}
+                        value={unit}
+                        onValueChange={(v) =>
+                          updateRow(row.id, { unit: v })
+                        }
+                        disabled={!ing}
+                      />
+                      <Input
+                        aria-label={`Harga per ${unit || "unit"} baris ${idx + 1}`}
+                        placeholder="Harga per unit (Rp)"
+                        type="text"
+                        inputMode="numeric"
+                        value={row.unitCost}
+                        onChange={(e) =>
+                          updateRow(row.id, { unitCost: e.target.value })
+                        }
+                      />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => removeRow(row.id)}
+                        aria-label="Hapus baris"
+                        title="Hapus baris"
+                        className="text-danger-500 hover:bg-danger-100"
+                        disabled={items.length <= 1}
+                      >
+                        <Trash2 className="size-4" aria-hidden />
+                      </Button>
                     </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => removeRow(row.id)}
-                      aria-label="Hapus baris"
-                      title="Hapus baris"
-                      className="text-danger-500 hover:bg-danger-100"
-                      disabled={items.length <= 1}
-                    >
-                      <Trash2 className="size-4" aria-hidden />
-                    </Button>
+                    {hasQty && costN > 0 ? (
+                      <div className="mt-1.5 flex justify-end pr-12 text-xs text-neutral-700">
+                        <span className="font-mono">
+                          {formatQtyForDisplay(qtyN)} {unit || "unit"} ×{" "}
+                          {formatRupiah(costN)} ={" "}
+                          <strong className="text-mahakan-green-900">
+                            {formatRupiah(lineTotal)}
+                          </strong>
+                        </span>
+                      </div>
+                    ) : ing ? (
+                      <div className="mt-1.5 flex justify-end pr-12 text-xs text-neutral-500">
+                        <span>Isi QTY + Harga buat lihat total</span>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-3">
+          <div className="space-y-2">
             <label className="flex items-start gap-2 text-sm text-neutral-700">
               <input
                 type="checkbox"
@@ -544,8 +629,12 @@ export function PurchaseFormModal({
                 onChange={(e) => setUpdateCost(e.target.checked)}
                 className="mt-0.5 size-4 rounded border-neutral-300 text-mahakan-green-700 focus:ring-mahakan-green-700"
               />
-              <span>
-                <strong>Update cost master</strong> dari harga pembelian ini
+              <span className="flex-1">
+                <strong>Update harga master bahan</strong>
+                <span className="ml-1 text-xs text-neutral-500">
+                  — centang kalau harga belanja ini bakal jadi acuan baru.
+                  Hilangkan kalau cuma deal sekali / promo.
+                </span>
               </span>
             </label>
             <label className="flex items-start gap-2 text-sm text-neutral-700">
@@ -556,14 +645,17 @@ export function PurchaseFormModal({
                 disabled={paymentMethod === "top"}
                 className="mt-0.5 size-4 rounded border-neutral-300 text-mahakan-green-700 focus:ring-mahakan-green-700"
               />
-              <span>
-                <strong>Buat entry kas otomatis</strong>
+              <span className="flex-1">
+                <strong>Catat otomatis di kas hari ini</strong>
                 {paymentMethod === "top" ? (
-                  <span className="text-neutral-500">
-                    {" "}
-                    (TOP buat saat tandai lunas)
+                  <span className="ml-1 text-xs text-neutral-500">
+                    — TOP nanti masuk kas pas tandai lunas.
                   </span>
-                ) : null}
+                ) : (
+                  <span className="ml-1 text-xs text-neutral-500">
+                    — hilangkan kalau belum dibayar / mau catat manual nanti.
+                  </span>
+                )}
               </span>
             </label>
           </div>

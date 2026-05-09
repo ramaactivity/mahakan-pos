@@ -5,6 +5,7 @@ import {
   text,
   timestamp,
   bigint,
+  numeric,
   integer,
   date,
   index,
@@ -116,6 +117,13 @@ export const purchaseItems = pgTable(
     unitCost: bigint("unit_cost", { mode: "number" }).notNull(),
     totalCost: bigint("total_cost", { mode: "number" }).notNull(),
 
+    /** Sesi AE — decimal qty (e.g. 0.5 kg, 0.25 L). NULL = legacy integer
+     * row (pre-AE) yang masih pakai bigint qty saja. Saat ada nilai,
+     * server treat ini sebagai authoritative qty (totalCost &
+     * inventoryMovements.qtyDelta tetap snapshot bigint round). UI display
+     * prefer this kalau available. */
+    qtyDecimal: numeric("qty_decimal", { precision: 15, scale: 4 }),
+
     /** Backlink to inventoryMovements row created on purchase confirm. */
     movementId: uuid("movement_id").references(() => inventoryMovements.id),
 
@@ -123,6 +131,10 @@ export const purchaseItems = pgTable(
      * di-rename / di-soft-delete kemudian. */
     ingredientNameSnapshot: text("ingredient_name_snapshot").notNull(),
     unitSnapshot: text("unit_snapshot").notNull(),
+    /** Sesi AE — per-line unit override (Btl/Kg/gr/Pcs/Packs/L/ml). NULL =
+     * pakai master ingredient unit (unitSnapshot). Snapshot text-only,
+     * tidak ada konversi server-side; staff display apa adanya. */
+    unitOverride: text("unit_override"),
     /** Snapshot section enum value at purchase time. NULL kalau ingredient
      * belum di-section-kan. Used for HPP + purchase rollup grouping. */
     sectionSnapshot: text("section_snapshot"),
