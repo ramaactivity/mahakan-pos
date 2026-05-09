@@ -233,6 +233,14 @@ export type CashDepositDashboard = {
   isOverThreshold: boolean;
   /** Last 30 days daily rollup, oldest first. Mirror spreadsheet pattern. */
   last30DaysFlow: CashDailyRollup[];
+  // Sesi AE-10 anti-fraud guards:
+  /** Days since the oldest still-pending deposit was created. NULL kalau ga
+   * ada pending. Owner banner triggered kalau > 3 days. */
+  oldestPendingDays: number | null;
+  /** True kalau computed cashOnHand < 0 (data inconsistency / anomaly).
+   * Critical banner — biasanya artinya ada deposit yang harusnya rejected
+   * tapi keburu di-verify, atau cash leak yang ga ke-record. */
+  isCashNegative: boolean;
 };
 
 // ---------- Reconciliation ----------

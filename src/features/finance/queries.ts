@@ -554,11 +554,14 @@ export async function getCashDepositDashboard(
       }
     : null;
 
-  // Pending stats.
+  // Pending stats + oldest pending age (sesi AE-10 anti-fraud time gap alert).
   const [pendingAgg] = await db
     .select({
       count: sql<string>`COUNT(*)`,
       total: sql<string>`COALESCE(SUM(${cashDeposits.amount}), 0)`,
+      oldestCreatedAt: sql<
+        Date | null
+      >`MIN(${cashDeposits.createdAt})`,
     })
     .from(cashDeposits)
     .where(
@@ -569,6 +572,13 @@ export async function getCashDepositDashboard(
     );
   const pendingCount = Number(pendingAgg?.count ?? 0);
   const pendingTotal = Number(pendingAgg?.total ?? 0);
+  const oldestPendingDays =
+    pendingCount > 0 && pendingAgg?.oldestCreatedAt
+      ? Math.floor(
+          (Date.now() - new Date(pendingAgg.oldestCreatedAt).getTime()) /
+            (24 * 60 * 60 * 1000),
+        )
+      : null;
 
   // Total deposited this calendar month (verified only, by depositDate).
   const monthStart = `${todayIso.slice(0, 7)}-01`;
@@ -783,6 +793,8 @@ export async function getCashDepositDashboard(
     thresholdIdr: onHand.thresholdIdr,
     isOverThreshold: onHand.isOverThreshold,
     last30DaysFlow,
+    oldestPendingDays,
+    isCashNegative: onHand.cashOnHand < 0,
   };
 }
 

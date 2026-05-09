@@ -110,6 +110,9 @@ export function SetoranTunaiSection({ viewerRole }: Props) {
         ) : null}
       </header>
 
+      {/* ============ Anti-fraud banners (sesi AE-10) ============ */}
+      <AntiFraudBanners dashboard={dashboard} onSeePending={() => setTab("pending")} />
+
       {/* ============ Dashboard cards ============ */}
       <CashOnHandCards
         dashboard={dashboard}
@@ -168,6 +171,75 @@ export function SetoranTunaiSection({ viewerRole }: Props) {
       />
     </div>
   );
+}
+
+// ============================================================
+// Anti-fraud banners (sesi AE-10) — surface time gap + negative cash
+// ============================================================
+
+function AntiFraudBanners({
+  dashboard,
+  onSeePending,
+}: {
+  dashboard: CashDepositDashboard | null;
+  onSeePending: () => void;
+}) {
+  if (!dashboard) return null;
+  const banners: React.ReactElement[] = [];
+
+  if (dashboard.isCashNegative) {
+    banners.push(
+      <div
+        key="negative-cash"
+        className="flex items-start gap-3 rounded-xl border-2 border-danger-500 bg-danger-100 p-4 text-danger-700"
+      >
+        <AlertTriangle className="mt-0.5 size-5 shrink-0" aria-hidden />
+        <div className="flex-1 space-y-0.5">
+          <p className="text-sm font-bold">Kas tersedia minus</p>
+          <p className="text-xs">
+            Sistem mendeteksi cashOnHand{" "}
+            <strong className="font-mono">
+              {formatRupiah(dashboard.cashOnHand)}
+            </strong>{" "}
+            (negatif). Kemungkinan ada deposit yang seharusnya rejected
+            atau cash leak ga ke-record. Cek pending list + audit log
+            sebelum verify setoran baru.
+          </p>
+        </div>
+      </div>,
+    );
+  }
+
+  if (
+    dashboard.oldestPendingDays !== null &&
+    dashboard.oldestPendingDays > 3
+  ) {
+    banners.push(
+      <div
+        key="time-gap"
+        className="flex items-start gap-3 rounded-xl border-2 border-warning-500 bg-warning-100 p-4 text-warning-700"
+      >
+        <AlertTriangle className="mt-0.5 size-5 shrink-0" aria-hidden />
+        <div className="flex-1 space-y-0.5">
+          <p className="text-sm font-bold">
+            Setoran pending {dashboard.oldestPendingDays} hari belum verified
+          </p>
+          <p className="text-xs">
+            Pending tertua sudah {dashboard.oldestPendingDays} hari menunggu
+            owner approve. Total {dashboard.pendingCount} setoran (
+            {formatRupiah(dashboard.pendingTotal)}). Verify atau reject
+            supaya kas tracking tetap accurate.
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={onSeePending}>
+          Buka Pending
+        </Button>
+      </div>,
+    );
+  }
+
+  if (banners.length === 0) return null;
+  return <div className="space-y-2">{banners}</div>;
 }
 
 // ============================================================

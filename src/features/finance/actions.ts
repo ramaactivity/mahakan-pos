@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db } from "@/db";
 import {
   aggregatorSettlements,
@@ -53,6 +53,13 @@ async function requireSession() {
   const session = await auth();
   if (!session) throw new Error("UNAUTHORIZED");
   return session;
+}
+
+/** Add 1 day to YYYY-MM-DD ISO date. Used for period-overlap suggestion. */
+function addOneDayIsoLocal(dateIso: string): string {
+  const d = new Date(`${dateIso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
 }
 
 // ---------- Read wrappers ----------
@@ -201,6 +208,37 @@ export async function createCashDeposit(
     return fail("VALIDATION", parsed.error.issues[0]?.message ?? "Invalid");
   }
   const v = parsed.data;
+
+  // Sesi AE-10 — anti-fraud period overlap guard. Reject kalau periode kas
+  // (coversFromDate..coversToDate) overlap dengan deposit yang sudah verified
+  // di outlet yang sama. Prevents double-counting + ensures monotonic timeline.
+  // Tidak block overlap dengan pending (owner mungkin lagi review/edit).
+  const overlapping = await db
+    .select({
+      id: cashDeposits.id,
+      coversFromDate: cashDeposits.coversFromDate,
+      coversToDate: cashDeposits.coversToDate,
+    })
+    .from(cashDeposits)
+    .where(
+      and(
+        eq(cashDeposits.outletId, session.user.outletId),
+        eq(cashDeposits.status, "verified"),
+        // Standard interval overlap: A.from <= B.to AND A.to >= B.from
+        lte(cashDeposits.coversFromDate, v.coversToDate),
+        gte(cashDeposits.coversToDate, v.coversFromDate),
+      ),
+    )
+    .orderBy(desc(cashDeposits.coversToDate))
+    .limit(1);
+  if (overlapping.length > 0) {
+    const conflict = overlapping[0];
+    return fail(
+      "PERIOD_OVERLAP",
+      `Periode kas overlap dengan setoran verified ${conflict.coversFromDate}..${conflict.coversToDate}. Mulai dari ${addOneDayIsoLocal(conflict.coversToDate)}.`,
+    );
+  }
+
   const [row] = await db
     .insert(cashDeposits)
     .values({
