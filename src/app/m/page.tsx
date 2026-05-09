@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -5,8 +9,11 @@ import {
   ChevronRight,
   ClipboardList,
   Fingerprint,
+  LogOut,
   PackageSearch,
 } from "lucide-react";
+import { Spinner, toast } from "@/components/ui";
+import { useSession } from "@/features/auth/SessionProvider";
 
 interface ModuleCard {
   href: string;
@@ -52,23 +59,50 @@ const MODULES: ModuleCard[] = [
 ];
 
 /**
- * Sesi AD-9 / AD-12 — mobile landing page untuk karyawan ops.
+ * Sesi AE-15 — Mobile staff landing dengan auth gate.
  *
- * Karyawan akses /m dari shortcut HP / Add-to-Home-Screen PWA, pilih
- * modul yang mau dipakai. /m memakai manifest staff terpisah (lihat
- * src/app/m/layout.tsx) sehingga icon di home screen ber-warna amber
- * + label "Mahakan Staff" — beda dari POS owner shortcut.
+ * Sebelumnya landing render 4 cards untuk semua user (logged-in atau
+ * tidak). Sekarang gated: kalau unauth → redirect ke /pin?callbackUrl=/m,
+ * kalau auth → tampil greeting personalize + 4 cards + tombol logout.
  *
- * Currently live:
- *   - Absensi (/absenkaryawan)            — sesi AB
- *   - Jadwal Kerja (/m/jadwal)            — sesi AD-12
- *   - Stock Opname (/m/opname)            — sesi AD-10
- *   - Purchase Order (/m/po)              — sesi AD-10
+ * Auth flow:
+ *   - status="loading" → spinner
+ *   - status="unauthenticated" → redirect /pin?callbackUrl=/m
+ *   - status="authenticated" → render dashboard
  *
- * Mobile-first design: full-width cards, big tap targets ≥ 44px,
- * minimal scroll. Tipikal akses dari HP karyawan, bukan tablet POS.
+ * /pin page (sesi AE-15 update) honor callbackUrl param post-login.
  */
 export default function MobileLanding() {
+  const router = useRouter();
+  const { status, session, logout } = useSession();
+
+  useEffect(() => {
+    if (status === "loading") return;
+    if (status === "unauthenticated" || !session) {
+      router.replace("/pin?callbackUrl=/m");
+    }
+  }, [status, session, router]);
+
+  if (status === "loading") {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Spinner className="size-6 text-mahakan-green-700" />
+      </div>
+    );
+  }
+  if (status === "unauthenticated" || !session) return null;
+
+  const userName = session.user.name ?? "Karyawan";
+  const firstName = userName.split(/\s+/)[0] ?? userName;
+
+  async function handleLogout() {
+    try {
+      await logout("/pin?callbackUrl=/m");
+    } catch {
+      toast.error("Gagal logout");
+    }
+  }
+
   return (
     <div className="space-y-6">
       <header className="flex flex-col items-center gap-2 text-center">
@@ -90,17 +124,31 @@ export default function MobileLanding() {
         </div>
       </header>
 
-      <div>
-        <p className="text-sm text-neutral-700">
+      <section className="rounded-xl border border-mahakan-green-700/30 bg-mahakan-green-50 p-4">
+        <p className="text-xs uppercase tracking-wider text-mahakan-green-900/70">
+          Login sebagai
+        </p>
+        <p className="mt-0.5 text-base font-bold text-mahakan-green-900">
+          Hai, {firstName}!
+        </p>
+        <p className="text-xs text-neutral-700">
           Pilih modul yang mau kamu gunakan.
         </p>
-      </div>
+      </section>
 
       <div className="space-y-3">
         {MODULES.map((m) => (
           <ModuleCardLink key={m.href} module={m} />
         ))}
       </div>
+
+      <button
+        type="button"
+        onClick={handleLogout}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white py-3 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
+      >
+        <LogOut className="size-4" aria-hidden /> Keluar
+      </button>
 
       <footer className="pt-4 text-center text-[11px] text-neutral-600">
         Mahakan Coffee &amp; Space · Cisarua, Bogor
@@ -109,11 +157,9 @@ export default function MobileLanding() {
   );
 }
 
-function ModuleCardLink({ module }: { module: ModuleCard }) {
-  const isLive = module.status === "live";
+function ModuleCardLink({ module: m }: { module: ModuleCard }) {
+  const isLive = m.status === "live";
 
-  // Soon modules render as static divs (no nav). Live modules render as
-  // Link. Server-component compatible — no onClick handlers.
   const inner = (
     <div className="flex items-start gap-3">
       <div
@@ -124,12 +170,12 @@ function ModuleCardLink({ module }: { module: ModuleCard }) {
             : "bg-neutral-100 text-neutral-600")
         }
       >
-        {module.icon}
+        {m.icon}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <h2 className="text-base font-semibold text-neutral-900">
-            {module.title}
+            {m.title}
           </h2>
           {!isLive ? (
             <span className="rounded-md bg-warning-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-warning-500">
@@ -137,7 +183,7 @@ function ModuleCardLink({ module }: { module: ModuleCard }) {
             </span>
           ) : null}
         </div>
-        <p className="mt-1 text-sm text-neutral-600">{module.description}</p>
+        <p className="mt-1 text-sm text-neutral-600">{m.description}</p>
       </div>
       {isLive ? (
         <ChevronRight
@@ -161,7 +207,7 @@ function ModuleCardLink({ module }: { module: ModuleCard }) {
 
   return (
     <Link
-      href={module.href}
+      href={m.href}
       className="block rounded-xl border border-neutral-200 bg-white p-4 transition-colors hover:border-mahakan-green-700 active:scale-[0.99]"
     >
       {inner}

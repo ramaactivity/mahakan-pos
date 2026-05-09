@@ -31,6 +31,117 @@ async function requireSession() {
 }
 
 /**
+ * Sesi AE-15 — PR dashboard stats untuk backoffice management view.
+ * Mengembalikan counts per status + aging open PRs (>3 hari unfulfilled)
+ * + monthly completion summary.
+ */
+export interface PurchaseRequestStats {
+  openCount: number;
+  partialCount: number;
+  completedCount: number;
+  cancelledCount: number;
+  /** PR dengan status open yang sudah > 3 hari (perlu attention). */
+  agingOpenCount: number;
+  /** PR completed bulan kalender ini. */
+  completedThisMonth: number;
+  /** Total request items pending (sum requestedQty - receivedQty di open + partial). */
+  pendingItemsTotal: number;
+}
+
+export async function getPurchaseRequestStats(): Promise<
+  ApiResult<PurchaseRequestStats>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase_request.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak akses");
+  }
+  const outletId = session.user.outletId;
+
+  // Status counts.
+  const statusRows = await db
+    .select({
+      status: purchaseRequests.status,
+      count: sql<string>`count(*)::int`,
+    })
+    .from(purchaseRequests)
+    .where(
+      and(
+        eq(purchaseRequests.outletId, outletId),
+        isNull(purchaseRequests.deletedAt),
+      ),
+    )
+    .groupBy(purchaseRequests.status);
+
+  const counts = {
+    open: 0,
+    partial: 0,
+    completed: 0,
+    cancelled: 0,
+  };
+  for (const r of statusRows) {
+    const k = r.status as keyof typeof counts;
+    if (k in counts) counts[k] = Number(r.count);
+  }
+
+  // Aging open PRs (created > 3 days ago, still open).
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const [agingRow] = await db
+    .select({ count: sql<string>`count(*)::int` })
+    .from(purchaseRequests)
+    .where(
+      and(
+        eq(purchaseRequests.outletId, outletId),
+        eq(purchaseRequests.status, "open"),
+        isNull(purchaseRequests.deletedAt),
+        lte(purchaseRequests.createdAt, threeDaysAgo),
+      ),
+    );
+
+  // Completed bulan ini (calendar month based on completedAt).
+  const today = new Date();
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const [monthRow] = await db
+    .select({ count: sql<string>`count(*)::int` })
+    .from(purchaseRequests)
+    .where(
+      and(
+        eq(purchaseRequests.outletId, outletId),
+        eq(purchaseRequests.status, "completed"),
+        isNull(purchaseRequests.deletedAt),
+        sql`${purchaseRequests.completedAt} >= ${monthStart}`,
+      ),
+    );
+
+  // Pending items qty total (requested - received) in open + partial.
+  const [pendingRow] = await db
+    .select({
+      total: sql<string>`COALESCE(SUM(${purchaseRequestItems.requestedQty} - ${purchaseRequestItems.receivedQty}), 0)::bigint`,
+    })
+    .from(purchaseRequestItems)
+    .innerJoin(
+      purchaseRequests,
+      eq(purchaseRequests.id, purchaseRequestItems.requestId),
+    )
+    .where(
+      and(
+        eq(purchaseRequests.outletId, outletId),
+        isNull(purchaseRequests.deletedAt),
+        inArray(purchaseRequests.status, ["open", "partial"]),
+      ),
+    );
+
+  return ok({
+    openCount: counts.open,
+    partialCount: counts.partial,
+    completedCount: counts.completed,
+    cancelledCount: counts.cancelled,
+    agingOpenCount: Number(agingRow?.count ?? 0),
+    completedThisMonth: Number(monthRow?.count ?? 0),
+    pendingItemsTotal: Number(pendingRow?.total ?? 0),
+  });
+}
+
+/**
  * Suggested qty pattern: reorderThreshold * 1.5 - currentStock, clamped
  * minimum to reorderThreshold so under-stocked items at least get re-stocked
  * to threshold. Floor minimum 1 (bigint can't be 0 for requested_qty).
@@ -188,10 +299,28 @@ export interface ListPurchaseRequestsOptions {
 }
 
 export async function listPurchaseRequests(
-  opts: ListPurchaseRequestsOptions = {},
+  opts: ListPurchaseRequestsOptions & {
+    /** Sesi AE-15 — kalau true, filter ke `createdBy = session.user.id`
+     * sehingga staff bisa lihat PR mereka sendiri tanpa butuh
+     * `purchase_request.view` permission. Backoffice tetap pakai default
+     * (false) untuk lihat semua PR di outlet. */
+    onlyMine?: boolean;
+  } = {},
 ): Promise<ApiResult<PurchaseRequestWithItems[]>> {
   const session = await requireSession();
-  if (!hasPermission(session.user.role, "purchase_request.view")) {
+  // Staff can list their own PRs (createdBy = self), tapi backoffice list
+  // semua PR di outlet butuh `purchase_request.view`.
+  if (
+    !opts.onlyMine &&
+    !hasPermission(session.user.role, "purchase_request.view")
+  ) {
+    return fail("FORBIDDEN", "Tidak punya hak akses");
+  }
+  // Even with onlyMine, harus punya create permission (sanity gate).
+  if (
+    opts.onlyMine &&
+    !hasPermission(session.user.role, "purchase_request.create")
+  ) {
     return fail("FORBIDDEN", "Tidak punya hak akses");
   }
 
@@ -202,6 +331,9 @@ export async function listPurchaseRequests(
   ];
   if (opts.status && opts.status !== "all") {
     conds.push(eq(purchaseRequests.status, opts.status));
+  }
+  if (opts.onlyMine) {
+    conds.push(eq(purchaseRequests.createdBy, session.user.id));
   }
 
   const requestRows = await db

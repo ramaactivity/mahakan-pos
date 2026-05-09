@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { ArrowLeft } from "lucide-react";
 import {
@@ -60,8 +60,44 @@ function avatarInitials(name: string): string {
  * Avatar select mode: single-column with responsive grid (handled by
  * StaffAvatarGrid).
  */
+function defaultRedirectFor(role: string | null | undefined): string {
+  if (role === "staff") return "/pos";
+  return "/dashboard";
+}
+
+/** Sanitize callback URL — only allow same-origin paths starting with "/".
+ * Prevents open-redirect via query param manipulation. */
+function safeCallback(raw: string | null): string | null {
+  if (!raw) return null;
+  if (!raw.startsWith("/")) return null;
+  if (raw.startsWith("//")) return null; // protocol-relative, reject
+  return raw;
+}
+
 export default function PinLoginPage() {
+  // useSearchParams forces dynamic rendering; wrap in Suspense supaya
+  // Next.js build prerender ga error untuk this client page.
+  return (
+    <Suspense fallback={<PinLoginFallback />}>
+      <PinLoginInner />
+    </Suspense>
+  );
+}
+
+function PinLoginFallback() {
+  return (
+    <Card className="p-3 sm:p-4 lg:p-5">
+      <CardContent className="flex h-40 items-center justify-center">
+        <Spinner className="size-6 text-mahakan-green-700" />
+      </CardContent>
+    </Card>
+  );
+}
+
+function PinLoginInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const callbackUrl = safeCallback(searchParams?.get("callbackUrl") ?? null);
   const { status, session, refresh } = useSession();
 
   const [users, setUsers] = useState<PinUser[]>([]);
@@ -75,9 +111,13 @@ export default function PinLoginPage() {
 
   useEffect(() => {
     if (status === "authenticated" && session) {
-      router.replace(session.user.role === "staff" ? "/pos" : "/dashboard");
+      // Sesi AE-15 — honor callbackUrl param (e.g., /m for staff mobile),
+      // else fallback default per role.
+      const dest =
+        callbackUrl ?? defaultRedirectFor(session.user.role);
+      router.replace(dest);
     }
-  }, [status, session, router]);
+  }, [status, session, router, callbackUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,7 +170,8 @@ export default function PinLoginPage() {
       updated && typeof updated === "object" && "user" in updated
         ? (updated as { user: { role: string } }).user.role
         : null;
-    router.replace(role === "staff" ? "/pos" : "/dashboard");
+    const dest = callbackUrl ?? defaultRedirectFor(role);
+    router.replace(dest);
   }
 
   useEffect(() => {

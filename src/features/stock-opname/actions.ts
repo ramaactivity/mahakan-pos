@@ -218,6 +218,9 @@ export async function startOpname(
           sessionId: s.id,
           ingredientId: ing.id,
           expectedQty: ing.currentStock,
+          // Sesi AE-15 — decimal mirror snapshot dari ingredient state.
+          expectedQtyDecimal:
+            ing.currentStockDecimal ?? Number(ing.currentStock).toFixed(4),
           unitCostAtSnapshot: ing.costPerUnit,
           ingredientNameSnapshot: ing.name,
           unitSnapshot: ing.unit,
@@ -298,8 +301,12 @@ export async function saveOpnameCount(
           throw new Error("BAD_STATE");
         }
 
+        // Sesi AE-15 — write decimal mirror. bigint = rounded snapshot.
         const setClause: Record<string, unknown> = {
-          actualQty: v.actualQty,
+          actualQty:
+            v.actualQty === null ? null : Math.max(0, Math.round(v.actualQty)),
+          actualQtyDecimal:
+            v.actualQty === null ? null : v.actualQty.toFixed(4),
           note: v.note ?? null,
         };
         if (v.actualQty === null) {
@@ -400,8 +407,14 @@ export async function saveOpnameCountBatch(
 
         const now = new Date();
         for (const line of v.lines) {
+          // Sesi AE-15 — decimal mirror.
           const setClause: Record<string, unknown> = {
-            actualQty: line.actualQty,
+            actualQty:
+              line.actualQty === null
+                ? null
+                : Math.max(0, Math.round(line.actualQty)),
+            actualQtyDecimal:
+              line.actualQty === null ? null : line.actualQty.toFixed(4),
             note: line.note ?? null,
           };
           if (line.actualQty === null) {
@@ -642,7 +655,9 @@ export async function finalizeOpname(
           id: stockOpnameLines.id,
           ingredientId: stockOpnameLines.ingredientId,
           expectedQty: stockOpnameLines.expectedQty,
+          expectedQtyDecimal: stockOpnameLines.expectedQtyDecimal,
           actualQty: stockOpnameLines.actualQty,
+          actualQtyDecimal: stockOpnameLines.actualQtyDecimal,
           unitCostAtSnapshot: stockOpnameLines.unitCostAtSnapshot,
           ingredientNameSnapshot: stockOpnameLines.ingredientNameSnapshot,
         })
@@ -653,12 +668,24 @@ export async function finalizeOpname(
       let totalAbsDiffQty = 0;
       let totalAbsDiffCost = 0;
 
+      // Sesi AE-15 — diff dihitung pakai decimal kalau ada (precise),
+      // fallback bigint untuk legacy lines pre-AE-15.
+      const computeDiff = (l: (typeof lines)[number]): number => {
+        if (l.actualQty === null) return 0;
+        const expected =
+          l.expectedQtyDecimal !== null
+            ? parseFloat(l.expectedQtyDecimal)
+            : l.expectedQty;
+        const actual =
+          l.actualQtyDecimal !== null
+            ? parseFloat(l.actualQtyDecimal)
+            : l.actualQty;
+        return actual - expected;
+      };
+
       // Lock all impacted ingredients up front for atomicity.
       const impactedIds = lines
-        .filter(
-          (l) =>
-            l.actualQty !== null && l.actualQty - l.expectedQty !== 0,
-        )
+        .filter((l) => l.actualQty !== null && computeDiff(l) !== 0)
         .map((l) => l.ingredientId);
 
       if (impactedIds.length > 0) {
@@ -678,7 +705,8 @@ export async function finalizeOpname(
 
         for (const line of lines) {
           if (line.actualQty === null) continue;
-          const diff = line.actualQty - line.expectedQty;
+          // Sesi AE-15 — diff prefer decimal precision.
+          const diff = computeDiff(line);
           if (diff === 0) continue;
 
           const live = liveById.get(line.ingredientId);

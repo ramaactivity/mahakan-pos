@@ -6,6 +6,7 @@ import {
   timestamp,
   bigint,
   integer,
+  numeric,
   index,
   uniqueIndex,
   check,
@@ -117,6 +118,19 @@ export const stockOpnameLines = pgTable(
 
     expectedQty: bigint("expected_qty", { mode: "number" }).notNull(),
     actualQty: bigint("actual_qty", { mode: "number" }),
+    /** Sesi AE-15 — decimal mirrors. Mirror sesi AE-12 pattern dari
+     * purchases/inventory. Mobile + backoffice dapat input decimal
+     * fractions (e.g. 2.5 kg). bigint columns tetap di-write rounded
+     * sebagai backward-compat snapshot. NULL untuk legacy rows
+     * pre-AE-15. UI prefer decimal kalau ada, fallback bigint. */
+    expectedQtyDecimal: numeric("expected_qty_decimal", {
+      precision: 15,
+      scale: 4,
+    }),
+    actualQtyDecimal: numeric("actual_qty_decimal", {
+      precision: 15,
+      scale: 4,
+    }),
     /** Cost per unit at time of session start — frozen so finalize cost
      * impact is reproducible even if cost_per_unit changes later. */
     unitCostAtSnapshot: bigint("unit_cost_at_snapshot", { mode: "number" })

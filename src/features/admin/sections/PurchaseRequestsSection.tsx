@@ -2,7 +2,15 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardList, MessageCircle, X } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ClipboardList,
+  MessageCircle,
+  Package,
+  TrendingUp,
+  X,
+} from "lucide-react";
 import {
   Badge,
   Button,
@@ -21,6 +29,7 @@ import {
 } from "@/components/ui";
 import {
   cancelPurchaseRequest,
+  getPurchaseRequestStats,
   listPurchaseRequests,
   receiveItem,
 } from "@/features/purchase-requests/actions";
@@ -90,6 +99,18 @@ export function PurchaseRequestsSection() {
   });
   const error =
     queryError instanceof Error ? queryError.message : null;
+
+  // Sesi AE-15 — PR stats dashboard.
+  const statsQuery = useQuery({
+    queryKey: ["admin", "purchase-requests", "stats"],
+    queryFn: async () => {
+      const res = await getPurchaseRequestStats();
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+    staleTime: 60 * 1000,
+  });
+  const stats = statsQuery.data ?? null;
 
   const refresh = () =>
     queryClient.invalidateQueries({
@@ -172,6 +193,55 @@ export function PurchaseRequestsSection() {
           </p>
         </div>
       </header>
+
+      {/* Sesi AE-15 — PR Stats dashboard cards */}
+      {stats ? (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <PrStatCard
+            Icon={Package}
+            label="Open + Partial"
+            value={String(stats.openCount + stats.partialCount)}
+            sub={
+              stats.pendingItemsTotal > 0
+                ? `${stats.pendingItemsTotal} item belum diterima`
+                : "Tidak ada pending"
+            }
+            accent={
+              stats.openCount + stats.partialCount > 0 ? "warning" : "default"
+            }
+          />
+          <PrStatCard
+            Icon={AlertTriangle}
+            label="Aging > 3 Hari"
+            value={String(stats.agingOpenCount)}
+            sub={
+              stats.agingOpenCount > 0
+                ? "PR open yang perlu segera ditindaklanjuti"
+                : "Semua PR baru"
+            }
+            accent={stats.agingOpenCount > 0 ? "danger" : "default"}
+          />
+          <PrStatCard
+            Icon={CheckCircle2}
+            label="Selesai Bulan Ini"
+            value={String(stats.completedThisMonth)}
+            sub="Status completed (semua item diterima)"
+            accent="success"
+          />
+          <PrStatCard
+            Icon={TrendingUp}
+            label="Total Lifetime"
+            value={String(
+              stats.openCount +
+                stats.partialCount +
+                stats.completedCount +
+                stats.cancelledCount,
+            )}
+            sub={`${stats.completedCount} selesai · ${stats.cancelledCount} dibatalkan`}
+            accent="default"
+          />
+        </div>
+      ) : null}
 
       <div
         role="tablist"
@@ -515,4 +585,47 @@ function purchaseRequestItemColumns(): ResponsiveColumn<PurchaseRequestItem>[] {
       },
     },
   ];
+}
+
+// ============================================================
+// Sesi AE-15 — PR stats card
+// ============================================================
+
+function PrStatCard({
+  Icon,
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  Icon: typeof ClipboardList;
+  label: string;
+  value: string;
+  sub: string;
+  accent: "default" | "warning" | "danger" | "success";
+}) {
+  const accentClasses = {
+    default: "border-neutral-200 bg-white",
+    warning: "border-warning-300 bg-warning-100",
+    danger: "border-danger-300 bg-danger-100",
+    success: "border-mahakan-green-200 bg-mahakan-green-50",
+  }[accent];
+  const iconColor = {
+    default: "text-neutral-500",
+    warning: "text-warning-500",
+    danger: "text-danger-500",
+    success: "text-mahakan-green-700",
+  }[accent];
+  return (
+    <div className={cn("rounded-xl border p-4", accentClasses)}>
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-neutral-600">
+        <Icon className={cn("size-4", iconColor)} aria-hidden />
+        {label}
+      </div>
+      <div className="mt-1.5 font-mono text-2xl font-bold tabular-nums text-neutral-900">
+        {value}
+      </div>
+      <p className="mt-0.5 text-[11px] text-neutral-600">{sub}</p>
+    </div>
+  );
 }

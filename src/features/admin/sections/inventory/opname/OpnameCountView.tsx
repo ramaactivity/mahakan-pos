@@ -258,12 +258,14 @@ export function OpnameCountView({
   }
 
   async function persistLine(ingredientId: string, raw: string) {
-    const trimmed = raw.trim();
+    // Sesi AE-15 — accept decimal (mirror sesi AE-12 pattern dari purchases).
+    // Allow koma OR titik as decimal separator (staff Indo biasa pakai koma).
+    const trimmed = raw.trim().replace(",", ".");
     let actualQty: number | null;
     if (trimmed === "") {
       actualQty = null;
     } else {
-      const n = parseInt(trimmed, 10);
+      const n = parseFloat(trimmed);
       if (!Number.isFinite(n) || n < 0) {
         setStateMap((prev) => {
           const next = new Map(prev);
@@ -926,7 +928,7 @@ function CountRow({
       <div className="flex items-center gap-2 sm:w-[200px]">
         <input
           aria-label={`Qty aktual ${name}`}
-          inputMode="numeric"
+          inputMode="decimal"
           autoComplete="off"
           placeholder="0"
           value={state.input}

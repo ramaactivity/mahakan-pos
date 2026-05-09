@@ -115,12 +115,18 @@ function OpnameView() {
         return;
       }
       setDetail(detailRes.data);
-      // Pre-fill drafts from existing actualQty values
+      // Pre-fill drafts from existing actualQty values. Sesi AE-15 — prefer
+      // decimal mirror kalau ada (precise, e.g. "2.5" not "3").
       const initialDrafts: Record<string, LineDraft> = {};
       for (const line of detailRes.data.lines) {
         if (line.actualQty !== null) {
+          const rawValue =
+            line.actualQtyDecimal !== null
+              ? // Trim trailing zeros for display: "2.5000" → "2.5"
+                String(parseFloat(line.actualQtyDecimal))
+              : String(line.actualQty);
           initialDrafts[line.ingredientId] = {
-            input: String(line.actualQty),
+            input: rawValue,
             status: "saved",
           };
         }
@@ -403,7 +409,11 @@ function LineRow({
   onChange: (raw: string) => void;
   onBlur: (raw: string) => void;
 }) {
-  const expectedQty = line.expectedQty;
+  // Sesi AE-15 — prefer decimal mirror untuk display + diff calc.
+  const expectedQtyValue =
+    line.expectedQtyDecimal !== null
+      ? parseFloat(line.expectedQtyDecimal)
+      : Number(line.expectedQty);
   const inputValue = draft?.input ?? "";
   const status = draft?.status ?? "idle";
   let parsedActual: number | null = null;
@@ -413,9 +423,9 @@ function LineRow({
     if (Number.isFinite(p) && p >= 0) parsedActual = p;
   }
   const diff =
-    parsedActual !== null && expectedQty !== null
-      ? parsedActual - Number(expectedQty)
-      : null;
+    parsedActual !== null ? parsedActual - expectedQtyValue : null;
+  const fmt = (n: number) =>
+    new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(n);
 
   return (
     <li
@@ -434,9 +444,7 @@ function LineRow({
           </p>
           <p className="text-[11px] text-neutral-600">
             Expected:{" "}
-            <span className="font-mono">
-              {Number(expectedQty).toLocaleString("id-ID")}
-            </span>{" "}
+            <span className="font-mono">{fmt(expectedQtyValue)}</span>{" "}
             {line.ingredient.unit}
           </p>
         </div>
@@ -466,7 +474,7 @@ function LineRow({
           Selisih:{" "}
           <span className="font-mono">
             {diff > 0 ? "+" : ""}
-            {diff.toLocaleString("id-ID")}
+            {fmt(diff)}
           </span>{" "}
           {line.ingredient.unit}
         </p>

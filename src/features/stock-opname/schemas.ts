@@ -6,11 +6,14 @@ const REASON_MIN = 3;
 const REASON_MAX = 200;
 const NOTE_LINE_MAX = 200;
 
+// Sesi AE-15 — accept decimal qty (e.g. 2.5 kg, 0.75 L). Mirror sesi AE-12
+// pattern dari purchases. Removed `.int()` constraint. Server stores via
+// dual-column pattern: bigint (rounded) + numeric(15,4) decimal.
 const qtyNonNeg = z
   .number()
-  .int()
   .nonnegative("Jumlah tidak boleh negatif")
-  .max(10_000_000_000, "Jumlah terlalu besar");
+  .max(10_000_000_000, "Jumlah terlalu besar")
+  .refine((v) => Number.isFinite(v), "Jumlah harus angka");
 
 export const startOpnameSchema = z.object({
   periodLabel: z.string().trim().min(1).max(PERIOD_MAX).optional(),

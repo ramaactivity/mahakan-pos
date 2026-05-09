@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   ClipboardList,
+  History,
   Plus,
   Search,
   Trash2,
@@ -16,8 +17,14 @@ import { useSession } from "@/features/auth/SessionProvider";
 import {
   createPurchaseRequest,
   listLowStockIngredients,
+  listPurchaseRequests,
 } from "@/features/purchase-requests/actions";
-import { isOk, type LowStockIngredient } from "@/features/purchase-requests/types";
+import {
+  isOk,
+  type LowStockIngredient,
+  type PurchaseRequestWithItems,
+} from "@/features/purchase-requests/types";
+import { formatIndonesianDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
 interface ItemDraft {
@@ -82,6 +89,11 @@ function PoView() {
     waLink: string;
   } | null>(null);
   const [search, setSearch] = useState("");
+  // Sesi AE-15 — own PR history (staff scope).
+  const [tab, setTab] = useState<"buat" | "riwayat">("buat");
+  const [history, setHistory] = useState<PurchaseRequestWithItems[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyKey, setHistoryKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,6 +109,22 @@ function PoView() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setHistoryLoading(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    void (async () => {
+      const res = await listPurchaseRequests({ onlyMine: true, limit: 30 });
+      if (cancelled) return;
+      if (isOk(res)) setHistory(res.data);
+      setHistoryLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [historyKey]);
 
   const filteredLowStock = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -294,6 +322,52 @@ function PoView() {
         </p>
       </header>
 
+      {/* Sesi AE-15 — Tabs Buat Baru | Riwayat */}
+      <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-neutral-100 p-1.5">
+        <button
+          type="button"
+          onClick={() => setTab("buat")}
+          className={cn(
+            "flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-semibold transition-colors",
+            tab === "buat"
+              ? "bg-white text-mahakan-green-900 shadow-sm"
+              : "text-neutral-600 hover:text-neutral-900",
+          )}
+        >
+          <Plus className="size-4" aria-hidden /> Buat Baru
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setTab("riwayat");
+            setHistoryKey((k) => k + 1);
+          }}
+          className={cn(
+            "flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-semibold transition-colors",
+            tab === "riwayat"
+              ? "bg-white text-mahakan-green-900 shadow-sm"
+              : "text-neutral-600 hover:text-neutral-900",
+          )}
+        >
+          <History className="size-4" aria-hidden /> Riwayat
+          {history.length > 0 ? (
+            <span className="ml-1 rounded-full bg-mahakan-green-100 px-1.5 py-0.5 text-[10px] font-bold text-mahakan-green-900">
+              {history.length}
+            </span>
+          ) : null}
+        </button>
+      </div>
+
+      {tab === "riwayat" ? (
+        <PrHistorySection
+          loading={historyLoading}
+          history={history}
+          onRefresh={() => setHistoryKey((k) => k + 1)}
+        />
+      ) : null}
+
+      {tab !== "buat" ? null : (
+      <>
       {/* Low stock auto-suggestions */}
       {lowStock.length > 0 ? (
         <section>
@@ -475,7 +549,180 @@ function PoView() {
           ? "Menyimpan…"
           : `Submit ${items.length > 0 ? `(${items.length} item)` : ""}`}
       </Button>
+      </>
+      )}
     </div>
+  );
+}
+
+// ============================================================
+// Sesi AE-15 — PR history section (own scope)
+// ============================================================
+
+function PrHistorySection({
+  loading,
+  history,
+  onRefresh,
+}: {
+  loading: boolean;
+  history: PurchaseRequestWithItems[];
+  onRefresh: () => void;
+}) {
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-neutral-200 bg-white p-4 text-center text-sm text-neutral-500">
+        <Spinner className="mx-auto size-5 text-mahakan-green-700" />
+      </div>
+    );
+  }
+  if (history.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-neutral-300 bg-neutral-50 p-6 text-center text-sm text-neutral-600">
+        <ClipboardList
+          className="mx-auto mb-2 size-6 text-neutral-400"
+          aria-hidden
+        />
+        Belum ada permintaan belanja yang kamu buat.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] uppercase tracking-wider text-neutral-600">
+          {history.length} permintaan terakhir
+        </p>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="text-[11px] text-mahakan-green-700 hover:underline"
+        >
+          Refresh
+        </button>
+      </div>
+      <ul className="space-y-2">
+        {history.map((pr) => (
+          <PrHistoryCard key={pr.id} pr={pr} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function PrHistoryCard({ pr }: { pr: PurchaseRequestWithItems }) {
+  const totalRequested = pr.items.reduce(
+    (s, it) => s + Number(it.requestedQty),
+    0,
+  );
+  const totalReceived = pr.items.reduce(
+    (s, it) => s + Number(it.receivedQty),
+    0,
+  );
+  const fulfillPercent =
+    totalRequested > 0
+      ? Math.round((totalReceived / totalRequested) * 100)
+      : 0;
+
+  const statusMap: Record<
+    string,
+    { label: string; bg: string; text: string }
+  > = {
+    open: {
+      label: "Belum Dipenuhi",
+      bg: "bg-warning-100",
+      text: "text-warning-700",
+    },
+    partial: {
+      label: "Sebagian",
+      bg: "bg-info-100",
+      text: "text-info-500",
+    },
+    completed: {
+      label: "Selesai",
+      bg: "bg-mahakan-green-100",
+      text: "text-mahakan-green-900",
+    },
+    cancelled: {
+      label: "Dibatalkan",
+      bg: "bg-neutral-100",
+      text: "text-neutral-600",
+    },
+  };
+  const status = statusMap[pr.status] ?? statusMap.open;
+
+  return (
+    <li className="rounded-xl border border-neutral-200 bg-white p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-neutral-900">
+            PR-{pr.id.slice(0, 8)}
+          </p>
+          <p className="text-[11px] text-neutral-600">
+            {formatIndonesianDate(pr.createdAt)} · {pr.items.length} item
+            {pr.whatsappSentAt ? " · WA terkirim" : ""}
+          </p>
+        </div>
+        <span
+          className={cn(
+            "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+            status.bg,
+            status.text,
+          )}
+        >
+          {status.label}
+        </span>
+      </div>
+
+      {totalRequested > 0 ? (
+        <div className="mt-2 space-y-1">
+          <div className="flex items-center justify-between text-[11px] text-neutral-700">
+            <span>Pemenuhan</span>
+            <span className="font-mono font-semibold">
+              {fulfillPercent}% ({totalReceived}/{totalRequested})
+            </span>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">
+            <div
+              className={cn(
+                "h-full transition-all",
+                fulfillPercent === 100
+                  ? "bg-mahakan-green-700"
+                  : fulfillPercent > 0
+                    ? "bg-info-400"
+                    : "bg-warning-400",
+              )}
+              style={{ width: `${Math.min(100, fulfillPercent)}%` }}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      <ul className="mt-2 space-y-0.5">
+        {pr.items.slice(0, 3).map((it) => (
+          <li
+            key={it.id}
+            className="flex items-baseline justify-between text-[11px] text-neutral-700"
+          >
+            <span className="truncate">{it.ingredientNameSnapshot}</span>
+            <span className="ml-2 shrink-0 font-mono">
+              {Number(it.receivedQty)}/{Number(it.requestedQty)}{" "}
+              {it.unitSnapshot}
+            </span>
+          </li>
+        ))}
+        {pr.items.length > 3 ? (
+          <li className="text-[11px] italic text-neutral-500">
+            +{pr.items.length - 3} item lain
+          </li>
+        ) : null}
+      </ul>
+
+      {pr.status === "cancelled" && pr.cancelReason ? (
+        <p className="mt-1.5 rounded-md bg-neutral-50 px-2 py-1 text-[11px] italic text-neutral-700">
+          Alasan batal: {pr.cancelReason}
+        </p>
+      ) : null}
+    </li>
   );
 }
 

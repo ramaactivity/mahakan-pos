@@ -242,6 +242,7 @@ export async function fetchActiveIngredientsForSnapshot(
     name: string;
     unit: string;
     currentStock: number;
+    currentStockDecimal: string | null;
     costPerUnit: number;
   }>
 > {
@@ -251,6 +252,7 @@ export async function fetchActiveIngredientsForSnapshot(
       name: ingredients.name,
       unit: ingredients.unit,
       currentStock: ingredients.currentStock,
+      currentStockDecimal: ingredients.currentStockDecimal,
       costPerUnit: ingredients.costPerUnit,
     })
     .from(ingredients)
