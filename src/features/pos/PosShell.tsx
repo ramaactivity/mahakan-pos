@@ -1282,12 +1282,15 @@ export function PosShell() {
           open={closeShiftOpen}
           shift={shift}
           userId={session.user.id}
+          cashierName={session.user.name ?? "Kasir"}
+          receiptConfig={receiptConfig}
           onClose={() => setCloseShiftOpen(false)}
           onClosed={async () => {
             setCloseShiftOpen(false);
             const res = await getActiveShift();
             if (isOk(res)) setShift(res.data);
           }}
+          onOpenSettings={() => setTab("settings")}
         />
       ) : null}
       <HistoryDetailModal
