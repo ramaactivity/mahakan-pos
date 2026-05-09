@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   BookOpen,
@@ -28,13 +29,8 @@ import {
   CardTitle,
   Skeleton,
 } from "@/components/ui";
-import {
-  getDailySalesReport,
-  isOk,
-  type DailySalesReport,
-} from "@/features/reports";
+import { getDailySalesReport, isOk } from "@/features/reports";
 import { getTodayAttendanceStatus } from "@/features/attendance/actions";
-import type { EmployeeAttendanceTodayStatus } from "@/features/attendance/types";
 import { listPayrollPeriods } from "@/features/payroll/actions";
 import type { PayrollPeriodWithStats } from "@/features/payroll/types";
 import { listExpiringDocuments } from "@/features/employees/actions";
@@ -59,100 +55,102 @@ interface DashboardHomeProps {
 }
 
 export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
-  const [report, setReport] = useState<DailySalesReport | null>(null);
-  const [attendance, setAttendance] = useState<
-    EmployeeAttendanceTodayStatus[] | null
-  >(null);
-  const [activePeriod, setActivePeriod] =
-    useState<PayrollPeriodWithStats | null>(null);
-  const [expiringDocs, setExpiringDocs] = useState<ExpiringDocument[]>([]);
-  const [accountingMtd, setAccountingMtd] =
-    useState<IncomeStatementReport | null>(null);
-  const [balanceSheet, setBalanceSheet] =
-    useState<BalanceSheetReport | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      // Compute MTD range for accounting summary
-      const now = new Date();
-      const yyyy = now.getFullYear();
-      const mm = String(now.getMonth() + 1).padStart(2, "0");
-      const lastDay = new Date(yyyy, now.getMonth() + 1, 0).getDate();
-      const mtdFrom = `${yyyy}-${mm}-01`;
-      const mtdTo = `${yyyy}-${mm}-${String(lastDay).padStart(2, "0")}`;
-      const mtdLabel = now.toLocaleDateString("id-ID", {
+  // MTD date range — stable per render, used by accounting queries below.
+  const mtdRange = useMemo(() => {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const lastDay = new Date(yyyy, now.getMonth() + 1, 0).getDate();
+    return {
+      fromDate: `${yyyy}-${mm}-01`,
+      toDate: `${yyyy}-${mm}-${String(lastDay).padStart(2, "0")}`,
+      label: now.toLocaleDateString("id-ID", {
         year: "numeric",
         month: "long",
-      });
-
-      // allSettled so any single action failure doesn't deadlock the loader.
-      const [
-        reportSettled,
-        attendanceSettled,
-        payrollSettled,
-        docsSettled,
-        accountingSettled,
-        balanceSheetSettled,
-      ] = await Promise.allSettled([
-        getDailySalesReport(),
-        getTodayAttendanceStatus(),
-        listPayrollPeriods(),
-        listExpiringDocuments(30),
-        fetchIncomeStatement({
-          fromDate: mtdFrom,
-          toDate: mtdTo,
-          periodLabel: mtdLabel,
-        }),
-        fetchBalanceSheet(mtdTo),
-      ]);
-      if (cancelled) return;
-      if (
-        reportSettled.status === "fulfilled" &&
-        isOk(reportSettled.value)
-      ) {
-        setReport(reportSettled.value.data);
-      }
-      if (
-        attendanceSettled.status === "fulfilled" &&
-        attendanceSettled.value.success
-      ) {
-        setAttendance(attendanceSettled.value.data);
-      }
-      if (
-        payrollSettled.status === "fulfilled" &&
-        payrollSettled.value.success
-      ) {
-        const active =
-          payrollSettled.value.data.find((p) => p.status !== "paid") ?? null;
-        setActivePeriod(active);
-      }
-      if (
-        docsSettled.status === "fulfilled" &&
-        docsSettled.value.success
-      ) {
-        setExpiringDocs(docsSettled.value.data);
-      }
-      if (
-        accountingSettled.status === "fulfilled" &&
-        accountingSettled.value.ok
-      ) {
-        setAccountingMtd(accountingSettled.value.data);
-      }
-      if (
-        balanceSheetSettled.status === "fulfilled" &&
-        balanceSheetSettled.value.ok
-      ) {
-        setBalanceSheet(balanceSheetSettled.value.data);
-      }
-      setLoading(false);
-    }
-    void load();
-    return () => {
-      cancelled = true;
+      }),
     };
   }, []);
+
+  // 6 independent queries — each cached separately by TanStack Query.
+  // Failures don't deadlock the dashboard (mimics old Promise.allSettled
+  // behavior); each section just shows null/empty state.
+  const reportQuery = useQuery({
+    queryKey: ["admin", "dashboard", "daily-sales"],
+    queryFn: async () => {
+      const res = await getDailySalesReport();
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+    staleTime: 60 * 1000, // 1min — kasir rotates throughout day
+  });
+
+  const attendanceQuery = useQuery({
+    queryKey: ["admin", "dashboard", "attendance-today"],
+    queryFn: async () => {
+      const res = await getTodayAttendanceStatus();
+      if (!res.success) throw new Error(res.error.message);
+      return res.data;
+    },
+    staleTime: 30 * 1000, // 30s — staff clock in/out frequently
+  });
+
+  const payrollQuery = useQuery({
+    queryKey: ["admin", "dashboard", "active-payroll"],
+    queryFn: async () => {
+      const res = await listPayrollPeriods();
+      if (!res.success) throw new Error(res.error.message);
+      return res.data.find((p) => p.status !== "paid") ?? null;
+    },
+  });
+
+  const docsQuery = useQuery({
+    queryKey: ["admin", "dashboard", "expiring-docs"],
+    queryFn: async () => {
+      const res = await listExpiringDocuments(30);
+      if (!res.success) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+
+  const accountingQuery = useQuery({
+    queryKey: ["admin", "dashboard", "income-statement-mtd", mtdRange],
+    queryFn: async () => {
+      const res = await fetchIncomeStatement({
+        fromDate: mtdRange.fromDate,
+        toDate: mtdRange.toDate,
+        periodLabel: mtdRange.label,
+      });
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+
+  const balanceSheetQuery = useQuery({
+    queryKey: ["admin", "dashboard", "balance-sheet-mtd", mtdRange.toDate],
+    queryFn: async () => {
+      const res = await fetchBalanceSheet(mtdRange.toDate);
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+
+  const report = reportQuery.data ?? null;
+  const attendance = attendanceQuery.data ?? null;
+  const activePeriod = payrollQuery.data ?? null;
+  const expiringDocs = docsQuery.data ?? [];
+  const accountingMtd = accountingQuery.data ?? null;
+  const balanceSheet = balanceSheetQuery.data ?? null;
+
+  // Match old behavior: single global loading flag = ANY query still loading
+  // first time. After cache hit on revisit, all return false instantly →
+  // dashboard renders fully without skeleton flash.
+  const loading =
+    reportQuery.isLoading ||
+    attendanceQuery.isLoading ||
+    payrollQuery.isLoading ||
+    docsQuery.isLoading ||
+    accountingQuery.isLoading ||
+    balanceSheetQuery.isLoading;
 
   if (loading) {
     return (

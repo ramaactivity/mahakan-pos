@@ -81,3 +81,7 @@ next-env.d.ts
 # Owner-imported seed CSVs (operational data, not for repo)
 seed-data/
 .env*.local
+
+# Local install artifacts (skill bundles, downloaded installers)
+/aso-skills/
+*.pkg
