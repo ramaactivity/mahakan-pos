@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
-import { MessageSquare } from "lucide-react";
-import { Button, Modal, NumericInput, toast } from "@/components/ui";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Calendar,
+  CheckCircle2,
+  Clock,
+  MessageSquare,
+  PackageSearch,
+  Wallet,
+} from "lucide-react";
+import { Button, Modal, toast } from "@/components/ui";
 import {
   getLastClosedShiftAtOutlet,
   isOk,
@@ -10,9 +17,10 @@ import {
   type Shift,
 } from "@/features/shifts";
 import { formatIndonesianDateTime } from "@/lib/date";
-import { formatRupiah, parseRupiah } from "@/lib/format";
+import { formatRupiah } from "@/lib/format";
 import type { Category, MenuItem } from "@/features/menu";
 import type { Role } from "@/lib/auth/rbac";
+import { cn } from "@/lib/utils";
 import { MenuStatusCard } from "./MenuStatusCard";
 
 interface OpenShiftModalProps {
@@ -23,6 +31,10 @@ interface OpenShiftModalProps {
   menuItems: MenuItem[];
   categories: Category[];
   role: Role;
+  /** Display name kasir (greeting). Optional — falls back ke "Kasir". */
+  cashierName?: string;
+  /** Outlet name (greeting). Optional. */
+  outletName?: string;
   onItemUpdated: (next: MenuItem) => void;
   onClose: () => void;
   onOpened: () => void;
@@ -30,30 +42,46 @@ interface OpenShiftModalProps {
 
 type Step = "cash" | "stock";
 
+const QUICK_AMOUNTS: Array<{ label: string; value: string }> = [
+  { label: "Kosong", value: "0" },
+  { label: "50rb", value: "50000" },
+  { label: "100rb", value: "100000" },
+  { label: "200rb", value: "200000" },
+  { label: "500rb", value: "500000" },
+];
+
 /**
- * 2-step buka-shift flow (Galih ask #6):
- *   1. Cash awal — kasir input nominal kas di laci
- *   2. Stok review — kasir scan menu, mark item sold-out di awal shift
- *      sebelum customer datang. Optional skip.
+ * Sesi AE-2 redesign — 2-column fullscreen layout, mirroring CloseShiftModal
+ * pattern (sesi AD-8). Staff feedback: popup lama "kecil dan ribet"; redesign
+ * pakai full card 2 kolom dengan typography + hierarchy yang lebih jelas.
  *
- * Step 1 calls the openShift action so the shift is open even if kasir
- * skips step 2. Step 2 is just MenuStatusCard embedded — toggleSoldOut
- * mutations already work in real time once shift is active.
+ * Step 1 (cash): LEFT = greeting + handover message + checklist tip; RIGHT =
+ *   hero amount display + quick amounts + dedicated 3×4 numpad.
+ * Step 2 (stock): MenuStatusCard full width (kasir scan menu, mark sold-out
+ *   sebelum mulai jualan).
+ *
+ * Prefetched handover message via getLastClosedShiftAtOutlet (single fetch
+ * on modal open). Numpad pakai onPointerDown + touch-action: manipulation
+ * supaya tap instant di tablet/iPhone Safari (sesi AE-2 numpad polish).
  */
 export function OpenShiftModal({
   open,
   menuItems,
   categories,
   role,
+  cashierName,
+  outletName,
   onItemUpdated,
   onClose,
   onOpened,
 }: OpenShiftModalProps) {
   const [step, setStep] = useState<Step>("cash");
+  // Raw digit string (no separator) — formatted for display via formatRupiah.
   const [openingCash, setOpeningCash] = useState("100000");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [previousShift, setPreviousShift] = useState<Shift | null>(null);
+  const [previousLoading, setPreviousLoading] = useState(true);
 
   useEffect(() => {
     if (!open) return;
@@ -63,6 +91,7 @@ export function OpenShiftModal({
     setError(null);
     setSubmitting(false);
     setPreviousShift(null);
+    setPreviousLoading(true);
     /* eslint-enable react-hooks/set-state-in-effect */
 
     let cancelled = false;
@@ -70,21 +99,19 @@ export function OpenShiftModal({
       const res = await getLastClosedShiftAtOutlet();
       if (cancelled) return;
       if (isOk(res)) setPreviousShift(res.data);
+      setPreviousLoading(false);
     })();
     return () => {
       cancelled = true;
     };
   }, [open]);
 
-  let parsed = 0;
-  try {
-    parsed = parseRupiah(openingCash);
-  } catch {
-    parsed = 0;
-  }
+  const parsed = useMemo(() => {
+    const n = parseInt(openingCash || "0", 10);
+    return Number.isFinite(n) ? n : 0;
+  }, [openingCash]);
 
-  async function onSubmitCash(e: FormEvent) {
-    e.preventDefault();
+  async function onSubmitCash() {
     if (submitting) return;
     if (parsed < 0) {
       setError("Kas awal tidak boleh negatif");
@@ -108,88 +135,357 @@ export function OpenShiftModal({
     onOpened();
   }
 
+  // Numpad press helpers — kept here so they can rely on closure state w/o re-render.
+  function appendDigit(d: string) {
+    if (submitting) return;
+    setOpeningCash((s) => {
+      // Prevent leading zeros — "0" + "1" should become "1" not "01".
+      if (s === "0" && d !== "0") return d;
+      if (s.length >= 12) return s;
+      return s + d;
+    });
+  }
+  function backspace() {
+    if (submitting) return;
+    setOpeningCash((s) => (s.length <= 1 ? "0" : s.slice(0, -1)));
+  }
+  function clearAmount() {
+    if (submitting) return;
+    setOpeningCash("0");
+  }
+  function setQuickAmount(v: string) {
+    if (submitting) return;
+    setOpeningCash(v);
+  }
+
+  const today = useMemo(() => {
+    return new Intl.DateTimeFormat("id-ID", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      timeZone: "Asia/Jakarta",
+    }).format(new Date());
+  }, []);
+
+  const greeting = cashierName ? `Hai, ${cashierName}!` : "Hai, Kasir!";
+
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={step === "cash" ? "Buka Shift — Kas Awal" : "Buka Shift — Cek Stok Menu"}
+      title="Buka Shift"
       description={
         step === "cash"
-          ? "Hitung kas yang ada di laci sekarang dan masukin jumlahnya."
-          : "Tandai item yang sudah habis sebelum mulai jualan. Bisa skip kalau gak ada perubahan stok."
+          ? "Hitung kas di laci, lalu masukin di kolom kanan. Pesan dari shift sebelumnya bisa dibaca di kiri."
+          : "Tandai item yang sudah habis sebelum mulai jualan. Skip kalau gak ada perubahan."
       }
-      size={step === "stock" ? "lg" : "md"}
+      size="fullscreen"
+      bodyPadding="none"
       footer={
         step === "cash" ? (
           <>
-            <Button variant="ghost" onClick={onClose} disabled={submitting}>
+            <Button
+              variant="ghost"
+              onClick={onClose}
+              disabled={submitting}
+              size="lg"
+            >
               Batal
             </Button>
             <Button
-              onClick={(e) => onSubmitCash(e)}
+              onClick={onSubmitCash}
               loading={submitting}
               disabled={parsed < 0}
               size="lg"
+              className="!h-12 min-w-[220px] touch:min-w-[280px] !text-base"
             >
-              Lanjut → Cek Stok
+              Buka Shift · {formatRupiah(parsed)}
             </Button>
           </>
         ) : (
-          <Button onClick={handleSkipOrFinish} size="lg">
-            Selesai
+          <Button
+            onClick={handleSkipOrFinish}
+            size="lg"
+            className="!h-12 min-w-[220px] touch:min-w-[280px] !text-base"
+          >
+            <CheckCircle2 className="size-5" aria-hidden /> Selesai · Mulai
+            Jualan
           </Button>
         )
       }
     >
       {step === "cash" ? (
-        <form
-          onSubmit={onSubmitCash}
-          className="space-y-3"
-          aria-label="Form buka shift"
-        >
-          {previousShift &&
-          previousShift.handoverMessage &&
-          previousShift.handoverMessage.length > 0 ? (
-            <div className="rounded-lg border border-mahakan-green-200 bg-mahakan-green-50 p-3">
-              <div className="flex items-center gap-2 text-xs font-medium text-mahakan-green-900">
-                <MessageSquare className="size-4" aria-hidden />
-                Pesan dari shift sebelumnya
-                {previousShift.closedAt ? (
-                  <span className="ml-auto text-mahakan-green-700/70">
-                    {formatIndonesianDateTime(previousShift.closedAt)}
-                  </span>
+        <div className="grid h-full divide-y divide-neutral-200 lg:grid-cols-[5fr_7fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
+          {/* ============ LEFT: Persiapan Shift ============ */}
+          <div className="flex flex-col gap-4 overflow-y-auto p-4 touch:p-3 lg:p-5">
+            <section className="rounded-xl border border-mahakan-green-700/30 bg-mahakan-green-50 p-4 touch:p-3">
+              <h3 className="text-base font-semibold text-mahakan-green-900 touch:text-sm">
+                {greeting}
+              </h3>
+              <p className="mt-1 text-xs text-neutral-700 touch:text-[11px]">
+                Selamat bertugas. Sebelum mulai jualan, isi kas awal di laci.
+              </p>
+              <dl className="mt-3 grid grid-cols-2 gap-2 text-xs touch:text-[11px]">
+                <div className="flex items-center gap-1.5 text-neutral-700">
+                  <Calendar className="size-3.5 text-mahakan-green-700" aria-hidden />
+                  <span>{today}</span>
+                </div>
+                {outletName ? (
+                  <div className="flex items-center gap-1.5 text-neutral-700">
+                    <Clock className="size-3.5 text-mahakan-green-700" aria-hidden />
+                    <span>{outletName}</span>
+                  </div>
                 ) : null}
+              </dl>
+            </section>
+
+            <section>
+              <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+                Pesan dari shift sebelumnya
+              </h4>
+              {previousLoading ? (
+                <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-xs text-neutral-500 touch:text-[11px]">
+                  Memuat pesan…
+                </div>
+              ) : previousShift &&
+                previousShift.handoverMessage &&
+                previousShift.handoverMessage.length > 0 ? (
+                <div className="rounded-lg border border-mahakan-green-700/30 bg-white p-4 shadow-sm touch:p-3">
+                  <div className="flex items-start gap-2">
+                    <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-mahakan-green-100">
+                      <MessageSquare
+                        className="size-4 text-mahakan-green-800"
+                        aria-hidden
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="whitespace-pre-wrap text-sm text-neutral-900 touch:text-[13px]">
+                        {previousShift.handoverMessage}
+                      </p>
+                      {previousShift.closedAt ? (
+                        <p className="mt-2 text-[10px] uppercase tracking-wider text-neutral-500">
+                          Ditutup{" "}
+                          {formatIndonesianDateTime(previousShift.closedAt)}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-center text-xs text-neutral-500 touch:p-3 touch:text-[11px]">
+                  <MessageSquare
+                    className="mx-auto mb-1 size-4 text-neutral-400"
+                    aria-hidden
+                  />
+                  Tidak ada pesan handover.
+                </div>
+              )}
+            </section>
+
+            <section>
+              <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+                Checklist sebelum jualan
+              </h4>
+              <ul className="space-y-2 text-xs text-neutral-700 touch:text-[11px]">
+                <ChecklistItem text="Hitung uang di laci, masukkan jumlahnya" />
+                <ChecklistItem text="Cek pesan dari shift sebelumnya di atas" />
+                <ChecklistItem text="Setelah Buka Shift, lanjut tandai menu yang habis" />
+              </ul>
+            </section>
+          </div>
+
+          {/* ============ RIGHT: Kas Awal Hero ============ */}
+          <div className="flex flex-col gap-4 overflow-y-auto p-4 touch:p-3 lg:p-5">
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-semibold text-neutral-900 touch:text-sm">
+                  <span className="inline-flex items-center gap-2">
+                    <Wallet
+                      className="size-4 text-mahakan-green-800"
+                      aria-hidden
+                    />
+                    Kas Awal di Laci
+                  </span>
+                </h3>
+                <span className="text-[11px] text-neutral-500">
+                  Geser angka kalau salah
+                </span>
               </div>
-              <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-900">
-                {previousShift.handoverMessage}
+
+              <div
+                className={cn(
+                  "flex h-16 items-center justify-end rounded-xl border-2 px-5 font-mono text-3xl font-bold tabular-nums text-mahakan-green-900 transition-colors touch:h-14 touch:text-2xl",
+                  parsed > 0
+                    ? "border-mahakan-green-700 bg-mahakan-green-50"
+                    : "border-neutral-200 bg-neutral-50",
+                )}
+              >
+                {formatRupiah(parsed)}
+              </div>
+
+              {/* Quick amounts */}
+              <div className="grid grid-cols-5 gap-1.5 touch:gap-2">
+                {QUICK_AMOUNTS.map((q) => (
+                  <button
+                    key={q.value}
+                    type="button"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      setQuickAmount(q.value);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setQuickAmount(q.value);
+                      }
+                    }}
+                    style={{ touchAction: "manipulation" }}
+                    disabled={submitting}
+                    className={cn(
+                      "rounded-lg border-2 py-1.5 text-sm font-bold transition-all touch:py-1 touch:text-xs",
+                      "hover:bg-mahakan-green-100 active:scale-95",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                      "disabled:cursor-not-allowed disabled:opacity-50",
+                      openingCash === q.value
+                        ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                        : "border-neutral-200 bg-white text-neutral-800",
+                    )}
+                  >
+                    {q.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+                  Numpad
+                </h4>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 touch:gap-2">
+                {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
+                  <NumKey
+                    key={d}
+                    label={d}
+                    onPress={() => appendDigit(d)}
+                    disabled={submitting}
+                  />
+                ))}
+                <NumKey
+                  label="C"
+                  onPress={clearAmount}
+                  disabled={submitting}
+                  variant="muted"
+                />
+                <NumKey
+                  label="0"
+                  onPress={() => appendDigit("0")}
+                  disabled={submitting}
+                />
+                <NumKey
+                  label="⌫"
+                  onPress={backspace}
+                  disabled={submitting}
+                  variant="muted"
+                />
+              </div>
+            </section>
+
+            {error ? (
+              <p
+                role="alert"
+                className="rounded-md bg-danger-100 p-2 text-sm font-medium text-danger-500"
+              >
+                {error}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        // ============ Step 2: Cek Stok Menu (full width) ============
+        <div className="flex h-full flex-col p-4 touch:p-3 lg:p-5">
+          <div className="mb-3 flex items-start gap-3 rounded-xl border border-mahakan-green-700/30 bg-mahakan-green-50 p-3 touch:p-2">
+            <PackageSearch
+              className="size-5 shrink-0 text-mahakan-green-800"
+              aria-hidden
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-mahakan-green-900 touch:text-[13px]">
+                Tandai menu yang habis sebelum mulai jualan
+              </p>
+              <p className="text-xs text-neutral-700 touch:text-[11px]">
+                Tap item yang stoknya habis → otomatis di-hide dari menu
+                customer. Bisa di-edit lagi kapan aja dari panel Shift.
               </p>
             </div>
-          ) : null}
-          <NumericInput
-            label="Kas Awal"
-            value={openingCash}
-            onChange={setOpeningCash}
-            prefix="Rp"
-            hint={`Preview: ${formatRupiah(parsed)}`}
-            required
-            disabled={submitting}
-          />
-          {error ? (
-            <p role="alert" className="text-sm font-medium text-danger-500">
-              {error}
-            </p>
-          ) : null}
-        </form>
-      ) : (
-        <div className="max-h-[60vh] overflow-y-auto">
-          <MenuStatusCard
-            menuItems={menuItems}
-            categories={categories}
-            role={role}
-            onItemUpdated={onItemUpdated}
-          />
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <MenuStatusCard
+              menuItems={menuItems}
+              categories={categories}
+              role={role}
+              onItemUpdated={onItemUpdated}
+            />
+          </div>
         </div>
       )}
     </Modal>
+  );
+}
+
+function ChecklistItem({ text }: { text: string }) {
+  return (
+    <li className="flex items-start gap-2">
+      <CheckCircle2
+        className="mt-0.5 size-3.5 shrink-0 text-mahakan-green-700"
+        aria-hidden
+      />
+      <span>{text}</span>
+    </li>
+  );
+}
+
+function NumKey({
+  label,
+  onPress,
+  disabled,
+  variant,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  variant?: "muted";
+}) {
+  return (
+    <button
+      type="button"
+      onPointerDown={(e) => {
+        if (disabled) return;
+        e.preventDefault();
+        onPress();
+      }}
+      onKeyDown={(e) => {
+        if (disabled) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onPress();
+        }
+      }}
+      disabled={disabled}
+      style={{ touchAction: "manipulation" }}
+      className={cn(
+        "flex h-12 items-center justify-center rounded-lg border font-mono text-xl font-semibold transition-colors touch:h-11 touch:text-lg",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+        "active:scale-95 active:shadow-inner",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        variant === "muted"
+          ? "border-neutral-200 bg-neutral-50 text-neutral-600 hover:bg-neutral-100"
+          : "border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50",
+      )}
+    >
+      {label}
+    </button>
   );
 }

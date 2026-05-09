@@ -273,11 +273,27 @@ function Key({
   ariaLabel,
   children,
 }: KeyProps) {
+  // Sesi AE-2 — onPointerDown bukan onClick. Mobile/tablet tap onClick fires
+  // setelah pointerup + ~200ms double-tap detection delay. onPointerDown
+  // fires saat finger pertama nyentuh layar = no perceived latency. Staff
+  // POS feedback: angka harus instant. preventDefault() suppress subsequent
+  // click event jadi handler ga jalan dua kali. Keyboard a11y di-handle
+  // via onKeyDown explicit.
   return (
     <button
       type="button"
-      onClick={onPress}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        onPress();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onPress();
+        }
+      }}
       aria-label={ariaLabel ?? label}
+      style={{ touchAction: "manipulation" }}
       className={cn(
         "flex h-11 items-center justify-center rounded-md border text-lg font-semibold tabular-nums shadow-sm transition-all active:scale-95",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700/40",

@@ -1186,6 +1186,11 @@ export function PosShell() {
         categoryName={
           variantItem ? categoryNameById[variantItem.categoryId] ?? "" : ""
         }
+        modifiers={
+          variantItem
+            ? modifiersByCategory[variantItem.categoryId] ?? []
+            : []
+        }
         onClose={() => setVariantItem(null)}
         onAdd={(line) => {
           if (!activeDraftId) return;
@@ -1259,6 +1264,7 @@ export function PosShell() {
         menuItems={menuItems}
         categories={categories}
         role={session.user.role}
+        cashierName={session.user.name ?? undefined}
         onItemUpdated={(next) =>
           setMenuItems((items) =>
             items.map((it) => (it.id === next.id ? next : it)),

@@ -18,6 +18,10 @@ interface ItemModifierModalProps {
   item: MenuItem | null;
   /** Resolved category name for snapshot in cart line. */
   categoryName: string;
+  /** Sesi AE-2 — modifiers untuk category ini, prefetched di PosShell mount.
+   * Kalau diset, modal pakai langsung tanpa fetch (instant render). Kalau
+   * undefined (caller belum prefetch / fallback), modal akan fetch sendiri. */
+  modifiers?: Modifier[];
   onClose: () => void;
   onAdd: (line: ReturnType<typeof buildLineItem>) => void;
 }
@@ -25,16 +29,20 @@ interface ItemModifierModalProps {
 export function ItemModifierModal({
   item,
   categoryName,
+  modifiers: prefetchedModifiers,
   onClose,
   onAdd,
 }: ItemModifierModalProps) {
-  const [modifiers, setModifiers] = useState<Modifier[]>([]);
+  const [fetchedModifiers, setFetchedModifiers] = useState<Modifier[]>([]);
+  // Prefer prefetched. Hanya fetch fallback kalau caller ga kasih.
+  const modifiers = prefetchedModifiers ?? fetchedModifiers;
   const [variant, setVariant] = useState<Variant | null>(null);
   const [selections, setSelections] = useState<Record<string, string | boolean>>(
     {},
   );
 
-  // Reset state when item changes
+  // Reset state + seed default selections when item changes. Pakai modifiers
+  // yang lagi available (prefetched > fetched > empty) sebagai dasar default.
   useEffect(() => {
     if (!item) return;
     const defaultVariant: Variant | null =
@@ -45,24 +53,30 @@ export function ItemModifierModal({
             ? "iced"
             : null
         : null;
-    // Reset on new item — sync with external trigger
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    /* eslint-disable react-hooks/set-state-in-effect */
     setVariant(defaultVariant);
-    setSelections({});
-  }, [item]);
+    // Seed selections dari prefetched modifiers (instant). Kalau prefetch ga
+    // ada, fallback fetch effect bawah yang akan re-seed.
+    const next: Record<string, string | boolean> = {};
+    for (const mod of prefetchedModifiers ?? []) {
+      if (mod.type === "single_select" && mod.optionsJson?.[0]) {
+        next[mod.slug] = mod.optionsJson[0].value;
+      } else if (mod.type === "toggle") {
+        next[mod.slug] = false;
+      }
+    }
+    setSelections(next);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [item, prefetchedModifiers]);
 
   useEffect(() => {
-    if (!item) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setModifiers([]);
-      return;
-    }
+    // Fallback fetch — only fires kalau caller TIDAK pass prefetched.
+    if (!item || prefetchedModifiers !== undefined) return;
     let cancelled = false;
     async function load() {
       const res = await listModifiersForCategory(item!.categoryId);
       if (cancelled || !isOk(res)) return;
-      setModifiers(res.data.items);
-      // Set default selections (single_select default = first option)
+      setFetchedModifiers(res.data.items);
       const next: Record<string, string | boolean> = {};
       for (const mod of res.data.items) {
         if (mod.type === "single_select" && mod.optionsJson) {
@@ -77,7 +91,7 @@ export function ItemModifierModal({
     return () => {
       cancelled = true;
     };
-  }, [item]);
+  }, [item, prefetchedModifiers]);
 
   const unitPrice = useMemo(() => {
     if (!item) return 0;

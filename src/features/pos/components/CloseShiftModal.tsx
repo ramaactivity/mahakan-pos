@@ -840,11 +840,25 @@ function NumKey({
   disabled?: boolean;
   variant?: "muted";
 }) {
+  // Sesi AE-2 — onPointerDown bukan onClick. iOS Safari + tablet tap
+  // onClick fire setelah pointerup + ~200ms delay. onPointerDown = instant.
   return (
     <button
       type="button"
-      onClick={onPress}
+      onPointerDown={(e) => {
+        if (disabled) return;
+        e.preventDefault();
+        onPress();
+      }}
+      onKeyDown={(e) => {
+        if (disabled) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onPress();
+        }
+      }}
       disabled={disabled}
+      style={{ touchAction: "manipulation" }}
       className={cn(
         "flex h-12 items-center justify-center rounded-lg border font-mono text-xl font-semibold transition-colors touch:h-11 touch:text-lg",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
