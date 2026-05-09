@@ -16,8 +16,13 @@ declare const self: ServiceWorkerGlobalScope;
 // dari pre-AD-12). Mengubah konstanta ini = sw.js byte-diff = forced
 // reinstall di client → activate listener jalan → entries ke-/m + ke-/login
 // di-delete dari semua runtime cache.
-const SW_TAG = "ad13-iphone-cache-evict";
-const STALE_PATH_PATTERNS = [/\/m(\/|$|\?)/, /\/login(\/|$|\?)/];
+const SW_TAG = "ae-staff-icon-rebrand";
+const STALE_PATH_PATTERNS = [
+  /\/m(\/|$|\?)/,
+  /\/login(\/|$|\?)/,
+  /\/icon-staff-/,
+  /\/manifest-staff/,
+];
 
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
