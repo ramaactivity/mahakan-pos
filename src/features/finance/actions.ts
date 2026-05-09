@@ -19,6 +19,7 @@ import {
   verifyCashDepositSchema,
 } from "./schemas";
 import {
+  getCashDepositDashboard,
   getCashFlowLedger,
   getCashOnHand,
   getDailySettlementReport,
@@ -34,6 +35,7 @@ import {
   type AggregatorSettlement,
   type ApiResult,
   type CashDeposit,
+  type CashDepositDashboard,
   type CashDepositStatus,
   type CashFlowLedgerReport,
   type CashOnHandSnapshot,
@@ -74,6 +76,21 @@ export async function fetchCashOnHand(): Promise<
     return fail("FORBIDDEN", "Tidak punya akses cash on hand");
   }
   const data = await getCashOnHand(session.user.outletId);
+  return ok(data);
+}
+
+/**
+ * Sesi AE-8 — Setoran Tunai dashboard payload (cards + 30-day rollup).
+ * Single fetch untuk dedicated module di backoffice + POS Kas tab.
+ */
+export async function fetchCashDepositDashboard(): Promise<
+  ApiResult<CashDepositDashboard>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "cash_deposit.view")) {
+    return fail("FORBIDDEN", "Tidak punya akses dashboard setoran tunai");
+  }
+  const data = await getCashDepositDashboard(session.user.outletId);
   return ok(data);
 }
 
@@ -318,6 +335,15 @@ export async function verifyCashDeposit(
   }
   if (current.status !== "pending_verification") {
     return fail("INVALID_STATE", "Hanya setoran pending yang bisa diverifikasi");
+  }
+  // Sesi AE-8 — anti-fraud guard: tidak boleh verify tanpa foto bukti.
+  // Auto-create dari shift close boleh skip foto (kasir input nominal saja),
+  // tapi owner WAJIB upload foto via Edit dulu sebelum mark verified.
+  if (!current.photoUrl) {
+    return fail(
+      "PHOTO_REQUIRED",
+      "Upload foto bukti transfer dulu sebelum verifikasi (anti-fraud)",
+    );
   }
 
   const [row] = await db

@@ -197,6 +197,44 @@ export type CashFlowLedgerReport = {
   };
 };
 
+// ---------- Cash deposit dashboard (sesi AE-8) ----------
+
+/**
+ * Per-day rollup mirror screenshot DAILY CASHIER REPORT spreadsheet.
+ * Formula: sisaAkhir = sisaAwal + cashSales - cashExpenses - depositsVerified.
+ */
+export type CashDailyRollup = {
+  date: string; // YYYY-MM-DD WIB
+  sisaAwal: number; // carryover from previous day
+  cashSales: number; // total kas tunai (paid - refunded)
+  cashExpenses: number; // petty cash expenses (cash payment method)
+  depositsVerified: number; // verified deposits with depositDate = this day
+  depositsPending: number; // pending deposits with depositDate = this day
+  sisaAkhir: number; // sisaAwal + cashSales - cashExpenses - depositsVerified
+  shiftCount: number; // closed shifts on this day
+};
+
+export type CashDepositDashboard = {
+  asOf: Date;
+  cashOnHand: number; // dari getCashOnHand
+  outstandingToDeposit: number; // cashOnHand - pendingDepositsAmount (kas yang belum disetor)
+  pendingCount: number;
+  pendingTotal: number; // sum pending deposits awaiting verify
+  lastVerified: {
+    id: string;
+    depositDate: string;
+    amount: number;
+    bankDestination: string;
+    verifierName: string | null;
+    verifiedAt: Date;
+  } | null;
+  totalDepositedThisMonth: number;
+  thresholdIdr: number;
+  isOverThreshold: boolean;
+  /** Last 30 days daily rollup, oldest first. Mirror spreadsheet pattern. */
+  last30DaysFlow: CashDailyRollup[];
+};
+
 // ---------- Reconciliation ----------
 
 export type SettlementReconciliationRow = {

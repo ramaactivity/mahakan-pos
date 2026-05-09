@@ -19,6 +19,7 @@ import { InventorySection } from "@/features/admin/sections/InventorySection";
 import { MenuSection } from "@/features/admin/sections/MenuSection";
 import { ReportsSection } from "@/features/admin/sections/ReportsSection";
 import { SettingsSection } from "@/features/admin/sections/SettingsSection";
+import { SetoranTunaiSection } from "@/features/admin/sections/SetoranTunaiSection";
 import { ShiftsSection } from "@/features/admin/sections/ShiftsSection";
 import { StaffSection } from "@/features/admin/sections/StaffSection";
 import { SuppliersSection } from "@/features/admin/sections/SuppliersSection";
@@ -68,6 +69,8 @@ export function AdminShell() {
           <ShiftsSection />
         ) : section === "cash" ? (
           <CashSection viewerUserId={session.user.id} />
+        ) : section === "setoran_tunai" ? (
+          <SetoranTunaiSection viewerRole={session.user.role} />
         ) : section === "finance" ? (
           <FinanceSection viewerRole={session.user.role} />
         ) : section === "accounting" ? (

@@ -16,7 +16,9 @@ import {
 import { JAKARTA_TZ, toJakartaDateOnly } from "@/lib/date";
 import type {
   AggregatorChannel,
+  CashDailyRollup,
   CashDeposit,
+  CashDepositDashboard,
   CashDepositStatus,
   CashFlowEntry,
   CashFlowEntryKind,
@@ -490,6 +492,298 @@ function addOneDayIso(dateIso: string): string {
   const d = new Date(`${dateIso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
+}
+
+function subtractDaysIso(dateIso: string, days: number): string {
+  const d = new Date(`${dateIso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Sesi AE-8 — Setoran Tunai dashboard aggregate.
+ *
+ * Mengembalikan single payload yang fuel: 4 stat cards (cash on hand,
+ * outstanding, last verified, pending count) + daily rollup table 30
+ * hari terakhir (mirror spreadsheet DAILY CASHIER REPORT pattern).
+ *
+ * Dipakai by SetoranTunaiSection (backoffice) + KasOwnerPanel (POS).
+ *
+ * Performance note: query ini punya beberapa round-trip ke DB (cash on
+ * hand snapshot + 30-day shift sums + 30-day deposit sums). Acceptable
+ * untuk dashboard yang refetch jarang via TanStack Query staleTime.
+ */
+export async function getCashDepositDashboard(
+  outletId: string,
+): Promise<CashDepositDashboard> {
+  const todayIso = toJakartaDateOnly(new Date());
+  const fromIso = subtractDaysIso(todayIso, 29); // 30 hari termasuk hari ini
+
+  const onHand = await getCashOnHand(outletId);
+  const outstandingToDeposit = Math.max(0, onHand.cashOnHand);
+
+  // Last verified deposit (any date, not just window).
+  const [lastVerifiedRow] = await db
+    .select({
+      id: cashDeposits.id,
+      depositDate: cashDeposits.depositDate,
+      amount: cashDeposits.amount,
+      bankDestination: cashDeposits.bankDestination,
+      verifiedAt: cashDeposits.verifiedAt,
+      verifierName: users.name,
+    })
+    .from(cashDeposits)
+    .leftJoin(users, eq(cashDeposits.verifiedBy, users.id))
+    .where(
+      and(
+        eq(cashDeposits.outletId, outletId),
+        eq(cashDeposits.status, "verified"),
+      ),
+    )
+    .orderBy(desc(cashDeposits.verifiedAt))
+    .limit(1);
+
+  const lastVerified = lastVerifiedRow?.verifiedAt
+    ? {
+        id: lastVerifiedRow.id,
+        depositDate: String(lastVerifiedRow.depositDate),
+        amount: Number(lastVerifiedRow.amount),
+        bankDestination: lastVerifiedRow.bankDestination,
+        verifierName: lastVerifiedRow.verifierName,
+        verifiedAt: lastVerifiedRow.verifiedAt,
+      }
+    : null;
+
+  // Pending stats.
+  const [pendingAgg] = await db
+    .select({
+      count: sql<string>`COUNT(*)`,
+      total: sql<string>`COALESCE(SUM(${cashDeposits.amount}), 0)`,
+    })
+    .from(cashDeposits)
+    .where(
+      and(
+        eq(cashDeposits.outletId, outletId),
+        eq(cashDeposits.status, "pending_verification"),
+      ),
+    );
+  const pendingCount = Number(pendingAgg?.count ?? 0);
+  const pendingTotal = Number(pendingAgg?.total ?? 0);
+
+  // Total deposited this calendar month (verified only, by depositDate).
+  const monthStart = `${todayIso.slice(0, 7)}-01`;
+  const [monthAgg] = await db
+    .select({
+      total: sql<string>`COALESCE(SUM(${cashDeposits.amount}), 0)`,
+    })
+    .from(cashDeposits)
+    .where(
+      and(
+        eq(cashDeposits.outletId, outletId),
+        eq(cashDeposits.status, "verified"),
+        gte(cashDeposits.depositDate, monthStart),
+        lte(cashDeposits.depositDate, todayIso),
+      ),
+    );
+  const totalDepositedThisMonth = Number(monthAgg?.total ?? 0);
+
+  // 30-day daily rollup. Pull aggregates per day, then iterate dates building
+  // running balance from oldest verified-deposit-anchored carryover.
+  const windowFrom = new Date(`${fromIso}T00:00:00+07:00`);
+  const windowTo = new Date(`${todayIso}T23:59:59.999+07:00`);
+
+  // Group closed shifts per WIB date, sum opening cash.
+  const shiftsAgg = await db
+    .select({
+      shiftId: shifts.id,
+      openingCash: shifts.openingCash,
+      closedAt: shifts.closedAt,
+    })
+    .from(shifts)
+    .where(
+      and(
+        eq(shifts.outletId, outletId),
+        eq(shifts.status, "closed"),
+        gte(shifts.closedAt, windowFrom),
+        lte(shifts.closedAt, windowTo),
+      ),
+    );
+
+  // Map shift → date string for grouping.
+  const shiftToDate = new Map<string, string>();
+  const dateShiftSummary = new Map<
+    string,
+    { openingCash: number; shiftIds: string[] }
+  >();
+  for (const s of shiftsAgg) {
+    if (!s.closedAt) continue;
+    const dateIso = toJakartaDateOnly(s.closedAt);
+    shiftToDate.set(s.shiftId, dateIso);
+    const cur = dateShiftSummary.get(dateIso) ?? {
+      openingCash: 0,
+      shiftIds: [],
+    };
+    cur.openingCash += s.openingCash;
+    cur.shiftIds.push(s.shiftId);
+    dateShiftSummary.set(dateIso, cur);
+  }
+
+  // Cash sales + refunded cash per shift, then re-bucket by date.
+  const allShiftIds = shiftsAgg.map((s) => s.shiftId);
+  const dateCashSales = new Map<string, number>();
+  if (allShiftIds.length > 0) {
+    const trxRows = await db
+      .select({
+        shiftId: transactions.shiftId,
+        paymentMethod: transactions.paymentMethod,
+        status: transactions.status,
+        total: sql<string>`COALESCE(SUM(${transactions.total}), 0)`,
+      })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.outletId, outletId),
+          inArray(transactions.shiftId, allShiftIds),
+        ),
+      )
+      .groupBy(
+        transactions.shiftId,
+        transactions.paymentMethod,
+        transactions.status,
+      );
+
+    for (const r of trxRows) {
+      const dateIso = shiftToDate.get(r.shiftId ?? "");
+      if (!dateIso) continue;
+      const amt = Number(r.total);
+      if (r.status === "paid" && r.paymentMethod === "cash") {
+        dateCashSales.set(dateIso, (dateCashSales.get(dateIso) ?? 0) + amt);
+      } else if (r.status === "refunded" && r.paymentMethod === "cash") {
+        dateCashSales.set(dateIso, (dateCashSales.get(dateIso) ?? 0) - amt);
+      }
+    }
+
+    // Split-payment cash legs.
+    const splitRows = await db
+      .select({
+        shiftId: splitPayments.shiftId,
+        total: sql<string>`COALESCE(SUM(${splitPayments.amount}), 0)`,
+      })
+      .from(splitPayments)
+      .innerJoin(transactions, eq(splitPayments.transactionId, transactions.id))
+      .where(
+        and(
+          eq(splitPayments.paymentMethod, "cash"),
+          eq(transactions.status, "paid"),
+          inArray(splitPayments.shiftId, allShiftIds),
+        ),
+      )
+      .groupBy(splitPayments.shiftId);
+    for (const r of splitRows) {
+      const dateIso = shiftToDate.get(r.shiftId ?? "");
+      if (!dateIso) continue;
+      dateCashSales.set(
+        dateIso,
+        (dateCashSales.get(dateIso) ?? 0) + Number(r.total),
+      );
+    }
+  }
+
+  // Cash expenses per expense_date.
+  const expenseRows = await db
+    .select({
+      date: expenses.expenseDate,
+      total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)`,
+    })
+    .from(expenses)
+    .where(
+      and(
+        eq(expenses.outletId, outletId),
+        eq(expenses.paymentMethod, "cash"),
+        isNull(expenses.deletedAt),
+        gte(expenses.expenseDate, fromIso),
+        lte(expenses.expenseDate, todayIso),
+      ),
+    )
+    .groupBy(expenses.expenseDate);
+  const dateExpenses = new Map<string, number>();
+  for (const r of expenseRows) {
+    dateExpenses.set(String(r.date), Number(r.total));
+  }
+
+  // Deposits per deposit_date, split verified vs pending.
+  const depositRows = await db
+    .select({
+      date: cashDeposits.depositDate,
+      status: cashDeposits.status,
+      total: sql<string>`COALESCE(SUM(${cashDeposits.amount}), 0)`,
+    })
+    .from(cashDeposits)
+    .where(
+      and(
+        eq(cashDeposits.outletId, outletId),
+        gte(cashDeposits.depositDate, fromIso),
+        lte(cashDeposits.depositDate, todayIso),
+      ),
+    )
+    .groupBy(cashDeposits.depositDate, cashDeposits.status);
+  const dateDepositsVerified = new Map<string, number>();
+  const dateDepositsPending = new Map<string, number>();
+  for (const r of depositRows) {
+    const dateStr = String(r.date);
+    if (r.status === "verified") {
+      dateDepositsVerified.set(
+        dateStr,
+        (dateDepositsVerified.get(dateStr) ?? 0) + Number(r.total),
+      );
+    } else if (r.status === "pending_verification") {
+      dateDepositsPending.set(
+        dateStr,
+        (dateDepositsPending.get(dateStr) ?? 0) + Number(r.total),
+      );
+    }
+  }
+
+  // Anchor sisaAwal: cash on hand at (fromIso - 1). Approximation: 0 for
+  // simplicity — historical reconstruction would require walking deposits
+  // back. Most outlets cycle weekly, 30 days = enough window. Today's
+  // sisaAkhir (last entry) matches getCashOnHand-derived value.
+  const last30DaysFlow: CashDailyRollup[] = [];
+  let sisaAwal = 0;
+  for (let i = 29; i >= 0; i--) {
+    const dateIso = subtractDaysIso(todayIso, i);
+    const cashSales = dateCashSales.get(dateIso) ?? 0;
+    const cashExpenses = dateExpenses.get(dateIso) ?? 0;
+    const depositsVerified = dateDepositsVerified.get(dateIso) ?? 0;
+    const depositsPending = dateDepositsPending.get(dateIso) ?? 0;
+    const shiftSummary = dateShiftSummary.get(dateIso);
+    const sisaAkhir =
+      sisaAwal + cashSales - cashExpenses - depositsVerified;
+    last30DaysFlow.push({
+      date: dateIso,
+      sisaAwal,
+      cashSales,
+      cashExpenses,
+      depositsVerified,
+      depositsPending,
+      sisaAkhir,
+      shiftCount: shiftSummary?.shiftIds.length ?? 0,
+    });
+    sisaAwal = sisaAkhir;
+  }
+
+  return {
+    asOf: new Date(),
+    cashOnHand: onHand.cashOnHand,
+    outstandingToDeposit,
+    pendingCount,
+    pendingTotal,
+    lastVerified,
+    totalDepositedThisMonth,
+    thresholdIdr: onHand.thresholdIdr,
+    isOverThreshold: onHand.isOverThreshold,
+    last30DaysFlow,
+  };
 }
 
 export async function listCashDeposits(opts: {

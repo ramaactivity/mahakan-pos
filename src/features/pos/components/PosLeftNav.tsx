@@ -6,6 +6,7 @@ import {
   Coins,
   FileText,
   History,
+  Landmark,
   LayoutGrid,
   LogOut,
   PanelLeftClose,
@@ -14,6 +15,7 @@ import {
   Wallet,
   type LucideIcon,
 } from "lucide-react";
+import { hasPermission, type Permission, type Role } from "@/lib/auth/rbac";
 import { cn } from "@/lib/utils";
 
 export type PosTab =
@@ -23,27 +25,43 @@ export type PosTab =
   | "history"
   | "shifts"
   | "petty_cash"
+  | "kas"
   | "settings";
 
 interface PosLeftNavProps {
   activeTab: PosTab;
   onTabChange: (tab: PosTab) => void;
   onLogout: () => void;
+  /** Role of current user — used to filter role-gated tabs. */
+  role: Role;
   /** Optional badge count for cashier tab (drafts count, etc.) */
   cashierBadge?: number;
   /** Optional badge for queue tab (pending paid transactions). */
   queueBadge?: number;
   /** Optional badge for open_bills tab (unpaid transactions). */
   openBillsBadge?: number;
+  /** Optional badge for kas tab (pending deposits awaiting verify). */
+  kasBadge?: number;
 }
 
-const TABS: Array<{ key: PosTab; label: string; Icon: LucideIcon }> = [
+interface TabConfig {
+  key: PosTab;
+  label: string;
+  Icon: LucideIcon;
+  /** Permission required to see this tab. Undefined = visible to all roles. */
+  gate?: Permission;
+}
+
+// Sesi AE-8 — tambah "kas" tab gated by cash_deposit.view (owner+manager+
+// supervisor). Staff biasa tidak akan melihat tab ini.
+const TABS: TabConfig[] = [
   { key: "cashier", label: "Kasir", Icon: LayoutGrid },
   { key: "open_bills", label: "Bill Aktif", Icon: FileText },
   { key: "queue", label: "Pesanan", Icon: ClipboardList },
   { key: "history", label: "Riwayat", Icon: History },
   { key: "shifts", label: "Shift", Icon: Wallet },
   { key: "petty_cash", label: "Petty Cash", Icon: Coins },
+  { key: "kas", label: "Kas", Icon: Landmark, gate: "cash_deposit.view" },
   { key: "settings", label: "Pengaturan", Icon: Settings },
 ];
 
@@ -91,12 +109,17 @@ export function PosLeftNav({
   activeTab,
   onTabChange,
   onLogout,
+  role,
   cashierBadge,
   queueBadge,
   openBillsBadge,
+  kasBadge,
 }: PosLeftNavProps) {
   const [collapsed, setCollapsed] = useSidebarCollapsed();
   const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
+  const visibleTabs = TABS.filter(
+    (t) => !t.gate || hasPermission(role, t.gate),
+  );
   return (
     <nav
       aria-label="Navigasi POS"
@@ -125,7 +148,7 @@ export function PosLeftNav({
       {/* Items scrollable so tab kecil (Galaxy Tab landscape ~600px height)
        * tidak kepotong; logout tetap visible di bawah via flex layout. */}
       <div className="flex w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto px-1 py-1">
-        {TABS.map((tab) => {
+        {visibleTabs.map((tab) => {
           const badge =
             tab.key === "cashier"
               ? cashierBadge
@@ -133,7 +156,9 @@ export function PosLeftNav({
                 ? queueBadge
                 : tab.key === "open_bills"
                   ? openBillsBadge
-                  : undefined;
+                  : tab.key === "kas"
+                    ? kasBadge
+                    : undefined;
           return (
             <NavButton
               key={tab.key}

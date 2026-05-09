@@ -5,7 +5,6 @@ import { Banknote } from "lucide-react";
 import { BankSettlementView } from "./finance/BankSettlementView";
 import { CashOnHandTile } from "./finance/CashOnHandTile";
 import { DailySettlementView } from "./finance/DailySettlementView";
-import { SetoranTunaiView } from "./finance/SetoranTunaiView";
 import { ArusKasView } from "./finance/ArusKasView";
 import { ReconciliationView } from "./finance/ReconciliationView";
 import { HutangSurfacingView } from "./finance/HutangSurfacingView";
@@ -16,11 +15,12 @@ import { cn } from "@/lib/utils";
 type FinanceTab =
   | "settlement"
   | "bank"
-  | "deposits"
   | "cashflow"
   | "reconcile"
   | "hutang";
 
+// Sesi AE-8 — "Setoran Tunai" tab sudah promote ke top-level sidebar
+// (Cashflow group). Sub-tab disini dihapus supaya tidak duplikasi.
 const TABS: Array<{
   key: FinanceTab;
   label: string;
@@ -28,7 +28,6 @@ const TABS: Array<{
 }> = [
   { key: "settlement", label: "Ringkasan Shift" },
   { key: "bank", label: "Mutasi Bank" },
-  { key: "deposits", label: "Setoran Tunai" },
   { key: "cashflow", label: "Arus Kas", ownerOnly: true },
   { key: "reconcile", label: "Rekonsiliasi" },
   { key: "hutang", label: "Hutang Dagang" },
@@ -89,8 +88,6 @@ export function FinanceSection({ viewerRole }: FinanceSectionProps) {
           <DailySettlementView />
         ) : tab === "bank" ? (
           <BankSettlementView viewerRole={viewerRole} />
-        ) : tab === "deposits" ? (
-          <SetoranTunaiView viewerRole={viewerRole} />
         ) : tab === "cashflow" ? (
           <ArusKasView />
         ) : tab === "reconcile" ? (

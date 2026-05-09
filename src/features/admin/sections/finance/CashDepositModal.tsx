@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, FileText, ImagePlus, Loader2, X } from "lucide-react";
 import {
   Button,
   DatePicker,
@@ -11,9 +12,13 @@ import {
 } from "@/components/ui";
 import {
   createCashDeposit,
+  fetchCashDepositDashboard,
+  fetchCashDeposits,
   updateCashDeposit,
 } from "@/features/finance/actions";
 import type { CashDeposit } from "@/features/finance/types";
+import { formatRupiah } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 interface Props {
   open: boolean;
@@ -24,32 +29,59 @@ interface Props {
 }
 
 function todayIso(): string {
-  const wibOffset = 7 * 60 * 60 * 1000;
-  return new Date(Date.now() + wibOffset).toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
+function addOneDay(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Sesi AE-8 redesign — Catat Setoran Tunai with integrated upload + smart
+ * defaults. Replaces old URL-paste field dengan proper Drive upload (clone
+ * pattern dari PurchaseFormModal). Auto-suggest amount = cashOnHand &
+ * periode = since last verified.
+ */
 export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
   const [depositDate, setDepositDate] = useState<string | null>(todayIso());
   const [amount, setAmount] = useState("");
   const [bankDestination, setBankDestination] = useState("");
   const [referenceNo, setReferenceNo] = useState("");
-  const [photoUrl, setPhotoUrl] = useState("");
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [photoFileName, setPhotoFileName] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [notes, setNotes] = useState("");
   const [coversFromDate, setCoversFromDate] = useState<string | null>(
     todayIso(),
   );
   const [coversToDate, setCoversToDate] = useState<string | null>(todayIso());
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Smart defaults — only fetched on open create-mode (not edit).
+  const [cashOnHand, setCashOnHand] = useState<number | null>(null);
+  const [bankSuggestions, setBankSuggestions] = useState<string[]>([]);
 
   useEffect(() => {
     if (!open) return;
     /* eslint-disable react-hooks/set-state-in-effect */
+    setError(null);
+    setSubmitting(false);
     if (editing) {
       setDepositDate(editing.depositDate);
       setAmount(String(editing.amount));
       setBankDestination(editing.bankDestination);
       setReferenceNo(editing.referenceNo ?? "");
-      setPhotoUrl(editing.photoUrl ?? "");
+      setPhotoUrl(editing.photoUrl ?? null);
+      setPhotoFileName(editing.photoUrl ? "Bukti tersimpan" : null);
       setNotes(editing.notes ?? "");
       setCoversFromDate(editing.coversFromDate);
       setCoversToDate(editing.coversToDate);
@@ -59,7 +91,8 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
       setAmount("");
       setBankDestination("");
       setReferenceNo("");
-      setPhotoUrl("");
+      setPhotoUrl(null);
+      setPhotoFileName(null);
       setNotes("");
       setCoversFromDate(t);
       setCoversToDate(t);
@@ -67,22 +100,115 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open, editing]);
 
-  async function onSubmit() {
-    if (!depositDate || !coversFromDate || !coversToDate) {
-      toast.error("Tanggal wajib diisi");
+  // Smart defaults effect — separate so it doesn't reset user inputs.
+  useEffect(() => {
+    if (!open || editing) return;
+    let cancelled = false;
+    void (async () => {
+      const [dashRes, depRes] = await Promise.all([
+        fetchCashDepositDashboard(),
+        fetchCashDeposits({ status: "all", limit: 30 }),
+      ]);
+      if (cancelled) return;
+      if (dashRes.ok) {
+        const onHand = dashRes.data.outstandingToDeposit;
+        setCashOnHand(onHand);
+        // Pre-fill amount = outstanding cash (rounded to nearest 1000).
+        if (onHand > 0) {
+          setAmount(String(Math.round(onHand)));
+        }
+        // Pre-fill periode: from (lastVerified.coversToDate + 1) to today.
+        if (dashRes.data.lastVerified) {
+          setCoversFromDate(addOneDay(dashRes.data.lastVerified.depositDate));
+        }
+      }
+      if (depRes.ok) {
+        // Top 3 most-used bank destinations from recent deposits.
+        const counts = new Map<string, number>();
+        for (const r of depRes.data.rows) {
+          const key = r.bankDestination.trim();
+          if (key.length === 0) continue;
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        }
+        const sorted = Array.from(counts.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 4)
+          .map(([k]) => k);
+        setBankSuggestions(sorted);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, editing]);
+
+  const parsedAmount = useMemo(() => {
+    const n = Number(amount);
+    return Number.isFinite(n) ? n : 0;
+  }, [amount]);
+
+  const exceedsCashOnHand =
+    cashOnHand !== null && parsedAmount > cashOnHand && cashOnHand > 0;
+
+  async function handlePhotoPick(file: File) {
+    if (!depositDate) {
+      toast.error("Pilih tanggal setor dulu sebelum upload");
       return;
     }
-    const amt = Number(amount);
-    if (!amt || amt <= 0) {
-      toast.error("Nominal harus lebih dari 0");
+    setError(null);
+    if (file.size > 5 * 1024 * 1024) {
+      setError("Ukuran maks 5 MB");
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("depositDate", depositDate);
+      const res = await fetch("/api/v1/setoran-receipts/upload", {
+        method: "POST",
+        body: fd,
+      });
+      const json = (await res.json()) as
+        | { success: true; data: { url: string; folderPath: string } }
+        | { success: false; error: { code: string; message: string } };
+      if (!json.success) throw new Error(json.error.message);
+      setPhotoUrl(json.data.url);
+      setPhotoFileName(file.name);
+      toast.success(`Bukti tersimpan di Drive · ${json.data.folderPath}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload gagal");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function onSubmit() {
+    setError(null);
+    if (!depositDate || !coversFromDate || !coversToDate) {
+      setError("Tanggal wajib diisi");
+      return;
+    }
+    if (!parsedAmount || parsedAmount <= 0) {
+      setError("Nominal harus lebih dari 0");
       return;
     }
     if (bankDestination.trim().length < 2) {
-      toast.error("Tujuan bank wajib diisi");
+      setError("Tujuan bank wajib diisi");
       return;
     }
     if (coversToDate < coversFromDate) {
-      toast.error("Periode akhir harus >= awal");
+      setError("Periode akhir harus >= awal");
+      return;
+    }
+    // Foto wajib saat create (anti-fraud sesi AE-8). Edit boleh tanpa
+    // foto karena auto-create dari shift close mungkin masih kosong;
+    // verify side enforce required at approve time.
+    if (!editing && !photoUrl) {
+      setError(
+        "Foto bukti transfer / nota wajib di-upload sebelum simpan",
+      );
       return;
     }
 
@@ -90,10 +216,10 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
     try {
       const payload = {
         depositDate,
-        amount: amt,
+        amount: parsedAmount,
         bankDestination: bankDestination.trim(),
         referenceNo: referenceNo.trim() || null,
-        photoUrl: photoUrl.trim() || null,
+        photoUrl: photoUrl || null,
         notes: notes.trim() || null,
         coversFromDate,
         coversToDate,
@@ -104,9 +230,8 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
       if (res.ok) {
         toast.success(editing ? "Setoran diupdate" : "Setoran dicatat");
         onSaved();
-        onClose();
       } else {
-        toast.error(res.error.message);
+        setError(res.error.message);
       }
     } finally {
       setSubmitting(false);
@@ -118,71 +243,226 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
       open={open}
       onClose={submitting ? () => undefined : onClose}
       title={editing ? "Edit Setoran Tunai" : "Catat Setoran Tunai"}
-      size="lg"
+      description={
+        editing
+          ? "Update setoran pending. Foto bukti wajib sebelum di-verifikasi owner."
+          : "Catat setoran cash ke bank atau owner. Foto bukti transfer/nota wajib supaya owner bisa verifikasi."
+      }
+      size="2xl"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+            Batal
+          </Button>
+          <Button
+            onClick={onSubmit}
+            loading={submitting}
+            disabled={uploading}
+            size="lg"
+          >
+            {editing ? "Update Setoran" : "Simpan Setoran"}
+          </Button>
+        </>
+      }
     >
       <div className="space-y-4">
-        <DatePicker
-          label="Tanggal Setor"
-          value={depositDate}
-          onChange={setDepositDate}
-          required
-        />
-        <NumericInput
-          label="Nominal"
-          value={amount}
-          onChange={setAmount}
-          prefix="Rp"
-          formatThousands
-          required
-        />
+        {/* Cash on hand context (create only) */}
+        {!editing && cashOnHand !== null ? (
+          <div
+            className={cn(
+              "flex items-center justify-between rounded-md border px-3 py-2 text-sm",
+              cashOnHand > 0
+                ? "border-mahakan-green-300 bg-mahakan-green-50 text-mahakan-green-900"
+                : "border-neutral-200 bg-neutral-50 text-neutral-700",
+            )}
+          >
+            <span>
+              <strong>Kas tersedia di outlet:</strong>{" "}
+              <span className="font-mono">{formatRupiah(cashOnHand)}</span>
+            </span>
+            {cashOnHand > 0 ? (
+              <button
+                type="button"
+                onClick={() => setAmount(String(Math.round(cashOnHand)))}
+                className="rounded-md bg-mahakan-green-700 px-2 py-1 text-xs font-medium text-white hover:bg-mahakan-green-800"
+              >
+                Setor Semua
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <DatePicker
+            label="Tanggal Setor"
+            value={depositDate}
+            onChange={setDepositDate}
+            required
+          />
+          <NumericInput
+            label="Nominal"
+            value={amount}
+            onChange={setAmount}
+            prefix="Rp"
+            formatThousands
+            required
+          />
+        </div>
+
+        {exceedsCashOnHand ? (
+          <div className="flex items-start gap-2 rounded-md border border-warning-300 bg-warning-100 p-2 text-xs text-warning-700">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <span>
+              Nominal ({formatRupiah(parsedAmount)}) lebih besar dari kas
+              tersedia ({formatRupiah(cashOnHand ?? 0)}). Pastikan jumlah benar
+              sebelum submit.
+            </span>
+          </div>
+        ) : null}
+
+        <div>
+          <Input
+            label="Tujuan Setoran"
+            placeholder="BCA — Owner 1234567890"
+            value={bankDestination}
+            onChange={(e) => setBankDestination(e.target.value)}
+            required
+          />
+          {bankSuggestions.length > 0 && !editing ? (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              <span className="text-[11px] text-neutral-500">Cepat pilih:</span>
+              {bankSuggestions.map((b) => (
+                <button
+                  key={b}
+                  type="button"
+                  onClick={() => setBankDestination(b)}
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+                    bankDestination === b
+                      ? "border-mahakan-green-700 bg-mahakan-green-100 text-mahakan-green-900"
+                      : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100",
+                  )}
+                >
+                  {b}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
         <Input
-          label="Tujuan Bank"
-          placeholder="BCA — Owner 1234567890"
-          value={bankDestination}
-          onChange={(e) => setBankDestination(e.target.value)}
-          required
-        />
-        <Input
-          label="No. Referensi"
+          label="No. Referensi (opsional)"
           placeholder="Slip / m-banking ref"
           value={referenceNo}
           onChange={(e) => setReferenceNo(e.target.value)}
+          hint="Nomor slip / referensi transfer m-banking. Optional."
         />
-        <Input
-          label="URL Foto Bukti"
-          placeholder="https://..."
-          value={photoUrl}
-          onChange={(e) => setPhotoUrl(e.target.value)}
-          hint="Optional — paste link upload (Drive/Imgur/dst)"
-        />
+
+        {/* Photo upload — Drive integration (clone PurchaseFormModal pattern) */}
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-neutral-900">
+            Foto Bukti Transfer / Nota{" "}
+            {!editing ? (
+              <span className="text-danger-500" aria-hidden>
+                *
+              </span>
+            ) : null}
+          </label>
+          {photoUrl ? (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-2">
+              <a
+                href={photoUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex flex-1 items-center gap-2 text-xs text-mahakan-green-900 hover:underline min-w-0"
+              >
+                <FileText className="size-4 shrink-0" />
+                <span className="truncate">
+                  {photoFileName ?? "Lihat di Google Drive"}
+                </span>
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  setPhotoUrl(null);
+                  setPhotoFileName(null);
+                }}
+                disabled={submitting || uploading}
+                className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-neutral-500 hover:bg-danger-100 hover:text-danger-500"
+                aria-label="Hapus bukti dari form (file tetap di Drive)"
+                title="Hapus dari form"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ) : (
+            <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50/50 p-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handlePhotoPick(file);
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading || submitting}
+              >
+                {uploading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" /> Uploading…
+                  </>
+                ) : (
+                  <>
+                    <ImagePlus className="size-4" /> Upload Foto / PDF
+                  </>
+                )}
+              </Button>
+              <p className="mt-1 text-xs text-neutral-500">
+                JPG / PNG / WebP / PDF, max 5 MB. Tersimpan otomatis di Google
+                Drive folder <strong>BUKTI SETORAN</strong> → tahun → bulan.
+              </p>
+            </div>
+          )}
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <DatePicker
-            label="Periode (Dari)"
+            label="Periode Kas (Dari)"
             value={coversFromDate}
             onChange={setCoversFromDate}
             required
-            hint="Tanggal awal kas yg ditutupi setoran ini"
+            hint="Tanggal awal kas yang ditutupi setoran"
           />
           <DatePicker
-            label="Periode (Sampai)"
+            label="Periode Kas (Sampai)"
             value={coversToDate}
             onChange={setCoversToDate}
             required
           />
         </div>
+
         <Input
-          label="Catatan"
+          label="Catatan (opsional)"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
+          placeholder="Misal: setor 2 hari sekaligus, sisa di drawer Rp 100k"
         />
-      </div>
-      <div className="mt-6 flex justify-end gap-2">
-        <Button variant="ghost" onClick={onClose} disabled={submitting}>
-          Batal
-        </Button>
-        <Button onClick={onSubmit} disabled={submitting}>
-          {submitting ? "Menyimpan…" : editing ? "Update" : "Simpan"}
-        </Button>
+
+        {error ? (
+          <p
+            role="alert"
+            className="rounded-md border border-danger-300 bg-danger-100 px-3 py-2 text-sm font-medium text-danger-700"
+          >
+            {error}
+          </p>
+        ) : null}
       </div>
     </Modal>
   );

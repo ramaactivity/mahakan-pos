@@ -9,6 +9,7 @@ import {
   Clock,
   Coffee,
   Heart,
+  Landmark,
   LayoutDashboard,
   LogOut,
   Package,
@@ -36,6 +37,7 @@ export type AdminSection =
   | "hr_operations"
   | "shifts"
   | "cash"
+  | "setoran_tunai"
   | "finance"
   | "accounting"
   | "promos"
@@ -93,7 +95,10 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     heading: "Cashflow",
-    items: [{ key: "cash", label: "Kas", Icon: Wallet }],
+    items: [
+      { key: "setoran_tunai", label: "Setoran Tunai", Icon: Landmark },
+      { key: "cash", label: "Kas", Icon: Wallet },
+    ],
   },
   {
     heading: "HR",

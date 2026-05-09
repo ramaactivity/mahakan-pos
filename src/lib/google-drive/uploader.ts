@@ -59,9 +59,15 @@ const MODULE_ROOT_FOLDER: Record<UploadModule, string> = {
   hr: "DOKUMEN HR",
   expense: "STRUK PENGELUARAN",
   attendance: "ABSENSI",
+  setoran: "BUKTI SETORAN",
 };
 
-export type UploadModule = "purchase" | "hr" | "expense" | "attendance";
+export type UploadModule =
+  | "purchase"
+  | "hr"
+  | "expense"
+  | "attendance"
+  | "setoran";
 
 let _drive: drive_v3.Drive | null = null;
 
@@ -186,14 +192,18 @@ async function resolveTargetFolder(
     };
   }
 
-  // purchase + expense: year/month structure
-  if (!ctx.date) throw new Error("date wajib untuk purchase/expense");
+  // purchase + expense + setoran: year/month structure
+  if (!ctx.date) throw new Error("date wajib untuk purchase/expense/setoran");
   const m = ctx.date.match(/^(\d{4})-(\d{2})-\d{2}$/);
   if (!m) throw new Error("date harus YYYY-MM-DD");
   const yyyy = m[1];
   const monthIdx = parseInt(m[2], 10) - 1;
   const yearFolderName =
-    module === "purchase" ? `NOTA MAHAKAN ${yyyy}` : yyyy;
+    module === "purchase"
+      ? `NOTA MAHAKAN ${yyyy}`
+      : module === "setoran"
+        ? `BUKTI SETORAN ${yyyy}`
+        : yyyy;
   const monthFolderName = MONTH_LABELS_ID[monthIdx];
 
   const yearFolder = await findOrCreateFolder(d, yearFolderName, moduleRoot);

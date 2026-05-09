@@ -59,6 +59,7 @@ import { OpenShiftModal } from "@/features/pos/components/OpenShiftModal";
 import { OrderQueuePanel } from "@/features/pos/components/OrderQueuePanel";
 import { PosLeftNav, type PosTab } from "@/features/pos/components/PosLeftNav";
 import { PettyCashPanel } from "@/features/pos/components/PettyCashPanel";
+import { KasOwnerPanel } from "@/features/pos/components/KasOwnerPanel";
 import { PosSettingsPanel } from "@/features/pos/components/PosSettingsPanel";
 import { ShiftPanel } from "@/features/pos/components/ShiftPanel";
 import { buildLineItem, useCartStore } from "@/features/pos/cartStore";
@@ -964,6 +965,7 @@ export function PosShell() {
         activeTab={tab}
         onTabChange={setTab}
         onLogout={handleLogout}
+        role={session.user.role}
         cashierBadge={drafts.length}
         openBillsBadge={openBillsCount}
       />
@@ -1030,6 +1032,8 @@ export function PosShell() {
           />
         ) : tab === "petty_cash" ? (
           <PettyCashPanel />
+        ) : tab === "kas" ? (
+          <KasOwnerPanel viewerRole={session.user.role} />
         ) : (
           <PosSettingsPanel
             shift={shift}
