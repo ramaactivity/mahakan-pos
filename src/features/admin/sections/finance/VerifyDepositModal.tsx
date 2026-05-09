@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Building2,
@@ -64,8 +65,22 @@ export function VerifyDepositModal({
   const [mode, setMode] = useState<"verify" | "reject">("verify");
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [cashOnHand, setCashOnHand] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Sesi AE-13 — share cache dengan SetoranTunaiSection. TanStack dedupe
+  // by key, so opening VerifyDepositModal saat dashboard already loaded =
+  // instant (no roundtrip).
+  const dashboardQuery = useQuery({
+    queryKey: ["finance", "deposit-dashboard"],
+    queryFn: async () => {
+      const res = await fetchCashDepositDashboard();
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+    staleTime: 30 * 1000,
+    enabled: open && deposit !== null,
+  });
+  const cashOnHand = dashboardQuery.data?.cashOnHand ?? null;
 
   useEffect(() => {
     if (!open || !deposit) return;
@@ -73,23 +88,8 @@ export function VerifyDepositModal({
     setMode("verify");
     setReason("");
     setSubmitting(false);
-    setCashOnHand(null);
     setError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
-    let cancelled = false;
-    void (async () => {
-      const res = await fetchCashDepositDashboard();
-      if (cancelled) return;
-      if (res.ok) {
-        // Variance = depositAmount vs (cashOnHand + this pending deposit
-        // contribution). Pending deposits NOT subtracted in cashOnHand calc,
-        // so we compare deposit.amount directly to cashOnHand.
-        setCashOnHand(res.data.cashOnHand);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
   }, [open, deposit]);
 
   const variance = useMemo(() => {

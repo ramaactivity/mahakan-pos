@@ -232,6 +232,13 @@
       "when": 1778317235119,
       "tag": "0032_inventory_decimal_precision",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1778320244130,
+      "tag": "0033_bank_accounts",
+      "breakpoints": true
     }
   ]
 }

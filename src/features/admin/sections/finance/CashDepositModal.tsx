@@ -13,10 +13,14 @@ import {
 import {
   createCashDeposit,
   fetchCashDepositDashboard,
-  fetchCashDeposits,
   updateCashDeposit,
 } from "@/features/finance/actions";
 import type { CashDeposit } from "@/features/finance/types";
+import {
+  BankAccountSelect,
+  FREE_TEXT_VALUE,
+} from "@/features/bank-accounts/BankAccountSelect";
+import { formatBankAccountDisplay } from "@/features/bank-accounts/types";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -68,7 +72,10 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
 
   // Smart defaults — only fetched on open create-mode (not edit).
   const [cashOnHand, setCashOnHand] = useState<number | null>(null);
-  const [bankSuggestions, setBankSuggestions] = useState<string[]>([]);
+  // Sesi AE-13 — bank account selector. accountSelectId = "id" / FREE_TEXT_VALUE / null
+  // bankDestination remains the saved string (formatted display from account
+  // ATAU free-text yang user ketik manual).
+  const [accountSelectId, setAccountSelectId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -79,6 +86,7 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
       setDepositDate(editing.depositDate);
       setAmount(String(editing.amount));
       setBankDestination(editing.bankDestination);
+      setAccountSelectId(FREE_TEXT_VALUE); // edit mode: assume free-text
       setReferenceNo(editing.referenceNo ?? "");
       setPhotoUrl(editing.photoUrl ?? null);
       setPhotoFileName(editing.photoUrl ? "Bukti tersimpan" : null);
@@ -90,6 +98,7 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
       setDepositDate(t);
       setAmount("");
       setBankDestination("");
+      setAccountSelectId(null);
       setReferenceNo("");
       setPhotoUrl(null);
       setPhotoFileName(null);
@@ -105,10 +114,7 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
     if (!open || editing) return;
     let cancelled = false;
     void (async () => {
-      const [dashRes, depRes] = await Promise.all([
-        fetchCashDepositDashboard(),
-        fetchCashDeposits({ status: "all", limit: 30 }),
-      ]);
+      const dashRes = await fetchCashDepositDashboard();
       if (cancelled) return;
       if (dashRes.ok) {
         const onHand = dashRes.data.outstandingToDeposit;
@@ -121,20 +127,6 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
         if (dashRes.data.lastVerified) {
           setCoversFromDate(addOneDay(dashRes.data.lastVerified.depositDate));
         }
-      }
-      if (depRes.ok) {
-        // Top 3 most-used bank destinations from recent deposits.
-        const counts = new Map<string, number>();
-        for (const r of depRes.data.rows) {
-          const key = r.bankDestination.trim();
-          if (key.length === 0) continue;
-          counts.set(key, (counts.get(key) ?? 0) + 1);
-        }
-        const sorted = Array.from(counts.entries())
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 4)
-          .map(([k]) => k);
-        setBankSuggestions(sorted);
       }
     })();
     return () => {
@@ -320,33 +312,33 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
           </div>
         ) : null}
 
-        <div>
-          <Input
+        <div className="space-y-2">
+          <BankAccountSelect
             label="Tujuan Setoran"
-            placeholder="BCA — Owner 1234567890"
-            value={bankDestination}
-            onChange={(e) => setBankDestination(e.target.value)}
+            value={accountSelectId}
+            onChange={(id, account) => {
+              setAccountSelectId(id);
+              if (id === FREE_TEXT_VALUE) {
+                setBankDestination("");
+              } else if (account) {
+                setBankDestination(formatBankAccountDisplay(account));
+              } else {
+                setBankDestination("");
+              }
+            }}
+            allowFreeText
             required
+            hint="Pilih dari daftar rekening yang sudah terdaftar di Pengaturan."
           />
-          {bankSuggestions.length > 0 && !editing ? (
-            <div className="mt-1.5 flex flex-wrap gap-1">
-              <span className="text-[11px] text-neutral-500">Cepat pilih:</span>
-              {bankSuggestions.map((b) => (
-                <button
-                  key={b}
-                  type="button"
-                  onClick={() => setBankDestination(b)}
-                  className={cn(
-                    "rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
-                    bankDestination === b
-                      ? "border-mahakan-green-700 bg-mahakan-green-100 text-mahakan-green-900"
-                      : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100",
-                  )}
-                >
-                  {b}
-                </button>
-              ))}
-            </div>
+          {accountSelectId === FREE_TEXT_VALUE ? (
+            <Input
+              label="Tujuan (manual)"
+              placeholder="BCA — Owner 1234567890"
+              value={bankDestination}
+              onChange={(e) => setBankDestination(e.target.value)}
+              required
+              hint="Free-text untuk rekening yang belum di-register. Tambah ke Pengaturan supaya bisa di-pilih dropdown lain kali."
+            />
           ) : null}
         </div>
 

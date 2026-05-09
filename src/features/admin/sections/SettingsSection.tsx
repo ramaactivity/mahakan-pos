@@ -26,6 +26,7 @@ import { OperationalHoursModal } from "./settings/OperationalHoursModal";
 import { ReceiptEditorModal } from "./settings/ReceiptEditorModal";
 import { SettingsTunablesModal } from "./settings/SettingsTunablesModal";
 import { ApprovalCodesPanel } from "./settings/ApprovalCodesPanel";
+import { BankAccountsCard } from "./settings/BankAccountsCard";
 
 type OperationalHours = NonNullable<Outlet["operationalHours"]>;
 
@@ -322,6 +323,10 @@ export function SettingsSection() {
           </dl>
         </CardContent>
       </Card>
+
+      <BankAccountsCard
+        viewerRole={session?.user.role ?? "staff"}
+      />
 
       {isOwner ? <ApprovalCodesPanel /> : null}
 

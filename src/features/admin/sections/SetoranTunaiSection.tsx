@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowRight,
@@ -11,7 +12,7 @@ import {
   TrendingUp,
   Wallet,
 } from "lucide-react";
-import { Button, Skeleton, toast } from "@/components/ui";
+import { Button, Skeleton } from "@/components/ui";
 import {
   fetchCashDepositDashboard,
   fetchCashDeposits,
@@ -28,6 +29,12 @@ import { cn } from "@/lib/utils";
 import { CashDepositModal } from "./finance/CashDepositModal";
 import { VerifyDepositModal } from "./finance/VerifyDepositModal";
 import { SetoranTunaiView } from "./finance/SetoranTunaiView";
+
+// Sesi AE-13 — shared cache key untuk dashboard. Dipakai di SetoranTunai
+// section + KasOwnerPanel + VerifyDepositModal supaya satu fetch share
+// across components (TanStack Query dedup).
+const DEPOSIT_DASHBOARD_KEY = ["finance", "deposit-dashboard"] as const;
+const DEPOSIT_PENDING_KEY = ["finance", "deposits", "pending"] as const;
 
 type Tab = "riwayat" | "daftar" | "pending";
 
@@ -59,36 +66,40 @@ type DepositRow = CashDeposit & {
  */
 export function SetoranTunaiSection({ viewerRole }: Props) {
   const [tab, setTab] = useState<Tab>("riwayat");
-  const [dashboard, setDashboard] = useState<CashDepositDashboard | null>(null);
-  const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const queryClient = useQueryClient();
 
   const canCreate = hasPermission(viewerRole, "cash_deposit.create");
 
-  useEffect(() => {
-    let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setLoadingDashboard(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void (async () => {
+  // Sesi AE-13 — TanStack Query cache. Dashboard cached 30 detik —
+  // switching tab di-dalam Setoran Tunai = instant (cached), bukan re-fetch.
+  const dashboardQuery = useQuery({
+    queryKey: DEPOSIT_DASHBOARD_KEY,
+    queryFn: async () => {
       const res = await fetchCashDepositDashboard();
-      if (cancelled) return;
-      if (res.ok) {
-        setDashboard(res.data);
-      } else {
-        toast.error(res.error.message);
-      }
-      setLoadingDashboard(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey]);
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+    staleTime: 30 * 1000,
+  });
+  const dashboard = dashboardQuery.data ?? null;
+  const loadingDashboard = dashboardQuery.isLoading;
 
   function handleSaved() {
     setCreateOpen(false);
-    setRefreshKey((k) => k + 1);
+    void queryClient.invalidateQueries({ queryKey: DEPOSIT_DASHBOARD_KEY });
+    void queryClient.invalidateQueries({ queryKey: DEPOSIT_PENDING_KEY });
+    void queryClient.invalidateQueries({
+      queryKey: ["finance", "deposits", "list"],
+    });
+  }
+
+  function handleChanged() {
+    void queryClient.invalidateQueries({ queryKey: DEPOSIT_DASHBOARD_KEY });
+    void queryClient.invalidateQueries({ queryKey: DEPOSIT_PENDING_KEY });
+    void queryClient.invalidateQueries({
+      queryKey: ["finance", "deposits", "list"],
+    });
   }
 
   return (
@@ -158,8 +169,7 @@ export function SetoranTunaiSection({ viewerRole }: Props) {
         ) : (
           <PendingDepositsList
             viewerRole={viewerRole}
-            refreshKey={refreshKey}
-            onChanged={() => setRefreshKey((k) => k + 1)}
+            onChanged={handleChanged}
           />
         )}
       </div>
@@ -544,40 +554,31 @@ function StatusBadge({ status }: { status: "ok" | "tahan" | "negative" }) {
 
 function PendingDepositsList({
   viewerRole,
-  refreshKey,
   onChanged,
 }: {
   viewerRole: Role;
-  refreshKey: number;
   onChanged: () => void;
 }) {
-  const [rows, setRows] = useState<DepositRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [verifying, setVerifying] = useState<DepositRow | null>(null);
   const [editing, setEditing] = useState<DepositRow | null>(null);
 
   const canVerify = hasPermission(viewerRole, "cash_deposit.verify");
   const canEdit = hasPermission(viewerRole, "cash_deposit.create");
 
-  useEffect(() => {
-    let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setLoading(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void (async () => {
+  const pendingQuery = useQuery({
+    queryKey: DEPOSIT_PENDING_KEY,
+    queryFn: async () => {
       const res = await fetchCashDeposits({
         status: "pending_verification",
         limit: 100,
       });
-      if (cancelled) return;
-      if (res.ok) setRows(res.data.rows);
-      else toast.error(res.error.message);
-      setLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey]);
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data.rows;
+    },
+    staleTime: 15 * 1000,
+  });
+  const rows = pendingQuery.data ?? [];
+  const loading = pendingQuery.isLoading;
 
   if (loading) return <Skeleton className="h-40 w-full" />;
   if (rows.length === 0) {

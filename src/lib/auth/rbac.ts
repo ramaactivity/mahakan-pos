@@ -241,6 +241,11 @@ export const permissions = {
   "aggregator_settlement.create": ["owner", "manager", "supervisor"],
   "settings.cash_threshold.update": ["owner"],
 
+  // Bank accounts master (sesi AE-13). Owner manage, manager+supervisor
+  // view-only (untuk pakai dropdown saat catat setoran).
+  "bank_account.view": ["owner", "manager", "supervisor"],
+  "bank_account.manage": ["owner"],
+
   // Settlement Log per channel per hari (Phase 6.1, sesi AC-5).
   // Owner input mutasi bank actual + variance log. Supervisor view-only
   // (compare expected vs actual saat shift), tidak input atau hapus

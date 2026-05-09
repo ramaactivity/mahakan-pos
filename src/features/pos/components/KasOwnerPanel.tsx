@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowRight,
@@ -11,15 +12,12 @@ import {
   Plus,
   Wallet,
 } from "lucide-react";
-import { Button, Skeleton, toast } from "@/components/ui";
+import { Button, Skeleton } from "@/components/ui";
 import {
   fetchCashDepositDashboard,
   fetchCashDeposits,
 } from "@/features/finance/actions";
-import type {
-  CashDeposit,
-  CashDepositDashboard,
-} from "@/features/finance/types";
+import type { CashDeposit } from "@/features/finance/types";
 import { CashDepositModal } from "@/features/admin/sections/finance/CashDepositModal";
 import { VerifyDepositModal } from "@/features/admin/sections/finance/VerifyDepositModal";
 import { hasPermission, type Role } from "@/lib/auth/rbac";
@@ -50,41 +48,52 @@ type DepositRow = CashDeposit & {
  *   - Link ke Backoffice untuk full history
  */
 export function KasOwnerPanel({ viewerRole }: Props) {
-  const [dashboard, setDashboard] = useState<CashDepositDashboard | null>(null);
-  const [pending, setPending] = useState<DepositRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshKey, setRefreshKey] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<DepositRow | null>(null);
   const [verifying, setVerifying] = useState<DepositRow | null>(null);
+  const queryClient = useQueryClient();
 
   const canCreate = hasPermission(viewerRole, "cash_deposit.create");
   const canVerify = hasPermission(viewerRole, "cash_deposit.verify");
 
-  useEffect(() => {
-    let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setLoading(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void (async () => {
-      const [dashRes, pendRes] = await Promise.all([
-        fetchCashDepositDashboard(),
-        fetchCashDeposits({ status: "pending_verification", limit: 50 }),
-      ]);
-      if (cancelled) return;
-      if (dashRes.ok) setDashboard(dashRes.data);
-      else toast.error(dashRes.error.message);
-      if (pendRes.ok) setPending(pendRes.data.rows);
-      else toast.error(pendRes.error.message);
-      setLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey]);
+  // Sesi AE-13 — TanStack Query share cache dengan SetoranTunaiSection di
+  // backoffice. Owner switching POS Kas tab ↔ Backoffice Setoran tidak
+  // refetch (cache hit kalau staleTime belum expire).
+  const dashboardQuery = useQuery({
+    queryKey: ["finance", "deposit-dashboard"],
+    queryFn: async () => {
+      const res = await fetchCashDepositDashboard();
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+    staleTime: 30 * 1000,
+  });
+  const pendingQuery = useQuery({
+    queryKey: ["finance", "deposits", "pending"],
+    queryFn: async () => {
+      const res = await fetchCashDeposits({
+        status: "pending_verification",
+        limit: 50,
+      });
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data.rows as DepositRow[];
+    },
+    staleTime: 15 * 1000,
+  });
+  const dashboard = dashboardQuery.data ?? null;
+  const pending = pendingQuery.data ?? [];
+  const loading = dashboardQuery.isLoading || pendingQuery.isLoading;
 
   function refresh() {
-    setRefreshKey((k) => k + 1);
+    void queryClient.invalidateQueries({
+      queryKey: ["finance", "deposit-dashboard"],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["finance", "deposits", "pending"],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["finance", "deposits", "list"],
+    });
   }
 
   return (

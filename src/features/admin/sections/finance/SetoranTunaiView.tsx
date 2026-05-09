@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
-import { Badge, Button, Skeleton, toast } from "@/components/ui";
+import { Badge, Button, Skeleton } from "@/components/ui";
 import { fetchCashDeposits } from "@/features/finance/actions";
 import type {
   CashDeposit,
@@ -41,33 +42,42 @@ const STATUS_VARIANT: Record<
 
 export function SetoranTunaiView({ viewerRole }: Props) {
   const [filter, setFilter] = useState<CashDepositStatus | "all">("all");
-  const [rows, setRows] = useState<DepositRow[]>([]);
-  const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<DepositRow | null>(null);
   const [verifying, setVerifying] = useState<DepositRow | null>(null);
+  const queryClient = useQueryClient();
 
   const canCreate = hasPermission(viewerRole, "cash_deposit.create");
   const canVerify = hasPermission(viewerRole, "cash_deposit.verify");
 
-  async function load() {
-    setLoading(true);
-    try {
+  // Sesi AE-13 — TanStack Query cache. Per-filter key biar switching tab
+  // keep cache untuk yang udah di-load.
+  const listQuery = useQuery({
+    queryKey: ["finance", "deposits", "list", filter],
+    queryFn: async () => {
       const res = await fetchCashDeposits({
         status: filter === "all" ? "all" : filter,
         limit: 100,
       });
-      if (res.ok) setRows(res.data.rows);
-      else toast.error(res.error.message);
-    } finally {
-      setLoading(false);
-    }
-  }
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data.rows as DepositRow[];
+    },
+    staleTime: 30 * 1000,
+  });
+  const rows = listQuery.data ?? [];
+  const loading = listQuery.isLoading;
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-    load();
-  }, [filter]);
+  function invalidateAll() {
+    void queryClient.invalidateQueries({
+      queryKey: ["finance", "deposits", "list"],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["finance", "deposit-dashboard"],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["finance", "deposits", "pending"],
+    });
+  }
 
   const filterChips: Array<{ key: typeof filter; label: string }> = [
     { key: "all", label: "Semua" },
@@ -213,7 +223,7 @@ export function SetoranTunaiView({ viewerRole }: Props) {
         onSaved={() => {
           setCreateOpen(false);
           setEditing(null);
-          load();
+          invalidateAll();
         }}
       />
       <VerifyDepositModal
@@ -222,7 +232,7 @@ export function SetoranTunaiView({ viewerRole }: Props) {
         onClose={() => setVerifying(null)}
         onChanged={() => {
           setVerifying(null);
-          load();
+          invalidateAll();
         }}
       />
     </div>

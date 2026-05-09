@@ -160,6 +160,10 @@ export const AUDIT_EVENT_TYPES = [
   "fixed_asset.create",
   "fixed_asset.deactivate",
   "fixed_asset.depreciation",
+  // Bank Accounts master (Sesi AE-13) — owner CRUD untuk dropdown setoran.
+  "bank_account.create",
+  "bank_account.update",
+  "bank_account.delete",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -199,7 +203,8 @@ export type AuditEntityType =
   | "chart_of_accounts"
   | "accounting_period"
   | "journal_entry"
-  | "fixed_asset";
+  | "fixed_asset"
+  | "bank_account";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */
