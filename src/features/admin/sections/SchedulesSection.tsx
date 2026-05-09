@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarDays,
   ChevronLeft,
@@ -59,10 +60,7 @@ export function SchedulesSection() {
   const [weekStart, setWeekStart] = useState<Date>(() =>
     startOfWeekMonday(new Date()),
   );
-  const [employees, setEmployees] = useState<ActiveEmployee[]>([]);
-  const [schedules, setSchedules] = useState<ScheduleWithEmployee[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const queryClient = useQueryClient();
 
   const [editing, setEditing] = useState<{
     employee: ActiveEmployee;
@@ -77,25 +75,37 @@ export function SchedulesSection() {
   const fromIso = isoDate(weekDates[0]);
   const toIso = isoDate(weekDates[6]);
 
-  useEffect(() => {
-    let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setLoading(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void (async () => {
-      const [empRes, schRes] = await Promise.all([
-        listActiveEmployees(),
-        listSchedules({ from: fromIso, to: toIso }),
-      ]);
-      if (cancelled) return;
-      if (isOk(empRes)) setEmployees(empRes.data);
-      if (isOk(schRes)) setSchedules(schRes.data);
-      setLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [fromIso, toIso, refreshKey]);
+  // Sesi AE-14 — TanStack Query. Active employees jarang ganti (5min cache);
+  // schedules per-week cached.
+  const employeesQuery = useQuery({
+    queryKey: ["admin", "employees", "active"],
+    queryFn: async () => {
+      const res = await listActiveEmployees();
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+  const schedulesQuery = useQuery({
+    queryKey: ["admin", "schedules", "list", fromIso, toIso],
+    queryFn: async () => {
+      const res = await listSchedules({ from: fromIso, to: toIso });
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+  const employees = useMemo(
+    () => employeesQuery.data ?? [],
+    [employeesQuery.data],
+  );
+  const schedules = useMemo(
+    () => schedulesQuery.data ?? [],
+    [schedulesQuery.data],
+  );
+  const loading = employeesQuery.isLoading || schedulesQuery.isLoading;
+
+  function refresh() {
+    void queryClient.invalidateQueries({ queryKey: ["admin", "schedules"] });
+  }
 
   // Index schedules by (employeeId, scheduleDate) for O(1) cell lookup.
   const scheduleMap = useMemo(() => {
@@ -129,7 +139,7 @@ export function SchedulesSection() {
     toast.success(
       `${res.data.copied} jadwal disalin, ${res.data.skipped} dilewati`,
     );
-    setRefreshKey((k) => k + 1);
+    refresh();
   }
 
   return (
@@ -268,7 +278,7 @@ export function SchedulesSection() {
         onClose={() => setEditing(null)}
         onSaved={() => {
           setEditing(null);
-          setRefreshKey((k) => k + 1);
+          refresh();
         }}
       />
     </div>

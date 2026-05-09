@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Heart, Search, TrendingUp, Wallet } from "lucide-react";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import {
   Badge,
   Card,
@@ -21,51 +23,36 @@ import { CustomerDetailModal } from "./customers/CustomerDetailModal";
 const PAGE_SIZE = 50;
 
 export function CustomersSection() {
-  const [rows, setRows] = useState<Customer[] | null>(null);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [stats, setStats] = useState<{
-    total: number;
-    totalPointsOutstanding: number;
-    lifetimeSpend: number;
-  } | null>(null);
   const [detail, setDetail] = useState<Customer | null>(null);
+  const debouncedSearch = useDebouncedValue(search.trim(), 250);
+  const queryClient = useQueryClient();
 
-  // Debounce search → re-fetch list.
-  useEffect(() => {
-    let cancelled = false;
-    const timer = setTimeout(async () => {
-      setLoading(true);
+  // Sesi AE-14 — TanStack Query. List re-fetches on debounced search;
+  // stats cache 5min default.
+  const listQuery = useQuery({
+    queryKey: ["admin", "customers", "list", debouncedSearch],
+    queryFn: async () => {
       const res = await listCustomers({
-        search: search.trim() || undefined,
+        search: debouncedSearch || undefined,
         limit: PAGE_SIZE,
       });
-      if (cancelled) return;
-      if (isOk(res)) {
-        setRows(res.data.items);
-        setTotal(res.data.total);
-      }
-      setLoading(false);
-    }, 250);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [search]);
-
-  // Stats — fetched once on mount, refreshed when search clears.
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+  const statsQuery = useQuery({
+    queryKey: ["admin", "customers", "stats"],
+    queryFn: async () => {
       const res = await customerStats();
-      if (!cancelled && isOk(res)) setStats(res.data);
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+  const rows = listQuery.data?.items ?? null;
+  const total = listQuery.data?.total ?? 0;
+  const loading = listQuery.isLoading;
+  const stats = statsQuery.data ?? null;
 
   const headline = useMemo(() => {
     if (!stats) return null;
@@ -231,9 +218,9 @@ export function CustomersSection() {
         onClose={() => setDetail(null)}
         onUpdated={(next) => {
           setDetail(next);
-          setRows((prev) =>
-            prev ? prev.map((r) => (r.id === next.id ? next : r)) : prev,
-          );
+          void queryClient.invalidateQueries({
+            queryKey: ["admin", "customers"],
+          });
         }}
       />
     </div>

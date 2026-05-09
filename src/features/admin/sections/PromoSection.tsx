@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Pause,
   Pencil,
@@ -52,38 +53,26 @@ const STATUS_BADGE: Record<
 const DAY_LABELS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 
 export function PromoSection() {
-  const [items, setItems] = useState<PromoWithStats[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshKey, setRefreshKey] = useState(0);
   const [statusFilter, setStatusFilter] = useState<PromoStatus | "all">("all");
-
   const [formOpen, setFormOpen] = useState(false);
   const [formInitial, setFormInitial] = useState<Promo | null>(null);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setLoading(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void (async () => {
-      try {
-        const res = await listPromos(statusFilter);
-        if (cancelled) return;
-        if (isOk(res)) setItems(res.data);
-        else toast.error(res.error.message);
-      } catch (e) {
-        if (!cancelled) {
-          const msg = e instanceof Error ? e.message : "Gagal load promo";
-          toast.error(msg);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [statusFilter, refreshKey]);
+  // Sesi AE-14 — TanStack Query.
+  const promosQuery = useQuery({
+    queryKey: ["admin", "promos", "list", statusFilter],
+    queryFn: async () => {
+      const res = await listPromos(statusFilter);
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+  const items = promosQuery.data ?? [];
+  const loading = promosQuery.isLoading;
+
+  function refresh() {
+    void queryClient.invalidateQueries({ queryKey: ["admin", "promos"] });
+  }
 
   function openCreate() {
     setFormInitial(null);
@@ -127,7 +116,7 @@ export function PromoSection() {
       return;
     }
     toast.success(next === "paused" ? "Promo dipause" : "Promo diaktifkan");
-    setRefreshKey((k) => k + 1);
+    refresh();
   }
 
   async function handleDelete(p: Promo) {
@@ -138,7 +127,7 @@ export function PromoSection() {
       return;
     }
     toast.success("Promo diarsipkan");
-    setRefreshKey((k) => k + 1);
+    refresh();
   }
 
   return (
@@ -220,7 +209,7 @@ export function PromoSection() {
         onClose={() => setFormOpen(false)}
         onSaved={() => {
           setFormOpen(false);
-          setRefreshKey((k) => k + 1);
+          refresh();
         }}
       />
     </div>

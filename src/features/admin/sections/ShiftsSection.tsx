@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Eye, Receipt } from "lucide-react";
 import {
   Badge,
@@ -21,29 +22,29 @@ import { cn } from "@/lib/utils";
 const VARIANCE_THRESHOLD = 10_000;
 
 export function ShiftsSection() {
-  const [shifts, setShifts] = useState<Shift[]>([]);
-  const [users, setUsers] = useState<PublicUser[]>([]);
-  const [loading, setLoading] = useState(true);
   const [varianceFilter, setVarianceFilter] = useState<"all" | "flag">("all");
   const [openShift, setOpenShift] = useState<Shift | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      const [shiftsRes, usersRes] = await Promise.all([
-        listShifts({ limit: 100 }),
-        listUsers(),
-      ]);
-      if (cancelled) return;
-      if (isOk(shiftsRes)) setShifts(shiftsRes.data.items);
-      if (isOk(usersRes)) setUsers(usersRes.data.items);
-      setLoading(false);
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Sesi AE-14 — TanStack Query, parallel + cached.
+  const shiftsQuery = useQuery({
+    queryKey: ["admin", "shifts", "list", { limit: 100 }],
+    queryFn: async () => {
+      const res = await listShifts({ limit: 100 });
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data.items;
+    },
+  });
+  const usersQuery = useQuery({
+    queryKey: ["admin", "users", "list"],
+    queryFn: async () => {
+      const res = await listUsers();
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data.items;
+    },
+  });
+  const shifts = useMemo(() => shiftsQuery.data ?? [], [shiftsQuery.data]);
+  const users = useMemo(() => usersQuery.data ?? [], [usersQuery.data]);
+  const loading = shiftsQuery.isLoading || usersQuery.isLoading;
 
   const userById = useMemo(() => {
     const m: Record<string, PublicUser> = {};

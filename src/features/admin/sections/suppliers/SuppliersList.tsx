@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Search, Trash2, Truck } from "lucide-react";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import {
   Badge,
   Button,
@@ -36,33 +38,40 @@ export function SuppliersList() {
     ? hasPermission(role, "supplier.delete")
     : false;
 
-  const [items, setItems] = useState<Supplier[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Supplier | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Supplier | null>(null);
+  const debouncedSearch = useDebouncedValue(search.trim(), 250);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setLoading(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    void (async () => {
+  // Sesi AE-14 — TanStack Query.
+  const suppliersQuery = useQuery({
+    queryKey: [
+      "admin",
+      "suppliers",
+      "list",
+      { active: !showInactive, search: debouncedSearch },
+    ],
+    queryFn: async () => {
       const res = await listSuppliers({
         activeOnly: !showInactive,
-        search: search.trim() || undefined,
+        search: debouncedSearch || undefined,
       });
-      if (cancelled) return;
-      if (isOk(res)) setItems(res.data);
-      setLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey, search, showInactive]);
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+  const items = useMemo(
+    () => suppliersQuery.data ?? [],
+    [suppliersQuery.data],
+  );
+  const loading = suppliersQuery.isLoading;
+
+  function refresh() {
+    void queryClient.invalidateQueries({ queryKey: ["admin", "suppliers"] });
+  }
 
   const sort = useColumnSort("suppliers.list", "name", "asc");
   const filtered = useMemo(() => {
@@ -87,10 +96,6 @@ export function SuppliersList() {
     [items],
   );
   const inactiveCount = items.length - activeCount;
-
-  function refresh() {
-    setRefreshKey((k) => k + 1);
-  }
 
   async function onConfirmDelete() {
     if (!deleteTarget) return;

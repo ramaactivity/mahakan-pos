@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bluetooth,
   Building2,
@@ -44,27 +45,28 @@ type EditTarget = "business" | "hours" | "tunables" | "receipt" | null;
 
 export function SettingsSection() {
   const { session } = useSession();
-  const [outlet, setOutlet] = useState<Outlet | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [edit, setEdit] = useState<EditTarget>(null);
 
   const isOwner = session?.user.role === "owner";
   const canEditReceipt =
     session?.user.role === "owner" || session?.user.role === "manager";
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
+  // Sesi AE-14 — TanStack Query.
+  const outletQuery = useQuery({
+    queryKey: ["admin", "outlet", "self"],
+    queryFn: async () => {
       const res = await getOwnOutlet();
-      if (cancelled) return;
-      if (isOk(res)) setOutlet(res.data);
-      setLoading(false);
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+  const outlet = outletQuery.data ?? null;
+  const loading = outletQuery.isLoading;
+
+  function refreshOutlet() {
+    void queryClient.invalidateQueries({ queryKey: ["admin", "outlet"] });
+  }
 
   if (loading || !outlet) {
     return (
@@ -81,8 +83,9 @@ export function SettingsSection() {
     );
   }
 
-  function onSaved(next: Outlet) {
-    setOutlet(next);
+  function onSaved(_next: Outlet) {
+    void _next;
+    refreshOutlet();
     setEdit(null);
   }
 
