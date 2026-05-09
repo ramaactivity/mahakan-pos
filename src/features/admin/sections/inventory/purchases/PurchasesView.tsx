@@ -587,25 +587,33 @@ function PurchaseDetailModal({
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
-                {detail.items.map((item) => (
-                  <tr key={item.id}>
-                    <td className="px-3 py-2">
-                      {item.ingredientNameSnapshot}
-                      <span className="ml-1 text-xs text-neutral-500">
-                        ({item.unitSnapshot})
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono">
-                      {item.qty.toLocaleString("id-ID")}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">
-                      {formatRupiah(item.unitCost)}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono">
-                      {formatRupiah(item.totalCost)}
-                    </td>
-                  </tr>
-                ))}
+                {detail.items.map((item) => {
+                  const display = formatPurchaseItemQty(item);
+                  return (
+                    <tr key={item.id}>
+                      <td className="px-3 py-2">
+                        {item.ingredientNameSnapshot}
+                        {display.unitOverridden ? (
+                          <span className="ml-1 text-[10px] uppercase tracking-wider text-warning-700">
+                            override
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono">
+                        {display.qty}
+                        <span className="ml-1 text-xs text-neutral-500">
+                          {display.unit}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-xs">
+                        {formatRupiah(item.unitCost)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono">
+                        {formatRupiah(item.totalCost)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -653,4 +661,34 @@ function Info({ label, value }: { label: string; value: string }) {
       <p className="font-medium text-neutral-900">{value}</p>
     </div>
   );
+}
+
+/**
+ * Sesi AE-11 — format purchase item qty dengan precision yg benar.
+ *
+ * Pre-AE rows: pakai `qty` (bigint integer). AE+ rows: prefer `qtyDecimal`
+ * (numeric string seperti "0.5000") karena qty bigint adalah Math.max(1,
+ * Math.round(qty)) lossy snapshot. Unit pakai `unitOverride` kalau ada,
+ * else fallback ke `unitSnapshot` (master saat purchase di-create).
+ */
+function formatPurchaseItemQty(item: {
+  qty: number;
+  qtyDecimal: string | null;
+  unitSnapshot: string;
+  unitOverride: string | null;
+}): { qty: string; unit: string; unitOverridden: boolean } {
+  const decimal =
+    item.qtyDecimal !== null ? parseFloat(item.qtyDecimal) : null;
+  const value =
+    decimal !== null && Number.isFinite(decimal) ? decimal : item.qty;
+  const formatted = new Intl.NumberFormat("id-ID", {
+    maximumFractionDigits: 4,
+  }).format(value);
+  const unitOverridden = Boolean(
+    item.unitOverride && item.unitOverride.trim().length > 0,
+  );
+  const unit = unitOverridden
+    ? (item.unitOverride as string)
+    : item.unitSnapshot;
+  return { qty: formatted, unit, unitOverridden };
 }
