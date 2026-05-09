@@ -216,7 +216,7 @@ export function OpenShiftModal({
       }
     >
       {step === "cash" ? (
-        <div className="grid h-full min-h-0 divide-y divide-neutral-200 lg:grid-cols-[5fr_7fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
+        <div className="grid h-full min-h-0 grid-rows-1 divide-y divide-neutral-200 lg:grid-cols-[5fr_7fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
           {/* ============ LEFT: Persiapan Shift ============ */}
           <div
             className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4 touch:p-3 lg:p-5"

@@ -532,7 +532,7 @@ export function CloseShiftModal({
         ) : !summary ? (
           <p className="p-5 text-sm text-danger-500">Gagal load summary</p>
         ) : (
-          <div className="grid h-full min-h-0 divide-y divide-neutral-200 lg:grid-cols-[5fr_7fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
+          <div className="grid h-full min-h-0 grid-rows-1 divide-y divide-neutral-200 lg:grid-cols-[5fr_7fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
             {/* ============================================================ */}
             {/* LEFT — Summary + Setor + Catatan + Handover                 */}
             {/* ============================================================ */}
