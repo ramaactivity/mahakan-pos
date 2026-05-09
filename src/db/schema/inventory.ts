@@ -7,6 +7,7 @@ import {
   bigint,
   boolean,
   integer,
+  numeric,
   index,
   uniqueIndex,
   unique,
@@ -40,6 +41,14 @@ export const ingredients = pgTable(
     currentStock: bigint("current_stock", { mode: "number" })
       .notNull()
       .default(0),
+    /** Sesi AE-12 — decimal-precision mirror untuk stock decimal (mis.
+     * 0.5 kg, 1.25 L). NULL untuk legacy rows pre-AE-12; populated
+     * forward di every stock-changing path. UI prefer decimal kalau
+     * ada, fallback ke bigint currentStock. Truth source for AE-12+. */
+    currentStockDecimal: numeric("current_stock_decimal", {
+      precision: 15,
+      scale: 4,
+    }),
     reorderThreshold: bigint("reorder_threshold", { mode: "number" }),
     notes: text("notes"),
     isActive: boolean("is_active").notNull().default(true),
@@ -199,6 +208,15 @@ export const inventoryMovements = pgTable(
       ],
     }).notNull(),
     qtyDelta: bigint("qty_delta", { mode: "number" }).notNull(),
+    /** Sesi AE-12 — decimal-precision mirror (signed). Untuk movement
+     * dari decimal source (purchase 0.5 kg = +0.5000, waste 0.1 = -0.1000),
+     * qtyDeltaDecimal = exact value. qtyDelta bigint tetap di-write
+     * sebagai rounded snapshot untuk backward compat. NULL untuk legacy
+     * rows pre-AE-12. */
+    qtyDeltaDecimal: numeric("qty_delta_decimal", {
+      precision: 15,
+      scale: 4,
+    }),
     unitCostAtMovement: bigint("unit_cost_at_movement", { mode: "number" }),
 
     referenceType: text("reference_type", {

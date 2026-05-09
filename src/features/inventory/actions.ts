@@ -15,6 +15,7 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { diffShallow, logAudit } from "@/lib/audit/logger";
 import { logAndSanitize } from "@/lib/server-error";
+import { computeNewStock, formatMovementDelta } from "@/lib/stock-decimal";
 import {
   cascadeCostUpdate,
   detectCycleForRecipeUpsert,
@@ -172,6 +173,8 @@ export async function createIngredient(
 
   try {
     const created = await db.transaction(async (tx) => {
+      // Sesi AE-12 — initial stock juga write decimal mirror.
+      const initialMovement = formatMovementDelta(v.initialStock);
       const [row] = await tx
         .insert(ingredients)
         .values({
@@ -180,6 +183,7 @@ export async function createIngredient(
           unit: v.unit,
           costPerUnit: v.costPerUnit,
           currentStock: v.initialStock,
+          currentStockDecimal: v.initialStock.toFixed(4),
           reorderThreshold: v.reorderThreshold ?? null,
           notes: v.notes ?? null,
           isPreparation: v.isPreparation ?? false,
@@ -195,7 +199,8 @@ export async function createIngredient(
           outletId: session.user.outletId,
           ingredientId: row.id,
           kind: "initial",
-          qtyDelta: v.initialStock,
+          qtyDelta: initialMovement.bigint,
+          qtyDeltaDecimal: initialMovement.decimal,
           unitCostAtMovement: v.costPerUnit,
           referenceType: "manual",
           reason: "Stok awal",
@@ -451,12 +456,19 @@ async function recordMovementAndUpdateStock(opts: {
       throw new Error("INGREDIENT_NOT_FOUND");
     }
 
-    const newStock = ingRow.currentStock + opts.qtyDelta;
+    // Sesi AE-12 — write decimal mirror.
+    const newStock = computeNewStock({
+      currentBigint: ingRow.currentStock,
+      currentDecimal: ingRow.currentStockDecimal,
+      delta: opts.qtyDelta,
+    });
+    const movementDelta = formatMovementDelta(opts.qtyDelta);
 
     const [updatedIng] = await tx
       .update(ingredients)
       .set({
-        currentStock: newStock,
+        currentStock: newStock.bigint,
+        currentStockDecimal: newStock.decimal,
         updatedAt: new Date(),
         updatedBy: opts.userId,
       })
@@ -469,7 +481,8 @@ async function recordMovementAndUpdateStock(opts: {
         outletId: opts.outletId,
         ingredientId: opts.ingredientId,
         kind: opts.kind,
-        qtyDelta: opts.qtyDelta,
+        qtyDelta: movementDelta.bigint,
+        qtyDeltaDecimal: movementDelta.decimal,
         unitCostAtMovement: opts.unitCostAtMovement,
         referenceType: opts.referenceType,
         referenceId: opts.referenceId,
@@ -516,10 +529,19 @@ export async function receiveStock(
         throw new Error("INGREDIENT_NOT_FOUND");
       }
 
+      // Sesi AE-12 — write decimal mirror.
+      const newStock = computeNewStock({
+        currentBigint: ingRow.currentStock,
+        currentDecimal: ingRow.currentStockDecimal,
+        delta: v.qty,
+      });
+      const movementDelta = formatMovementDelta(v.qty);
+
       const [updatedIng] = await tx
         .update(ingredients)
         .set({
-          currentStock: ingRow.currentStock + v.qty,
+          currentStock: newStock.bigint,
+          currentStockDecimal: newStock.decimal,
           costPerUnit: v.updateCost ? v.unitCost : ingRow.costPerUnit,
           updatedAt: new Date(),
           updatedBy: session.user.id,
@@ -533,7 +555,8 @@ export async function receiveStock(
           outletId: session.user.outletId,
           ingredientId: v.ingredientId,
           kind: "purchase",
-          qtyDelta: v.qty,
+          qtyDelta: movementDelta.bigint,
+          qtyDeltaDecimal: movementDelta.decimal,
           unitCostAtMovement: v.unitCost,
           referenceType: "manual",
           reason: v.note ?? null,
@@ -688,10 +711,19 @@ export async function recordWaste(
         throw new Error("INSUFFICIENT_STOCK");
       }
 
+      // Sesi AE-12 — decimal mirror.
+      const newStock = computeNewStock({
+        currentBigint: ingRow.currentStock,
+        currentDecimal: ingRow.currentStockDecimal,
+        delta: -v.qty,
+      });
+      const movementDelta = formatMovementDelta(-v.qty);
+
       const [updatedIng] = await tx
         .update(ingredients)
         .set({
-          currentStock: ingRow.currentStock - v.qty,
+          currentStock: newStock.bigint,
+          currentStockDecimal: newStock.decimal,
           updatedAt: new Date(),
           updatedBy: session.user.id,
         })
@@ -704,7 +736,8 @@ export async function recordWaste(
           outletId: session.user.outletId,
           ingredientId: v.ingredientId,
           kind: "waste",
-          qtyDelta: -v.qty,
+          qtyDelta: movementDelta.bigint,
+          qtyDeltaDecimal: movementDelta.decimal,
           unitCostAtMovement: ingRow.costPerUnit,
           referenceType: "manual",
           reason: v.reason,

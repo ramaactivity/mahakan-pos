@@ -12,6 +12,7 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { logAndSanitize } from "@/lib/server-error";
+import { computeNewStock, formatMovementDelta } from "@/lib/stock-decimal";
 import { jakartaMonthLabel } from "./cadence";
 import { computeDiffStats } from "./diff-stats";
 import {
@@ -666,6 +667,7 @@ export async function finalizeOpname(
             id: ingredients.id,
             outletId: ingredients.outletId,
             currentStock: ingredients.currentStock,
+            currentStockDecimal: ingredients.currentStockDecimal,
             deletedAt: ingredients.deletedAt,
           })
           .from(ingredients)
@@ -690,22 +692,30 @@ export async function finalizeOpname(
             throw new Error("OUTLET_MISMATCH");
           }
 
-          const newStock = live.currentStock + diff;
-          if (newStock < 0) {
+          // Sesi AE-12 — decimal mirror.
+          const newStock = computeNewStock({
+            currentBigint: live.currentStock,
+            currentDecimal: live.currentStockDecimal,
+            delta: diff,
+          });
+          if (newStock.bigint < 0) {
             throw new Error(
               `NEGATIVE_STOCK:${line.ingredientNameSnapshot}`,
             );
           }
+          const movementDelta = formatMovementDelta(diff);
 
           await tx
             .update(ingredients)
             .set({
-              currentStock: newStock,
+              currentStock: newStock.bigint,
+              currentStockDecimal: newStock.decimal,
               updatedAt: new Date(),
               updatedBy: session.user.id,
             })
             .where(eq(ingredients.id, line.ingredientId));
-          live.currentStock = newStock;
+          live.currentStock = newStock.bigint;
+          live.currentStockDecimal = newStock.decimal;
 
           const [movement] = await tx
             .insert(inventoryMovements)
@@ -713,7 +723,8 @@ export async function finalizeOpname(
               outletId: session.user.outletId,
               ingredientId: line.ingredientId,
               kind: "adjust",
-              qtyDelta: diff,
+              qtyDelta: movementDelta.bigint,
+              qtyDeltaDecimal: movementDelta.decimal,
               unitCostAtMovement: line.unitCostAtSnapshot,
               referenceType: "manual",
               referenceId: v.sessionId,

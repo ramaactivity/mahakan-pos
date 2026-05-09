@@ -219,6 +219,9 @@ export async function applyStockDeductions(
         ingredientId,
         kind: "sale_deduct",
         qtyDelta: -lean,
+        // Sesi AE-12 — mirror decimal (signed). Recipe qty is integer
+        // bigint, decimal mirror = same value just typed numeric.
+        qtyDeltaDecimal: (-lean).toFixed(4),
         unitCostAtMovement: unitCost,
         referenceType: "transaction",
         referenceId: transactionId,
@@ -233,6 +236,7 @@ export async function applyStockDeductions(
         ingredientId,
         kind: "waste",
         qtyDelta: -waste,
+        qtyDeltaDecimal: (-waste).toFixed(4),
         unitCostAtMovement: unitCost,
         referenceType: "transaction",
         referenceId: transactionId,
@@ -250,6 +254,9 @@ export async function applyStockDeductions(
           .update(ingredients)
           .set({
             currentStock: sql`${ingredients.currentStock} - ${u.total}`,
+            // Sesi AE-12 — keep decimal in sync. COALESCE fallback ke
+            // bigint untuk legacy rows yang decimal masih NULL.
+            currentStockDecimal: sql`COALESCE(${ingredients.currentStockDecimal}, ${ingredients.currentStock}::numeric) - ${u.total}`,
             updatedAt: now,
             updatedBy: userId,
           })
@@ -320,6 +327,8 @@ export async function restoreStockForTransaction(
       .update(ingredients)
       .set({
         currentStock: sql`${ingredients.currentStock} + ${totalQty}`,
+        // Sesi AE-12 — keep decimal in sync.
+        currentStockDecimal: sql`COALESCE(${ingredients.currentStockDecimal}, ${ingredients.currentStock}::numeric) + ${totalQty}`,
         updatedAt: new Date(),
         updatedBy: userId,
       })
@@ -330,6 +339,7 @@ export async function restoreStockForTransaction(
       ingredientId,
       kind,
       qtyDelta: totalQty,
+      qtyDeltaDecimal: totalQty.toFixed(4),
       unitCostAtMovement: unitCost,
       referenceType: "transaction",
       referenceId: transactionId,

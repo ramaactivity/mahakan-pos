@@ -28,6 +28,7 @@ import {
 import { hasPermission } from "@/lib/auth/rbac";
 import { useSession } from "@/features/auth/SessionProvider";
 import { formatRupiah } from "@/lib/format";
+import { formatStockQty, resolveStockDecimal } from "@/lib/stock-decimal";
 import { formatIndonesianDateTime } from "@/lib/date";
 import { downloadCsv } from "../reports/menu-engineering-csv";
 
@@ -318,10 +319,15 @@ export function MovementsList() {
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
                   {movements.map((m) => {
-                    const positive = m.qtyDelta >= 0;
+                    // Sesi AE-12 — prefer decimal mirror untuk display.
+                    const deltaValue = resolveStockDecimal(
+                      m.qtyDelta,
+                      m.qtyDeltaDecimal ?? null,
+                    );
+                    const positive = deltaValue >= 0;
                     const value =
                       m.unitCostAtMovement !== null
-                        ? Math.abs(m.qtyDelta) * m.unitCostAtMovement
+                        ? Math.abs(deltaValue) * m.unitCostAtMovement
                         : null;
                     return (
                       <tr key={m.id} className="hover:bg-neutral-50">
@@ -347,7 +353,10 @@ export function MovementsList() {
                           }`}
                         >
                           {positive ? "+" : ""}
-                          {m.qtyDelta.toLocaleString("id-ID")}
+                          {formatStockQty(
+                            m.qtyDelta,
+                            m.qtyDeltaDecimal ?? null,
+                          )}
                         </td>
                         {canSeeCost ? (
                           <td className="px-4 py-3 text-right font-mono text-xs text-neutral-700">

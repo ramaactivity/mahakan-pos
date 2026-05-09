@@ -15,6 +15,11 @@ import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { logAndSanitize } from "@/lib/server-error";
 import {
+  computeNewStock,
+  formatMovementDelta,
+  resolveStockDecimal,
+} from "@/lib/stock-decimal";
+import {
   cancelPurchaseSchema,
   createPurchaseSchema,
   markPaidSchema,
@@ -213,22 +218,26 @@ export async function createPurchase(
       if (!created) throw new Error("INSERT_FAILED");
 
       // Per item: insert purchase_items + inventory_movements + update stock.
-      // Sesi AE — qty boleh decimal. Authoritative storage = qtyDecimal
-      // (numeric). Legacy `qty` bigint + inventoryMovements.qtyDelta + stock
-      // counter masih integer, jadi kita round ke nearest int (min 1 kalau
-      // decimal positif >0). Acknowledged lossy untuk inventory; total cost
-      // tetap akurat ke rupiah karena pakai decimal qty waktu hitung.
+      // Sesi AE — qty boleh decimal. Sesi AE-12 — stock counter sekarang
+      // tracking decimal precision via current_stock_decimal kolom. bigint
+      // tetap di-write rounded sebagai backward-compat. inventory_movements
+      // qty_delta_decimal mirrors decimal delta (signed).
       for (const item of v.items) {
         const ing = ingById.get(item.ingredientId)!;
         const totalCost = Math.round(item.qty * item.unitCost);
-        const qtyLegacy = Math.max(1, Math.round(item.qty));
         const qtyDecimalStr = item.qty.toFixed(4);
         const unitOverride = item.unit?.trim() || null;
+        const newStock = computeNewStock({
+          currentBigint: ing.currentStock,
+          currentDecimal: ing.currentStockDecimal,
+          delta: item.qty,
+        });
+        const movementDelta = formatMovementDelta(item.qty);
 
         // Update stock.
-        const newStock = ing.currentStock + qtyLegacy;
         const updateValues: Record<string, unknown> = {
-          currentStock: newStock,
+          currentStock: newStock.bigint,
+          currentStockDecimal: newStock.decimal,
           updatedAt: new Date(),
           updatedBy: session.user.id,
         };
@@ -248,7 +257,8 @@ export async function createPurchase(
             outletId: session.user.outletId,
             ingredientId: item.ingredientId,
             kind: "purchase",
-            qtyDelta: qtyLegacy,
+            qtyDelta: movementDelta.bigint,
+            qtyDeltaDecimal: movementDelta.decimal,
             unitCostAtMovement: item.unitCost,
             referenceType: "manual",
             referenceId: created.id,
@@ -259,11 +269,13 @@ export async function createPurchase(
           })
           .returning({ id: inventoryMovements.id });
 
-        // Item.
+        // Item — qty bigint = rounded movement delta (matches movement bigint)
+        // for ck_purchase_items_qty_pos compliance (must be > 0). Decimal
+        // tetap exact untuk display + reporting.
         await tx.insert(purchaseItems).values({
           purchaseId: created.id,
           ingredientId: item.ingredientId,
-          qty: qtyLegacy,
+          qty: Math.max(1, movementDelta.bigint),
           qtyDecimal: qtyDecimalStr,
           unitCost: item.unitCost,
           totalCost,
@@ -458,23 +470,34 @@ export async function cancelPurchase(
           .for("update")
           .limit(1);
         if (!ing) continue; // ingredient deleted — skip
-        const newStock = ing.currentStock - item.qty;
-        if (newStock < 0) throw new Error(`NEGATIVE_STOCK:${ing.name}`);
+
+        // Sesi AE-12 — reverse pakai qtyDecimal kalau ada (precise),
+        // fallback ke bigint qty untuk legacy purchase_items pre-AE.
+        const reverseQty = resolveStockDecimal(item.qty, item.qtyDecimal);
+        const newStock = computeNewStock({
+          currentBigint: ing.currentStock,
+          currentDecimal: ing.currentStockDecimal,
+          delta: -reverseQty,
+        });
+        if (newStock.bigint < 0) throw new Error(`NEGATIVE_STOCK:${ing.name}`);
         await tx
           .update(ingredients)
           .set({
-            currentStock: newStock,
+            currentStock: newStock.bigint,
+            currentStockDecimal: newStock.decimal,
             updatedAt: new Date(),
             updatedBy: session.user.id,
           })
           .where(eq(ingredients.id, item.ingredientId));
 
         // Counter-movement for traceability.
+        const movementDelta = formatMovementDelta(-reverseQty);
         await tx.insert(inventoryMovements).values({
           outletId: session.user.outletId,
           ingredientId: item.ingredientId,
           kind: "adjust",
-          qtyDelta: -item.qty,
+          qtyDelta: movementDelta.bigint,
+          qtyDeltaDecimal: movementDelta.decimal,
           unitCostAtMovement: item.unitCost,
           referenceType: "manual",
           referenceId: v.id,

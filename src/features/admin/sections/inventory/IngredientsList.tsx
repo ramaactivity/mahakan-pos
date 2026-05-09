@@ -40,6 +40,7 @@ import {
 import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
+import { formatStockQty } from "@/lib/stock-decimal";
 import { cn } from "@/lib/utils";
 import { IngredientFormModal } from "./IngredientFormModal";
 import { StockReceiveModal } from "./StockReceiveModal";
@@ -274,7 +275,12 @@ export function IngredientsList() {
                 >
                   <span className="font-medium text-neutral-900">{i.name}</span>{" "}
                   <span className="text-neutral-500">
-                    sisa {i.currentStock} {i.unit} / threshold {i.reorderThreshold}
+                    sisa{" "}
+                    {formatStockQty(
+                      i.currentStock,
+                      i.currentStockDecimal ?? null,
+                    )}{" "}
+                    {i.unit} / threshold {i.reorderThreshold}
                   </span>
                 </li>
               ))}
@@ -479,7 +485,10 @@ export function IngredientsList() {
                             i.currentStock < 0 ? "text-danger-700" : "",
                           )}
                         >
-                          {i.currentStock.toLocaleString("id-ID")}
+                          {formatStockQty(
+                            i.currentStock,
+                            i.currentStockDecimal ?? null,
+                          )}
                         </td>
                         <td className="px-4 py-3 text-neutral-700">{i.unit}</td>
                         {canSeeCost ? (
@@ -656,7 +665,10 @@ export function IngredientsList() {
         title="Hapus bahan?"
         description={
           target?.kind === "delete"
-            ? `${target.ingredient.name} (sisa ${target.ingredient.currentStock} ${target.ingredient.unit})`
+            ? `${target.ingredient.name} (sisa ${formatStockQty(
+                target.ingredient.currentStock,
+                target.ingredient.currentStockDecimal ?? null,
+              )} ${target.ingredient.unit})`
             : ""
         }
         size="sm"
