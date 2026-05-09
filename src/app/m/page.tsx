@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import {
+  CalendarDays,
   ChevronRight,
   ClipboardList,
   Fingerprint,
@@ -25,12 +26,20 @@ const MODULES: ModuleCard[] = [
     status: "live",
   },
   {
+    href: "/m/jadwal",
+    title: "Jadwal Kerja",
+    description:
+      "Lihat jadwal masuk minggu ini + minggu berikutnya. Disusun oleh HR.",
+    icon: <CalendarDays className="size-6" aria-hidden />,
+    status: "live",
+  },
+  {
     href: "/m/opname",
     title: "Stock Opname",
     description:
       "Hitung stock fisik bahan dapur / bar. Submit ke owner untuk verifikasi.",
     icon: <PackageSearch className="size-6" aria-hidden />,
-    status: "soon",
+    status: "live",
   },
   {
     href: "/m/po",
@@ -38,18 +47,23 @@ const MODULES: ModuleCard[] = [
     description:
       "Buat permintaan belanja saat bahan menipis. Owner approve via WhatsApp.",
     icon: <ClipboardList className="size-6" aria-hidden />,
-    status: "soon",
+    status: "live",
   },
 ];
 
 /**
- * Sesi AD-9 — mobile landing page untuk karyawan ops.
+ * Sesi AD-9 / AD-12 — mobile landing page untuk karyawan ops.
  *
- * Karyawan akses /m dari shortcut HP, pilih modul yang mau dipakai.
- * Currently:
- *   - Absensi: live (existing /absenkaryawan)
- *   - Stock Opname: scaffold "Coming soon" — full impl di sesi follow-up
- *   - Purchase Order: scaffold "Coming soon"
+ * Karyawan akses /m dari shortcut HP / Add-to-Home-Screen PWA, pilih
+ * modul yang mau dipakai. /m memakai manifest staff terpisah (lihat
+ * src/app/m/layout.tsx) sehingga icon di home screen ber-warna amber
+ * + label "Mahakan Staff" — beda dari POS owner shortcut.
+ *
+ * Currently live:
+ *   - Absensi (/absenkaryawan)            — sesi AB
+ *   - Jadwal Kerja (/m/jadwal)            — sesi AD-12
+ *   - Stock Opname (/m/opname)            — sesi AD-10
+ *   - Purchase Order (/m/po)              — sesi AD-10
  *
  * Mobile-first design: full-width cards, big tap targets ≥ 44px,
  * minimal scroll. Tipikal akses dari HP karyawan, bukan tablet POS.

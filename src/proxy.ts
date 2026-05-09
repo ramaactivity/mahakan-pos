@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 
-const PUBLIC_PATHS = ["/", "/login", "/pin", "/showcase", "/absenkaryawan"];
+// Sesi AD-12: /m landing + sub-modules accessible without server-level auth
+// guard. Sub-modules (/m/opname, /m/po, /m/jadwal) enforce client-side auth
+// via useSession() — redirect to /pin if not authenticated. Landing /m
+// itself is public so karyawan can pick module without login first.
+const PUBLIC_PATHS = ["/", "/login", "/pin", "/showcase", "/absenkaryawan", "/m"];
 const ADMIN_PATHS = ["/dashboard"];
 
 function matches(pathname: string, prefixes: string[]): boolean {

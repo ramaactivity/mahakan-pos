@@ -9,6 +9,7 @@ export { isOk } from "./types";
 export {
   copyWeekSchedules,
   deleteSchedule,
+  getMyScheduleWeek,
   listActiveEmployees,
   listSchedules,
   upsertSchedule,

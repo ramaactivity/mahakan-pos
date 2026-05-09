@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, lte } from "drizzle-orm";
 import { db } from "@/db";
 import { employeeSchedules, employees } from "@/db/schema";
 import { auth } from "@/lib/auth";
@@ -50,6 +50,82 @@ export async function listSchedules(opts: {
       outletId: session.user.outletId,
     }),
   );
+}
+
+/**
+ * Sesi AD-12 — staff-scoped read. Returns ONLY the calling user's own
+ * schedule for a given week. No `schedule.view` admin permission check —
+ * any authenticated user can see their own jadwal di /m/jadwal.
+ *
+ * Maps session.user.id → employees.userId → employeeSchedules. If the
+ * user record isn't linked to an employee row, returns NOT_LINKED so
+ * the UI can show a helpful "minta owner link akun-mu" state.
+ */
+export async function getMyScheduleWeek(input: {
+  weekStart: string;
+}): Promise<
+  ApiResult<{
+    employeeName: string;
+    weekStart: string;
+    weekEnd: string;
+    entries: EmployeeSchedule[];
+  }>
+> {
+  const session = await requireSession();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.weekStart)) {
+    return fail("VALIDATION_ERROR", "Format tanggal minggu tidak valid");
+  }
+
+  const [emp] = await db
+    .select({
+      id: employees.id,
+      fullName: employees.fullName,
+      nickname: employees.nickname,
+      outletId: employees.outletId,
+    })
+    .from(employees)
+    .where(
+      and(
+        eq(employees.userId, session.user.id),
+        isNull(employees.deletedAt),
+      ),
+    )
+    .limit(1);
+
+  if (!emp) {
+    return fail(
+      "NOT_LINKED",
+      "Akun kamu belum di-link ke data karyawan. Minta owner / manager link dulu di Back Office.",
+    );
+  }
+  if (emp.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Outlet tidak cocok");
+  }
+
+  // Compute week end (start + 6 days), all UTC date math on YYYY-MM-DD.
+  const start = new Date(`${input.weekStart}T00:00:00Z`);
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 6);
+  const weekEnd = end.toISOString().slice(0, 10);
+
+  const rows = await db
+    .select()
+    .from(employeeSchedules)
+    .where(
+      and(
+        eq(employeeSchedules.employeeId, emp.id),
+        gte(employeeSchedules.scheduleDate, input.weekStart),
+        lte(employeeSchedules.scheduleDate, weekEnd),
+      ),
+    )
+    .orderBy(asc(employeeSchedules.scheduleDate));
+
+  return ok({
+    employeeName: emp.nickname ?? emp.fullName,
+    weekStart: input.weekStart,
+    weekEnd,
+    entries: rows,
+  });
 }
 
 export async function listActiveEmployees(): Promise<

@@ -2,12 +2,30 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
 export const metadata: Metadata = {
-  title: "Karyawan Mobile — Mahakan Coffee & Space",
+  title: "Mahakan Staff — Tools Karyawan",
   description:
-    "Modul karyawan mobile: absen, stock opname, purchase order.",
+    "Tools karyawan Mahakan: absensi, stock opname, purchase order, jadwal.",
+  // Staff PWA manifest (sesi AD-12). Different name + icon + theme dari
+  // /pos manifest, supaya kalau staff "Add to Home Screen" iconnya
+  // ke-label "Mahakan Staff" + warna amber, bukan green POS.
+  manifest: "/manifest-staff.webmanifest",
+  applicationName: "Mahakan Staff",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Mahakan Staff",
+  },
+  icons: {
+    icon: [
+      { url: "/icon-staff-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-staff-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/icon-staff-512.png",
+  },
 };
 
 export const viewport: Viewport = {
+  themeColor: "#C1996B",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
