@@ -219,7 +219,7 @@ export function OpenShiftModal({
         <div className="grid h-full min-h-0 grid-rows-1 divide-y divide-neutral-200 lg:grid-cols-[5fr_7fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
           {/* ============ LEFT: Persiapan Shift ============ */}
           <div
-            className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4 touch:p-3 lg:p-5"
+            className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4 touch:p-3 lg:max-h-[calc(92vh-9rem)] lg:p-5 touch:max-h-none"
             style={{ overscrollBehavior: "contain" }}
           >
             <section className="rounded-xl border border-mahakan-green-700/30 bg-mahakan-green-50 p-4 touch:p-3">
@@ -300,7 +300,7 @@ export function OpenShiftModal({
 
           {/* ============ RIGHT: Kas Awal Hero ============ */}
           <div
-            className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4 touch:p-3 lg:p-5"
+            className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4 touch:p-3 lg:max-h-[calc(92vh-9rem)] lg:p-5 touch:max-h-none"
             style={{ overscrollBehavior: "contain" }}
           >
             <section className="space-y-3">
@@ -415,7 +415,7 @@ export function OpenShiftModal({
         // overflow-y-auto ga punya constrained height (default min-height:
         // auto bikin grow ke content). overscrollBehavior contain prevent
         // scroll chaining ke background page (sesi AE-3 fix).
-        <div className="flex h-full min-h-0 flex-col p-4 touch:p-3 lg:p-5">
+        <div className="flex h-full min-h-0 flex-col p-4 touch:p-3 lg:max-h-[calc(92vh-9rem)] lg:p-5 touch:max-h-none">
           <div className="mb-3 flex shrink-0 items-start gap-3 rounded-xl border border-mahakan-green-700/30 bg-mahakan-green-50 p-3 touch:p-2">
             <PackageSearch
               className="size-5 shrink-0 text-mahakan-green-800"

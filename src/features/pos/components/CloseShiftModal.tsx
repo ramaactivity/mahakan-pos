@@ -537,7 +537,7 @@ export function CloseShiftModal({
             {/* LEFT — Summary + Setor + Catatan + Handover                 */}
             {/* ============================================================ */}
             <aside
-              className="flex min-h-0 flex-col gap-3 overflow-y-auto bg-neutral-50 p-4 touch:p-3"
+              className="flex min-h-0 flex-col gap-3 overflow-y-auto bg-neutral-50 p-4 touch:p-3 lg:max-h-[calc(92vh-9rem)] touch:max-h-none"
               style={{ overscrollBehavior: "contain" }}
             >
               <SummarySection
@@ -579,7 +579,7 @@ export function CloseShiftModal({
             {/* RIGHT — Field Tab Bar + Hero Display + Numpad               */}
             {/* ============================================================ */}
             <div
-              className="flex min-h-0 flex-col gap-3 overflow-y-auto p-4 touch:gap-3 touch:p-3"
+              className="flex min-h-0 flex-col gap-3 overflow-y-auto p-4 touch:gap-3 touch:p-3 lg:max-h-[calc(92vh-9rem)] touch:max-h-none"
               style={{ overscrollBehavior: "contain" }}
             >
               {/* Field selector tab bar */}
@@ -1266,7 +1266,7 @@ function BlockedByOpenBillsView({
 }) {
   return (
     <div
-      className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-5 touch:p-4"
+      className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-5 touch:p-4 lg:max-h-[calc(92vh-9rem)] touch:max-h-none"
       style={{ overscrollBehavior: "contain" }}
     >
       <div className="rounded-xl border border-warning-300 bg-warning-100 p-4">
