@@ -1,8 +1,9 @@
 "use server";
 
-import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  categories,
   expenseCategories,
   expenses,
   menuItems,
@@ -35,6 +36,11 @@ import {
   isOk as isApprovalOk,
   type ApprovalActionType,
 } from "@/features/approval-codes";
+import {
+  fireJournalHook,
+  postJournalForPosSale,
+  postJournalForPosRefund,
+} from "@/features/accounting/hooks";
 import { isNull } from "drizzle-orm";
 import { outlets, users } from "@/db/schema";
 import { asc } from "drizzle-orm";
@@ -286,21 +292,49 @@ export async function createTransaction(
     return fail("FORBIDDEN", "cashierId harus sama dengan session user");
   }
 
-  // Idempotency
-  if (v.clientRefId) {
-    const existing = await fetchTransactionByClientRefId(v.clientRefId);
-    if (existing) {
-      const full = await fetchTransactionById(existing.id);
-      if (full) return ok(full);
-    }
+  // Sesi AD-11 perf: PARALLEL pre-tx queries.
+  // Was 4 sequential round-trips (idempotency → shift → menu → customer).
+  // Each ~200-250ms RTT to Neon Singapore from Vercel iad1. Total ~1s.
+  // Now: single Promise.all batch → max 1 RTT (slowest query).
+  // Saves ~600-750ms on first paint of "Memvalidasi…" loading state.
+  //
+  // Plus: menu + categories combined into single LEFT JOIN query.
+  const menuItemIds = Array.from(new Set(v.items.map((i) => i.menuItemId)));
+
+  const [idempotentExisting, shift, menuRowsWithCat, customerResult] =
+    await Promise.all([
+      v.clientRefId
+        ? fetchTransactionByClientRefId(v.clientRefId)
+        : Promise.resolve(null),
+      db
+        .select()
+        .from(shifts)
+        .where(eq(shifts.id, v.shiftId))
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({
+          ...getTableColumns(menuItems),
+          categoryName: categories.name,
+        })
+        .from(menuItems)
+        .leftJoin(categories, eq(menuItems.categoryId, categories.id))
+        .where(inArray(menuItems.id, menuItemIds)),
+      v.customerPhone
+        ? findOrCreateCustomer({
+            phone: v.customerPhone,
+            name: v.customerName ?? `Member ${v.customerPhone}`,
+          })
+        : Promise.resolve(null),
+    ]);
+
+  // Idempotent hit — return early
+  if (idempotentExisting) {
+    const full = await fetchTransactionById(idempotentExisting.id);
+    if (full) return ok(full);
   }
 
-  // Shift must be active and belong to cashier
-  const [shift] = await db
-    .select()
-    .from(shifts)
-    .where(eq(shifts.id, v.shiftId))
-    .limit(1);
+  // Shift validation
   if (!shift) return fail("SHIFT_NOT_FOUND", "Shift tidak ditemukan");
   if (shift.status !== "open") {
     return fail("SHIFT_CLOSED", "Shift sudah ditutup");
@@ -309,7 +343,10 @@ export async function createTransaction(
     return fail("SHIFT_OWNERSHIP", "Shift bukan milik kamu");
   }
 
-  // Approver token consumption — if discount applied AND user is staff
+  // Approver token consumption — if discount applied AND user is staff.
+  // NOT parallelized with the batch above because token consume is
+  // destructive (decrements a counter) — we don't want to consume a token
+  // if shift validation will fail.
   let discountApproverId: string | null = null;
   if (v.discountAmount > 0 && session.user.role === "staff") {
     if (!v.discountApproverToken) {
@@ -338,15 +375,23 @@ export async function createTransaction(
     }
   }
 
-  // Fetch all referenced menu items in one query
-  const menuItemIds = Array.from(new Set(v.items.map((i) => i.menuItemId)));
-  const menuRows: MenuItem[] = await db
-    .select()
-    .from(menuItems)
-    .where(inArray(menuItems.id, menuItemIds));
-  if (menuRows.length !== menuItemIds.length) {
+  // Menu existence check
+  if (menuRowsWithCat.length !== menuItemIds.length) {
     return fail("MENU_ITEM_NOT_FOUND", "Beberapa item tidak ditemukan");
   }
+
+  // Build menu rows + category lookup from joined query result.
+  // Strip the synthetic categoryName field for downstream MenuItem typing.
+  const menuRows: MenuItem[] = menuRowsWithCat.map((row) => {
+    const { categoryName: _omit, ...rest } = row;
+    void _omit;
+    return rest as MenuItem;
+  });
+  const categoryNameByMenuId = new Map<string, string>();
+  for (const r of menuRowsWithCat) {
+    categoryNameByMenuId.set(r.categoryId, r.categoryName ?? "");
+  }
+  const menuById = new Map(menuRows.map((m) => [m.id, m]));
 
   // Validate / recompute money server-side
   const validation = validateCreateTransaction(v, menuRows);
@@ -354,44 +399,22 @@ export async function createTransaction(
     return fail(validation.code, validation.message);
   }
 
-  // Build category lookup once for snapshot field on items
-  const categoryNameByMenuId = new Map<string, string>();
-  {
-    const catIds = Array.from(
-      new Set(menuRows.map((m) => m.categoryId)),
-    );
-    const cats = await db
-      .select({ id: sql<string>`id`, name: sql<string>`name` })
-      .from(sql`categories`)
-      .where(sql`id in ${catIds}`);
-    for (const c of cats) categoryNameByMenuId.set(c.id, c.name);
-  }
-  const menuById = new Map(menuRows.map((m) => [m.id, m]));
-
-  // Resolve loyalty customer if a phone was provided. find-or-create — name
-  // defaults to customerName (or "Member <phone>" fallback). Failure here
-  // shouldn't block the sale; we proceed with no customer linkage.
+  // Resolve customer result from parallel batch
   let customerId: string | null = null;
   let customerNameSnapshot = v.customerName ?? null;
   let resolvedCustomerBalance = 0;
-  if (v.customerPhone) {
-    const customerRes = await findOrCreateCustomer({
-      phone: v.customerPhone,
-      name: v.customerName ?? `Member ${v.customerPhone}`,
-    });
-    if (customerRes.success) {
-      customerId = customerRes.data.id;
-      resolvedCustomerBalance = customerRes.data.totalPoints;
-      // Use the canonical customer name from the loyalty record so the struk
-      // and history reflect the registered name (kasir's free-text label
-      // takes priority though if explicitly typed).
-      if (!customerNameSnapshot) {
-        customerNameSnapshot = customerRes.data.name;
-      }
+  if (customerResult && customerResult.success) {
+    customerId = customerResult.data.id;
+    resolvedCustomerBalance = customerResult.data.totalPoints;
+    // Use the canonical customer name from the loyalty record so the struk
+    // and history reflect the registered name (kasir's free-text label
+    // takes priority though if explicitly typed).
+    if (!customerNameSnapshot) {
+      customerNameSnapshot = customerResult.data.name;
     }
-    // If find-or-create failed (e.g. invalid phone), silently continue
-    // without loyalty linkage — sale must not block on this.
   }
+  // If find-or-create failed (e.g. invalid phone), silently continue
+  // without loyalty linkage — sale must not block on this.
 
   // Loyalty redemption pre-flight. The actual balance decrement happens
   // inside the sale tx (atomic with the insert) so a rollback also
@@ -707,10 +730,9 @@ export async function createTransaction(
 
     // Sesi T — Accounting auto-journal hook (fire-and-forget, feature-flagged).
     // Skipped when saveAsOpenBill calls (status flipped to 'open' before paid).
+    // sesi AD-11: hoisted dynamic import to top of file to skip ~5-10ms
+    // module load on every paid transaction.
     if (!opts.skipEarn && result.trx.status === "paid") {
-      const { fireJournalHook, postJournalForPosSale } = await import(
-        "@/features/accounting/hooks"
-      );
       fireJournalHook(
         () =>
           postJournalForPosSale({
@@ -1050,22 +1072,18 @@ export async function refundTransaction(
   // Sesi T — Accounting auto-journal (full refund). Source id = transaction.id
   // (full refund happens once per transaction max). Partial refunds use a
   // separate sourceType + refund_event_id (see refundTransactionPartial).
-  {
-    const { fireJournalHook, postJournalForPosRefund } = await import(
-      "@/features/accounting/hooks"
-    );
-    fireJournalHook(
-      () =>
-        postJournalForPosRefund({
-          outletId: session.user.outletId,
-          transactionId: result.id,
-          refundEventId: result.id, // full-refund: 1:1 ke transaction
-          refundedAmount: result.total,
-          actorId: session.user.id,
-        }),
-      "pos_refund_full",
-    );
-  }
+  // sesi AD-11: hoisted to static import.
+  fireJournalHook(
+    () =>
+      postJournalForPosRefund({
+        outletId: session.user.outletId,
+        transactionId: result.id,
+        refundEventId: result.id, // full-refund: 1:1 ke transaction
+        refundedAmount: result.total,
+        actorId: session.user.id,
+      }),
+    "pos_refund_full",
+  );
 
   return ok({ transaction: result });
 }
@@ -1889,20 +1907,16 @@ export async function closeOpenBill(
 
   // Sesi T — Accounting auto-journal hook (open bill → paid). Fire here, NOT
   // di saveAsOpenBill (which calls createTransaction with skipEarn=true).
-  {
-    const { fireJournalHook, postJournalForPosSale } = await import(
-      "@/features/accounting/hooks"
-    );
-    fireJournalHook(
-      () =>
-        postJournalForPosSale({
-          outletId: session.user.outletId,
-          transactionId: input.transactionId,
-          actorId: session.user.id,
-        }),
-      "pos_sale_open_bill_close",
-    );
-  }
+  // sesi AD-11: hoisted to static import.
+  fireJournalHook(
+    () =>
+      postJournalForPosSale({
+        outletId: session.user.outletId,
+        transactionId: input.transactionId,
+        actorId: session.user.id,
+      }),
+    "pos_sale_open_bill_close",
+  );
 
   const refreshed = await fetchTransactionById(input.transactionId);
   return refreshed
