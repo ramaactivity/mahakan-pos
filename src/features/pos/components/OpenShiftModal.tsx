@@ -216,9 +216,12 @@ export function OpenShiftModal({
       }
     >
       {step === "cash" ? (
-        <div className="grid h-full divide-y divide-neutral-200 lg:grid-cols-[5fr_7fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
+        <div className="grid h-full min-h-0 divide-y divide-neutral-200 lg:grid-cols-[5fr_7fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
           {/* ============ LEFT: Persiapan Shift ============ */}
-          <div className="flex flex-col gap-4 overflow-y-auto p-4 touch:p-3 lg:p-5">
+          <div
+            className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4 touch:p-3 lg:p-5"
+            style={{ overscrollBehavior: "contain" }}
+          >
             <section className="rounded-xl border border-mahakan-green-700/30 bg-mahakan-green-50 p-4 touch:p-3">
               <h3 className="text-base font-semibold text-mahakan-green-900 touch:text-sm">
                 {greeting}
@@ -296,7 +299,10 @@ export function OpenShiftModal({
           </div>
 
           {/* ============ RIGHT: Kas Awal Hero ============ */}
-          <div className="flex flex-col gap-4 overflow-y-auto p-4 touch:p-3 lg:p-5">
+          <div
+            className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4 touch:p-3 lg:p-5"
+            style={{ overscrollBehavior: "contain" }}
+          >
             <section className="space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-semibold text-neutral-900 touch:text-sm">
@@ -405,8 +411,12 @@ export function OpenShiftModal({
         </div>
       ) : (
         // ============ Step 2: Cek Stok Menu (full width) ============
-        <div className="flex h-full flex-col p-4 touch:p-3 lg:p-5">
-          <div className="mb-3 flex items-start gap-3 rounded-xl border border-mahakan-green-700/30 bg-mahakan-green-50 p-3 touch:p-2">
+        // min-h-0 wajib di parent flex container — tanpa itu, child flex-1
+        // overflow-y-auto ga punya constrained height (default min-height:
+        // auto bikin grow ke content). overscrollBehavior contain prevent
+        // scroll chaining ke background page (sesi AE-3 fix).
+        <div className="flex h-full min-h-0 flex-col p-4 touch:p-3 lg:p-5">
+          <div className="mb-3 flex shrink-0 items-start gap-3 rounded-xl border border-mahakan-green-700/30 bg-mahakan-green-50 p-3 touch:p-2">
             <PackageSearch
               className="size-5 shrink-0 text-mahakan-green-800"
               aria-hidden
@@ -421,7 +431,10 @@ export function OpenShiftModal({
               </p>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto">
+          <div
+            className="min-h-0 flex-1 overflow-y-auto"
+            style={{ overscrollBehavior: "contain" }}
+          >
             <MenuStatusCard
               menuItems={menuItems}
               categories={categories}
