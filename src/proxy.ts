@@ -106,6 +106,11 @@ export const config = {
   matcher: [
     // Exclude all API routes (each handler enforces its own auth via auth())
     // and Next/static assets/manifest/sw bundles.
-    "/((?!api|_next/static|_next/image|favicon.ico|assets|manifest.webmanifest|sw\\.js|swe-worker-|icon-|apple-touch-icon).*)",
+    // Sesi AE-25 — pakai `[\\w-]*\\.webmanifest` supaya semua manifest file
+    // (manifest.webmanifest + manifest-staff.webmanifest + future variants)
+    // di-bypass dari auth gate. Sebelumnya cuma exclude manifest.webmanifest
+    // → /manifest-staff.webmanifest ke-redirect ke /login → Chrome gagal
+    // detect PWA installable + fallback ke "shortcut" mode.
+    "/((?!api|_next/static|_next/image|favicon.ico|assets|[\\w-]*\\.webmanifest|sw\\.js|swe-worker-|icon-|apple-touch-icon).*)",
   ],
 };
