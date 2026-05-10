@@ -85,6 +85,19 @@ export interface SaveCountBatchInput {
   }>;
 }
 
+/** Sesi AE-22 — staff add bahan baru on-the-fly saat opname.
+ *  Auto-create ingredient master + opname line dalam 1 transaction. */
+export interface AddOpnameItemAdHocInput {
+  sessionId: string;
+  name: string;
+  unit: string;
+  /** Kalau null = "Lainnya" / unclassified. */
+  section?: IngredientSection | null;
+  /** Decimal qty actual (yang dihitung staff). */
+  actualQty: number;
+  note?: string | null;
+}
+
 export interface SubmitOpnameInput {
   sessionId: string;
   /** Lines that were uncounted will be treated as expected (zero diff). If

@@ -10,6 +10,7 @@ import {
   EyeOff,
   Loader2,
   Pencil,
+  Plus,
   Search,
   X,
 } from "lucide-react";
@@ -41,6 +42,7 @@ import { downloadCountSheet } from "./opname-csv";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { EditUnitModal } from "./EditUnitModal";
+import { AddOpnameItemModal } from "./AddOpnameItemModal";
 
 interface OpnameCountViewProps {
   detail: OpnameSessionDetail;
@@ -92,11 +94,13 @@ export function OpnameCountView({
 }: OpnameCountViewProps) {
   const canCancel = hasPermission(role, "inventory.opname.cancel");
   const canEditUnit = hasPermission(role, "inventory.ingredient.update");
+  const canAddItem = hasPermission(role, "inventory.opname.add_item");
   const [editUnitFor, setEditUnitFor] = useState<{
     id: string;
     name: string;
     unit: string;
   } | null>(null);
+  const [addItemOpen, setAddItemOpen] = useState(false);
 
   // Map of ingredientId → state. Re-init when session id changes (rare).
   const [stateMap, setStateMap] = useState<Map<string, LineState>>(() =>
@@ -408,6 +412,16 @@ export function OpnameCountView({
               <CheckCircle2 className="size-4" aria-hidden /> Submit untuk
               Review
             </Button>
+            {canAddItem ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setAddItemOpen(true)}
+                className="text-mahakan-green-700"
+              >
+                <Plus className="size-4" aria-hidden /> Tambah Bahan Baru
+              </Button>
+            ) : null}
             <Button size="sm" variant="outline" onClick={onPrintCountSheet}>
               <Download className="size-4" aria-hidden /> Lembar Hitung
               (CSV)
@@ -734,6 +748,17 @@ export function OpnameCountView({
           }}
         />
       ) : null}
+
+      <AddOpnameItemModal
+        open={addItemOpen}
+        sessionId={detail.id}
+        onClose={() => setAddItemOpen(false)}
+        onAdded={() => {
+          setAddItemOpen(false);
+          // Parent refetch the detail untuk pick up new line dari server.
+          onChanged();
+        }}
+      />
     </div>
   );
 }

@@ -172,6 +172,11 @@ export const permissions = {
   "inventory.opname.view": ["owner", "manager", "supervisor", "staff"],
   "inventory.opname.start": ["owner", "manager", "supervisor", "staff"],
   "inventory.opname.count": ["owner", "manager", "supervisor", "staff"],
+  /** Sesi AE-22 — staff add item baru on-the-fly saat opname (mis. bahan
+   *  baru yang lupa di-master). Auto-create ingredient + line. Same scope
+   *  dengan `count` karena kalau staff bisa count, dia juga harus bisa
+   *  catat bahan yang lupa ditambah. Owner/manager review saat finalize. */
+  "inventory.opname.add_item": ["owner", "manager", "supervisor", "staff"],
   "inventory.opname.finalize": ["owner", "manager"],
   "inventory.opname.cancel": ["owner", "manager"],
 

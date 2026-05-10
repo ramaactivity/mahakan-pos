@@ -69,6 +69,8 @@ export const AUDIT_EVENT_TYPES = [
   "inventory.opname.submit",
   "inventory.opname.finalize",
   "inventory.opname.cancel",
+  /** Sesi AE-22 — staff add bahan baru on-the-fly saat opname. */
+  "inventory.opname.add_item",
   // Inventory — Section bulk assign (Sesi O)
   "inventory.section.bulk_assign",
   // Suppliers (Sesi O)
@@ -193,6 +195,7 @@ export type AuditEntityType =
   | "promo"
   | "employee_career_history"
   | "stock_opname_session"
+  | "stock_opname_line"
   | "supplier"
   | "purchase"
   | "purchase_request"

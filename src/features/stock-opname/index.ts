@@ -1,4 +1,5 @@
 export type {
+  AddOpnameItemAdHocInput,
   OpnameSession,
   OpnameLine,
   OpnameStatus,
@@ -24,6 +25,7 @@ export { computeDiffStats } from "./diff-stats";
 export { jakartaMonthKey, jakartaMonthLabel } from "./cadence";
 
 export {
+  addOpnameItemAdHocSchema,
   startOpnameSchema,
   saveCountSchema,
   saveCountBatchSchema,
@@ -34,6 +36,7 @@ export {
 } from "./schemas";
 
 export {
+  addOpnameItemAdHoc,
   listOpnameSessions,
   getActiveOpname,
   getMonthlyCadence,

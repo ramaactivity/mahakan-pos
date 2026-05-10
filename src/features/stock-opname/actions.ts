@@ -16,6 +16,7 @@ import { computeNewStock, formatMovementDelta } from "@/lib/stock-decimal";
 import { jakartaMonthLabel } from "./cadence";
 import { computeDiffStats } from "./diff-stats";
 import {
+  addOpnameItemAdHocSchema,
   cancelOpnameSchema,
   finalizeOpnameSchema,
   reopenOpnameSchema,
@@ -38,10 +39,12 @@ import {
 import {
   fail,
   ok,
+  type AddOpnameItemAdHocInput,
   type ApiResult,
   type CancelOpnameInput,
   type FinalizeOpnameInput,
   type MonthlyCadenceStatus,
+  type OpnameLineWithIngredient,
   type OpnameSession,
   type OpnameSessionDetail,
   type OpnameSessionWithCounts,
@@ -1018,4 +1021,195 @@ export async function reopenOpname(
   }
 
   return ok({ sessionId: v.sessionId });
+}
+
+/**
+ * Sesi AE-22 — Add ad-hoc item ke opname session.
+ *
+ * Use case: staff hitung opname, ketemu bahan baru / lupa di-master.
+ * Dulu harus keluar opname → buka Bahan tab → create → kembali ke
+ * opname. Sekarang bisa langsung dari mobile / backoffice.
+ *
+ * Behavior:
+ *   - Cek nama duplikat di outlet (case-insensitive). Kalau exists,
+ *     return CONFLICT — minta staff pakai search untuk count
+ *     ingredient yang sudah ada (mencegah pollute master).
+ *   - Auto-create ingredient master: currentStock=0, costPerUnit=0,
+ *     notes stamped "Ditambahkan dari Opname [periodLabel] oleh
+ *     [user]" supaya owner aware saat review.
+ *   - Insert opname line: expectedQty=0 (belum pernah ada di stock),
+ *     actualQty=user input. Diff = +actualQty (akan jadi adjust+
+ *     movement saat finalize).
+ *   - Update session.totalLines + countedLines.
+ *
+ * Permission: inventory.opname.add_item (sama scope dgn count, supaya
+ * staff yang count juga boleh add). Owner review pas finalize.
+ */
+export async function addOpnameItemAdHoc(
+  input: AddOpnameItemAdHocInput,
+): Promise<ApiResult<OpnameLineWithIngredient>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.opname.add_item")) {
+    return fail("FORBIDDEN", "Tidak punya hak tambah bahan di opname");
+  }
+  const parsed = addOpnameItemAdHocSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+      String(parsed.error.issues[0]?.path[0] ?? ""),
+    );
+  }
+  const v = parsed.data;
+  const trimmedName = v.name.trim();
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      const [sess] = await tx
+        .select()
+        .from(stockOpnameSessions)
+        .where(
+          and(
+            eq(stockOpnameSessions.id, v.sessionId),
+            eq(stockOpnameSessions.outletId, session.user.outletId),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!sess) throw new Error("NOT_FOUND");
+      if (sess.status !== "in_progress") {
+        throw new Error("BAD_STATE");
+      }
+
+      // Cek duplikat ingredient name (case-insensitive) di outlet aktif.
+      const existing = await tx
+        .select({
+          id: ingredients.id,
+          name: ingredients.name,
+        })
+        .from(ingredients)
+        .where(
+          and(
+            eq(ingredients.outletId, session.user.outletId),
+            sql`lower(${ingredients.name}) = lower(${trimmedName})`,
+            sql`${ingredients.deletedAt} IS NULL`,
+          ),
+        )
+        .limit(1);
+      if (existing.length > 0) {
+        throw new Error(`DUPLICATE:${existing[0]!.name}`);
+      }
+
+      const stamp = `Ditambahkan dari Opname ${sess.periodLabel} oleh ${session.user.name ?? "staff"}`;
+      const [newIng] = await tx
+        .insert(ingredients)
+        .values({
+          outletId: session.user.outletId,
+          name: trimmedName,
+          unit: v.unit.trim(),
+          section: v.section ?? null,
+          currentStock: 0,
+          currentStockDecimal: "0.0000",
+          costPerUnit: 0,
+          notes: stamp,
+          isActive: true,
+          createdBy: session.user.id,
+          updatedBy: session.user.id,
+        })
+        .returning();
+      if (!newIng) throw new Error("CREATE_FAILED");
+
+      const actualRounded = Math.max(0, Math.round(v.actualQty));
+      const [newLine] = await tx
+        .insert(stockOpnameLines)
+        .values({
+          sessionId: v.sessionId,
+          ingredientId: newIng.id,
+          expectedQty: 0,
+          expectedQtyDecimal: "0.0000",
+          actualQty: actualRounded,
+          actualQtyDecimal: v.actualQty.toFixed(4),
+          unitCostAtSnapshot: 0,
+          ingredientNameSnapshot: trimmedName,
+          unitSnapshot: v.unit.trim(),
+          note: v.note ?? null,
+          countedAt: new Date(),
+          countedBy: session.user.id,
+        })
+        .returning();
+      if (!newLine) throw new Error("CREATE_FAILED");
+
+      const [stats] = await tx
+        .select({
+          counted: sql<number>`count(*) FILTER (WHERE ${stockOpnameLines.actualQty} IS NOT NULL)::int`,
+          total: sql<number>`count(*)::int`,
+        })
+        .from(stockOpnameLines)
+        .where(eq(stockOpnameLines.sessionId, v.sessionId));
+      await tx
+        .update(stockOpnameSessions)
+        .set({
+          totalLines: stats?.total ?? sess.totalLines + 1,
+          countedLines: stats?.counted ?? sess.countedLines + 1,
+          updatedAt: new Date(),
+        })
+        .where(eq(stockOpnameSessions.id, v.sessionId));
+
+      return { newLine, newIng };
+    });
+
+    await logAudit({
+      eventType: "inventory.opname.add_item",
+      userId: session.user.id,
+      entityType: "stock_opname_line",
+      entityId: result.newLine.id,
+      payload: {
+        summary: `Tambah bahan ad-hoc "${trimmedName}" ke opname`,
+        context: {
+          sessionId: v.sessionId,
+          ingredientId: result.newIng.id,
+          name: trimmedName,
+          unit: v.unit,
+          actualQty: v.actualQty,
+        },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    });
+
+    const lineWithIng: OpnameLineWithIngredient = {
+      ...result.newLine,
+      ingredient: {
+        id: result.newIng.id,
+        name: result.newIng.name,
+        unit: result.newIng.unit,
+        isActive: result.newIng.isActive,
+        deletedAt: result.newIng.deletedAt,
+        section: result.newIng.section,
+      },
+    };
+    return ok(lineWithIng);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Database error";
+    if (msg === "NOT_FOUND") return fail("NOT_FOUND", "Sesi tidak ditemukan");
+    if (msg === "BAD_STATE")
+      return fail(
+        "BAD_STATE",
+        "Sesi sudah disubmit / selesai — tidak bisa tambah item.",
+      );
+    if (msg.startsWith("DUPLICATE:")) {
+      const name = msg.slice("DUPLICATE:".length);
+      return fail(
+        "CONFLICT",
+        `"${name}" sudah ada di master. Pakai search di list opname untuk count yang sudah ada.`,
+        "name",
+      );
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "stock-opname", "Operasi database gagal"),
+    );
+  }
 }

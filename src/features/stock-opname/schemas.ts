@@ -58,3 +58,20 @@ export const cancelOpnameSchema = z.object({
 export const reopenOpnameSchema = z.object({
   sessionId: z.uuid(),
 });
+
+/** Sesi AE-22 — add ad-hoc item ke opname session berjalan. */
+export const addOpnameItemAdHocSchema = z.object({
+  sessionId: z.uuid(),
+  name: z
+    .string()
+    .trim()
+    .min(2, "Nama bahan minimal 2 karakter")
+    .max(80, "Nama bahan maksimal 80 karakter"),
+  unit: z.string().trim().min(1, "Unit wajib diisi").max(20),
+  section: z
+    .enum(["kitchen", "bar", "supporting", "cleaning"])
+    .nullable()
+    .optional(),
+  actualQty: qtyNonNeg,
+  note: z.string().trim().max(NOTE_LINE_MAX).nullable().optional(),
+});

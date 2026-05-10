@@ -8,6 +8,7 @@ import {
   Check,
   Loader2,
   PackageSearch,
+  Plus,
   Save,
   Search,
 } from "lucide-react";
@@ -23,6 +24,7 @@ import type {
   OpnameLineWithIngredient,
   OpnameSessionDetail,
 } from "@/features/stock-opname/types";
+import { AddOpnameItemModal } from "@/features/admin/sections/inventory/opname/AddOpnameItemModal";
 import {
   compatibleUnitsFor,
   convertQty,
@@ -105,6 +107,7 @@ function OpnameView() {
   const [drafts, setDrafts] = useState<Record<string, LineDraft>>({});
   const [filter, setFilter] = useState<SectionFilter>("all");
   const [search, setSearch] = useState("");
+  const [addItemOpen, setAddItemOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -388,6 +391,17 @@ function OpnameView() {
         })}
       </div>
 
+      {/* Sesi AE-22 — Tombol tambah bahan baru. Staff sering ketemu bahan
+       * yang lupa di-master. Tombol di sini biar gampang diakses sebelum
+       * scroll list. */}
+      <button
+        type="button"
+        onClick={() => setAddItemOpen(true)}
+        className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-mahakan-green-700/40 bg-mahakan-green-50/40 px-4 py-3 text-sm font-medium text-mahakan-green-700 transition-colors hover:border-mahakan-green-700 hover:bg-mahakan-green-50 active:scale-[0.99]"
+      >
+        <Plus className="size-4" aria-hidden /> Tambah Bahan Baru
+      </button>
+
       {/* Lines list */}
       {filteredLines.length === 0 ? (
         <p className="rounded-lg border border-dashed border-neutral-300 bg-white py-8 text-center text-sm text-neutral-600">
@@ -453,6 +467,32 @@ function OpnameView() {
         Decimal boleh (0.5 Kg = 500 gr). Untuk finalize opname,
         Owner/Manager review via Back Office.
       </p>
+
+      <AddOpnameItemModal
+        open={addItemOpen}
+        sessionId={detail.id}
+        onClose={() => setAddItemOpen(false)}
+        onAdded={(newLine) => {
+          setAddItemOpen(false);
+          // Append ke detail.lines + pre-fill draft (sudah counted di server).
+          setDetail((prev) => {
+            if (!prev) return prev;
+            return { ...prev, lines: [newLine, ...prev.lines] };
+          });
+          const decimalStr =
+            newLine.actualQtyDecimal !== null
+              ? String(parseFloat(newLine.actualQtyDecimal))
+              : String(newLine.actualQty ?? 0);
+          setDrafts((d) => ({
+            ...d,
+            [newLine.ingredientId]: {
+              input: decimalStr,
+              inputUnit: newLine.ingredient.unit,
+              status: "saved",
+            },
+          }));
+        }}
+      />
     </div>
   );
 }
