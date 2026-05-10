@@ -166,6 +166,8 @@ export const AUDIT_EVENT_TYPES = [
   "bank_account.create",
   "bank_account.update",
   "bank_account.delete",
+  // Sesi AE-32 — nuclear reset operational data (mockup → trial).
+  "system.reset_mockup_data",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];

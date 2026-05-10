@@ -195,6 +195,11 @@ export const permissions = {
   "market_list.update": ["owner", "manager"],
   "market_list.delete": ["owner"],
 
+  // Sesi AE-32 — system reset: nuclear wipe semua data operasional
+  // (transaksi/absensi/shift/dll) untuk transition mockup → real trial.
+  // Owner-only — destructive, tidak bisa di-undo.
+  "system.reset_mockup_data": ["owner"],
+
   // Purchases (Sesi O). Replaces Form Cash + Form TOP spreadsheets.
   // Staff bisa input pembelian harian (mereka tim purchasing); finalize
   // payment & cancel manager+ only. Supervisor view + create (operational

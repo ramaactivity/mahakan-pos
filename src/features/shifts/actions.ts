@@ -1,12 +1,13 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte, lte } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { shifts, transactions } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAndSanitize } from "@/lib/server-error";
+import { todayWibRangeUtc, toJakartaDateOnly } from "@/lib/date";
 import {
   fetchActiveShiftForUser,
   fetchLastClosedShiftForOutlet,
@@ -134,6 +135,30 @@ export async function openShift(
   const existing = await fetchActiveShiftForUser(session.user.id);
   if (existing) {
     return fail("ALREADY_OPEN", "Kamu masih punya shift aktif");
+  }
+
+  // Sesi AE-32 — daily lock: 1 user cuma boleh 1 shift per hari (WIB).
+  // Owner request supaya audit trail bersih + cegah duplikat shift dalam
+  // sehari (mis. close → open lagi → forensic tax/payroll jadi rumit).
+  // Cek shift apapun (open atau closed) yang dibuka di WIB hari ini.
+  const wibToday = toJakartaDateOnly(new Date());
+  const { from, to } = todayWibRangeUtc();
+  const todayShifts = await db
+    .select({ id: shifts.id, status: shifts.status })
+    .from(shifts)
+    .where(
+      and(
+        eq(shifts.userId, session.user.id),
+        gte(shifts.openedAt, new Date(from)),
+        lte(shifts.openedAt, new Date(to)),
+      ),
+    )
+    .limit(1);
+  if (todayShifts.length > 0) {
+    return fail(
+      "DAILY_LIMIT",
+      `Shift hari ini (${wibToday}) sudah pernah dibuka. Hanya 1× shift per hari per user.`,
+    );
   }
 
   try {

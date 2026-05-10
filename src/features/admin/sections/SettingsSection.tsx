@@ -28,6 +28,7 @@ import { ReceiptEditorModal } from "./settings/ReceiptEditorModal";
 import { SettingsTunablesModal } from "./settings/SettingsTunablesModal";
 import { ApprovalCodesPanel } from "./settings/ApprovalCodesPanel";
 import { BankAccountsCard } from "./settings/BankAccountsCard";
+import { ResetMockupDataCard } from "./settings/ResetMockupDataCard";
 
 type OperationalHours = NonNullable<Outlet["operationalHours"]>;
 
@@ -332,6 +333,9 @@ export function SettingsSection() {
       />
 
       {isOwner ? <ApprovalCodesPanel /> : null}
+
+      {/* Sesi AE-32 — nuclear reset untuk transition mockup → trial. */}
+      {isOwner ? <ResetMockupDataCard /> : null}
 
       <BusinessInfoModal
         open={edit === "business"}
