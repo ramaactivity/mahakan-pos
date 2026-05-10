@@ -1007,9 +1007,15 @@ export function PosShell() {
               setRightPanel({ kind: "cart", draftId: id });
             }}
             onCountChange={setOpenBillsCount}
-            onBillPaid={(trx) =>
-              setPrintConfirm({ trx, title: "Pembayaran sukses" })
-            }
+            onBillPaid={(trx) => {
+              // Sesi AE-26 — CRITICAL FIX: bump historyRefreshKey supaya
+              // Pesanan + History segera refetch. Sebelumnya hanya
+              // setPrintConfirm — bill yang baru dibayar hilang dari
+              // Bill Aktif (local tick refresh) tapi tidak muncul di
+              // Pesanan/History sampai 30s polling.
+              setHistoryRefreshKey((k) => k + 1);
+              setPrintConfirm({ trx, title: "Pembayaran sukses" });
+            }}
           />
         ) : tab === "queue" ? (
           <OrderQueuePanel

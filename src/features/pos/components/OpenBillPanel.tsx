@@ -328,15 +328,25 @@ function BillCard({
               <p className="text-xs text-neutral-500">
                 {formatIndonesianTime(summary.createdAt)} ·{" "}
                 {summary.orderType === "dine_in" ? "Dine-in" : "Takeaway"}
-                {summary.customerName ? (
-                  <span className="ml-1 font-medium text-neutral-800">
-                    · {summary.customerName}
+                {summary.note ? (
+                  <span
+                    className="ml-1 inline-flex items-center text-warning-500"
+                    title={summary.note}
+                  >
+                    · 📝
                   </span>
                 ) : null}
               </p>
+              {/* Sesi AE-26 — customer info baris dedicated, lebih
+               * prominent dari sebelumnya yg cuma append ke time line. */}
+              {summary.customerName ? (
+                <div className="mt-1 text-xs font-medium text-neutral-800">
+                  👤 {summary.customerName}
+                </div>
+              ) : null}
               {detail ? (
                 <p className="mt-1 text-xs text-neutral-700 line-clamp-1">
-                  {itemSummary}
+                  {detail.items.length} item: {itemSummary}
                 </p>
               ) : null}
             </div>

@@ -2,11 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Banknote,
   Check,
   ChefHat,
   ClipboardList,
   Coffee,
+  CreditCard,
   RefreshCw,
+  Smartphone,
+  User,
 } from "lucide-react";
 import {
   Badge,
@@ -291,12 +295,12 @@ function OrderCard({
     <Card className={cn(isServed && "opacity-70")}>
       <CardContent className="space-y-3 p-4">
         <header className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
+          <div className="flex items-start gap-3 min-w-0 flex-1">
             <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-mahakan-green-100 text-lg font-bold text-mahakan-green-900">
               {summary.pagerNumber !== null ? summary.pagerNumber : "—"}
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="font-mono text-sm font-semibold text-neutral-900">
                   {summary.transactionNumber}
                 </span>
@@ -305,11 +309,32 @@ function OrderCard({
                 ) : (
                   <Badge variant="warning">Tertunda</Badge>
                 )}
+                <Badge variant="neutral">
+                  {summary.orderType === "dine_in" ? "Dine-in" : "Takeaway"}
+                </Badge>
+                {summary.note ? (
+                  <span
+                    className="inline-flex items-center text-xs text-warning-500"
+                    title={summary.note}
+                  >
+                    📝
+                  </span>
+                ) : null}
               </div>
-              <p className="text-xs text-neutral-500">
+              {/* Sesi AE-26 — customer info baris kedua. Sebelumnya tidak
+               * ditampilkan di Pesanan tab — owner request critical. */}
+              {summary.customerName ? (
+                <div className="mt-1 flex items-center gap-1 text-xs font-medium text-neutral-700">
+                  <User className="size-3 text-neutral-400" aria-hidden />
+                  {summary.customerName}
+                </div>
+              ) : null}
+              <p className="mt-1 text-xs text-neutral-500">
                 {formatIndonesianTime(summary.createdAt)} ·{" "}
-                {summary.orderType === "dine_in" ? "Dine-in" : "Takeaway"} ·{" "}
-                {formatRupiah(summary.total)}
+                <PaymentMethodInline trx={summary} /> ·{" "}
+                <span className="font-mono font-semibold text-neutral-700">
+                  {formatRupiah(summary.total)}
+                </span>
               </p>
             </div>
           </div>
@@ -412,4 +437,34 @@ function itemSummary(item: TransactionWithItems["items"][number]): string {
       : "";
   const note = item.note ? ` · catatan: ${item.note}` : "";
   return `${item.quantity}× ${item.itemName}${variant}${mods}${note}`;
+}
+
+/** Sesi AE-26 — payment method label inline (chip kecil di Pesanan tab). */
+function PaymentMethodInline({ trx }: { trx: Transaction }) {
+  const method = trx.paymentMethod;
+  let icon: React.ReactNode = null;
+  let label = "";
+  if (method === "cash") {
+    icon = <Banknote className="inline size-3" aria-hidden />;
+    label = "Tunai";
+  } else if (method === "qris") {
+    icon = <Smartphone className="inline size-3" aria-hidden />;
+    label = "QRIS";
+  } else if (method === "split") {
+    icon = <CreditCard className="inline size-3" aria-hidden />;
+    label = "Split";
+  } else {
+    icon = <CreditCard className="inline size-3" aria-hidden />;
+    if (method === "card_bca") label = "BCA";
+    else if (method === "card_bni") label = "BNI";
+    else if (method === "card_mandiri") label = "Mandiri";
+    else if (method === "card_bri") label = "BRI";
+    else label = "Kartu";
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-neutral-600">
+      {icon}
+      {label}
+    </span>
+  );
 }
