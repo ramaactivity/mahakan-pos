@@ -27,6 +27,7 @@ import {
   isOk as suppliersIsOk,
   type Supplier,
 } from "@/features/suppliers";
+import { lookupMarketPriceForPurchase } from "@/features/market-list";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -260,6 +261,49 @@ export function PurchaseFormModal({
       patch.unit = ing.unit;
     }
     updateRow(rowId, patch);
+    // Sesi AE-21 — kalau supplier sudah dipilih, lookup market list price
+    // → override unit cost + unit kalau ada match. Lebih akurat dari
+    // ingredient.cost_per_unit (yang aggregate global).
+    if (supplierId) {
+      void lookupMarketPriceForRow(rowId, supplierId, ingredientId);
+    }
+  }
+
+  async function lookupMarketPriceForRow(
+    rowId: string,
+    supId: string,
+    ingId: string,
+  ) {
+    const res = await lookupMarketPriceForPurchase({
+      supplierId: supId,
+      ingredientId: ingId,
+    });
+    if (!isOk(res) || !res.data) return;
+    const m = res.data;
+    setItems((prev) =>
+      prev.map((r) =>
+        r.id === rowId
+          ? {
+              ...r,
+              // Pakai harga total per pack langsung — staff input qty
+              // dalam pack unit, total = qty × unit_cost.
+              unitCost: String(m.unitCost),
+              unit: m.packUnit,
+            }
+          : r,
+      ),
+    );
+  }
+
+  // Sesi AE-21 — re-lookup all rows saat supplier diganti (auto-fill ulang).
+  function onSupplierChange(nextSupplierId: string | null) {
+    setSupplierId(nextSupplierId);
+    if (!nextSupplierId) return;
+    for (const r of items) {
+      if (r.ingredientId) {
+        void lookupMarketPriceForRow(r.id, nextSupplierId, r.ingredientId);
+      }
+    }
   }
 
   async function onSubmit() {
@@ -472,7 +516,7 @@ export function PurchaseFormModal({
                   } satisfies ComboboxGroup,
                 ]}
                 value={supplierId}
-                onChange={(v) => setSupplierId(v)}
+                onChange={(v) => onSupplierChange(v)}
               />
             )}
           </div>

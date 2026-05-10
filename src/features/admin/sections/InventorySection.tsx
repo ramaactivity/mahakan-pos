@@ -5,6 +5,7 @@ import { Calculator } from "lucide-react";
 import { Button } from "@/components/ui";
 import { CogsCalculatorWidget } from "./inventory/CogsCalculatorWidget";
 import { IngredientsList } from "./inventory/IngredientsList";
+import { MarketListView } from "./inventory/market-list/MarketListView";
 import { MovementsList } from "./inventory/MovementsList";
 import { OpnameTab } from "./inventory/opname/OpnameTab";
 import { PreparationsList } from "./inventory/PreparationsList";
@@ -16,6 +17,7 @@ import type { AdminSection } from "../components/AdminLeftNav";
 
 type InventoryTab =
   | "ingredients"
+  | "market_list"
   | "preparations"
   | "opname"
   | "purchases"
@@ -25,6 +27,7 @@ type InventoryTab =
 
 const TABS: Array<{ key: InventoryTab; label: string; soon?: boolean }> = [
   { key: "ingredients", label: "Bahan" },
+  { key: "market_list", label: "Market List" },
   { key: "preparations", label: "Preparations" },
   { key: "purchases", label: "Pembelian" },
   { key: "top", label: "Hutang Dagang" },
@@ -93,6 +96,8 @@ export function InventorySection({ onNavigate }: InventorySectionProps = {}) {
       <div>
         {tab === "ingredients" ? (
           <IngredientsList />
+        ) : tab === "market_list" ? (
+          <MarketListView />
         ) : tab === "preparations" ? (
           <PreparationsList />
         ) : tab === "purchases" ? (

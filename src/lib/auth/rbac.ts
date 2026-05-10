@@ -181,6 +181,15 @@ export const permissions = {
   "supplier.update": ["owner", "manager"],
   "supplier.delete": ["owner"],
 
+  // Market List (Sesi AE-21) — supplier price catalog. Owner/manager
+  // edit; supervisor view (untuk reference saat catat pembelian).
+  // Update is_primary triggers ingredients.cost_per_unit cascade —
+  // sensitive, owner+manager only (sama dgn ingredient.update).
+  "market_list.view": ["owner", "manager", "supervisor"],
+  "market_list.create": ["owner", "manager"],
+  "market_list.update": ["owner", "manager"],
+  "market_list.delete": ["owner"],
+
   // Purchases (Sesi O). Replaces Form Cash + Form TOP spreadsheets.
   // Staff bisa input pembelian harian (mereka tim purchasing); finalize
   // payment & cancel manager+ only. Supervisor view + create (operational
