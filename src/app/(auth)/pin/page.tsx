@@ -98,6 +98,10 @@ function PinLoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = safeCallback(searchParams?.get("callbackUrl") ?? null);
+  // Sesi AE-17 — staff context kalau callback dari /m. Swap title +
+  // description supaya UI ga ambigu antara "Login Kasir" vs "Login
+  // Karyawan".
+  const isStaffContext = callbackUrl?.startsWith("/m") ?? false;
   const { status, session, refresh } = useSession();
 
   const [users, setUsers] = useState<PinUser[]>([]);
@@ -213,7 +217,8 @@ function PinLoginInner() {
                   Halo, {selectedUser.name}
                 </CardTitle>
                 <CardDescription className="text-xs landscape:md:text-xs lg:text-sm">
-                  Masukkan PIN 4–6 digit untuk masuk POS
+                  Masukkan PIN 4–6 digit untuk{" "}
+                  {isStaffContext ? "akses Tools Karyawan" : "masuk POS"}
                 </CardDescription>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
                   {ROLE_LABEL[selectedUser.role]}
@@ -296,10 +301,12 @@ function PinLoginInner() {
         <>
           <CardHeader className="mb-3 landscape:md:mb-3">
             <CardTitle className="text-lg landscape:md:text-xl lg:text-2xl">
-              Login Kasir
+              {isStaffContext ? "Login Karyawan" : "Login Kasir"}
             </CardTitle>
             <CardDescription className="text-xs landscape:md:text-sm">
-              Pilih nama Anda untuk lanjut input PIN
+              {isStaffContext
+                ? "Pilih nama Anda untuk akses Tools Karyawan (Absensi, Jadwal, Opname, PO)"
+                : "Pilih nama Anda untuk lanjut input PIN"}
             </CardDescription>
           </CardHeader>
           <CardContent>

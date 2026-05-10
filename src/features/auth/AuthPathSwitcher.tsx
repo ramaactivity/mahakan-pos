@@ -1,24 +1,62 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { LayoutDashboard, ShoppingBag } from "lucide-react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { LayoutDashboard, ShoppingBag, Users } from "lucide-react";
+import { Suspense } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * Segmented control for switching between POS PIN login and Back Office
+ * Segmented control untuk switching antara POS PIN login dan Back Office
  * email login. Owner-feedback (sesi J): the small footer link "Mau ke Back
  * Office? Login dengan email" was easily missed; users got confused which
  * path to take. This puts the choice front-and-center.
+ *
+ * Sesi AE-17 — staff /m context. Kalau callbackUrl=/m, switcher hide jadi
+ * single-purpose badge "Login Karyawan" supaya staff yang dateng dari
+ * /m link langsung paham ini login mereka, bukan dual POS/BackOffice
+ * switcher yang confusing.
  *
  * Routes:
  *   /pin    → POS / Kasir (PIN avatar)
  *   /login  → Back Office (email + password)
  */
 export function AuthPathSwitcher() {
+  return (
+    <Suspense fallback={null}>
+      <AuthPathSwitcherInner />
+    </Suspense>
+  );
+}
+
+function AuthPathSwitcherInner() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams?.get("callbackUrl") ?? "";
+  const isStaffContext = callbackUrl.startsWith("/m");
   const isPin = pathname?.startsWith("/pin") ?? false;
   const isLogin = pathname?.startsWith("/login") ?? false;
+
+  // Sesi AE-17 — staff context: render single badge instead of switcher.
+  if (isStaffContext && isPin) {
+    return (
+      <div className="mx-auto w-full max-w-md">
+        <div className="flex items-center gap-3 rounded-xl border border-mahakan-green-700/30 bg-mahakan-green-50 p-3 shadow-sm">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-mahakan-green-700 text-white">
+            <Users className="size-5" aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-mahakan-green-900">
+              Login Karyawan
+            </p>
+            <p className="text-[11px] text-neutral-700">
+              Akses Tools Karyawan: Absensi, Jadwal, Opname, PO
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto w-full max-w-md">
