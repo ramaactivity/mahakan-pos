@@ -23,6 +23,11 @@ import type {
   OpnameLineWithIngredient,
   OpnameSessionDetail,
 } from "@/features/stock-opname/types";
+import {
+  compatibleUnitsFor,
+  convertQty,
+  resolveUnit,
+} from "@/lib/unit-conversion";
 import { cn } from "@/lib/utils";
 
 type SectionFilter = "all" | "bar" | "kitchen" | "supporting" | "cleaning" | "other";
@@ -43,6 +48,10 @@ const SECTION_TABS: SectionTab[] = [
 
 interface LineDraft {
   input: string;
+  /** Sesi AE-20 — unit yang dipakai staff input (boleh beda dari master).
+   *  Default = master unit; staff pilih lain via picker, qty di-konversi
+   *  saat save. Decimal allowed (0.5 Kg = 500 gr). */
+  inputUnit: string;
   status: "idle" | "saving" | "saved" | "error";
   errorMsg?: string;
 }
@@ -127,6 +136,7 @@ function OpnameView() {
               : String(line.actualQty);
           initialDrafts[line.ingredientId] = {
             input: rawValue,
+            inputUnit: line.ingredient.unit,
             status: "saved",
           };
         }
@@ -169,7 +179,11 @@ function OpnameView() {
     };
   }, [detail]);
 
-  async function handleSaveLine(line: OpnameLineWithIngredient, raw: string) {
+  async function handleSaveLine(
+    line: OpnameLineWithIngredient,
+    raw: string,
+    inputUnit: string,
+  ) {
     if (!detail) return;
     const trimmed = raw.trim();
     let actualQty: number | null = null;
@@ -180,18 +194,38 @@ function OpnameView() {
           ...d,
           [line.ingredientId]: {
             input: raw,
+            inputUnit,
             status: "error",
             errorMsg: "Angka tidak valid",
           },
         }));
         return;
       }
-      actualQty = parsed;
+      // Sesi AE-20 — convert ke master unit kalau staff pilih unit lain.
+      const masterUnit = line.ingredient.unit;
+      if (inputUnit !== masterUnit) {
+        const converted = convertQty(parsed, inputUnit, masterUnit);
+        if (converted === null) {
+          setDrafts((d) => ({
+            ...d,
+            [line.ingredientId]: {
+              input: raw,
+              inputUnit,
+              status: "error",
+              errorMsg: `Tidak bisa convert ${inputUnit} ke ${masterUnit}`,
+            },
+          }));
+          return;
+        }
+        actualQty = converted;
+      } else {
+        actualQty = parsed;
+      }
     }
 
     setDrafts((d) => ({
       ...d,
-      [line.ingredientId]: { input: raw, status: "saving" },
+      [line.ingredientId]: { input: raw, inputUnit, status: "saving" },
     }));
 
     const res = await saveOpnameCount({
@@ -205,6 +239,7 @@ function OpnameView() {
         ...d,
         [line.ingredientId]: {
           input: raw,
+          inputUnit,
           status: "error",
           errorMsg: res.error.message,
         },
@@ -215,7 +250,7 @@ function OpnameView() {
 
     setDrafts((d) => ({
       ...d,
-      [line.ingredientId]: { input: raw, status: "saved" },
+      [line.ingredientId]: { input: raw, inputUnit, status: "saved" },
     }));
 
     // Update detail line.actualQty so revisit shows saved value
@@ -360,39 +395,63 @@ function OpnameView() {
         </p>
       ) : (
         <ul className="space-y-2">
-          {filteredLines.map((line) => (
-            <LineRow
-              key={line.id}
-              line={line}
-              draft={drafts[line.ingredientId]}
-              onChange={(input) => {
-                setDrafts((d) => ({
-                  ...d,
-                  [line.ingredientId]: { input, status: "idle" },
-                }));
-              }}
-              onBlur={(input) => {
-                const current = drafts[line.ingredientId];
-                if (current?.status === "saved" && current.input === input) {
-                  return; // No change, skip save
-                }
-                if (
-                  input.trim() ===
-                  (line.actualQty !== null ? String(line.actualQty) : "")
-                ) {
-                  return;
-                }
-                void handleSaveLine(line, input);
-              }}
-            />
-          ))}
+          {filteredLines.map((line) => {
+            const draft = drafts[line.ingredientId];
+            const inputUnit = draft?.inputUnit ?? line.ingredient.unit;
+            return (
+              <LineRow
+                key={line.id}
+                line={line}
+                draft={draft}
+                inputUnit={inputUnit}
+                onChange={(input) => {
+                  setDrafts((d) => ({
+                    ...d,
+                    [line.ingredientId]: {
+                      input,
+                      inputUnit,
+                      status: "idle",
+                    },
+                  }));
+                }}
+                onUnitChange={(nextUnit) => {
+                  setDrafts((d) => ({
+                    ...d,
+                    [line.ingredientId]: {
+                      input: draft?.input ?? "",
+                      inputUnit: nextUnit,
+                      status: draft?.status === "saved" ? "idle" : (draft?.status ?? "idle"),
+                    },
+                  }));
+                }}
+                onBlur={(input) => {
+                  const current = drafts[line.ingredientId];
+                  if (
+                    current?.status === "saved" &&
+                    current.input === input &&
+                    current.inputUnit === inputUnit
+                  ) {
+                    return;
+                  }
+                  if (
+                    input.trim() === "" &&
+                    line.actualQty === null
+                  ) {
+                    return;
+                  }
+                  void handleSaveLine(line, input, inputUnit);
+                }}
+              />
+            );
+          })}
         </ul>
       )}
 
       <p className="rounded-lg bg-info-100/60 p-3 text-xs text-info-500">
-        💡 Tip: tap field, isi jumlah fisik di laci, lalu tap di luar field
-        untuk simpan otomatis. Untuk finalize opname, Owner/Manager perlu
-        review via Back Office.
+        💡 Tip: isi jumlah fisik, pilih satuan yang kamu pakai (mis. Kg
+        untuk timbangan), lalu tap di luar field untuk simpan otomatis.
+        Decimal boleh (0.5 Kg = 500 gr). Untuk finalize opname,
+        Owner/Manager review via Back Office.
       </p>
     </div>
   );
@@ -401,31 +460,56 @@ function OpnameView() {
 function LineRow({
   line,
   draft,
+  inputUnit,
   onChange,
+  onUnitChange,
   onBlur,
 }: {
   line: OpnameLineWithIngredient;
   draft: LineDraft | undefined;
+  inputUnit: string;
   onChange: (raw: string) => void;
+  onUnitChange: (nextUnit: string) => void;
   onBlur: (raw: string) => void;
 }) {
   // Sesi AE-15 — prefer decimal mirror untuk display + diff calc.
+  const masterUnit = line.ingredient.unit;
   const expectedQtyValue =
     line.expectedQtyDecimal !== null
       ? parseFloat(line.expectedQtyDecimal)
       : Number(line.expectedQty);
   const inputValue = draft?.input ?? "";
   const status = draft?.status ?? "idle";
+
   let parsedActual: number | null = null;
   const trimmed = inputValue.trim();
   if (trimmed.length > 0) {
     const p = parseFloat(trimmed.replace(",", "."));
     if (Number.isFinite(p) && p >= 0) parsedActual = p;
   }
+
+  // Sesi AE-20 — convert input → master unit untuk diff calc + preview.
+  const convertedToMaster =
+    parsedActual !== null && inputUnit !== masterUnit
+      ? convertQty(parsedActual, inputUnit, masterUnit)
+      : parsedActual;
   const diff =
-    parsedActual !== null ? parsedActual - expectedQtyValue : null;
+    convertedToMaster !== null
+      ? convertedToMaster - expectedQtyValue
+      : null;
+
   const fmt = (n: number) =>
     new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(n);
+
+  // Unit options — kalau master "discrete" (Btl/Pcs/etc), staff cuma
+  // bisa input pakai master unit, dropdown disabled. Kalau mass/volume,
+  // staff bisa pilih (mis. master gr → bisa input pakai Kg).
+  const unitOptions = compatibleUnitsFor(masterUnit);
+  const masterMeta = resolveUnit(masterUnit);
+  const canPickUnit =
+    masterMeta !== null &&
+    masterMeta.dimension !== "discrete" &&
+    unitOptions.length > 1;
 
   return (
     <li
@@ -445,12 +529,16 @@ function LineRow({
           <p className="text-[11px] text-neutral-600">
             Expected:{" "}
             <span className="font-mono">{fmt(expectedQtyValue)}</span>{" "}
-            {line.ingredient.unit}
+            {masterUnit}
           </p>
         </div>
         <StatusIcon status={status} />
       </div>
-      <div className="mt-2 flex items-center gap-2">
+      {/* Sesi AE-20 — input QTY + unit picker side-by-side. Mirror
+       * pattern Catat Pembelian (bahan + qty + unit + harga). Decimal
+       * QTY allowed (0.5 Kg = 500 gr). Auto-convert ke master unit
+       * saat blur / save. */}
+      <div className="mt-2 flex items-stretch gap-2">
         <input
           type="text"
           inputMode="decimal"
@@ -460,10 +548,36 @@ function LineRow({
           placeholder="0"
           className="flex-1 rounded-md border border-neutral-300 bg-white px-3 py-2 text-base font-mono tabular-nums text-neutral-900 placeholder:text-neutral-400 focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
         />
-        <span className="shrink-0 text-sm font-medium text-neutral-700">
-          {line.ingredient.unit}
-        </span>
+        {canPickUnit ? (
+          <select
+            value={inputUnit}
+            onChange={(e) => onUnitChange(e.target.value)}
+            onBlur={() => onBlur(inputValue)}
+            className="shrink-0 rounded-md border border-neutral-300 bg-white px-2 py-2 text-sm font-medium text-neutral-900 focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+            aria-label={`Satuan ${line.ingredient.name}`}
+          >
+            {unitOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="flex shrink-0 items-center px-2 text-sm font-medium text-neutral-700">
+            {masterUnit}
+          </span>
+        )}
       </div>
+      {/* Auto-convert preview — staff lihat hasil conversion sebelum save. */}
+      {parsedActual !== null &&
+      inputUnit !== masterUnit &&
+      convertedToMaster !== null ? (
+        <p className="mt-1 text-[11px] text-neutral-600">
+          ={" "}
+          <span className="font-mono">{fmt(convertedToMaster)}</span>{" "}
+          {masterUnit}
+        </p>
+      ) : null}
       {diff !== null && diff !== 0 ? (
         <p
           className={cn(
@@ -476,7 +590,7 @@ function LineRow({
             {diff > 0 ? "+" : ""}
             {fmt(diff)}
           </span>{" "}
-          {line.ingredient.unit}
+          {masterUnit}
         </p>
       ) : null}
       {status === "error" && draft?.errorMsg ? (

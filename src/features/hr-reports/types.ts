@@ -45,3 +45,43 @@ export interface AttendanceSummary {
   rangeEnd: string;
   rows: AttendanceSummaryRow[];
 }
+
+/** Sesi AE-20 — calendar matrix view. Rows = employees, cols = dates,
+ *  cell = status enum. Owner request: tabel jelas per-tanggal staff
+ *  masuk/izin/cuti/off — supaya quick eyeball siapa bolong di hari mana. */
+export type AttendanceDayStatus =
+  /** Ada clock-in record. */
+  | "hadir"
+  /** Hadir tapi telat (lateMinutes > 0). */
+  | "telat"
+  /** Schedule day-off (libur kerja). */
+  | "off"
+  /** Schedule kerja, tidak ada record (alpa). */
+  | "alpa"
+  /** Tidak ada schedule + tidak ada record (no expectation). */
+  | "kosong";
+
+export interface AttendanceCalendarCell {
+  status: AttendanceDayStatus;
+  /** Filled untuk hadir/telat. */
+  workMinutes?: number;
+  lateMinutes?: number;
+  overtimeMinutes?: number;
+}
+
+export interface AttendanceCalendarRow {
+  employeeId: string;
+  employeeFullName: string;
+  employeeNickname: string | null;
+  employeePosition: string | null;
+  /** Per-date map. Key = "YYYY-MM-DD". */
+  days: Record<string, AttendanceCalendarCell>;
+}
+
+export interface AttendanceCalendar {
+  rangeStart: string;
+  rangeEnd: string;
+  /** Inclusive list of dates in range, ordered. */
+  dates: string[];
+  rows: AttendanceCalendarRow[];
+}

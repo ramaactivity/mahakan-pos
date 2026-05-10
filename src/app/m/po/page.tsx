@@ -37,6 +37,23 @@ interface ItemDraft {
   ingredientId?: string; // null for custom items (added manually)
 }
 
+/** Sesi AE-20 — common units untuk manual PO item. Aligned dengan
+ *  Catat Pembelian COMMON_UNITS biar konsisten antar modul. */
+const PO_UNIT_OPTIONS = [
+  "Pcs",
+  "Kg",
+  "gr",
+  "L",
+  "ml",
+  "Btl",
+  "Pack",
+  "Bks",
+  "Krat",
+  "Lusin",
+  "Karton",
+  "Box",
+] as const;
+
 /**
  * Sesi AD-10 — Purchase Order mobile module.
  *
@@ -164,7 +181,7 @@ function PoView() {
       {
         id: `custom-${Date.now()}`,
         ingredientName: "",
-        unit: "pcs",
+        unit: "Pcs",
         qty: "",
         notes: "",
         fromLowStock: false,
@@ -498,13 +515,21 @@ function PoView() {
                       {it.unit}
                     </span>
                   ) : (
-                    <input
-                      type="text"
+                    /* Sesi AE-20 — manual item unit dropdown (konsisten
+                     * dengan Catat Pembelian + Stock Opname). Sebelumnya
+                     * free-text → typo-prone (kg vs Kg vs KG). */
+                    <select
                       value={it.unit}
                       onChange={(e) => updateItem(it.id, { unit: e.target.value })}
-                      placeholder="unit"
-                      className="w-20 shrink-0 rounded-md border border-neutral-300 bg-white px-2 py-2 text-sm text-neutral-900 focus:border-mahakan-green-700 focus:outline-none"
-                    />
+                      className="w-24 shrink-0 rounded-md border border-neutral-300 bg-white px-2 py-2 text-sm text-neutral-900 focus:border-mahakan-green-700 focus:outline-none"
+                      aria-label="Satuan"
+                    >
+                      {PO_UNIT_OPTIONS.map((u) => (
+                        <option key={u} value={u}>
+                          {u}
+                        </option>
+                      ))}
+                    </select>
                   )}
                 </div>
                 <input

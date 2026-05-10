@@ -15,6 +15,10 @@ import {
   fail,
   ok,
   type ApiResult,
+  type AttendanceCalendar,
+  type AttendanceCalendarCell,
+  type AttendanceCalendarRow,
+  type AttendanceDayStatus,
   type AttendanceSummary,
   type AttendanceSummaryRow,
 } from "./types";
@@ -139,6 +143,168 @@ export async function getAttendanceSummary(input: {
     rangeEnd: input.to,
     rows,
   });
+}
+
+/** Sesi AE-20 — calendar matrix view (per-employee × per-date status).
+ * Owner request: laporan HR ingin tabel jelas per tanggal masuk/off/alpa.
+ *
+ * Status derivation:
+ *   - "hadir" / "telat": ada attendanceRecord di tanggal itu (telat kalau
+ *     isLate=yes atau lateMinutes>0)
+ *   - "off": ada employeeSchedule.dayOff=true
+ *   - "alpa": ada schedule kerja (dayOff=false) tapi tidak ada record
+ *   - "kosong": tidak ada schedule + tidak ada record (rest day off-radar)
+ *
+ * Range capped 62 hari (≈ 2 bulan) supaya UI tidak overload.
+ */
+export async function getAttendanceCalendar(input: {
+  from: string;
+  to: string;
+}): Promise<ApiResult<AttendanceCalendar>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "attendance.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat laporan absensi");
+  }
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.from) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.to)
+  ) {
+    return fail("VALIDATION_ERROR", "Tanggal tidak valid");
+  }
+  if (input.to < input.from) {
+    return fail("VALIDATION_ERROR", "to harus >= from");
+  }
+
+  const dates = enumerateDates(input.from, input.to);
+  if (dates.length > 62) {
+    return fail(
+      "VALIDATION_ERROR",
+      "Range maksimal 62 hari (sekitar 2 bulan)",
+    );
+  }
+
+  const employeeRows = await db
+    .select({
+      id: employees.id,
+      fullName: employees.fullName,
+      nickname: employees.nickname,
+      position: employees.position,
+    })
+    .from(employees)
+    .where(
+      and(
+        eq(employees.outletId, session.user.outletId),
+        isNull(employees.deletedAt),
+      ),
+    )
+    .orderBy(asc(employees.fullName));
+
+  if (employeeRows.length === 0) {
+    return ok({
+      rangeStart: input.from,
+      rangeEnd: input.to,
+      dates,
+      rows: [],
+    });
+  }
+
+  const records = await db
+    .select({
+      employeeId: attendanceRecords.employeeId,
+      shiftDate: attendanceRecords.shiftDate,
+      workMinutes: attendanceRecords.workMinutes,
+      lateMinutes: attendanceRecords.lateMinutes,
+      isLate: attendanceRecords.isLate,
+      overtimeMinutes: attendanceRecords.overtimeMinutes,
+    })
+    .from(attendanceRecords)
+    .where(
+      and(
+        eq(attendanceRecords.outletId, session.user.outletId),
+        gte(attendanceRecords.shiftDate, input.from),
+        lte(attendanceRecords.shiftDate, input.to),
+      ),
+    );
+
+  const schedules = await db
+    .select({
+      employeeId: employeeSchedules.employeeId,
+      scheduleDate: employeeSchedules.scheduleDate,
+      dayOff: employeeSchedules.dayOff,
+    })
+    .from(employeeSchedules)
+    .where(
+      and(
+        eq(employeeSchedules.outletId, session.user.outletId),
+        gte(employeeSchedules.scheduleDate, input.from),
+        lte(employeeSchedules.scheduleDate, input.to),
+      ),
+    );
+
+  const recordMap = new Map<string, (typeof records)[number]>();
+  for (const r of records) {
+    recordMap.set(`${r.employeeId}|${r.shiftDate}`, r);
+  }
+  const scheduleMap = new Map<string, (typeof schedules)[number]>();
+  for (const s of schedules) {
+    scheduleMap.set(`${s.employeeId}|${s.scheduleDate}`, s);
+  }
+
+  const rows: AttendanceCalendarRow[] = employeeRows.map((e) => {
+    const days: Record<string, AttendanceCalendarCell> = {};
+    for (const date of dates) {
+      const rec = recordMap.get(`${e.id}|${date}`);
+      const sched = scheduleMap.get(`${e.id}|${date}`);
+      let status: AttendanceDayStatus;
+      const cell: AttendanceCalendarCell = { status: "kosong" };
+      if (rec) {
+        const isLate =
+          rec.isLate === "yes" || (rec.lateMinutes ?? 0) > 0;
+        status = isLate ? "telat" : "hadir";
+        cell.workMinutes = rec.workMinutes ?? undefined;
+        cell.lateMinutes = rec.lateMinutes ?? undefined;
+        cell.overtimeMinutes = rec.overtimeMinutes ?? undefined;
+      } else if (sched && sched.dayOff) {
+        status = "off";
+      } else if (sched && !sched.dayOff) {
+        status = "alpa";
+      } else {
+        status = "kosong";
+      }
+      cell.status = status;
+      days[date] = cell;
+    }
+    return {
+      employeeId: e.id,
+      employeeFullName: e.fullName,
+      employeeNickname: e.nickname,
+      employeePosition: e.position,
+      days,
+    };
+  });
+
+  return ok({
+    rangeStart: input.from,
+    rangeEnd: input.to,
+    dates,
+    rows,
+  });
+}
+
+/** Enumerate inclusive YYYY-MM-DD list between from..to. */
+function enumerateDates(from: string, to: string): string[] {
+  const out: string[] = [];
+  const fromDate = new Date(`${from}T00:00:00Z`);
+  const toDate = new Date(`${to}T00:00:00Z`);
+  const cursor = new Date(fromDate.getTime());
+  while (cursor.getTime() <= toDate.getTime()) {
+    const y = cursor.getUTCFullYear();
+    const m = String(cursor.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(cursor.getUTCDate()).padStart(2, "0");
+    out.push(`${y}-${m}-${d}`);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return out;
 }
 
 /** Returns a CSV string for attendance records within range. Includes

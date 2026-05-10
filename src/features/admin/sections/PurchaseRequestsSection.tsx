@@ -870,24 +870,30 @@ function RequestCard({
                     Number(it.requestedQty) - Number(it.receivedQty);
                   const itemDone = remaining === 0;
                   return (
-                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant={itemDone ? "outline" : "primary"}
                         onClick={() => onReceive(it, request.status)}
                       >
-                        {itemDone ? "Edit" : "Terima"}
+                        <CheckCheck className="size-4" />
+                        {itemDone ? "Edit Terima" : "Terima"}
                       </Button>
-                      {/* Sesi AE-19 — per-item reject button */}
+                      {/* Sesi AE-20 — per-item reject button. Sebelumnya
+                       * hanya icon X kecil ghost variant — owner feedback
+                       * "tidak jelas, bingung". Sekarang outline danger
+                       * dengan label "Tolak" + icon biar sebanding visual
+                       * dengan tombol "Terima". */}
                       {!itemDone ? (
                         <Button
                           size="sm"
-                          variant="ghost"
+                          variant="outline"
                           onClick={() => onRejectItem(it)}
-                          className="text-danger-500 hover:bg-danger-100"
+                          className="border-danger-300 text-danger-500 hover:bg-danger-50 hover:border-danger-400"
                           title="Tolak item ini"
                         >
-                          <X className="size-3.5" />
+                          <X className="size-4" />
+                          Tolak
                         </Button>
                       ) : null}
                     </div>
