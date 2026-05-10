@@ -5,6 +5,7 @@ import { CheckCircle2, Upload, XCircle } from "lucide-react";
 import { Button, Modal, toast } from "@/components/ui";
 import {
   bulkImportMarketList,
+  deleteAllMarketItems,
   isOk,
   type BulkImportResult,
 } from "@/features/market-list";
@@ -159,6 +160,10 @@ export function MarketCsvImportModal({ open, onClose, onImported }: Props) {
    *  owner ("kenapa import gagal padahal CSV bener" — biasanya supplier
    *  belum di-create di master). */
   const [createMissing, setCreateMissing] = useState(true);
+  /** Sesi AE-31 — kalau true, hapus SEMUA market list existing dulu
+   *  sebelum import. Use case: re-import CSV bersih setelah parsing
+   *  bug atau revisi data besar. Default OFF karena destructive. */
+  const [replaceAll, setReplaceAll] = useState(false);
   const [importResult, setImportResult] = useState<BulkImportResult | null>(
     null,
   );
@@ -180,6 +185,19 @@ export function MarketCsvImportModal({ open, onClose, onImported }: Props) {
   async function handleImport() {
     if (!parsed || parsed.rows.length === 0 || submitting) return;
     setSubmitting(true);
+    // Sesi AE-31 — kalau replaceAll, hapus existing dulu (transaction
+    // terpisah dari bulk import). Owner perlu confirm via UI sebelum
+    // sampai sini.
+    let deletedBefore = 0;
+    if (replaceAll) {
+      const delRes = await deleteAllMarketItems();
+      if (!isOk(delRes)) {
+        setSubmitting(false);
+        toast.error(`Replace gagal: ${delRes.error.message}`);
+        return;
+      }
+      deletedBefore = delRes.data.deletedCount;
+    }
     const res = await bulkImportMarketList({
       rows: parsed.rows,
       createMissing,
@@ -190,6 +208,11 @@ export function MarketCsvImportModal({ open, onClose, onImported }: Props) {
       return;
     }
     const r = res.data;
+    if (deletedBefore > 0) {
+      toast.info(
+        `${deletedBefore} entry lama dihapus sebelum import (replace mode)`,
+      );
+    }
     setImportResult(r);
     if (r.inserted + r.updated > 0) {
       toast.success(
@@ -293,6 +316,25 @@ CV Sumber,Ayam Fillet,57000,1000,gr,yes,`}
                 Direkomendasikan ON saat first-time import. Master baru
                 ditandai notes &quot;Auto-created saat import&quot; di tab
                 Supplier &amp; Bahan supaya owner gampang review.
+              </span>
+            </label>
+
+            {/* Sesi AE-31 — replace mode untuk re-import bersih. */}
+            <label className="flex items-start gap-2 rounded-lg border border-danger-300 bg-danger-100/30 p-3">
+              <input
+                type="checkbox"
+                checked={replaceAll}
+                onChange={(e) => setReplaceAll(e.target.checked)}
+                className="mt-0.5 size-4 accent-danger-500"
+              />
+              <span className="text-xs text-neutral-700">
+                <span className="font-semibold text-danger-500">
+                  ⚠️ Replace mode — hapus SEMUA entry lama sebelum import
+                </span>
+                <br />
+                Cocok untuk re-import bersih (mis. data lama parsing
+                salah). Master Bahan + Supplier TIDAK ikut terhapus,
+                cuma row Market List. Hati-hati: tidak bisa di-undo.
               </span>
             </label>
 

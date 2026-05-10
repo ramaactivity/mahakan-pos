@@ -11,6 +11,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import { deleteAllMarketItems } from "@/features/market-list";
 import {
   Badge,
   Button,
@@ -46,6 +47,9 @@ export function MarketListView() {
   const [deleteTarget, setDeleteTarget] = useState<MarketListItem | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [submittingDelete, setSubmittingDelete] = useState(false);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deleteAllConfirm, setDeleteAllConfirm] = useState("");
+  const [submittingDeleteAll, setSubmittingDeleteAll] = useState(false);
 
   const debouncedSearch = useDebouncedValue(search.trim(), 250);
   const queryClient = useQueryClient();
@@ -112,6 +116,22 @@ export function MarketListView() {
     refresh();
   }
 
+  async function onConfirmDeleteAll() {
+    if (submittingDeleteAll) return;
+    if (deleteAllConfirm.trim().toUpperCase() !== "HAPUS") return;
+    setSubmittingDeleteAll(true);
+    const res = await deleteAllMarketItems();
+    setSubmittingDeleteAll(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(`${res.data.deletedCount} entry dihapus`);
+    setDeleteAllOpen(false);
+    setDeleteAllConfirm("");
+    refresh();
+  }
+
   return (
     <div className="space-y-3">
       {/* Sesi AE-27 — banner relasi yang lebih jelas. Owner bingung
@@ -174,6 +194,16 @@ export function MarketListView() {
               <Plus className="size-4" /> Tambah
             </Button>
           </>
+        ) : null}
+        {canDelete && totalItems > 0 ? (
+          <Button
+            variant="outline"
+            onClick={() => setDeleteAllOpen(true)}
+            className="border-danger-300 text-danger-500 hover:bg-danger-50"
+            title="Hapus semua entry market list (untuk re-import bersih)"
+          >
+            <Trash2 className="size-4" /> Hapus Semua
+          </Button>
         ) : null}
       </div>
 
@@ -335,6 +365,72 @@ export function MarketListView() {
           refresh();
         }}
       />
+
+      {/* Sesi AE-31 — bulk delete modal dengan confirm-by-type "HAPUS"
+       * supaya owner gak accidentally wipe seluruh catalog. */}
+      <Modal
+        open={deleteAllOpen}
+        onClose={() => {
+          if (submittingDeleteAll) return;
+          setDeleteAllOpen(false);
+          setDeleteAllConfirm("");
+        }}
+        title="Hapus Semua Market List"
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setDeleteAllOpen(false);
+                setDeleteAllConfirm("");
+              }}
+              disabled={submittingDeleteAll}
+            >
+              Batal
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={onConfirmDeleteAll}
+              loading={submittingDeleteAll}
+              disabled={
+                deleteAllConfirm.trim().toUpperCase() !== "HAPUS" ||
+                submittingDeleteAll
+              }
+            >
+              Hapus Semua ({totalItems})
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm">
+          <div className="flex items-start gap-2 rounded-md border border-danger-300 bg-danger-100/40 p-3">
+            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-danger-500" />
+            <div className="text-danger-500">
+              <p className="font-semibold">
+                Akan menghapus {totalItems} entry market list (semua supplier
+                × bahan).
+              </p>
+              <p className="mt-1 text-xs">
+                Cocok untuk reset sebelum re-import CSV bersih. Master cost
+                di tab Bahan TIDAK ikut terhapus — owner perlu re-import /
+                re-set primary supplier untuk restore harga sync.
+              </p>
+            </div>
+          </div>
+          <label className="block">
+            <span className="text-xs font-medium text-neutral-700">
+              Ketik <strong>HAPUS</strong> untuk konfirmasi
+            </span>
+            <Input
+              value={deleteAllConfirm}
+              onChange={(e) => setDeleteAllConfirm(e.target.value)}
+              placeholder="HAPUS"
+              autoFocus
+            />
+          </label>
+        </div>
+      </Modal>
 
       <Modal
         open={deleteTarget !== null}

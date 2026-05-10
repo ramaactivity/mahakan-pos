@@ -551,6 +551,56 @@ export async function updateMarketItem(input: {
   return ok(found);
 }
 
+/**
+ * Sesi AE-31 — bulk soft-delete semua market list di outlet.
+ *
+ * Use case: owner re-import CSV setelah parse error — banyak entry
+ * lama dengan angka salah. Manual delete 100+ rows sangat tedious.
+ *
+ * Permission: market_list.delete (owner only — sensitif: bisa wipe
+ * harga catalog yang sudah curated).
+ *
+ * Catatan: NOT mengubah ingredients.cost_per_unit yang sudah ada
+ * (master cost di tab Bahan tetap). Cuma row supplier_ingredients
+ * yang di-soft-delete. Owner perlu re-import / re-add untuk restore
+ * primary supplier sync.
+ */
+export async function deleteAllMarketItems(): Promise<
+  ApiResult<{ deletedCount: number }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "market_list.delete")) {
+    return fail("FORBIDDEN", "Tidak punya hak hapus market list");
+  }
+  const now = new Date();
+  const updated = await db
+    .update(supplierIngredients)
+    .set({
+      deletedAt: now,
+      updatedAt: now,
+      updatedBy: session.user.id,
+    })
+    .where(
+      and(
+        eq(supplierIngredients.outletId, session.user.outletId),
+        isNull(supplierIngredients.deletedAt),
+      ),
+    )
+    .returning({ id: supplierIngredients.id });
+
+  await db.insert(auditLogs).values({
+    eventType: "market_list.delete",
+    userId: session.user.id,
+    entityType: "supplier_ingredients",
+    payload: {
+      bulkDelete: true,
+      deletedCount: updated.length,
+    },
+  });
+
+  return ok({ deletedCount: updated.length });
+}
+
 export async function deleteMarketItem(input: {
   id: string;
 }): Promise<ApiResult<{ id: string }>> {

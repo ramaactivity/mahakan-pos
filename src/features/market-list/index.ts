@@ -19,6 +19,7 @@ export {
 export {
   bulkImportMarketList,
   createMarketItem,
+  deleteAllMarketItems,
   deleteMarketItem,
   listMarketItems,
   lookupMarketPriceForPurchase,
