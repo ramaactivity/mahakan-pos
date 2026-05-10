@@ -36,4 +36,8 @@ export const bulkImportRowSchema = z.object({
 
 export const bulkImportSchema = z.object({
   rows: z.array(bulkImportRowSchema).min(1).max(500),
+  /** Sesi AE-27 — kalau true, auto-create supplier / ingredient yang
+   *  belum ada di master (drastically reduces friction kalau staff
+   *  punya CSV besar dengan supplier baru). */
+  createMissing: z.boolean().optional().default(false),
 });

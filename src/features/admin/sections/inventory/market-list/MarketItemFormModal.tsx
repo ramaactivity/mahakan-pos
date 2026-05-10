@@ -3,9 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Button,
+  Combobox,
   Input,
   Modal,
+  Select,
   toast,
+  type ComboboxGroup,
 } from "@/components/ui";
 import {
   createMarketItem,
@@ -24,6 +27,7 @@ import {
   type Supplier,
 } from "@/features/suppliers";
 import { compatibleUnitsFor, resolveUnit } from "@/lib/unit-conversion";
+import { formatRupiah } from "@/lib/format";
 
 const COMMON_PACK_UNITS = [
   "Kg",
@@ -48,6 +52,11 @@ interface Props {
   onSaved: () => void;
 }
 
+/**
+ * Sesi AE-27 — pakai Combobox (search-able) + Select (styled) konsisten
+ * dengan modul lain (Catat Pembelian, dll). Sebelumnya pakai native
+ * <select> bawaan browser yang berbeda style + mobile UX kurang oke.
+ */
 export function MarketItemFormModal({
   open,
   target,
@@ -120,14 +129,18 @@ export function MarketItemFormModal({
   );
 
   /** Pack unit options — kalau ingredient dipilih, batasi ke unit
-   *  yang compatible dengan master unit (mass / volume / count).
-   *  Untuk discrete (Btl/Pcs), tetap allow common pack units. */
+   *  yang compatible dengan master unit (mass / volume / count). */
   const packUnitOptions = useMemo(() => {
-    if (!selectedIngredient) return COMMON_PACK_UNITS;
-    const compat = compatibleUnitsFor(selectedIngredient.unit).map((o) => o.value);
+    if (!selectedIngredient)
+      return COMMON_PACK_UNITS.map((u) => ({ value: u, label: u }));
+    const compat = compatibleUnitsFor(selectedIngredient.unit).map((o) => ({
+      value: o.value,
+      label: o.label,
+    }));
     const meta = resolveUnit(selectedIngredient.unit);
     if (!meta || meta.dimension === "discrete") {
-      return Array.from(new Set([selectedIngredient.unit, ...COMMON_PACK_UNITS]));
+      const set = new Set([selectedIngredient.unit, ...COMMON_PACK_UNITS]);
+      return Array.from(set).map((u) => ({ value: u, label: u }));
     }
     return compat;
   }, [selectedIngredient]);
@@ -145,8 +158,8 @@ export function MarketItemFormModal({
   // Effective cost preview (Rp per ingredient.unit).
   const effectiveCost = useMemo(() => {
     if (!selectedIngredient) return null;
-    const cost = Number(unitCost);
-    const size = Number(packSize);
+    const cost = Number(unitCost.replace(/[^\d]/g, ""));
+    const size = Number(packSize.replace(",", "."));
     if (!Number.isFinite(cost) || cost <= 0) return null;
     if (!Number.isFinite(size) || size <= 0) return null;
     if (packUnit === selectedIngredient.unit) {
@@ -217,6 +230,8 @@ export function MarketItemFormModal({
     onSaved();
   }
 
+  const selectedSupplier = suppliers.find((s) => s.id === supplierId);
+
   return (
     <Modal
       open={open}
@@ -241,100 +256,99 @@ export function MarketItemFormModal({
         ) : (
           <>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-neutral-700">
-                  Supplier
-                </label>
-                <select
-                  value={supplierId}
-                  onChange={(e) => setSupplierId(e.target.value)}
-                  disabled={target !== null}
-                  className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-mahakan-green-700 focus:outline-none disabled:bg-neutral-50 disabled:text-neutral-600"
-                >
-                  <option value="">Pilih supplier…</option>
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-neutral-700">
-                  Bahan
-                </label>
-                <select
-                  value={ingredientId}
-                  onChange={(e) => setIngredientId(e.target.value)}
-                  disabled={target !== null}
-                  className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-mahakan-green-700 focus:outline-none disabled:bg-neutral-50 disabled:text-neutral-600"
-                >
-                  <option value="">Pilih bahan…</option>
-                  {ingredients.map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.name} ({i.unit})
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <Combobox
+                label="Supplier"
+                placeholder={
+                  target ? selectedSupplier?.name ?? "—" : "Pilih supplier…"
+                }
+                searchPlaceholder="Cari supplier…"
+                clearable={!target}
+                disabled={target !== null}
+                value={supplierId || null}
+                onChange={(v) => setSupplierId(v ?? "")}
+                groups={[
+                  {
+                    label: "",
+                    options: suppliers.map((s) => ({
+                      value: s.id,
+                      label: s.name,
+                      hint: s.contact ?? undefined,
+                      keywords: [s.category ?? ""],
+                    })),
+                  } satisfies ComboboxGroup,
+                ]}
+              />
+              <Combobox
+                label="Bahan"
+                placeholder={
+                  target ? selectedIngredient?.name ?? "—" : "Pilih bahan…"
+                }
+                searchPlaceholder="Cari bahan…"
+                clearable={!target}
+                disabled={target !== null}
+                value={ingredientId || null}
+                onChange={(v) => setIngredientId(v ?? "")}
+                groups={[
+                  {
+                    label: "",
+                    options: ingredients.map((i) => ({
+                      value: i.id,
+                      label: i.name,
+                      hint: i.unit,
+                      keywords: [i.section ?? ""],
+                    })),
+                  } satisfies ComboboxGroup,
+                ]}
+              />
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-neutral-700">
-                  Harga Total (Rp)
-                </label>
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  value={unitCost}
-                  onChange={(e) =>
-                    setUnitCost(e.target.value.replace(/\D/g, ""))
-                  }
-                  placeholder="36000"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-neutral-700">
-                  Pack Size
-                </label>
-                <Input
-                  type="text"
-                  inputMode="decimal"
-                  value={packSize}
-                  onChange={(e) => setPackSize(e.target.value)}
-                  placeholder="1000"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-neutral-700">
-                  Pack Unit
-                </label>
-                <select
-                  value={packUnit}
-                  onChange={(e) => setPackUnit(e.target.value)}
-                  className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-mahakan-green-700 focus:outline-none"
-                >
-                  <option value="">Pilih…</option>
-                  {packUnitOptions.map((u) => (
-                    <option key={u} value={u}>
-                      {u}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <Input
+                label="Harga Total (Rp)"
+                type="text"
+                inputMode="numeric"
+                value={unitCost}
+                onChange={(e) =>
+                  setUnitCost(e.target.value.replace(/\D/g, ""))
+                }
+                placeholder="36000"
+              />
+              <Input
+                label="Pack Size"
+                type="text"
+                inputMode="decimal"
+                value={packSize}
+                onChange={(e) => setPackSize(e.target.value)}
+                placeholder="1000"
+              />
+              <Select
+                label="Pack Unit"
+                value={packUnit}
+                onValueChange={setPackUnit}
+                options={packUnitOptions}
+                placeholder="Pilih…"
+              />
             </div>
 
             {selectedIngredient && effectiveCost !== null ? (
-              <div className="rounded-lg bg-info-100/40 p-3 text-xs text-info-500">
-                Effective cost ={" "}
-                <span className="font-mono font-bold">
-                  Rp {new Intl.NumberFormat("id-ID").format(effectiveCost)}
-                </span>{" "}
-                / {selectedIngredient.unit}
+              <div className="rounded-lg border border-info-300 bg-info-100/40 p-3 text-xs">
+                <div className="font-semibold text-info-500">
+                  Effective cost = {formatRupiah(effectiveCost)} /{" "}
+                  {selectedIngredient.unit}
+                </div>
+                <div className="mt-1 text-info-500/80">
+                  Master cost {selectedIngredient.name} sekarang ={" "}
+                  <span className="font-mono">
+                    {formatRupiah(selectedIngredient.costPerUnit)}
+                  </span>
+                  /{selectedIngredient.unit}
+                  {isPrimary
+                    ? ` → akan di-update ke ${formatRupiah(effectiveCost)} kalau disimpan`
+                    : " (tidak diubah, cuma catat sebagai harga supplier alt)"}
+                </div>
               </div>
             ) : selectedIngredient && unitCost && packSize && packUnit ? (
-              <div className="rounded-lg bg-warning-100 p-3 text-xs text-warning-500">
+              <div className="rounded-lg border border-warning-300 bg-warning-100/40 p-3 text-xs text-warning-500">
                 ⚠️ Tidak bisa convert {packUnit} ke {selectedIngredient.unit}{" "}
                 — pilih unit pack yang sesuai dimensi.
               </div>
@@ -358,16 +372,12 @@ export function MarketItemFormModal({
               </span>
             </label>
 
-            <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-700">
-                Catatan (opsional)
-              </label>
-              <Input
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Mis. promo Lebaran, harga event, dll"
-              />
-            </div>
+            <Input
+              label="Catatan (opsional)"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Mis. promo Lebaran, harga event, dll"
+            />
 
             {error ? (
               <p

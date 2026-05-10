@@ -98,5 +98,9 @@ export interface BulkImportResult {
   inserted: number;
   updated: number;
   skipped: number;
+  /** Auto-created suppliers (kalau opsi createMissing aktif). */
+  suppliersCreated: number;
+  /** Auto-created ingredients (kalau opsi createMissing aktif). */
+  ingredientsCreated: number;
   errors: Array<{ row: number; message: string }>;
 }

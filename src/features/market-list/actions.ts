@@ -589,8 +589,11 @@ export async function deleteMarketItem(input: {
 }
 
 /** Bulk import dari CSV. Match supplier + ingredient by name (case-insensitive).
- *  Existing entry → update; new → insert. Kalau name tidak match, skip + report
- *  ke errors. Cascade dijalankan untuk semua primary updates di akhir batch. */
+ *  Existing entry → update; new → insert. Kalau name tidak match dan
+ *  createMissing=true, auto-create supplier / ingredient (notes stamped
+ *  "Auto-created from market list import" supaya owner aware). Kalau
+ *  createMissing=false dan ada match yang miss, skip + report ke errors.
+ *  Cascade dijalankan untuk semua primary updates di akhir batch. */
 export async function bulkImportMarketList(input: {
   rows: Array<{
     supplierName: string;
@@ -601,6 +604,7 @@ export async function bulkImportMarketList(input: {
     isPrimary?: boolean;
     notes?: string | null;
   }>;
+  createMissing?: boolean;
 }): Promise<ApiResult<BulkImportResult>> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "market_list.create")) {
@@ -647,22 +651,82 @@ export async function bulkImportMarketList(input: {
     inserted: 0,
     updated: 0,
     skipped: 0,
+    suppliersCreated: 0,
+    ingredientsCreated: 0,
     errors: [],
   };
   const cascadeIngredientIds = new Set<string>();
   const now = new Date();
+  const createMissing = parse.data.createMissing ?? false;
+  const importStamp = "Auto-created saat import Market List";
 
   await db.transaction(async (tx) => {
     for (let idx = 0; idx < parse.data.rows.length; idx++) {
       const row = parse.data.rows[idx]!;
-      const supplier = supplierByName.get(row.supplierName.toLowerCase());
-      const ingredient = ingredientByName.get(
+      let supplier = supplierByName.get(row.supplierName.toLowerCase());
+      let ingredient = ingredientByName.get(
         row.ingredientName.toLowerCase(),
       );
+      // Sesi AE-27 — auto-create kalau opsi createMissing aktif. Notes
+      // stamped supaya owner aware ada master baru dari import flow.
+      if (!supplier && createMissing) {
+        const [created] = await tx
+          .insert(suppliers)
+          .values({
+            outletId: session.user.outletId,
+            name: row.supplierName,
+            contact: null,
+            category: null,
+            defaultPaymentTermDays: 0,
+            notes: importStamp,
+            isActive: true,
+            createdBy: session.user.id,
+            updatedBy: session.user.id,
+          })
+          .returning({ id: suppliers.id, name: suppliers.name });
+        if (created) {
+          supplier = { id: created.id, name: created.name };
+          supplierByName.set(created.name.toLowerCase(), supplier);
+          result.suppliersCreated++;
+        }
+      }
+      if (!ingredient && createMissing) {
+        const [created] = await tx
+          .insert(ingredients)
+          .values({
+            outletId: session.user.outletId,
+            name: row.ingredientName,
+            unit: row.packUnit,
+            currentStock: 0,
+            currentStockDecimal: "0.0000",
+            costPerUnit: 0,
+            notes: importStamp,
+            isActive: true,
+            isPreparation: false,
+            createdBy: session.user.id,
+            updatedBy: session.user.id,
+          })
+          .returning({
+            id: ingredients.id,
+            name: ingredients.name,
+            unit: ingredients.unit,
+            isPreparation: ingredients.isPreparation,
+          });
+        if (created) {
+          ingredient = {
+            id: created.id,
+            name: created.name,
+            unit: created.unit,
+            isPreparation: created.isPreparation,
+          };
+          ingredientByName.set(created.name.toLowerCase(), ingredient);
+          result.ingredientsCreated++;
+        }
+      }
       if (!supplier) {
         result.errors.push({
           row: idx + 1,
-          message: `Supplier "${row.supplierName}" tidak ditemukan`,
+          message: `Supplier "${row.supplierName}" tidak ditemukan${createMissing ? "" : " (centang opsi auto-create)"}`,
         });
         result.skipped++;
         continue;
@@ -670,7 +734,7 @@ export async function bulkImportMarketList(input: {
       if (!ingredient) {
         result.errors.push({
           row: idx + 1,
-          message: `Bahan "${row.ingredientName}" tidak ditemukan`,
+          message: `Bahan "${row.ingredientName}" tidak ditemukan${createMissing ? "" : " (centang opsi auto-create)"}`,
         });
         result.skipped++;
         continue;

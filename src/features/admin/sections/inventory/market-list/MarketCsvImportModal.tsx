@@ -1,9 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Upload } from "lucide-react";
+import { CheckCircle2, Upload, XCircle } from "lucide-react";
 import { Button, Modal, toast } from "@/components/ui";
-import { bulkImportMarketList, isOk } from "@/features/market-list";
+import {
+  bulkImportMarketList,
+  isOk,
+  type BulkImportResult,
+} from "@/features/market-list";
 
 interface Props {
   open: boolean;
@@ -147,15 +151,25 @@ export function MarketCsvImportModal({ open, onClose, onImported }: Props) {
   const [parsed, setParsed] = useState<ParseResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [fileName, setFileName] = useState<string>("");
+  /** Sesi AE-27 — kalau true, server auto-create supplier/bahan yang
+   *  belum ada di master. Default ON karena ini path utama yang diminta
+   *  owner ("kenapa import gagal padahal CSV bener" — biasanya supplier
+   *  belum di-create di master). */
+  const [createMissing, setCreateMissing] = useState(true);
+  const [importResult, setImportResult] = useState<BulkImportResult | null>(
+    null,
+  );
 
   function reset() {
     setParsed(null);
     setSubmitting(false);
     setFileName("");
+    setImportResult(null);
   }
 
   async function handleFile(file: File) {
     setFileName(file.name);
+    setImportResult(null);
     const text = await file.text();
     setParsed(parseCsv(text));
   }
@@ -163,140 +177,269 @@ export function MarketCsvImportModal({ open, onClose, onImported }: Props) {
   async function handleImport() {
     if (!parsed || parsed.rows.length === 0 || submitting) return;
     setSubmitting(true);
-    const res = await bulkImportMarketList({ rows: parsed.rows });
+    const res = await bulkImportMarketList({
+      rows: parsed.rows,
+      createMissing,
+    });
     setSubmitting(false);
     if (!isOk(res)) {
       toast.error(res.error.message);
       return;
     }
     const r = res.data;
-    toast.success(
-      `Import selesai: ${r.inserted} baru, ${r.updated} update, ${r.skipped} skip`,
-    );
-    if (r.errors.length > 0) {
-      console.warn("Bulk import errors:", r.errors);
+    setImportResult(r);
+    if (r.inserted + r.updated > 0) {
+      toast.success(
+        `Import selesai: ${r.inserted} baru, ${r.updated} update${
+          r.suppliersCreated > 0 ? `, ${r.suppliersCreated} supplier baru` : ""
+        }${
+          r.ingredientsCreated > 0
+            ? `, ${r.ingredientsCreated} bahan baru`
+            : ""
+        }`,
+      );
+      // Trigger parent refresh tapi JANGAN close modal — owner perlu lihat
+      // result detail terutama kalau ada error.
+      onImported();
+    } else {
+      toast.error("Tidak ada baris yang berhasil di-import");
     }
-    onImported();
+  }
+
+  function handleClose() {
     reset();
+    onClose();
   }
 
   return (
     <Modal
       open={open}
-      onClose={() => {
-        reset();
-        onClose();
-      }}
+      onClose={handleClose}
       title="Import Market List dari CSV"
       description="Format header: supplier, bahan, harga, pack_size, pack_unit, primary (opsional), notes (opsional). Match supplier + bahan by name (case-insensitive)."
       size="lg"
       footer={
         <>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              reset();
-              onClose();
-            }}
-            disabled={submitting}
-          >
-            Tutup
+          <Button variant="ghost" onClick={handleClose} disabled={submitting}>
+            {importResult ? "Selesai" : "Tutup"}
           </Button>
-          <Button
-            onClick={handleImport}
-            loading={submitting}
-            disabled={!parsed || parsed.rows.length === 0}
-          >
-            <Upload className="size-4" /> Import {parsed?.rows.length ?? 0} baris
-          </Button>
+          {!importResult ? (
+            <Button
+              onClick={handleImport}
+              loading={submitting}
+              disabled={!parsed || parsed.rows.length === 0}
+            >
+              <Upload className="size-4" /> Import {parsed?.rows.length ?? 0}{" "}
+              baris
+            </Button>
+          ) : (
+            <Button onClick={() => reset()}>Import Lagi</Button>
+          )}
         </>
       }
     >
       <div className="space-y-3">
-        <label className="block">
-          <span className="text-xs font-medium text-neutral-700">
-            File CSV
-          </span>
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void handleFile(f);
-            }}
-            className="mt-1 block w-full text-sm text-neutral-700 file:mr-3 file:rounded-md file:border-0 file:bg-mahakan-green-700 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-mahakan-green-900"
-          />
-          {fileName ? (
-            <span className="mt-1 inline-block text-xs text-neutral-600">
-              {fileName}
-            </span>
-          ) : null}
-        </label>
+        {!importResult ? (
+          <>
+            <label className="block">
+              <span className="text-xs font-medium text-neutral-700">
+                File CSV
+              </span>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void handleFile(f);
+                }}
+                className="mt-1 block w-full text-sm text-neutral-700 file:mr-3 file:rounded-md file:border-0 file:bg-mahakan-green-700 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-mahakan-green-900"
+              />
+              {fileName ? (
+                <span className="mt-1 inline-block text-xs text-neutral-600">
+                  {fileName}
+                </span>
+              ) : null}
+            </label>
 
-        <details className="rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-700">
-          <summary className="cursor-pointer font-semibold">
-            Contoh format CSV (klik untuk lihat)
-          </summary>
-          <pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-neutral-700">
+            <details className="rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-700">
+              <summary className="cursor-pointer font-semibold">
+                Contoh format CSV (klik untuk lihat)
+              </summary>
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-neutral-700">
 {`supplier,bahan,harga,pack_size,pack_unit,primary,notes
 Pasar Cisarua,Bawang Bombay,36000,1000,gr,yes,
 Toko Indah,Beras,12000,1,Kg,no,promo Mei
 CV Sumber,Ayam Fillet,57000,1000,gr,yes,`}
-          </pre>
-        </details>
+              </pre>
+            </details>
 
-        {parsed ? (
-          <div className="rounded-lg border border-neutral-200 bg-white p-3">
-            <p className="text-sm font-semibold text-neutral-900">
-              Preview: {parsed.rows.length} baris valid
-            </p>
-            {parsed.warnings.length > 0 ? (
-              <div className="mt-2 max-h-40 overflow-y-auto rounded-md bg-warning-100 p-2 text-xs text-warning-500">
-                {parsed.warnings.map((w, i) => (
-                  <div key={i}>⚠️ {w}</div>
-                ))}
-              </div>
-            ) : null}
-            {parsed.rows.length > 0 ? (
-              <div className="mt-2 max-h-60 overflow-y-auto">
-                <table className="w-full text-xs">
-                  <thead className="bg-neutral-100 text-left">
-                    <tr>
-                      <th className="px-2 py-1">Supplier</th>
-                      <th className="px-2 py-1">Bahan</th>
-                      <th className="px-2 py-1 text-right">Harga</th>
-                      <th className="px-2 py-1">Pack</th>
-                      <th className="px-2 py-1">Primary</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {parsed.rows.slice(0, 50).map((r, i) => (
-                      <tr key={i} className="border-b border-neutral-100">
-                        <td className="px-2 py-1">{r.supplierName}</td>
-                        <td className="px-2 py-1">{r.ingredientName}</td>
-                        <td className="px-2 py-1 text-right font-mono">
-                          {new Intl.NumberFormat("id-ID").format(r.unitCost)}
-                        </td>
-                        <td className="px-2 py-1 font-mono">
-                          {r.packSize} {r.packUnit}
-                        </td>
-                        <td className="px-2 py-1">
-                          {r.isPrimary ? "✓" : "—"}
-                        </td>
-                      </tr>
+            {/* Sesi AE-27 — checkbox auto-create. Solves "import gagal"
+             * issue saat supplier/bahan di CSV belum ada di master. */}
+            <label className="flex items-start gap-2 rounded-lg border border-mahakan-green-700/30 bg-mahakan-green-50 p-3">
+              <input
+                type="checkbox"
+                checked={createMissing}
+                onChange={(e) => setCreateMissing(e.target.checked)}
+                className="mt-0.5 size-4 accent-mahakan-green-700"
+              />
+              <span className="text-xs text-neutral-700">
+                <span className="font-semibold text-mahakan-green-900">
+                  Buat supplier / bahan baru otomatis kalau belum ada
+                </span>
+                <br />
+                Direkomendasikan ON saat first-time import. Master baru
+                ditandai notes &quot;Auto-created saat import&quot; di tab
+                Supplier &amp; Bahan supaya owner gampang review.
+              </span>
+            </label>
+
+            {parsed ? (
+              <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                <p className="text-sm font-semibold text-neutral-900">
+                  Preview: {parsed.rows.length} baris valid
+                </p>
+                {parsed.warnings.length > 0 ? (
+                  <div className="mt-2 max-h-40 overflow-y-auto rounded-md bg-warning-100 p-2 text-xs text-warning-500">
+                    {parsed.warnings.map((w, i) => (
+                      <div key={i}>⚠️ {w}</div>
                     ))}
-                  </tbody>
-                </table>
-                {parsed.rows.length > 50 ? (
-                  <p className="mt-1 text-xs text-neutral-500">
-                    +{parsed.rows.length - 50} baris lainnya…
-                  </p>
+                  </div>
+                ) : null}
+                {parsed.rows.length > 0 ? (
+                  <div className="mt-2 max-h-60 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-neutral-100 text-left">
+                        <tr>
+                          <th className="px-2 py-1">Supplier</th>
+                          <th className="px-2 py-1">Bahan</th>
+                          <th className="px-2 py-1 text-right">Harga</th>
+                          <th className="px-2 py-1">Pack</th>
+                          <th className="px-2 py-1">Primary</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {parsed.rows.slice(0, 50).map((r, i) => (
+                          <tr key={i} className="border-b border-neutral-100">
+                            <td className="px-2 py-1">{r.supplierName}</td>
+                            <td className="px-2 py-1">{r.ingredientName}</td>
+                            <td className="px-2 py-1 text-right font-mono">
+                              {new Intl.NumberFormat("id-ID").format(r.unitCost)}
+                            </td>
+                            <td className="px-2 py-1 font-mono">
+                              {r.packSize} {r.packUnit}
+                            </td>
+                            <td className="px-2 py-1">
+                              {r.isPrimary ? "✓" : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {parsed.rows.length > 50 ? (
+                      <p className="mt-1 text-xs text-neutral-500">
+                        +{parsed.rows.length - 50} baris lainnya…
+                      </p>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             ) : null}
-          </div>
-        ) : null}
+          </>
+        ) : (
+          <ImportResultPanel result={importResult} />
+        )}
       </div>
     </Modal>
+  );
+}
+
+/** Sesi AE-27 — result modal tetap tampil setelah import biar owner
+ *  tau persis berapa yg masuk + error apa. Sebelumnya auto-close + cuma
+ *  toast singkat → owner gak tau kenapa "import gagal". */
+function ImportResultPanel({ result }: { result: BulkImportResult }) {
+  const success = result.inserted + result.updated;
+  const hasErrors = result.errors.length > 0;
+  return (
+    <div className="space-y-3">
+      <div
+        className={
+          "rounded-lg border p-4 " +
+          (success > 0
+            ? "border-success-500/30 bg-success-100/40"
+            : "border-warning-500/30 bg-warning-100/40")
+        }
+      >
+        <div className="flex items-center gap-2">
+          {success > 0 ? (
+            <CheckCircle2 className="size-5 text-success-500" />
+          ) : (
+            <XCircle className="size-5 text-warning-500" />
+          )}
+          <span className="text-base font-semibold">
+            Import {success > 0 ? "Selesai" : "Tidak ada yg masuk"}
+          </span>
+        </div>
+        <ul className="mt-2 space-y-1 text-sm">
+          <li>
+            ✓ <strong>{result.inserted}</strong> baris baru ditambah
+          </li>
+          <li>
+            ✓ <strong>{result.updated}</strong> baris di-update
+          </li>
+          {result.suppliersCreated > 0 ? (
+            <li>
+              ✓ <strong>{result.suppliersCreated}</strong> supplier baru
+              dibuat otomatis
+            </li>
+          ) : null}
+          {result.ingredientsCreated > 0 ? (
+            <li>
+              ✓ <strong>{result.ingredientsCreated}</strong> bahan baru
+              dibuat otomatis
+            </li>
+          ) : null}
+          {result.skipped > 0 ? (
+            <li className="text-warning-500">
+              ⚠️ <strong>{result.skipped}</strong> baris di-skip (lihat detail
+              di bawah)
+            </li>
+          ) : null}
+        </ul>
+      </div>
+
+      {hasErrors ? (
+        <details
+          open
+          className="rounded-lg border border-danger-300 bg-white p-3"
+        >
+          <summary className="cursor-pointer text-sm font-semibold text-danger-500">
+            {result.errors.length} baris error / skip
+          </summary>
+          <div className="mt-2 max-h-60 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-neutral-100 text-left">
+                <tr>
+                  <th className="px-2 py-1 w-16">Baris</th>
+                  <th className="px-2 py-1">Pesan</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.errors.slice(0, 50).map((e, i) => (
+                  <tr key={i} className="border-b border-neutral-100">
+                    <td className="px-2 py-1 font-mono">#{e.row}</td>
+                    <td className="px-2 py-1 text-danger-500">{e.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {result.errors.length > 50 ? (
+              <p className="mt-1 text-xs text-neutral-500">
+                +{result.errors.length - 50} error lainnya…
+              </p>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
+    </div>
   );
 }

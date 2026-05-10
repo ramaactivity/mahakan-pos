@@ -114,12 +114,36 @@ export function MarketListView() {
 
   return (
     <div className="space-y-3">
+      {/* Sesi AE-27 — banner relasi yang lebih jelas. Owner bingung
+       * relasi Market List vs Bahan vs Supplier. Sekarang di-jelasin:
+       *   Bahan = master fisik (stock + unit + cost gabungan)
+       *   Supplier = master vendor (nama + kontak)
+       *   Market List = M2M (Supplier × Bahan) + harga + pack info */}
       <div className="rounded-lg border border-info-300 bg-info-100/40 p-3 text-xs text-info-500">
-        <strong>Market List</strong> = katalog harga belanja per supplier
-        untuk tiap bahan baku. Kalau supplier ditandai{" "}
-        <Star className="inline size-3.5 fill-warning-500 text-warning-500" />{" "}
-        <strong>Primary</strong>, harga otomatis update master cost di Bahan,
-        COGS, Recipe, dan HPP saat diubah.
+        <div className="mb-1 font-semibold">
+          📦 Market List = katalog harga belanja per supplier per bahan
+        </div>
+        <ul className="space-y-1 ml-4 list-disc">
+          <li>
+            <strong>Bahan</strong> (tab Bahan) = master fisik: stok + unit +{" "}
+            <em>1 master cost</em>
+          </li>
+          <li>
+            <strong>Supplier</strong> (tab Supplier) = master vendor: nama +
+            kontak + payment terms
+          </li>
+          <li>
+            <strong>Market List</strong> (tab ini) = catatan harga per
+            kombinasi (Supplier × Bahan) + pack size. <em>Banding harga</em>{" "}
+            multi-supplier per bahan
+          </li>
+          <li>
+            Tandai 1 supplier{" "}
+            <Star className="inline size-3 fill-warning-500 text-warning-500" />{" "}
+            <strong>Primary</strong> per bahan → harga otomatis sync ke
+            master cost Bahan + COGS + Recipe + HPP saat diubah
+          </li>
+        </ul>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
