@@ -906,6 +906,13 @@ export function PosShell() {
           return;
         }
         removeDraft(activeDraft.id);
+        // Sesi AE-28 — CRITICAL FIX: bump historyRefreshKey langsung
+        // setelah createTransaction sukses. Tanpa bump, Pesanan +
+        // Riwayat panel pakai cached data (stale sampai 30s tick),
+        // sehingga owner test "bayar cash → cek tab Pesanan" lihat
+        // kosong. Sebelumnya hanya handleFinishOrder yang bump (saat
+        // user klik Selesai), tapi user kadang langsung tab-switch.
+        setHistoryRefreshKey((k) => k + 1);
         setRightPanel({ kind: "paid", trx: res.data });
         toast.success(`Transaksi ${res.data.transactionNumber} berhasil`);
 
