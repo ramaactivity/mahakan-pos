@@ -552,6 +552,174 @@ export async function receiveItem(
   return ok(result);
 }
 
+/**
+ * Sesi AE-18 — bulk receive multiple items dalam 1 PR. Owner request:
+ * "terima semua sekaligus" supaya ga klik per-item. Reuse single-item
+ * status recompute logic by replaying within satu tx.
+ *
+ * Input: array of { itemId, receivedQty }. Validation: each receivedQty
+ * 0..requestedQty. Setelah update semua items, recompute parent status
+ * once (open/partial/completed berdasarkan agg).
+ */
+export async function bulkReceiveItems(input: {
+  requestId: string;
+  items: Array<{ itemId: string; receivedQty: number }>;
+}): Promise<
+  ApiResult<{
+    requestId: string;
+    newStatus: PurchaseRequestStatus;
+    itemsUpdated: number;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase_request.receive")) {
+    return fail("FORBIDDEN", "Tidak punya hak terima barang");
+  }
+  if (!input.items || input.items.length === 0) {
+    return fail("EMPTY_ITEMS", "Tidak ada item untuk di-update");
+  }
+  for (const it of input.items) {
+    if (!Number.isFinite(it.receivedQty) || it.receivedQty < 0) {
+      return fail("INVALID_QTY", "Qty tidak valid di salah satu item");
+    }
+  }
+
+  type BulkErr =
+    | "REQUEST_NOT_FOUND"
+    | "CROSS_OUTLET"
+    | "REQUEST_CANCELLED"
+    | "ITEM_NOT_IN_REQUEST"
+    | "QTY_EXCEEDS_REQUESTED";
+  type BulkResult =
+    | { error: BulkErr; itemId?: string }
+    | {
+        requestId: string;
+        newStatus: PurchaseRequestStatus;
+        itemsUpdated: number;
+      };
+
+  const result: BulkResult = await db.transaction(async (tx) => {
+    const [parent] = await tx
+      .select()
+      .from(purchaseRequests)
+      .where(eq(purchaseRequests.id, input.requestId))
+      .limit(1);
+    if (!parent) return { error: "REQUEST_NOT_FOUND" };
+    if (parent.outletId !== session.user.outletId) {
+      return { error: "CROSS_OUTLET" };
+    }
+    if (parent.status === "cancelled") {
+      return { error: "REQUEST_CANCELLED" };
+    }
+
+    // Lock + validate all items belong to this request.
+    const itemIds = input.items.map((i) => i.itemId);
+    const lockedItems = await tx
+      .select()
+      .from(purchaseRequestItems)
+      .where(inArray(purchaseRequestItems.id, itemIds))
+      .for("update");
+
+    const byId = new Map(lockedItems.map((r) => [r.id, r] as const));
+    for (const it of input.items) {
+      const row = byId.get(it.itemId);
+      if (!row || row.requestId !== input.requestId) {
+        return { error: "ITEM_NOT_IN_REQUEST", itemId: it.itemId };
+      }
+      if (it.receivedQty > Number(row.requestedQty)) {
+        return { error: "QTY_EXCEEDS_REQUESTED", itemId: it.itemId };
+      }
+    }
+
+    // Apply updates.
+    const now = new Date();
+    let itemsUpdated = 0;
+    for (const it of input.items) {
+      const row = byId.get(it.itemId)!;
+      const oldQty = Number(row.receivedQty);
+      if (oldQty === it.receivedQty) continue; // skip noop
+      await tx
+        .update(purchaseRequestItems)
+        .set({
+          receivedQty: Math.max(0, Math.floor(it.receivedQty)),
+          receivedQtyDecimal: it.receivedQty.toFixed(4),
+          updatedAt: now,
+        })
+        .where(eq(purchaseRequestItems.id, it.itemId));
+      itemsUpdated++;
+    }
+
+    // Recompute parent status once (after all updates).
+    const [agg] = await tx
+      .select({
+        totalReceived: sql<string>`COALESCE(SUM(${purchaseRequestItems.receivedQty}), 0)`,
+        totalRequested: sql<string>`COALESCE(SUM(${purchaseRequestItems.requestedQty}), 0)`,
+        anyPositive: sql<boolean>`BOOL_OR(${purchaseRequestItems.receivedQty} > 0)`,
+      })
+      .from(purchaseRequestItems)
+      .where(eq(purchaseRequestItems.requestId, parent.id));
+
+    let newStatus: PurchaseRequestStatus = "open";
+    const totalReceived = Number(agg.totalReceived);
+    const totalRequested = Number(agg.totalRequested);
+    if (totalRequested > 0 && totalReceived >= totalRequested) {
+      newStatus = "completed";
+    } else if (agg.anyPositive) {
+      newStatus = "partial";
+    }
+
+    if (newStatus !== parent.status) {
+      await tx
+        .update(purchaseRequests)
+        .set({
+          status: newStatus,
+          completedAt: newStatus === "completed" ? now : null,
+          updatedAt: now,
+          updatedBy: session.user.id,
+        })
+        .where(eq(purchaseRequests.id, parent.id));
+    } else if (itemsUpdated > 0) {
+      await tx
+        .update(purchaseRequests)
+        .set({ updatedAt: now, updatedBy: session.user.id })
+        .where(eq(purchaseRequests.id, parent.id));
+    }
+
+    return { requestId: parent.id, newStatus, itemsUpdated };
+  });
+
+  if ("error" in result) {
+    const messages: Record<BulkErr, string> = {
+      REQUEST_NOT_FOUND: "Request tidak ditemukan",
+      CROSS_OUTLET: "Request dari outlet lain",
+      REQUEST_CANCELLED: "Request sudah dibatalkan",
+      ITEM_NOT_IN_REQUEST: "Salah satu item bukan bagian dari request ini",
+      QTY_EXCEEDS_REQUESTED: "Salah satu qty melebihi yang diminta",
+    };
+    return fail(result.error, messages[result.error]);
+  }
+
+  await logAudit({
+    eventType: "purchase_request.receive",
+    userId: session.user.id,
+    entityType: "purchase_request",
+    entityId: result.requestId,
+    payload: {
+      summary: `Bulk receive ${result.itemsUpdated} item; status: ${result.newStatus}`,
+      after: {
+        itemsUpdated: result.itemsUpdated,
+        requestStatus: result.newStatus,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  }).catch((e) => console.error("[audit purchase_request.bulk-receive]", e));
+
+  return ok(result);
+}
+
 export async function cancelPurchaseRequest(
   input: CancelPurchaseRequestInput,
 ): Promise<ApiResult<PurchaseRequest>> {

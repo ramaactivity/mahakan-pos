@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  CheckCheck,
   CheckCircle2,
   ClipboardList,
   MessageCircle,
@@ -28,6 +29,7 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui";
 import {
+  bulkReceiveItems,
   cancelPurchaseRequest,
   getPurchaseRequestStats,
   listPurchaseRequests,
@@ -84,6 +86,12 @@ export function PurchaseRequestsSection() {
   );
   const [cancelReason, setCancelReason] = useState("");
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
+
+  // Sesi AE-18 — bulk receive state.
+  const [bulkTarget, setBulkTarget] =
+    useState<PurchaseRequestWithItems | null>(null);
+  const [bulkQtys, setBulkQtys] = useState<Record<string, string>>({});
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
 
   const {
     data: requests = [],
@@ -157,6 +165,78 @@ export function PurchaseRequestsSection() {
     void refresh();
   }
 
+  function openBulk(req: PurchaseRequestWithItems) {
+    setBulkTarget(req);
+    // Pre-fill with sisa untuk full fulfill.
+    const initial: Record<string, string> = {};
+    for (const it of req.items) {
+      const sisa = Number(it.requestedQty) - Number(it.receivedQty);
+      const target = sisa > 0 ? Number(it.requestedQty) : Number(it.receivedQty);
+      initial[it.id] = String(target);
+    }
+    setBulkQtys(initial);
+  }
+
+  function bulkFillAll() {
+    if (!bulkTarget) return;
+    const next: Record<string, string> = {};
+    for (const it of bulkTarget.items) {
+      next[it.id] = String(Number(it.requestedQty));
+    }
+    setBulkQtys(next);
+  }
+
+  function bulkResetReceived() {
+    if (!bulkTarget) return;
+    const next: Record<string, string> = {};
+    for (const it of bulkTarget.items) {
+      next[it.id] = String(Number(it.receivedQty));
+    }
+    setBulkQtys(next);
+  }
+
+  async function submitBulk() {
+    if (!bulkTarget) return;
+    const items: Array<{ itemId: string; receivedQty: number }> = [];
+    for (const it of bulkTarget.items) {
+      const raw = bulkQtys[it.id] ?? "0";
+      const n = parseFloat(raw.replace(",", "."));
+      if (!Number.isFinite(n) || n < 0) {
+        toast.error(`Qty tidak valid untuk ${it.ingredientNameSnapshot}`);
+        return;
+      }
+      if (n > Number(it.requestedQty)) {
+        toast.error(
+          `${it.ingredientNameSnapshot}: qty melebihi yang diminta`,
+        );
+        return;
+      }
+      items.push({ itemId: it.id, receivedQty: n });
+    }
+    setBulkSubmitting(true);
+    const res = await bulkReceiveItems({
+      requestId: bulkTarget.id,
+      items,
+    });
+    setBulkSubmitting(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(
+      `${res.data.itemsUpdated} item ter-update · status: ${
+        res.data.newStatus === "completed"
+          ? "Selesai"
+          : res.data.newStatus === "partial"
+            ? "Sebagian"
+            : "Open"
+      }`,
+    );
+    setBulkTarget(null);
+    setBulkQtys({});
+    void refresh();
+  }
+
   async function submitCancel() {
     if (!cancelTarget) return;
     const reason = cancelReason.trim();
@@ -184,12 +264,16 @@ export function PurchaseRequestsSection() {
     <div className="space-y-4 p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-mahakan-green-900">
-            Permintaan Belanja
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-mahakan-green-900">
+            <ClipboardList className="size-6" aria-hidden /> Permintaan
+            Belanja
           </h1>
           <p className="text-sm text-neutral-700">
-            List belanja dari kasir saat tutup shift. Mark received per item
-            untuk update status.
+            Permintaan belanja dari kasir/staff. Ikuti alur:
+            <strong> Open</strong> → terima sebagian (
+            <strong>Sebagian</strong>) → semua diterima (
+            <strong>Selesai</strong>). Klik <strong>Terima Banyak</strong>{" "}
+            untuk update banyak item sekaligus.
           </p>
         </div>
       </header>
@@ -289,6 +373,7 @@ export function PurchaseRequestsSection() {
               key={req.id}
               request={req}
               onReceive={openReceive}
+              onBulkReceive={openBulk}
               onCancel={(r) => {
                 setCancelTarget(r);
                 setCancelReason("");
@@ -367,6 +452,135 @@ export function PurchaseRequestsSection() {
         ) : null}
       </Modal>
 
+      {/* Sesi AE-18 — Bulk Receive Modal */}
+      <Modal
+        open={!!bulkTarget}
+        onClose={() => setBulkTarget(null)}
+        title="Terima Banyak Item Sekaligus"
+        description={
+          bulkTarget
+            ? `${bulkTarget.items.length} item dari ${formatRequestLabel(bulkTarget)}`
+            : undefined
+        }
+        size="2xl"
+        footer={
+          <div className="flex w-full items-center justify-between gap-2">
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={bulkFillAll}
+                disabled={bulkSubmitting}
+              >
+                <CheckCheck className="size-4" /> Penuhi Semua
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={bulkResetReceived}
+                disabled={bulkSubmitting}
+              >
+                Reset
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setBulkTarget(null)}
+                disabled={bulkSubmitting}
+              >
+                Batal
+              </Button>
+              <Button onClick={submitBulk} disabled={bulkSubmitting}>
+                {bulkSubmitting ? "Menyimpan…" : "Simpan Semua"}
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        {bulkTarget ? (
+          <div className="space-y-3">
+            <p className="text-xs text-neutral-600">
+              Edit qty diterima per item. Klik <strong>Penuhi Semua</strong>{" "}
+              untuk auto-fill ke qty yang diminta. Status PR auto-update
+              setelah simpan (Open → Sebagian → Selesai).
+            </p>
+            <div className="overflow-x-auto rounded-md border border-neutral-200 bg-white">
+              <table className="w-full text-sm">
+                <thead className="bg-neutral-50 text-xs text-neutral-600">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Bahan</th>
+                    <th className="px-3 py-2 text-right font-medium">Diminta</th>
+                    <th className="px-3 py-2 text-right font-medium">
+                      Sudah Diterima
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium">
+                      Total Diterima
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {bulkTarget.items.map((it) => {
+                    const requested = Number(it.requestedQty);
+                    const previousReceived = Number(it.receivedQty);
+                    const sisa = Math.max(0, requested - previousReceived);
+                    const currentVal = bulkQtys[it.id] ?? "0";
+                    const parsedCurrent = parseFloat(
+                      currentVal.replace(",", "."),
+                    );
+                    const isFulfilled =
+                      Number.isFinite(parsedCurrent) &&
+                      parsedCurrent >= requested;
+                    return (
+                      <tr key={it.id}>
+                        <td className="px-3 py-2">
+                          <p className="font-medium text-neutral-900">
+                            {it.ingredientNameSnapshot}
+                          </p>
+                          <p className="text-[11px] text-neutral-500">
+                            {it.unitSnapshot}
+                            {sisa > 0 ? ` · sisa ${sisa}` : " · sudah penuh"}
+                            {it.notes ? ` · ${it.notes}` : ""}
+                          </p>
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono">
+                          {requested.toLocaleString("id-ID")}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-neutral-600">
+                          {previousReceived.toLocaleString("id-ID")}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={currentVal}
+                            onChange={(e) =>
+                              setBulkQtys((prev) => ({
+                                ...prev,
+                                [it.id]: e.target.value,
+                              }))
+                            }
+                            className={cn(
+                              "h-9 w-24 rounded-md border bg-white px-2 text-right font-mono text-sm tabular-nums",
+                              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700/40 focus-visible:border-mahakan-green-700",
+                              isFulfilled
+                                ? "border-mahakan-green-700 text-mahakan-green-900"
+                                : parsedCurrent > 0
+                                  ? "border-warning-500 text-warning-700"
+                                  : "border-neutral-300 text-neutral-900",
+                            )}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
       <Modal
         open={!!cancelTarget}
         onClose={() => setCancelTarget(null)}
@@ -418,10 +632,16 @@ interface RequestCardProps {
     item: PurchaseRequestItem,
     requestStatus: PurchaseRequestStatus,
   ) => void;
+  onBulkReceive: (r: PurchaseRequestWithItems) => void;
   onCancel: (r: PurchaseRequestWithItems) => void;
 }
 
-function RequestCard({ request, onReceive, onCancel }: RequestCardProps) {
+function RequestCard({
+  request,
+  onReceive,
+  onBulkReceive,
+  onCancel,
+}: RequestCardProps) {
   const canEdit =
     request.status !== "cancelled" && request.status !== "completed";
   const totalRequested = request.items.reduce(
@@ -432,6 +652,10 @@ function RequestCard({ request, onReceive, onCancel }: RequestCardProps) {
     (sum, i) => sum + Number(i.receivedQty),
     0,
   );
+  const fulfillPercent =
+    totalRequested > 0
+      ? Math.round((totalReceived / totalRequested) * 100)
+      : 0;
   return (
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0 px-6 py-4">
@@ -466,6 +690,31 @@ function RequestCard({ request, onReceive, onCancel }: RequestCardProps) {
         </div>
       </CardHeader>
       <CardContent className="px-6 pb-4 pt-0">
+        {/* Sesi AE-18 — fulfillment progress bar */}
+        {totalRequested > 0 ? (
+          <div className="mb-3 space-y-1">
+            <div className="flex items-center justify-between text-xs text-neutral-600">
+              <span>Pemenuhan</span>
+              <span className="font-mono font-semibold">
+                {fulfillPercent}% ({totalReceived.toLocaleString("id-ID")}/
+                {totalRequested.toLocaleString("id-ID")})
+              </span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">
+              <div
+                className={cn(
+                  "h-full transition-all",
+                  fulfillPercent === 100
+                    ? "bg-mahakan-green-700"
+                    : fulfillPercent > 0
+                      ? "bg-info-400"
+                      : "bg-warning-400",
+                )}
+                style={{ width: `${Math.min(100, fulfillPercent)}%` }}
+              />
+            </div>
+          </div>
+        ) : null}
         <ResponsiveTable<PurchaseRequestItem>
           rows={request.items}
           rowKey={(it) => it.id}
@@ -491,13 +740,20 @@ function RequestCard({ request, onReceive, onCancel }: RequestCardProps) {
         />
       </CardContent>
       {canEdit ? (
-        <div className="flex justify-end gap-2 border-t border-neutral-100 px-6 py-3">
+        <div className="flex flex-wrap justify-end gap-2 border-t border-neutral-100 px-6 py-3">
           <Button
             size="sm"
             variant="ghost"
             onClick={() => onCancel(request)}
           >
             <X className="size-4" /> Batalkan
+          </Button>
+          {/* Sesi AE-18 — bulk receive shortcut. */}
+          <Button
+            size="sm"
+            onClick={() => onBulkReceive(request)}
+          >
+            <CheckCheck className="size-4" /> Terima Banyak
           </Button>
         </div>
       ) : request.status === "cancelled" && request.cancelReason ? (

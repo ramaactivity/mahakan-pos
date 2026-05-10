@@ -79,6 +79,7 @@ export default function MobilePoPage() {
 }
 
 function PoView() {
+  const { session } = useSession();
   const [loading, setLoading] = useState(true);
   const [lowStock, setLowStock] = useState<LowStockIngredient[]>([]);
   const [items, setItems] = useState<ItemDraft[]>([]);
@@ -242,6 +243,7 @@ function PoView() {
       `REQ-${res.data.id.slice(0, 8).toUpperCase()}`,
       validatedItems,
       notes,
+      session?.user.name ?? "Karyawan",
     );
     const waLink = buildWaLink(message);
 
@@ -740,24 +742,70 @@ function PrHistoryCard({ pr }: { pr: PurchaseRequestWithItems }) {
   );
 }
 
+/**
+ * Sesi AE-18 — WA message format upgrade. Owner feedback: pesan terlalu
+ * minim, butuh info lengkap. Tambah:
+ *   - Tanggal + jam WIB
+ *   - Nama pemohon (kasir)
+ *   - Total item count
+ *   - Format qty dengan locale id-ID + max 4 decimal
+ *   - Per-item notes kalau ada
+ *   - Catatan global (sudah ada)
+ *   - Branded footer dengan link WhatsApp instructions
+ */
 function buildWaMessage(
   reqNumber: string,
-  items: Array<{ ingredientName: string; unit: string; requestedQty: number }>,
+  items: Array<{
+    ingredientName: string;
+    unit: string;
+    requestedQty: number;
+    notes?: string | null;
+  }>,
   notes: string,
+  requesterName: string,
 ): string {
+  const fmtQty = (n: number) =>
+    new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(n);
+  const dateStr = new Intl.DateTimeFormat("id-ID", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  }).format(new Date());
+  const timeStr = new Intl.DateTimeFormat("id-ID", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Jakarta",
+  }).format(new Date());
+
   const lines = [
-    `*Permintaan Belanja — Mahakan*`,
-    `No: ${reqNumber}`,
+    `🛒 *PERMINTAAN BELANJA — MAHAKAN*`,
     ``,
-    ...items.map(
-      (it, i) =>
-        `${i + 1}. ${it.ingredientName} — ${it.requestedQty} ${it.unit}`,
-    ),
+    `📋 No. PR  : *${reqNumber}*`,
+    `📅 Tanggal : ${dateStr}`,
+    `⏰ Jam     : ${timeStr} WIB`,
+    `👤 Diminta : ${requesterName}`,
+    `📦 Item    : ${items.length} bahan`,
+    ``,
+    `*— DAFTAR BELANJA —*`,
   ];
-  if (notes.trim()) {
-    lines.push("", `Catatan: ${notes.trim()}`);
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    lines.push(`${i + 1}. ${it.ingredientName} — ${fmtQty(it.requestedQty)} ${it.unit}`);
+    if (it.notes && it.notes.trim().length > 0) {
+      lines.push(`   _↳ ${it.notes.trim()}_`);
+    }
   }
-  lines.push("", `_Dikirim dari Mahakan POS Mobile_`);
+  if (notes.trim()) {
+    lines.push("", `*— CATATAN —*`, notes.trim());
+  }
+  lines.push(
+    "",
+    `─────────────────────`,
+    `_Pesan otomatis dari Mahakan POS Mobile_`,
+    `_Konfirmasi approval atau pertanyaan: balas pesan ini_`,
+  );
   return lines.join("\n");
 }
 

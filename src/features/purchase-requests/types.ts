@@ -29,6 +29,12 @@ export interface ReceiveItemInput {
   receivedQty: number;
 }
 
+/** Sesi AE-18 — bulk receive untuk multiple items dalam 1 PR sekaligus. */
+export interface BulkReceiveItemsInput {
+  requestId: string;
+  items: Array<{ itemId: string; receivedQty: number }>;
+}
+
 export interface CancelPurchaseRequestInput {
   id: string;
   reason: string;
