@@ -4,9 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarDays,
+  CalendarRange,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Copy,
+  Pencil,
 } from "lucide-react";
 import {
   Button,
@@ -26,6 +29,14 @@ import {
   upsertSchedule,
   type ScheduleWithEmployee,
 } from "@/features/schedules";
+import {
+  getAttendanceCalendar,
+  isOk as hrIsOk,
+  type AttendanceCalendar,
+  type AttendanceCalendarCell,
+  type AttendanceDayStatus,
+} from "@/features/hr-reports";
+import { cn } from "@/lib/utils";
 
 const DAYS_OF_WEEK = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 
@@ -56,10 +67,61 @@ interface ActiveEmployee {
   position: string | null;
 }
 
+type ViewMode = "schedule" | "attendance";
+type RangeMode = "week" | "month";
+
+/** Sesi AE-23 — status → cell style. Konsisten dengan HR Calendar
+ *  (HrReportsSection). Owner request: tabel Jadwal-style dengan cells
+ *  berisi historis absen (Hadir/Telat/Off/Alpa). */
+const ATTENDANCE_STYLE: Record<
+  AttendanceDayStatus,
+  { label: string; cellClass: string; legend: string }
+> = {
+  hadir: {
+    label: "H",
+    cellClass: "border-success-500/40 bg-success-100/60 text-success-500",
+    legend: "Hadir",
+  },
+  telat: {
+    label: "T",
+    cellClass: "border-warning-500/40 bg-warning-100/60 text-warning-500",
+    legend: "Telat",
+  },
+  off: {
+    label: "Off",
+    cellClass: "border-neutral-200 bg-neutral-100 text-neutral-600",
+    legend: "Libur",
+  },
+  alpa: {
+    label: "A",
+    cellClass: "border-danger-500/40 bg-danger-100/60 text-danger-500",
+    legend: "Alpa",
+  },
+  kosong: {
+    label: "—",
+    cellClass: "border-neutral-200 bg-white text-neutral-400",
+    legend: "Tanpa Schedule",
+  },
+};
+
+function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m}m`;
+  return `${h}h ${m}m`;
+}
+
 export function SchedulesSection() {
   const [weekStart, setWeekStart] = useState<Date>(() =>
     startOfWeekMonday(new Date()),
   );
+  const [viewMode, setViewMode] = useState<ViewMode>("schedule");
+  const [rangeMode, setRangeMode] = useState<RangeMode>("week");
+  const [attendanceDetail, setAttendanceDetail] = useState<{
+    employeeName: string;
+    date: string;
+    cell: AttendanceCalendarCell;
+  } | null>(null);
   const queryClient = useQueryClient();
 
   const [editing, setEditing] = useState<{
@@ -68,12 +130,18 @@ export function SchedulesSection() {
     existing: ScheduleWithEmployee | null;
   } | null>(null);
 
-  const weekDates = useMemo(
-    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
-    [weekStart],
-  );
-  const fromIso = isoDate(weekDates[0]);
-  const toIso = isoDate(weekDates[6]);
+  // Sesi AE-23 — week count: 1 untuk weekly, 5 untuk monthly stack.
+  const weekCount = rangeMode === "month" ? 5 : 1;
+  const allWeekDates = useMemo(() => {
+    return Array.from({ length: weekCount }, (_, weekIdx) =>
+      Array.from({ length: 7 }, (_, dayIdx) =>
+        addDays(weekStart, weekIdx * 7 + dayIdx),
+      ),
+    );
+  }, [weekStart, weekCount]);
+
+  const fromIso = isoDate(allWeekDates[0]![0]!);
+  const toIso = isoDate(allWeekDates[weekCount - 1]![6]!);
 
   // Sesi AE-14 — TanStack Query. Active employees jarang ganti (5min cache);
   // schedules per-week cached.
@@ -92,7 +160,19 @@ export function SchedulesSection() {
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data;
     },
+    enabled: viewMode === "schedule",
   });
+  // Sesi AE-23 — attendance calendar query, hanya jalan di view "attendance".
+  const attendanceQuery = useQuery({
+    queryKey: ["admin", "attendance-calendar", fromIso, toIso],
+    queryFn: async () => {
+      const res = await getAttendanceCalendar({ from: fromIso, to: toIso });
+      if (!hrIsOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+    enabled: viewMode === "attendance",
+  });
+  const attendance: AttendanceCalendar | null = attendanceQuery.data ?? null;
   const employees = useMemo(
     () => employeesQuery.data ?? [],
     [employeesQuery.data],
@@ -101,7 +181,21 @@ export function SchedulesSection() {
     () => schedulesQuery.data ?? [],
     [schedulesQuery.data],
   );
-  const loading = employeesQuery.isLoading || schedulesQuery.isLoading;
+  const loading =
+    employeesQuery.isLoading ||
+    (viewMode === "schedule" && schedulesQuery.isLoading) ||
+    (viewMode === "attendance" && attendanceQuery.isLoading);
+
+  const attendanceByKey = useMemo(() => {
+    const m = new Map<string, AttendanceCalendarCell>();
+    if (!attendance) return m;
+    for (const row of attendance.rows) {
+      for (const [date, cell] of Object.entries(row.days)) {
+        m.set(`${row.employeeId}::${date}`, cell);
+      }
+    }
+    return m;
+  }, [attendance]);
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ["admin", "schedules"] });
@@ -154,35 +248,126 @@ export function SchedulesSection() {
               Jadwal
             </h1>
             <p className="text-sm text-neutral-600">
-              Mingguan per karyawan. Tap cell untuk set jam atau tandai
-              libur.
+              {viewMode === "schedule"
+                ? "Mingguan per karyawan. Tap cell untuk set jam atau tandai libur."
+                : "Historis absen per karyawan. Tap cell untuk lihat detail clock-in / out."}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={handleCopyLastWeek}>
-            <Copy className="size-4" aria-hidden /> Salin Minggu Lalu
-          </Button>
-          <Button variant="outline" onClick={() => navigateWeek(-7)}>
+          {viewMode === "schedule" ? (
+            <Button variant="outline" onClick={handleCopyLastWeek}>
+              <Copy className="size-4" aria-hidden /> Salin Minggu Lalu
+            </Button>
+          ) : null}
+          <Button
+            variant="outline"
+            onClick={() => navigateWeek(rangeMode === "month" ? -35 : -7)}
+            title={rangeMode === "month" ? "Mundur 5 minggu" : "Mundur 1 minggu"}
+          >
             <ChevronLeft className="size-4" aria-hidden />
           </Button>
           <div className="rounded-md bg-white border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-900">
-            {weekDates[0].toLocaleDateString("id-ID", {
+            {allWeekDates[0]![0]!.toLocaleDateString("id-ID", {
               day: "numeric",
               month: "short",
             })}{" "}
             —{" "}
-            {weekDates[6].toLocaleDateString("id-ID", {
+            {allWeekDates[weekCount - 1]![6]!.toLocaleDateString("id-ID", {
               day: "numeric",
               month: "short",
               year: "numeric",
             })}
           </div>
-          <Button variant="outline" onClick={() => navigateWeek(7)}>
+          <Button
+            variant="outline"
+            onClick={() => navigateWeek(rangeMode === "month" ? 35 : 7)}
+            title={rangeMode === "month" ? "Maju 5 minggu" : "Maju 1 minggu"}
+          >
             <ChevronRight className="size-4" aria-hidden />
           </Button>
         </div>
       </header>
+
+      {/* Sesi AE-23 — view mode + range toggles. Owner request: tabel
+       * historis absen 1 bulan dengan layout Jadwal-style. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex rounded-lg border border-neutral-200 bg-white p-0.5">
+          <button
+            type="button"
+            onClick={() => setViewMode("schedule")}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              viewMode === "schedule"
+                ? "bg-mahakan-green-700 text-white"
+                : "text-neutral-700 hover:bg-neutral-100",
+            )}
+          >
+            <Pencil className="size-3.5" /> Edit Jadwal
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("attendance")}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              viewMode === "attendance"
+                ? "bg-mahakan-green-700 text-white"
+                : "text-neutral-700 hover:bg-neutral-100",
+            )}
+          >
+            <Clock className="size-3.5" /> Historis Absen
+          </button>
+        </div>
+        <div className="inline-flex rounded-lg border border-neutral-200 bg-white p-0.5">
+          <button
+            type="button"
+            onClick={() => setRangeMode("week")}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              rangeMode === "week"
+                ? "bg-neutral-900 text-white"
+                : "text-neutral-600 hover:bg-neutral-100",
+            )}
+          >
+            1 Minggu
+          </button>
+          <button
+            type="button"
+            onClick={() => setRangeMode("month")}
+            className={cn(
+              "flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              rangeMode === "month"
+                ? "bg-neutral-900 text-white"
+                : "text-neutral-600 hover:bg-neutral-100",
+            )}
+          >
+            <CalendarRange className="size-3" /> 5 Minggu
+          </button>
+        </div>
+        {viewMode === "attendance" ? (
+          <div className="ml-auto flex flex-wrap gap-2 text-xs">
+            {(["hadir", "telat", "off", "alpa", "kosong"] as const).map((s) => {
+              const meta = ATTENDANCE_STYLE[s];
+              return (
+                <span
+                  key={s}
+                  className="inline-flex items-center gap-1 text-neutral-700"
+                >
+                  <span
+                    className={cn(
+                      "inline-flex size-5 items-center justify-center rounded border text-[10px] font-bold",
+                      meta.cellClass,
+                    )}
+                  >
+                    {meta.label}
+                  </span>
+                  {meta.legend}
+                </span>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
 
       <Card>
         <CardContent className="px-0">
@@ -206,68 +391,103 @@ export function SchedulesSection() {
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-y border-neutral-200 bg-neutral-50 text-left text-xs uppercase tracking-wider text-neutral-500">
-                  <tr>
-                    <th className="sticky left-0 z-10 bg-neutral-50 px-4 py-2">
-                      Karyawan
-                    </th>
-                    {weekDates.map((d, i) => (
-                      <th key={i} className="px-3 py-2 text-center">
-                        <div>{DAYS_OF_WEEK[i]}</div>
-                        <div className="font-mono text-[10px] text-neutral-400">
-                          {d.toLocaleDateString("id-ID", {
-                            day: "numeric",
-                            month: "short",
-                          })}
-                        </div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {employees.map((emp) => (
-                    <tr
-                      key={emp.id}
-                      className="border-b border-neutral-100 last:border-0"
-                    >
-                      <td className="sticky left-0 z-10 bg-white px-4 py-3">
-                        <div className="font-medium text-neutral-900">
-                          {emp.fullName}
-                        </div>
-                        {emp.position ? (
-                          <div className="text-xs text-neutral-500">
-                            {emp.position}
-                          </div>
-                        ) : null}
-                      </td>
-                      {weekDates.map((d) => {
-                        const dateIso = isoDate(d);
-                        const existing =
-                          scheduleMap.get(`${emp.id}::${dateIso}`) ?? null;
-                        return (
-                          <td
-                            key={dateIso}
-                            className="px-2 py-2 text-center align-middle"
-                          >
-                            <ScheduleCell
-                              schedule={existing}
-                              onClick={() =>
-                                setEditing({
-                                  employee: emp,
-                                  date: dateIso,
-                                  existing,
-                                })
-                              }
-                            />
+            <div className="space-y-3 p-4">
+              {allWeekDates.map((wkDates, wkIdx) => (
+                <div key={wkIdx} className="overflow-x-auto rounded-lg border border-neutral-200">
+                  <table className="w-full text-sm">
+                    {rangeMode === "month" ? (
+                      <caption className="caption-top bg-mahakan-green-50/40 px-4 py-1.5 text-left text-xs font-semibold text-mahakan-green-900">
+                        Minggu {wkIdx + 1} ·{" "}
+                        {wkDates[0]!.toLocaleDateString("id-ID", {
+                          day: "numeric",
+                          month: "short",
+                        })}{" "}
+                        —{" "}
+                        {wkDates[6]!.toLocaleDateString("id-ID", {
+                          day: "numeric",
+                          month: "short",
+                        })}
+                      </caption>
+                    ) : null}
+                    <thead className="border-y border-neutral-200 bg-neutral-50 text-left text-xs uppercase tracking-wider text-neutral-500">
+                      <tr>
+                        <th className="sticky left-0 z-10 bg-neutral-50 px-4 py-2">
+                          Karyawan
+                        </th>
+                        {wkDates.map((d, i) => (
+                          <th key={i} className="px-3 py-2 text-center">
+                            <div>{DAYS_OF_WEEK[i]}</div>
+                            <div className="font-mono text-[10px] text-neutral-400">
+                              {d.toLocaleDateString("id-ID", {
+                                day: "numeric",
+                                month: "short",
+                              })}
+                            </div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {employees.map((emp) => (
+                        <tr
+                          key={emp.id}
+                          className="border-b border-neutral-100 last:border-0"
+                        >
+                          <td className="sticky left-0 z-10 bg-white px-4 py-3">
+                            <div className="font-medium text-neutral-900">
+                              {emp.fullName}
+                            </div>
+                            {emp.position ? (
+                              <div className="text-xs text-neutral-500">
+                                {emp.position}
+                              </div>
+                            ) : null}
                           </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                          {wkDates.map((d) => {
+                            const dateIso = isoDate(d);
+                            const existing =
+                              scheduleMap.get(`${emp.id}::${dateIso}`) ?? null;
+                            const cell =
+                              attendanceByKey.get(`${emp.id}::${dateIso}`) ??
+                              null;
+                            return (
+                              <td
+                                key={dateIso}
+                                className="px-2 py-2 text-center align-middle"
+                              >
+                                {viewMode === "schedule" ? (
+                                  <ScheduleCell
+                                    schedule={existing}
+                                    onClick={() =>
+                                      setEditing({
+                                        employee: emp,
+                                        date: dateIso,
+                                        existing,
+                                      })
+                                    }
+                                  />
+                                ) : (
+                                  <AttendanceCell
+                                    cell={cell}
+                                    onClick={() => {
+                                      if (!cell) return;
+                                      setAttendanceDetail({
+                                        employeeName: emp.fullName,
+                                        date: dateIso,
+                                        cell,
+                                      });
+                                    }}
+                                  />
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>
@@ -281,7 +501,140 @@ export function SchedulesSection() {
           refresh();
         }}
       />
+
+      <AttendanceDetailModal
+        detail={attendanceDetail}
+        onClose={() => setAttendanceDetail(null)}
+      />
     </div>
+  );
+}
+
+function AttendanceCell({
+  cell,
+  onClick,
+}: {
+  cell: AttendanceCalendarCell | null;
+  onClick: () => void;
+}) {
+  if (!cell) {
+    return (
+      <span className="inline-flex size-9 items-center justify-center rounded-md border border-neutral-200 bg-white text-xs text-neutral-400">
+        —
+      </span>
+    );
+  }
+  const meta = ATTENDANCE_STYLE[cell.status];
+  const lateBadge =
+    (cell.status === "telat" || cell.status === "hadir") &&
+    cell.lateMinutes &&
+    cell.lateMinutes > 0
+      ? formatDuration(cell.lateMinutes)
+      : null;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex w-full flex-col items-center justify-center gap-0.5 rounded-md border px-1.5 py-1.5 text-xs font-bold transition-colors hover:brightness-95",
+        meta.cellClass,
+      )}
+      title={meta.legend}
+    >
+      <span className="text-sm">{meta.label}</span>
+      {lateBadge ? (
+        <span className="text-[9px] font-mono opacity-80">+{lateBadge}</span>
+      ) : null}
+    </button>
+  );
+}
+
+function AttendanceDetailModal({
+  detail,
+  onClose,
+}: {
+  detail: {
+    employeeName: string;
+    date: string;
+    cell: AttendanceCalendarCell;
+  } | null;
+  onClose: () => void;
+}) {
+  if (!detail) return null;
+  const meta = ATTENDANCE_STYLE[detail.cell.status];
+  const dateLabel = new Date(`${detail.date}T00:00:00Z`).toLocaleDateString(
+    "id-ID",
+    { weekday: "long", day: "numeric", month: "long", year: "numeric" },
+  );
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Detail Absen — ${detail.employeeName}`}
+      description={dateLabel}
+      size="sm"
+      footer={
+        <Button variant="ghost" onClick={onClose}>
+          Tutup
+        </Button>
+      }
+    >
+      <div className="space-y-3 text-sm">
+        <div
+          className={cn(
+            "rounded-lg border p-3 text-center",
+            meta.cellClass,
+          )}
+        >
+          <div className="text-xs uppercase tracking-wider opacity-80">
+            Status
+          </div>
+          <div className="mt-0.5 text-base font-bold">{meta.legend}</div>
+        </div>
+        {detail.cell.workMinutes !== undefined &&
+        detail.cell.workMinutes > 0 ? (
+          <div className="flex items-center justify-between rounded-md border border-neutral-200 bg-white p-3">
+            <span className="text-neutral-700">Total Kerja</span>
+            <span className="font-mono font-semibold text-neutral-900">
+              {formatDuration(detail.cell.workMinutes)}
+            </span>
+          </div>
+        ) : null}
+        {detail.cell.lateMinutes !== undefined &&
+        detail.cell.lateMinutes > 0 ? (
+          <div className="flex items-center justify-between rounded-md border border-warning-300 bg-warning-100/40 p-3">
+            <span className="text-warning-500">Telat</span>
+            <span className="font-mono font-semibold text-warning-500">
+              {formatDuration(detail.cell.lateMinutes)}
+            </span>
+          </div>
+        ) : null}
+        {detail.cell.overtimeMinutes !== undefined &&
+        detail.cell.overtimeMinutes > 0 ? (
+          <div className="flex items-center justify-between rounded-md border border-success-500/40 bg-success-100/40 p-3">
+            <span className="text-success-500">Overtime</span>
+            <span className="font-mono font-semibold text-success-500">
+              {formatDuration(detail.cell.overtimeMinutes)}
+            </span>
+          </div>
+        ) : null}
+        {detail.cell.status === "alpa" ? (
+          <p className="rounded-md border border-danger-300 bg-danger-100/40 p-3 text-xs text-danger-500">
+            ⚠️ Karyawan dijadwalkan kerja tapi tidak ada record clock-in.
+          </p>
+        ) : null}
+        {detail.cell.status === "off" ? (
+          <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
+            Hari libur sesuai schedule.
+          </p>
+        ) : null}
+        {detail.cell.status === "kosong" ? (
+          <p className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
+            Tidak ada schedule + tidak ada record absen.
+          </p>
+        ) : null}
+      </div>
+    </Modal>
   );
 }
 
