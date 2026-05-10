@@ -8,6 +8,7 @@ import {
   isOk,
   type BulkImportResult,
 } from "@/features/market-list";
+import { parseIndonesianInt, parseIndonesianNumber } from "@/lib/format";
 
 interface Props {
   open: boolean;
@@ -87,8 +88,8 @@ function parseCsv(text: string): ParseResult {
     const cells = splitCsvLine(line, sep);
     const supplierName = cells[idx.supplier]?.trim() ?? "";
     const ingredientName = cells[idx.bahan]?.trim() ?? "";
-    const hargaRaw = (cells[idx.harga] ?? "").replace(/[^\d.-]/g, "");
-    const sizeRaw = (cells[idx.packSize] ?? "").replace(",", ".");
+    const hargaCell = cells[idx.harga] ?? "";
+    const sizeCell = cells[idx.packSize] ?? "";
     const packUnit = cells[idx.packUnit]?.trim() ?? "";
     const isPrimaryStr =
       idx.primary !== -1 ? (cells[idx.primary] ?? "").trim().toLowerCase() : "";
@@ -98,16 +99,18 @@ function parseCsv(text: string): ParseResult {
       warnings.push(`Baris ${i + 1}: supplier / bahan kosong, skip`);
       continue;
     }
-    const unitCost = parseInt(hargaRaw, 10);
-    const packSize = parseFloat(sizeRaw);
+    // Sesi AE-30 — parse number Indonesian-aware. Owner CSV pakai titik
+    // sebagai thousand separator ("Rp 36.000" = 36000, "1.000" = 1000).
+    // Sebelumnya parseInt("36.000") = 36 (stop di titik) → harga + pack
+    // size salah parse ke nilai mini → effective cost 1000x off.
+    const unitCost = parseIndonesianInt(hargaCell);
+    const packSize = parseIndonesianNumber(sizeCell);
     if (!Number.isFinite(unitCost) || unitCost <= 0) {
-      warnings.push(`Baris ${i + 1}: harga invalid (${cells[idx.harga]}), skip`);
+      warnings.push(`Baris ${i + 1}: harga invalid (${hargaCell}), skip`);
       continue;
     }
     if (!Number.isFinite(packSize) || packSize <= 0) {
-      warnings.push(
-        `Baris ${i + 1}: pack_size invalid (${cells[idx.packSize]}), skip`,
-      );
+      warnings.push(`Baris ${i + 1}: pack_size invalid (${sizeCell}), skip`);
       continue;
     }
     rows.push({

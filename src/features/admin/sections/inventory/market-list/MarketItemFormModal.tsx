@@ -27,7 +27,11 @@ import {
   type Supplier,
 } from "@/features/suppliers";
 import { compatibleUnitsFor, resolveUnit } from "@/lib/unit-conversion";
-import { formatRupiah } from "@/lib/format";
+import {
+  formatRupiah,
+  parseIndonesianInt,
+  parseIndonesianNumber,
+} from "@/lib/format";
 
 const COMMON_PACK_UNITS = [
   "Kg",
@@ -158,8 +162,10 @@ export function MarketItemFormModal({
   // Effective cost preview (Rp per ingredient.unit).
   const effectiveCost = useMemo(() => {
     if (!selectedIngredient) return null;
-    const cost = Number(unitCost.replace(/[^\d]/g, ""));
-    const size = Number(packSize.replace(",", "."));
+    // Sesi AE-30 — pakai parser Indonesian-aware. Sebelumnya
+    // Number("1.000") = 1 (decimal), now → 1000 (thousand sep).
+    const cost = parseIndonesianInt(unitCost);
+    const size = parseIndonesianNumber(packSize);
     if (!Number.isFinite(cost) || cost <= 0) return null;
     if (!Number.isFinite(size) || size <= 0) return null;
     if (packUnit === selectedIngredient.unit) {
@@ -186,12 +192,12 @@ export function MarketItemFormModal({
       setError("Pilih bahan dulu");
       return;
     }
-    const cost = parseInt(unitCost.replace(/\D/g, ""), 10);
+    const cost = parseIndonesianInt(unitCost);
     if (!Number.isFinite(cost) || cost <= 0) {
       setError("Harga harus angka > 0");
       return;
     }
-    const size = Number(packSize.replace(",", "."));
+    const size = parseIndonesianNumber(packSize);
     if (!Number.isFinite(size) || size <= 0) {
       setError("Pack size harus angka > 0");
       return;
