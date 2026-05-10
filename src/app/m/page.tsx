@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Spinner, toast } from "@/components/ui";
 import { useSession } from "@/features/auth/SessionProvider";
+import { InstallAppButton } from "@/features/pwa/InstallAppButton";
 
 interface ModuleCard {
   href: string;
@@ -138,6 +139,11 @@ export default function MobileLanding() {
           <ModuleCardLink key={m.href} module={m} />
         ))}
       </div>
+
+      {/* Sesi AE-24 — PWA install button. Hanya muncul kalau browser
+       * support beforeinstallprompt + belum installed. iOS Safari kasih
+       * instruksi manual via modal. */}
+      <InstallAppButton />
 
       <button
         type="button"

@@ -1,14 +1,18 @@
 {
+  "id": "mahakan-pos",
   "name": "Mahakan Coffee & Space — POS",
   "short_name": "Mahakan POS",
   "description": "Sistem POS + Operasional untuk Mahakan Coffee & Space, Cisarua Bogor.",
-  "start_url": "/pos",
+  "start_url": "/pos?source=pwa",
   "scope": "/",
   "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
   "orientation": "any",
   "background_color": "#fafaf7",
   "theme_color": "#3D7557",
   "lang": "id",
+  "dir": "ltr",
+  "categories": ["business", "productivity"],
   "icons": [
     {
       "src": "/icon-192.png",
@@ -28,5 +32,6 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "prefer_related_applications": false
 }

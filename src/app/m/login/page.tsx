@@ -7,6 +7,7 @@ import { signIn } from "next-auth/react";
 import { Spinner, toast } from "@/components/ui";
 import { StaffAvatarGrid } from "@/features/auth/StaffAvatarGrid";
 import { useSession } from "@/features/auth/SessionProvider";
+import { InstallAppButton } from "@/features/pwa/InstallAppButton";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -298,6 +299,10 @@ export default function StaffLoginPage() {
           </div>
         )}
       </div>
+
+      {/* Sesi AE-24 — PWA install hint sebelum login. Owner request: /m
+       * harus bisa di-install sebagai webapp di Android tablet. */}
+      <InstallAppButton label="Install Mahakan Karyawan" />
 
       <footer className="text-center text-[11px] text-neutral-600">
         Mahakan Coffee &amp; Space · Cisarua, Bogor
