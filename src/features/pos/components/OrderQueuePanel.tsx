@@ -32,7 +32,7 @@ import {
 import { categoryToStation } from "@/lib/printer/station-mapping";
 import type { ReceiptConfig } from "@/lib/printer/print-transaction";
 import { formatRupiah } from "@/lib/format";
-import { formatIndonesianTime, toJakartaDateOnly } from "@/lib/date";
+import { formatIndonesianTime, todayWibRangeUtc } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
 type FilterState = "active" | "all" | "served";
@@ -84,10 +84,12 @@ export function OrderQueuePanel({
     let cancelled = false;
     async function load() {
       if (!hasLoadedOnce.current) setLoading(true);
-      const today = toJakartaDateOnly(new Date());
+      // Sesi AE-29 — pakai WIB-aware day range (sebelumnya UTC range yg
+      // exclude trx 00:00-06:59 WIB). Lihat docstring wibDayRangeUtc.
+      const { from, to } = todayWibRangeUtc();
       const res = await listTransactions({
-        from: `${today}T00:00:00.000Z`,
-        to: `${today}T23:59:59.999Z`,
+        from,
+        to,
         status: "paid",
         limit: 100,
       });

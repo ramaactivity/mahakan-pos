@@ -19,7 +19,7 @@ import {
   type TransactionStatus,
 } from "@/features/transactions";
 import { formatRupiah } from "@/lib/format";
-import { formatIndonesianTime, toJakartaDateOnly } from "@/lib/date";
+import { formatIndonesianTime, todayWibRangeUtc } from "@/lib/date";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
 
@@ -71,10 +71,12 @@ export function HistoryPanel({
     let cancelled = false;
     async function load() {
       if (!hasLoadedOnce.current) setLoading(true);
-      const today = toJakartaDateOnly(new Date());
+      // Sesi AE-29 — pakai WIB-aware day range (sebelumnya UTC range yg
+      // exclude trx 00:00-06:59 WIB). Lihat docstring wibDayRangeUtc.
+      const { from, to } = todayWibRangeUtc();
       const res = await listTransactions({
-        from: `${today}T00:00:00.000Z`,
-        to: `${today}T23:59:59.999Z`,
+        from,
+        to,
         status: statusFilter === "all" ? undefined : statusFilter,
         limit: 200,
       });

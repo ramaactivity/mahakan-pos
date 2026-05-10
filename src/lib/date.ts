@@ -51,6 +51,41 @@ export function toJakartaDateOnly(input: Date | string): string {
 }
 
 /**
+ * Sesi AE-29 — convert Jakarta calendar date (YYYY-MM-DD) ke UTC ISO range
+ * yang merepresentasikan 00:00:00.000 — 23:59:59.999 WIB pada hari itu.
+ *
+ * Critical untuk filter "today" di POS panels (HistoryPanel, OrderQueuePanel,
+ * dll). Sebelumnya semua call site pakai pola WRONG:
+ *   `${today}T00:00:00.000Z` to `${today}T23:59:59.999Z`
+ * Itu UTC range bukan WIB range — exclude transaksi yang dibuat 00:00-06:59
+ * WIB (= 17:00-23:59 UTC hari sebelumnya). Akibatnya transaksi dini hari
+ * Jakarta tidak muncul sampai polling 30s nanti pagi.
+ *
+ * Example: jakartaYmd = "2026-05-11"
+ *   from = 2026-05-10T17:00:00.000Z (= 2026-05-11 00:00 WIB)
+ *   to   = 2026-05-11T16:59:59.999Z (= 2026-05-11 23:59:59.999 WIB)
+ */
+export function wibDayRangeUtc(jakartaYmd: string): {
+  from: string;
+  to: string;
+} {
+  const fromDate = new Date(`${jakartaYmd}T00:00:00.000+07:00`);
+  const toDate = new Date(`${jakartaYmd}T23:59:59.999+07:00`);
+  return {
+    from: fromDate.toISOString(),
+    to: toDate.toISOString(),
+  };
+}
+
+/**
+ * Convenience: Jakarta "today" range as UTC ISO. Pakai server clock kalau
+ * dipanggil tanpa input (mostly client side).
+ */
+export function todayWibRangeUtc(): { from: string; to: string } {
+  return wibDayRangeUtc(toJakartaDateOnly(new Date()));
+}
+
+/**
  * Day-of-week key as used in OperationalHours JSONB ("mon"…"sun"), based on
  * WIB calendar day of the input date.
  */

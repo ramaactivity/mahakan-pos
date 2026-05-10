@@ -97,7 +97,6 @@ import { formatRupiah } from "@/lib/format";
 import {
   combineJakartaDateAndTime,
   jakartaDowKey,
-  toJakartaDateOnly,
 } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
@@ -322,10 +321,11 @@ export function PosShell() {
     if (!session) return;
     let cancelled = false;
     async function loadCount() {
-      const today = toJakartaDateOnly(new Date());
+      // Sesi AE-29 — open bills tidak butuh date filter sama sekali.
+      // Status="open" sudah cukup; cross-day bills (kemarin masih
+      // outstanding) juga harus terhitung. Sebelumnya pakai filter
+      // today UTC yang miss bill di window 00:00-06:59 WIB.
       const res = await listTransactions({
-        from: `${today}T00:00:00.000Z`,
-        to: `${today}T23:59:59.999Z`,
         status: "open",
         limit: 100,
       });
