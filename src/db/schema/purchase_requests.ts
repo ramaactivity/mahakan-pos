@@ -6,6 +6,7 @@ import {
   timestamp,
   bigint,
   integer,
+  numeric,
   index,
   check,
 } from "drizzle-orm/pg-core";
@@ -83,9 +84,11 @@ export const purchaseRequestItems = pgTable(
     requestId: uuid("request_id")
       .notNull()
       .references(() => purchaseRequests.id, { onDelete: "cascade" }),
-    ingredientId: uuid("ingredient_id")
-      .notNull()
-      .references(() => ingredients.id),
+    /** Sesi AE-16 — ingredientId is NULLABLE supaya support manual entries
+     * (staff Tambah Item Manual untuk bahan yang belum di-master). Snapshot
+     * name + unit always required (lossless display). Linked items punya
+     * FK; manual items ingredientId=null. */
+    ingredientId: uuid("ingredient_id").references(() => ingredients.id),
 
     /** Snapshot — tetap displayable kalau ingredient di-rename / soft-delete. */
     ingredientNameSnapshot: text("ingredient_name_snapshot").notNull(),
@@ -93,10 +96,19 @@ export const purchaseRequestItems = pgTable(
 
     /** Qty yang diminta. Bigint sesuai pattern purchase_items (atomic unit). */
     requestedQty: bigint("requested_qty", { mode: "number" }).notNull(),
+    /** Sesi AE-16 — decimal mirror untuk decimal qty (e.g. 0.5 kg). */
+    requestedQtyDecimal: numeric("requested_qty_decimal", {
+      precision: 15,
+      scale: 4,
+    }),
     /** Qty yang sudah diterima. 0 → open. > 0 dan < requested → partial. */
     receivedQty: bigint("received_qty", { mode: "number" })
       .notNull()
       .default(0),
+    receivedQtyDecimal: numeric("received_qty_decimal", {
+      precision: 15,
+      scale: 4,
+    }),
 
     notes: text("notes"),
     displayOrder: integer("display_order").notNull().default(0),

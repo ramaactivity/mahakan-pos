@@ -211,31 +211,48 @@ export async function createPurchaseRequest(
   if (!input.items || input.items.length === 0) {
     return fail("EMPTY_ITEMS", "Minimal 1 item harus diisi");
   }
+  // Sesi AE-16 — support manual items (ingredientId null). Each item
+  // need EITHER ingredientId (linked) OR name+unit (manual). Reject kalau
+  // dua-duanya kosong.
   for (const item of input.items) {
-    if (!item.ingredientId) {
-      return fail("MISSING_INGREDIENT", "Item harus pilih bahan");
+    const hasLink = Boolean(item.ingredientId);
+    const hasManual = Boolean(
+      item.ingredientNameSnapshot && item.ingredientNameSnapshot.trim() &&
+        item.unitSnapshot && item.unitSnapshot.trim(),
+    );
+    if (!hasLink && !hasManual) {
+      return fail(
+        "MISSING_ITEM_INFO",
+        "Item harus pilih bahan atau isi nama + satuan manual",
+      );
     }
     if (!Number.isFinite(item.requestedQty) || item.requestedQty <= 0) {
-      return fail("INVALID_QTY", `Qty harus > 0`);
+      return fail("INVALID_QTY", "Qty harus > 0");
     }
   }
 
-  // Snapshot ingredients (name + unit + cross-outlet validate).
-  const ingredientIds = input.items.map((i) => i.ingredientId);
-  const ingredientRows = await db
-    .select({
-      id: ingredients.id,
-      name: ingredients.name,
-      unit: ingredients.unit,
-      outletId: ingredients.outletId,
-    })
-    .from(ingredients)
-    .where(inArray(ingredients.id, ingredientIds));
+  // Snapshot ingredients untuk linked items only (manual pakai input string).
+  const linkedIds = input.items
+    .map((i) => i.ingredientId)
+    .filter((x): x is string => Boolean(x));
+  const ingredientRows =
+    linkedIds.length > 0
+      ? await db
+          .select({
+            id: ingredients.id,
+            name: ingredients.name,
+            unit: ingredients.unit,
+            outletId: ingredients.outletId,
+          })
+          .from(ingredients)
+          .where(inArray(ingredients.id, linkedIds))
+      : [];
 
   const byId = new Map(ingredientRows.map((r) => [r.id, r]));
   for (const item of input.items) {
+    if (!item.ingredientId) continue; // manual — skip ingredient validation
     const ing = byId.get(item.ingredientId);
-    if (!ing) return fail("INGREDIENT_NOT_FOUND", `Bahan tidak ditemukan`);
+    if (!ing) return fail("INGREDIENT_NOT_FOUND", "Bahan tidak ditemukan");
     if (ing.outletId !== session.user.outletId) {
       return fail("CROSS_OUTLET", "Bahan dari outlet lain");
     }
@@ -255,14 +272,26 @@ export async function createPurchaseRequest(
 
     let order = 0;
     for (const item of input.items) {
-      const ing = byId.get(item.ingredientId)!;
+      // Linked: pakai master snapshot. Manual: pakai input.
+      const ing = item.ingredientId ? byId.get(item.ingredientId) : null;
+      const nameSnapshot = ing
+        ? ing.name
+        : (item.ingredientNameSnapshot ?? "").trim();
+      const unitSnapshot = ing
+        ? ing.unit
+        : (item.unitSnapshot ?? "").trim();
+      // Sesi AE-16 — qty decimal mirror.
+      const qtyBigint = Math.max(1, Math.floor(item.requestedQty));
+      const qtyDecimal = item.requestedQty.toFixed(4);
       await tx.insert(purchaseRequestItems).values({
         requestId: request.id,
-        ingredientId: ing.id,
-        ingredientNameSnapshot: ing.name,
-        unitSnapshot: ing.unit,
-        requestedQty: Math.floor(item.requestedQty),
+        ingredientId: ing ? ing.id : null,
+        ingredientNameSnapshot: nameSnapshot,
+        unitSnapshot,
+        requestedQty: qtyBigint,
+        requestedQtyDecimal: qtyDecimal,
         receivedQty: 0,
+        receivedQtyDecimal: "0.0000",
         notes: item.notes ?? null,
         displayOrder: order++,
       });
@@ -445,7 +474,9 @@ export async function receiveItem(
     await tx
       .update(purchaseRequestItems)
       .set({
-        receivedQty: Math.floor(input.receivedQty),
+        receivedQty: Math.max(0, Math.floor(input.receivedQty)),
+        // Sesi AE-16 — decimal mirror.
+        receivedQtyDecimal: input.receivedQty.toFixed(4),
         updatedAt: new Date(),
       })
       .where(eq(purchaseRequestItems.id, input.itemId));

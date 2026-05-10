@@ -220,9 +220,11 @@ function PoView() {
       shiftId: null,
       notes: notes.trim() || null,
       items: validatedItems.map((v) => ({
-        ingredientId: v.ingredientId ?? "",
-        ingredientName: v.ingredientName,
-        unit: v.unit,
+        // Sesi AE-16 — null untuk manual items (no master FK). Linked
+        // items kirim ingredientId dari master. Server resolve snapshot.
+        ingredientId: v.ingredientId ?? null,
+        ingredientNameSnapshot: v.ingredientName,
+        unitSnapshot: v.unit,
         requestedQty: v.requestedQty,
         notes: v.notes ?? undefined,
       })),
@@ -609,19 +611,32 @@ function PrHistorySection({
   );
 }
 
+function qtyOf(item: {
+  requestedQty: number;
+  requestedQtyDecimal: string | null;
+}): number {
+  return item.requestedQtyDecimal !== null
+    ? parseFloat(item.requestedQtyDecimal)
+    : Number(item.requestedQty);
+}
+function recvOf(item: {
+  receivedQty: number;
+  receivedQtyDecimal: string | null;
+}): number {
+  return item.receivedQtyDecimal !== null
+    ? parseFloat(item.receivedQtyDecimal)
+    : Number(item.receivedQty);
+}
+
 function PrHistoryCard({ pr }: { pr: PurchaseRequestWithItems }) {
-  const totalRequested = pr.items.reduce(
-    (s, it) => s + Number(it.requestedQty),
-    0,
-  );
-  const totalReceived = pr.items.reduce(
-    (s, it) => s + Number(it.receivedQty),
-    0,
-  );
+  const totalRequested = pr.items.reduce((s, it) => s + qtyOf(it), 0);
+  const totalReceived = pr.items.reduce((s, it) => s + recvOf(it), 0);
   const fulfillPercent =
     totalRequested > 0
       ? Math.round((totalReceived / totalRequested) * 100)
       : 0;
+  const fmt = (n: number) =>
+    new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(n);
 
   const statusMap: Record<
     string,
@@ -678,7 +693,7 @@ function PrHistoryCard({ pr }: { pr: PurchaseRequestWithItems }) {
           <div className="flex items-center justify-between text-[11px] text-neutral-700">
             <span>Pemenuhan</span>
             <span className="font-mono font-semibold">
-              {fulfillPercent}% ({totalReceived}/{totalRequested})
+              {fulfillPercent}% ({fmt(totalReceived)}/{fmt(totalRequested)})
             </span>
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">
@@ -705,8 +720,7 @@ function PrHistoryCard({ pr }: { pr: PurchaseRequestWithItems }) {
           >
             <span className="truncate">{it.ingredientNameSnapshot}</span>
             <span className="ml-2 shrink-0 font-mono">
-              {Number(it.receivedQty)}/{Number(it.requestedQty)}{" "}
-              {it.unitSnapshot}
+              {fmt(recvOf(it))}/{fmt(qtyOf(it))} {it.unitSnapshot}
             </span>
           </li>
         ))}

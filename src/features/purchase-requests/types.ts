@@ -6,7 +6,14 @@ export type PurchaseRequestItem = InferSelectModel<typeof purchaseRequestItems>;
 export type PurchaseRequestStatus = PurchaseRequest["status"];
 
 export interface PurchaseRequestItemInput {
-  ingredientId: string;
+  /** Sesi AE-16 — nullable untuk support manual items (bahan yang belum
+   * di-master). Linked items punya FK; manual items pakai
+   * ingredientNameSnapshot + unitSnapshot saja. */
+  ingredientId?: string | null;
+  /** Required selalu (display). Untuk linked items, server overwrite
+   * dengan nama master saat create. */
+  ingredientNameSnapshot?: string;
+  unitSnapshot?: string;
   requestedQty: number;
   notes?: string | null;
 }
