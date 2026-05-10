@@ -34,6 +34,7 @@ import {
   getPurchaseRequestStats,
   listPurchaseRequests,
   receiveItem,
+  rejectItem,
 } from "@/features/purchase-requests/actions";
 import {
   isOk,
@@ -92,6 +93,13 @@ export function PurchaseRequestsSection() {
     useState<PurchaseRequestWithItems | null>(null);
   const [bulkQtys, setBulkQtys] = useState<Record<string, string>>({});
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
+
+  // Sesi AE-19 — per-item reject state.
+  const [rejectTarget, setRejectTarget] = useState<{
+    item: PurchaseRequestItem;
+  } | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectSubmitting, setRejectSubmitting] = useState(false);
 
   const {
     data: requests = [],
@@ -237,6 +245,44 @@ export function PurchaseRequestsSection() {
     void refresh();
   }
 
+  function openReject(item: PurchaseRequestItem) {
+    setRejectTarget({ item });
+    setRejectReason("");
+  }
+
+  async function submitReject() {
+    if (!rejectTarget) return;
+    const reason = rejectReason.trim();
+    if (reason.length < 3) {
+      toast.error("Alasan minimal 3 karakter");
+      return;
+    }
+    setRejectSubmitting(true);
+    const res = await rejectItem({
+      itemId: rejectTarget.item.id,
+      reason,
+    });
+    setRejectSubmitting(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(
+      `Item di-reject · status PR: ${
+        res.data.newStatus === "completed"
+          ? "Selesai"
+          : res.data.newStatus === "partial"
+            ? "Sebagian"
+            : res.data.newStatus === "cancelled"
+              ? "Dibatalkan (semua di-reject)"
+              : "Open"
+      }`,
+    );
+    setRejectTarget(null);
+    setRejectReason("");
+    void refresh();
+  }
+
   async function submitCancel() {
     if (!cancelTarget) return;
     const reason = cancelReason.trim();
@@ -374,6 +420,7 @@ export function PurchaseRequestsSection() {
               request={req}
               onReceive={openReceive}
               onBulkReceive={openBulk}
+              onRejectItem={openReject}
               onCancel={(r) => {
                 setCancelTarget(r);
                 setCancelReason("");
@@ -581,6 +628,94 @@ export function PurchaseRequestsSection() {
         ) : null}
       </Modal>
 
+      {/* Sesi AE-19 — Reject single item modal */}
+      <Modal
+        open={!!rejectTarget}
+        onClose={() => setRejectTarget(null)}
+        title="Tolak Item"
+        description={
+          rejectTarget
+            ? `${rejectTarget.item.ingredientNameSnapshot} — ${Number(rejectTarget.item.requestedQty)} ${rejectTarget.item.unitSnapshot}`
+            : undefined
+        }
+        size="md"
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setRejectTarget(null)}
+              disabled={rejectSubmitting}
+            >
+              Batal
+            </Button>
+            <Button
+              onClick={submitReject}
+              disabled={rejectSubmitting || rejectReason.trim().length < 3}
+              className="!bg-danger-500 hover:!bg-danger-600"
+            >
+              {rejectSubmitting ? "Memproses…" : "Tolak Item"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-xs text-neutral-600">
+            Item yang di-reject akan dikecualikan dari hitungan pemenuhan PR
+            (item lain tetap bisa di-terima). Status PR auto-recompute. Kalau
+            SEMUA item di-reject, PR otomatis di-cancel.
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {[
+              "Supplier kosong",
+              "Harga terlalu mahal",
+              "Sudah ada di gudang",
+              "Salah input dari kasir",
+            ].map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() =>
+                  setRejectReason((prev) =>
+                    prev.trim().length === 0
+                      ? t
+                      : `${prev.trim()} — ${t}`,
+                  )
+                }
+                disabled={rejectSubmitting}
+                className="rounded-full border border-danger-300 bg-danger-50 px-2.5 py-1 text-[11px] font-medium text-danger-700 transition-colors hover:bg-danger-100 disabled:opacity-50"
+              >
+                + {t}
+              </button>
+            ))}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-neutral-900">
+              Alasan Tolak <span className="text-danger-500">*</span>
+            </label>
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value.slice(0, 300))}
+              rows={3}
+              placeholder="Mis: supplier ga punya stok hari ini"
+              className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger-500"
+              disabled={rejectSubmitting}
+            />
+            <p
+              className={cn(
+                "mt-1 text-[11px]",
+                rejectReason.trim().length < 3
+                  ? "text-danger-700"
+                  : "text-neutral-500",
+              )}
+            >
+              {rejectReason.trim().length < 3
+                ? "Minimal 3 karakter"
+                : "Alasan terisi"}
+            </p>
+          </div>
+        </div>
+      </Modal>
+
       <Modal
         open={!!cancelTarget}
         onClose={() => setCancelTarget(null)}
@@ -633,6 +768,7 @@ interface RequestCardProps {
     requestStatus: PurchaseRequestStatus,
   ) => void;
   onBulkReceive: (r: PurchaseRequestWithItems) => void;
+  onRejectItem: (item: PurchaseRequestItem) => void;
   onCancel: (r: PurchaseRequestWithItems) => void;
 }
 
@@ -640,6 +776,7 @@ function RequestCard({
   request,
   onReceive,
   onBulkReceive,
+  onRejectItem,
   onCancel,
 }: RequestCardProps) {
   const canEdit =
@@ -722,17 +859,38 @@ function RequestCard({
           rowActions={
             canEdit
               ? (it) => {
+                  if (it.rejectedAt) {
+                    return (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-danger-100 px-2 py-0.5 text-[10px] font-semibold text-danger-700">
+                        <X className="size-3" /> Rejected
+                      </span>
+                    );
+                  }
                   const remaining =
                     Number(it.requestedQty) - Number(it.receivedQty);
                   const itemDone = remaining === 0;
                   return (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => onReceive(it, request.status)}
-                    >
-                      {itemDone ? "Edit" : "Terima"}
-                    </Button>
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onReceive(it, request.status)}
+                      >
+                        {itemDone ? "Edit" : "Terima"}
+                      </Button>
+                      {/* Sesi AE-19 — per-item reject button */}
+                      {!itemDone ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onRejectItem(it)}
+                          className="text-danger-500 hover:bg-danger-100"
+                          title="Tolak item ini"
+                        >
+                          <X className="size-3.5" />
+                        </Button>
+                      ) : null}
+                    </div>
                   );
                 }
               : undefined

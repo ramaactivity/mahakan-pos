@@ -60,17 +60,14 @@ const MODULES: ModuleCard[] = [
 
 /**
  * Sesi AE-15 — Mobile staff landing dengan auth gate.
- *
- * Sebelumnya landing render 4 cards untuk semua user (logged-in atau
- * tidak). Sekarang gated: kalau unauth → redirect ke /pin?callbackUrl=/m,
- * kalau auth → tampil greeting personalize + 4 cards + tombol logout.
+ * Sesi AE-19 — redirect unauth ke /m/login (dedicated staff login),
+ * bukan /pin?callbackUrl=/m (yang dipakai shared POS/BackOffice flow).
+ * Owner feedback: login page bercampur bikin bingung — pisah saja.
  *
  * Auth flow:
  *   - status="loading" → spinner
- *   - status="unauthenticated" → redirect /pin?callbackUrl=/m
+ *   - status="unauthenticated" → redirect /m/login
  *   - status="authenticated" → render dashboard
- *
- * /pin page (sesi AE-15 update) honor callbackUrl param post-login.
  */
 export default function MobileLanding() {
   const router = useRouter();
@@ -79,7 +76,7 @@ export default function MobileLanding() {
   useEffect(() => {
     if (status === "loading") return;
     if (status === "unauthenticated" || !session) {
-      router.replace("/pin?callbackUrl=/m");
+      router.replace("/m/login");
     }
   }, [status, session, router]);
 
@@ -97,7 +94,7 @@ export default function MobileLanding() {
 
   async function handleLogout() {
     try {
-      await logout("/pin?callbackUrl=/m");
+      await logout("/m/login");
     } catch {
       toast.error("Gagal logout");
     }

@@ -113,6 +113,13 @@ export const purchaseRequestItems = pgTable(
     notes: text("notes"),
     displayOrder: integer("display_order").notNull().default(0),
 
+    /** Sesi AE-19 — per-item reject. Owner/manager bisa tolak item
+     * specific (mis. supplier ga ada stok, harga terlalu mahal) tanpa
+     * cancel whole PR. Item rejected exclude dari fulfillment calc. */
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    rejectedBy: uuid("rejected_by").references(() => users.id),
+    rejectReason: text("reject_reason"),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

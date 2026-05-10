@@ -253,6 +253,13 @@
       "when": 1778417554667,
       "tag": "0035_pr_manual_items_decimal",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1778419656645,
+      "tag": "0036_pr_item_reject",
+      "breakpoints": true
     }
   ]
 }

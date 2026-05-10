@@ -720,6 +720,160 @@ export async function bulkReceiveItems(input: {
   return ok(result);
 }
 
+/**
+ * Sesi AE-19 — Reject single item dari PR (tanpa cancel whole PR).
+ * Owner/manager pakai ini kalau supplier ga punya stok untuk item
+ * specific, atau item ga jadi dibutuhin. Rejected items exclude dari
+ * fulfillment calc — parent status auto-recompute.
+ *
+ * Idempotent: kalau item already rejected, return ok (no-op). Kalau
+ * mau un-reject, sediain `unrejectItem` action separate (defer).
+ */
+export async function rejectItem(input: {
+  itemId: string;
+  reason: string;
+}): Promise<
+  ApiResult<{
+    requestId: string;
+    newStatus: PurchaseRequestStatus;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase_request.receive")) {
+    return fail("FORBIDDEN", "Tidak punya hak reject item");
+  }
+  const reason = input.reason.trim();
+  if (reason.length < 3) {
+    return fail("INVALID_REASON", "Alasan minimal 3 karakter");
+  }
+
+  type RejectErr =
+    | "ITEM_NOT_FOUND"
+    | "REQUEST_NOT_FOUND"
+    | "CROSS_OUTLET"
+    | "REQUEST_CANCELLED";
+  type RejectResult =
+    | { error: RejectErr }
+    | { requestId: string; newStatus: PurchaseRequestStatus };
+
+  const result: RejectResult = await db.transaction(async (tx) => {
+    const [item] = await tx
+      .select()
+      .from(purchaseRequestItems)
+      .where(eq(purchaseRequestItems.id, input.itemId))
+      .limit(1);
+    if (!item) return { error: "ITEM_NOT_FOUND" };
+
+    const [parent] = await tx
+      .select()
+      .from(purchaseRequests)
+      .where(eq(purchaseRequests.id, item.requestId))
+      .limit(1);
+    if (!parent) return { error: "REQUEST_NOT_FOUND" };
+    if (parent.outletId !== session.user.outletId) {
+      return { error: "CROSS_OUTLET" };
+    }
+    if (parent.status === "cancelled") {
+      return { error: "REQUEST_CANCELLED" };
+    }
+
+    // Idempotent — kalau already rejected, just return current status.
+    if (item.rejectedAt) {
+      return { requestId: parent.id, newStatus: parent.status };
+    }
+
+    await tx
+      .update(purchaseRequestItems)
+      .set({
+        rejectedAt: new Date(),
+        rejectedBy: session.user.id,
+        rejectReason: reason,
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseRequestItems.id, input.itemId));
+
+    // Recompute parent status excluding rejected items dari "yang harus
+    // di-fulfill". Logic: untuk active items only:
+    //   all received >= requested → completed
+    //   any > 0 → partial
+    //   else → open
+    // Kalau SEMUA items rejected, parent jadi cancelled (no work to do).
+    const allItems = await tx
+      .select({
+        requestedQty: purchaseRequestItems.requestedQty,
+        receivedQty: purchaseRequestItems.receivedQty,
+        rejectedAt: purchaseRequestItems.rejectedAt,
+      })
+      .from(purchaseRequestItems)
+      .where(eq(purchaseRequestItems.requestId, parent.id));
+
+    const active = allItems.filter((i) => i.rejectedAt === null);
+    const allRejected = allItems.length > 0 && active.length === 0;
+
+    let newStatus: PurchaseRequestStatus = "open";
+    if (allRejected) {
+      newStatus = "cancelled";
+    } else {
+      const totalReq = active.reduce((s, i) => s + Number(i.requestedQty), 0);
+      const totalRecv = active.reduce((s, i) => s + Number(i.receivedQty), 0);
+      if (totalReq > 0 && totalRecv >= totalReq) newStatus = "completed";
+      else if (totalRecv > 0) newStatus = "partial";
+    }
+
+    if (newStatus !== parent.status) {
+      await tx
+        .update(purchaseRequests)
+        .set({
+          status: newStatus,
+          completedAt: newStatus === "completed" ? new Date() : null,
+          cancelledAt: newStatus === "cancelled" ? new Date() : null,
+          cancelledBy: newStatus === "cancelled" ? session.user.id : null,
+          cancelReason:
+            newStatus === "cancelled"
+              ? "Semua item di-reject — auto-cancel"
+              : null,
+          updatedAt: new Date(),
+          updatedBy: session.user.id,
+        })
+        .where(eq(purchaseRequests.id, parent.id));
+    } else {
+      await tx
+        .update(purchaseRequests)
+        .set({ updatedAt: new Date(), updatedBy: session.user.id })
+        .where(eq(purchaseRequests.id, parent.id));
+    }
+
+    return { requestId: parent.id, newStatus };
+  });
+
+  if ("error" in result) {
+    const messages: Record<RejectErr, string> = {
+      ITEM_NOT_FOUND: "Item tidak ditemukan",
+      REQUEST_NOT_FOUND: "Request tidak ditemukan",
+      CROSS_OUTLET: "Request dari outlet lain",
+      REQUEST_CANCELLED: "Request sudah dibatalkan",
+    };
+    return fail(result.error, messages[result.error]);
+  }
+
+  await logAudit({
+    eventType: "purchase_request.receive",
+    userId: session.user.id,
+    entityType: "purchase_request_item",
+    entityId: input.itemId,
+    payload: {
+      summary: `Item di-reject: ${reason}`,
+      after: { rejectedAt: new Date(), reason, requestStatus: result.newStatus },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  }).catch((e) => console.error("[audit purchase_request.reject_item]", e));
+
+  return ok(result);
+}
+
 export async function cancelPurchaseRequest(
   input: CancelPurchaseRequestInput,
 ): Promise<ApiResult<PurchaseRequest>> {

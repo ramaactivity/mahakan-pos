@@ -65,7 +65,7 @@ export default function MobileJadwalPage() {
   useEffect(() => {
     if (status === "loading") return;
     if (status === "unauthenticated" || !session) {
-      router.replace("/pin");
+      router.replace("/m/login");
     }
   }, [status, session, router]);
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Eye, EyeOff, KeyRound, Trash2 } from "lucide-react";
 import {
   Button,
@@ -39,6 +39,7 @@ export function EmployeeAttendancePinModal({
   const [submitting, setSubmitting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fieldId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -137,10 +138,18 @@ export function EmployeeAttendancePinModal({
         </div>
 
         <div className="space-y-2">
+          {/* Sesi AE-19 — autoComplete=off + new-password + name yang ga
+           * matching pola login. Tanpa ini Chrome auto-fill email user yang
+           * login (bug yang owner laporkan). */}
           <Input
             label="PIN baru (4-6 digit angka)"
             type={showPin ? "text" : "password"}
             inputMode="numeric"
+            name={`employee-pin-new-${fieldId}`}
+            autoComplete="new-password"
+            data-1p-ignore
+            data-lpignore="true"
+            data-form-type="other"
             value={pin}
             onChange={(e) => setPin(e.target.value.replace(/[^\d]/g, "").slice(0, 6))}
             placeholder="••••"
@@ -151,6 +160,11 @@ export function EmployeeAttendancePinModal({
             label="Konfirmasi PIN"
             type={showPin ? "text" : "password"}
             inputMode="numeric"
+            name={`employee-pin-confirm-${fieldId}`}
+            autoComplete="new-password"
+            data-1p-ignore
+            data-lpignore="true"
+            data-form-type="other"
             value={confirmPin}
             onChange={(e) =>
               setConfirmPin(e.target.value.replace(/[^\d]/g, "").slice(0, 6))

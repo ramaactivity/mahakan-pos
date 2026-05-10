@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Button, Input, Modal, toast } from "@/components/ui";
 import { isOk, resetPin } from "@/features/users";
 
@@ -25,6 +25,7 @@ export function ResetPinModal({
   const [confirmPin, setConfirmPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fieldId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -72,10 +73,17 @@ export function ResetPinModal({
       }
     >
       <div className="space-y-3">
+        {/* Sesi AE-19 — autoComplete off untuk prevent browser autofill
+         * email login user. */}
         <Input
           label="PIN Baru (4-6 digit)"
           type="text"
           inputMode="numeric"
+          name={`staff-pin-new-${fieldId}`}
+          autoComplete="new-password"
+          data-1p-ignore
+          data-lpignore="true"
+          data-form-type="other"
           value={pin}
           onChange={(e) => setPin(e.target.value.replace(/[^\d]/g, "").slice(0, 6))}
           autoFocus
@@ -85,6 +93,11 @@ export function ResetPinModal({
           label="Konfirmasi PIN"
           type="text"
           inputMode="numeric"
+          name={`staff-pin-confirm-${fieldId}`}
+          autoComplete="new-password"
+          data-1p-ignore
+          data-lpignore="true"
+          data-form-type="other"
           value={confirmPin}
           onChange={(e) =>
             setConfirmPin(e.target.value.replace(/[^\d]/g, "").slice(0, 6))
