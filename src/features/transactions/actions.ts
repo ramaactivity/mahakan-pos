@@ -1313,6 +1313,95 @@ export async function refundTransactionPartial(
   return ok({ transaction: result.transaction, eventId: result.eventId });
 }
 
+// ---------- updateItemPrepStatus (KDS sesi AE-35) ----------
+
+/**
+ * Update prep_status untuk single transaction item (Pesanan tab KDS).
+ * Transitions:
+ *   pending → in_progress   (staff start preparing)
+ *   in_progress → done      (staff selesai)
+ *   any → pending           (reset, undo)
+ *
+ * Stamps prep_started_at saat masuk in_progress, prep_done_at saat done.
+ * Same permission dgn markServed (pos.transaction.create) — staff &
+ * kasir bisa update status persiapan.
+ */
+export async function updateItemPrepStatus(input: {
+  itemId: string;
+  status: "pending" | "in_progress" | "done";
+}): Promise<ApiResult<{ id: string; prepStatus: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "pos.transaction.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak update status pesanan");
+  }
+  const now = new Date();
+  const updates: {
+    prepStatus: "pending" | "in_progress" | "done";
+    prepStartedAt?: Date | null;
+    prepDoneAt?: Date | null;
+  } = { prepStatus: input.status };
+  if (input.status === "in_progress") {
+    updates.prepStartedAt = now;
+    updates.prepDoneAt = null;
+  } else if (input.status === "done") {
+    updates.prepDoneAt = now;
+  } else {
+    // reset to pending — clear both timestamps
+    updates.prepStartedAt = null;
+    updates.prepDoneAt = null;
+  }
+
+  // Outlet boundary via JOIN check.
+  const [row] = await db
+    .update(transactionItems)
+    .set(updates)
+    .where(
+      and(
+        eq(transactionItems.id, input.itemId),
+        sql`EXISTS (
+          SELECT 1 FROM ${transactions} t
+          WHERE t.id = ${transactionItems.transactionId}
+            AND t.outlet_id = ${session.user.outletId}
+        )`,
+      ),
+    )
+    .returning({ id: transactionItems.id, prepStatus: transactionItems.prepStatus });
+  if (!row) return fail("NOT_FOUND", "Item tidak ditemukan");
+  return ok(row);
+}
+
+/** Bulk: tandai SEMUA item dari 1 transaksi sebagai done.
+ *  Tombol "Tandai Semua Selesai" di OrderCard (KDS). */
+export async function markAllItemsDone(
+  transactionId: string,
+): Promise<ApiResult<{ updatedCount: number }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "pos.transaction.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak update status");
+  }
+  const now = new Date();
+  const rows = await db
+    .update(transactionItems)
+    .set({
+      prepStatus: "done",
+      prepDoneAt: now,
+      prepStartedAt: sql`COALESCE(${transactionItems.prepStartedAt}, ${now})`,
+    })
+    .where(
+      and(
+        eq(transactionItems.transactionId, transactionId),
+        sql`${transactionItems.prepStatus} != 'done'`,
+        sql`EXISTS (
+          SELECT 1 FROM ${transactions} t
+          WHERE t.id = ${transactionId}
+            AND t.outlet_id = ${session.user.outletId}
+        )`,
+      ),
+    )
+    .returning({ id: transactionItems.id });
+  return ok({ updatedCount: rows.length });
+}
+
 // ---------- markServed ----------
 
 /**

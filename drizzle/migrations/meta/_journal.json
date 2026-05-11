@@ -267,6 +267,13 @@
       "when": 1778427721280,
       "tag": "0037_dizzy_psynapse",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1778467104173,
+      "tag": "0038_cold_captain_flint",
+      "breakpoints": true
     }
   ]
 }

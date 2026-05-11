@@ -175,6 +175,22 @@ export const transactionItems = pgTable(
     note: text("note"),
     openPriceNote: text("open_price_note"),
 
+    /** Sesi AE-35 — KDS per-item prep status. Default 'pending' saat
+     * transaction dibuat. Staff dapur/bar tap "Mulai" → 'in_progress',
+     * tap "Selesai" → 'done'. Driver "Pesanan" tab dashboard + filters.
+     *
+     * Per-item granularity supaya partial completion visible: order 5 item,
+     * 3 sudah jadi, 2 lagi diproses — kasir tau tepat status. */
+    prepStatus: text("prep_status", {
+      enum: ["pending", "in_progress", "done"],
+    })
+      .notNull()
+      .default("pending"),
+    /** Stamped saat prepStatus berubah ke 'done'. Buat hitung prep time
+     * + audit + sort by oldest-pending di KDS view. */
+    prepStartedAt: timestamp("prep_started_at", { withTimezone: true }),
+    prepDoneAt: timestamp("prep_done_at", { withTimezone: true }),
+
     /** Cumulative quantity refunded across one or more partial refund
      * events. Cannot exceed `quantity`. Updated by refundTransactionPartial. */
     refundedQuantity: integer("refunded_quantity").notNull().default(0),

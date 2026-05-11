@@ -41,6 +41,8 @@ export {
   listTransactions,
   logTransactionReprint,
   markServed,
+  markAllItemsDone,
+  updateItemPrepStatus,
   refundTransaction,
   refundTransactionPartial,
   saveAsOpenBill,
