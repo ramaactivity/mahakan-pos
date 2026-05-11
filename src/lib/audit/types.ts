@@ -111,6 +111,7 @@ export const AUDIT_EVENT_TYPES = [
   "attendance.mobile_clock_in",
   "attendance.mobile_clock_out",
   "attendance.mobile_rejected",
+  "attendance.drive_upload_failed",
   // HR (Sesi C-8) — Schedule + Payroll.
   "schedule.upsert",
   "schedule.copy_week",

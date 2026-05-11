@@ -308,12 +308,56 @@ export async function POST(request: Request): Promise<NextResponse> {
     driveUrl = result.url;
     driveFileId = result.fileId;
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Upload gagal";
-    return jsonError(
-      "DRIVE_UPLOAD_FAILED",
-      `Gagal upload selfie ke Drive: ${message}. Coba lagi.`,
-      500,
-    );
+    /* Sesi AE-41 — staff feedback: clock-in error "invalid_grant" tidak
+     * jelas. Detect kondisi spesifik (refresh token expired/revoked,
+     * env vars hilang, quota) → pesan staff-friendly + audit log
+     * supaya owner langsung tahu harus re-auth. */
+    const rawMessage = e instanceof Error ? e.message : "Upload gagal";
+    const lc = rawMessage.toLowerCase();
+    let code = "DRIVE_UPLOAD_FAILED";
+    let userMessage = `Upload selfie gagal: ${rawMessage}. Coba lagi.`;
+    let auditSummary = `Drive upload gagal saat absen ${matched.fullName}: ${rawMessage}`;
+
+    if (lc.includes("invalid_grant") || lc.includes("invalid grant")) {
+      code = "DRIVE_AUTH_EXPIRED";
+      userMessage =
+        "Sistem absen lagi gangguan akses Google Drive — refresh token expired. Hubungi Owner buat refresh akses (jalankan 'npm run drive:auth' + update env Vercel). Sementara absen lewat WhatsApp ke Owner.";
+      auditSummary =
+        "🚨 Drive refresh token EXPIRED — semua absen mobile ter-block. Owner perlu re-auth: 'npm run drive:auth' lalu update GOOGLE_OAUTH_REFRESH_TOKEN di Vercel.";
+    } else if (lc.includes("quota") || lc.includes("rate")) {
+      code = "DRIVE_QUOTA";
+      userMessage =
+        "Google Drive quota habis sementara. Tunggu 1-2 menit lalu Foto Ulang + Submit lagi.";
+    } else if (
+      lc.includes("env") ||
+      lc.includes("client_id") ||
+      lc.includes("client_secret") ||
+      lc.includes("refresh_token") ||
+      lc.includes("root_parent_id")
+    ) {
+      code = "DRIVE_NOT_CONFIGURED";
+      userMessage =
+        "Sistem Drive belum di-setup oleh Owner. Hubungi Owner buat config env vars.";
+    }
+
+    await logAudit({
+      eventType: "attendance.drive_upload_failed",
+      userId: null,
+      entityType: "attendance",
+      entityId: matched.id,
+      payload: {
+        summary: auditSummary,
+        context: {
+          mode,
+          rawError: rawMessage,
+          code,
+          employeeName: matched.fullName,
+        },
+      },
+      metadata: { outletId: matched.outletId, actorRole: "system" },
+    }).catch((err) => console.error("[audit drive upload fail]", err));
+
+    return jsonError(code, userMessage, 503);
   }
 
   // System actor (clockedInBy / clockedOutBy is users.id NOT NULL — pakai

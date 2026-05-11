@@ -332,6 +332,9 @@ function ActStep({
   const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /* Sesi AE-41 — track error code separately supaya UI bisa render
+   * variant khusus untuk Drive auth issue (yg butuh action owner). */
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const clientRefIdRef = useRef<string>(crypto.randomUUID());
 
@@ -391,6 +394,7 @@ function ActStep({
     setSelfie(f);
     setSelfiePreview(URL.createObjectURL(f));
     setError(null);
+    setErrorCode(null);
   }
 
   const inRadius =
@@ -404,6 +408,7 @@ function ActStep({
     if (!canSubmit || !selfie || gps.status !== "ok") return;
     setSubmitting(true);
     setError(null);
+    setErrorCode(null);
     try {
       const formData = new FormData();
       formData.append("pin", pin);
@@ -424,13 +429,16 @@ function ActStep({
         const msg =
           (!json.ok && json.error?.message) ||
           `Submit gagal (HTTP ${res.status})`;
+        const code = !json.ok ? json.error?.code ?? null : null;
         setError(msg);
+        setErrorCode(code);
         setSubmitting(false);
         return;
       }
       onDone(json.data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Submit gagal");
+      setErrorCode(null);
       setSubmitting(false);
     }
   }
@@ -556,12 +564,60 @@ function ActStep({
       </div>
 
       {error ? (
-        <div
-          role="alert"
-          className="rounded-md border border-danger-300 bg-danger-100 px-3 py-2 text-sm font-medium text-danger-700"
-        >
-          {error}
-        </div>
+        errorCode === "DRIVE_AUTH_EXPIRED" ||
+        errorCode === "DRIVE_NOT_CONFIGURED" ? (
+          /* Sesi AE-41 — variant khusus: auth Drive butuh action owner.
+           * Pesan panjang, tampilkan dengan card besar + warning icon
+           * supaya staff jelas ini bukan kesalahan dia. */
+          <div
+            role="alert"
+            className="space-y-2 rounded-xl border-2 border-warning-500 bg-warning-100 p-3 text-sm text-warning-700"
+          >
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="size-5 shrink-0 text-warning-700" />
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold">
+                  Sistem absen lagi gangguan (bukan kesalahan kamu)
+                </p>
+                <p className="mt-1 text-xs leading-relaxed">{error}</p>
+              </div>
+            </div>
+            <div className="rounded-md bg-white/60 p-2 text-xs">
+              <p className="font-semibold text-neutral-900">
+                Sementara, lakukan ini:
+              </p>
+              <ol className="mt-1 ml-4 list-decimal space-y-0.5 text-neutral-700">
+                <li>Screenshot pesan ini, kirim ke Owner via WhatsApp</li>
+                <li>
+                  Catat jam datang &amp; pulang manual di chat Owner
+                </li>
+                <li>
+                  Owner akan input absen kamu setelah Drive di-fix
+                </li>
+              </ol>
+            </div>
+          </div>
+        ) : errorCode === "DRIVE_QUOTA" ? (
+          <div
+            role="alert"
+            className="rounded-xl border-2 border-warning-500 bg-warning-100 px-3 py-2.5 text-sm text-warning-700"
+          >
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="size-5 shrink-0" />
+              <div>
+                <p className="font-semibold">Drive sibuk sebentar</p>
+                <p className="mt-0.5 text-xs">{error}</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div
+            role="alert"
+            className="rounded-md border border-danger-300 bg-danger-100 px-3 py-2 text-sm font-medium text-danger-700"
+          >
+            {error}
+          </div>
+        )
       ) : null}
 
       <div className="space-y-2">
