@@ -1939,18 +1939,21 @@ export async function closeOpenBill(
       `Hanya open bill yang bisa di-close (status saat ini: ${current.status})`,
     );
   }
-  // NOTE: intentionally NOT checking assertShiftOpen here. Sesi Z #5 was
-  // scoped to refund/void/edit only — close-open-bill across shifts is
-  // legit (customer comes back next day to pay yesterday's bill). The
-  // payment still attributes to current.shiftId; if that becomes a recap
-  // gap, surface separately in a follow-up.
 
-  // Cash math validation
+  // Sesi AE-36 BUGFIX — fetch split breakdown supaya remaining ≠ total
+  // saat prior splits exist. Sebelumnya validate + cashChange pakai
+  // current.total raw → kasir diminta full total padahal sebagian sudah
+  // dibayar via split. Sekarang remainingAmount = total - sum(splits.amount).
+  const breakdown = await fetchSplitBreakdown(input.transactionId, current.total);
+  const remaining = breakdown.remainingAmount;
+  const hasPriorSplits = breakdown.totalPaid > 0;
+
+  // Cash math validation — pakai remaining, bukan total.
   if (input.paymentMethod === "cash") {
-    if (input.cashReceived === null || input.cashReceived < current.total) {
+    if (input.cashReceived === null || input.cashReceived < remaining) {
       return fail(
         "INSUFFICIENT_CASH",
-        `Tunai kurang. Total Rp${current.total.toLocaleString("id-ID")}.`,
+        `Tunai kurang. Sisa Rp${remaining.toLocaleString("id-ID")}${hasPriorSplits ? ` (sudah dibayar Rp${breakdown.totalPaid.toLocaleString("id-ID")} dari total Rp${current.total.toLocaleString("id-ID")})` : ""}.`,
       );
     }
   } else {
@@ -1964,20 +1967,63 @@ export async function closeOpenBill(
 
   const cashChange =
     input.paymentMethod === "cash" && input.cashReceived !== null
-      ? input.cashReceived - current.total
+      ? input.cashReceived - remaining
       : null;
 
-  await db
-    .update(transactions)
-    .set({
-      status: "paid",
-      paymentMethod: input.paymentMethod,
-      cashReceived: input.paymentMethod === "cash" ? input.cashReceived : null,
-      cashChange:
-        input.paymentMethod === "cash" ? cashChange : null,
-      updatedAt: new Date(),
-    })
-    .where(eq(transactions.id, input.transactionId));
+  // Sesi AE-36 — kalau ada prior splits, route via split_payments untuk
+  // konsistensi accounting. Final payment_method = "split" supaya audit
+  // trail menunjukkan ini mixed payment.
+  if (hasPriorSplits) {
+    // Get shift for split row.
+    const activeShift = await db
+      .select({ id: sql<string>`id` })
+      .from(sql`shifts`)
+      .where(
+        sql`user_id = ${session.user.id} AND status = 'open' AND outlet_id = ${session.user.outletId}`,
+      )
+      .limit(1);
+    if (activeShift.length === 0) {
+      return fail("NO_ACTIVE_SHIFT", "Buka shift dulu sebelum close bill");
+    }
+    const shiftId = activeShift[0]!.id;
+    await db.transaction(async (tx) => {
+      // Insert final residual split.
+      await tx.insert(splitPayments).values({
+        transactionId: input.transactionId,
+        outletId: session.user.outletId,
+        shiftId,
+        cashierId: session.user.id,
+        amount: remaining,
+        paymentMethod: input.paymentMethod,
+        cashReceived: input.paymentMethod === "cash" ? input.cashReceived : null,
+        cashChange,
+        splitKind: "nominal",
+      });
+      await tx
+        .update(transactions)
+        .set({
+          status: "paid",
+          paymentMethod: "split",
+          cashReceived: null,
+          cashChange: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(transactions.id, input.transactionId));
+    });
+  } else {
+    // No prior splits — original simple close path.
+    await db
+      .update(transactions)
+      .set({
+        status: "paid",
+        paymentMethod: input.paymentMethod,
+        cashReceived: input.paymentMethod === "cash" ? input.cashReceived : null,
+        cashChange:
+          input.paymentMethod === "cash" ? cashChange : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(transactions.id, input.transactionId));
+  }
 
   await logAudit({
     eventType: "transaction.open_bill.close",

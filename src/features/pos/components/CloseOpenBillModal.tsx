@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { Banknote, CheckCircle2, CreditCard, Loader2, QrCode, Wallet } from "lucide-react";
-import { Button, Modal, toast } from "@/components/ui";
+import { Badge, Button, Modal, toast } from "@/components/ui";
 import {
   closeOpenBill,
+  getSplitBreakdown,
   isOk,
   type PaymentMethod,
+  type SplitPaymentBreakdown,
   type TransactionWithItems,
 } from "@/features/transactions";
 import { formatRupiah } from "@/lib/format";
@@ -54,10 +56,16 @@ export function CloseOpenBillModal({
   onClosed,
   onOpenSettings,
 }: CloseOpenBillModalProps) {
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  // Sesi AE-36 — exclude 'split' karena split adalah sentinel value
+  // server-side, bukan user-selectable di Close modal.
+  const [paymentMethod, setPaymentMethod] = useState<
+    Exclude<PaymentMethod, "split">
+  >("cash");
   const [cashInput, setCashInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Sesi AE-36 — fetch split breakdown saat open biar tau sisa real. */
+  const [breakdown, setBreakdown] = useState<SplitPaymentBreakdown | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -66,7 +74,22 @@ export function CloseOpenBillModal({
     setCashInput("");
     setError(null);
     setSubmitting(false);
+    setBreakdown(null);
     /* eslint-enable react-hooks/set-state-in-effect */
+  }, [open, bill?.id]);
+
+  // Fetch split breakdown — Sesi AE-36 critical for showing correct sisa.
+  useEffect(() => {
+    if (!open || !bill) return;
+    let cancelled = false;
+    void (async () => {
+      const res = await getSplitBreakdown(bill.id);
+      if (cancelled) return;
+      if (isOk(res)) setBreakdown(res.data);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [open, bill?.id]);
 
   // Keyboard shortcuts — same UX as main PaymentModal (sesi AD-1).
@@ -74,9 +97,10 @@ export function CloseOpenBillModal({
   useEffect(() => {
     if (!open || !bill || paymentMethod !== "cash") return;
     function onKey(e: KeyboardEvent) {
-      const total = bill?.total ?? 0;
+      // Sesi AE-36 — pakai effectivePayable (remaining) bukan total.
+      const payable = breakdown?.remainingAmount ?? bill?.total ?? 0;
       const received = parseInt(cashInput || "0", 10) || 0;
-      const sufficient = received >= total;
+      const sufficient = received >= payable;
 
       if (e.key === "Enter") {
         if (!submitting && sufficient) {
@@ -102,10 +126,16 @@ export function CloseOpenBillModal({
 
   if (!open || !bill) return null;
 
+  // Sesi AE-36 — effective payable adalah remaining (kalau ada split sebelumnya)
+  // bukan total raw. Sebelumnya kasir diminta full total → bug.
+  const totalPaid = breakdown?.totalPaid ?? 0;
+  const effectivePayable = breakdown?.remainingAmount ?? bill.total;
+  const hasPriorSplits = totalPaid > 0;
+
   const cashReceived = parseInt(cashInput || "0", 10) || 0;
-  const cashChange = Math.max(0, cashReceived - bill.total);
+  const cashChange = Math.max(0, cashReceived - effectivePayable);
   const cashSufficient =
-    paymentMethod !== "cash" || cashReceived >= bill.total;
+    paymentMethod !== "cash" || cashReceived >= effectivePayable;
   const isCash = paymentMethod === "cash";
   const cardLabel = methodLabel(paymentMethod);
 
@@ -177,8 +207,8 @@ export function CloseOpenBillModal({
             ? "Memproses…"
             : isCash
               ? cashSufficient
-                ? `Konfirmasi Bayar ${formatRupiah(bill.total)}`
-                : `Kurang ${formatRupiah(bill.total - cashReceived)}`
+                ? `Konfirmasi Bayar ${formatRupiah(effectivePayable)}`
+                : `Kurang ${formatRupiah(effectivePayable - cashReceived)}`
               : `Sudah Lunas ${cardLabel}`}
         </Button>
       }
@@ -249,11 +279,46 @@ export function CloseOpenBillModal({
 
           <section className="rounded-lg border border-neutral-200 bg-white p-3">
             <div className="flex items-baseline justify-between">
-              <span className="text-sm font-bold text-neutral-900">TOTAL</span>
-              <span className="font-mono text-2xl font-bold text-mahakan-green-900">
+              <span className="text-sm font-bold text-neutral-900">TOTAL BILL</span>
+              <span className="font-mono text-lg font-semibold text-neutral-900">
                 {formatRupiah(bill.total)}
               </span>
             </div>
+            {/* Sesi AE-36 — info split breakdown kalau ada prior splits. */}
+            {hasPriorSplits ? (
+              <div className="mt-2 space-y-1.5 border-t border-neutral-200 pt-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-success-500">
+                    ✓ Sudah dibayar ({breakdown!.splits.length}×)
+                  </span>
+                  <span className="font-mono font-semibold text-success-500">
+                    -{formatRupiah(totalPaid)}
+                  </span>
+                </div>
+                {breakdown!.splits.map((s) => (
+                  <div
+                    key={s.id}
+                    className="flex items-center justify-between text-[11px] text-neutral-500"
+                  >
+                    <span>
+                      <Badge variant="neutral">
+                        {s.splitKind === "per_menu" ? "Per Item" : "Nominal"}
+                      </Badge>{" "}
+                      {paymentMethodShort(s.paymentMethod)}
+                    </span>
+                    <span className="font-mono">{formatRupiah(s.amount)}</span>
+                  </div>
+                ))}
+                <div className="flex items-baseline justify-between border-t border-neutral-200 pt-1.5">
+                  <span className="text-sm font-bold text-mahakan-green-900">
+                    SISA DIBAYAR
+                  </span>
+                  <span className="font-mono text-2xl font-bold text-mahakan-green-900">
+                    {formatRupiah(effectivePayable)}
+                  </span>
+                </div>
+              </div>
+            ) : null}
           </section>
         </div>
 
@@ -321,13 +386,13 @@ export function CloseOpenBillModal({
               cashReceived={cashReceived}
               cashChange={cashChange}
               cashSufficient={cashSufficient}
-              total={bill.total}
+              total={effectivePayable}
               submitting={submitting}
             />
           ) : (
             <NonCashInstruction
               method={paymentMethod}
-              total={bill.total}
+              total={effectivePayable}
               submitting={submitting}
             />
           )}
@@ -583,6 +648,14 @@ function NumpadKey({
       {label}
     </button>
   );
+}
+
+/** Short payment method label for split breakdown row. Sesi AE-36. */
+function paymentMethodShort(m: string): string {
+  if (m === "cash") return "Tunai";
+  if (m === "qris") return "QRIS";
+  if (m.startsWith("card_")) return "Kartu " + m.replace("card_", "").toUpperCase();
+  return m;
 }
 
 function methodLabel(m: PaymentMethod): string {

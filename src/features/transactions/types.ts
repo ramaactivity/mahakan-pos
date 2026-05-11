@@ -258,9 +258,11 @@ export interface SaveOpenBillInput {
  * Close an open bill — finalize payment + transition to "paid". Triggers
  * customer receipt auto-print on success (client-side after action).
  */
+/** Sesi AE-36 — close open bill. paymentMethod excludes 'split' karena
+ *  itu sentinel value yang dipasang server kalau ada prior splits. */
 export interface CloseOpenBillInput {
   transactionId: string;
-  paymentMethod: PaymentMethod;
+  paymentMethod: Exclude<PaymentMethod, "split">;
   cashReceived: number | null;
 }
 

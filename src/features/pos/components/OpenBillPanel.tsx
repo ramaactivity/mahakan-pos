@@ -5,17 +5,21 @@ import type { Transaction as TrxType } from "@/features/transactions";
 import {
   AlertTriangle,
   ClipboardList,
+  Clock,
   FileText,
   Pencil,
   Printer,
   RefreshCw,
+  Search,
   Split,
+  Wallet,
 } from "lucide-react";
 import {
   Badge,
   Button,
   Card,
   CardContent,
+  Input,
   Skeleton,
 } from "@/components/ui";
 import { PrintStationButtons } from "./PrintStationButtons";
@@ -32,6 +36,7 @@ import { CloseOpenBillModal } from "./CloseOpenBillModal";
 import { formatRupiah } from "@/lib/format";
 import { formatDuration } from "@/lib/duration";
 import { formatIndonesianTime } from "@/lib/date";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
 
 interface OpenBillPanelProps {
@@ -73,6 +78,8 @@ export function OpenBillPanel({
   const [bills, setBills] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
+  // Sesi AE-36 — nowMs untuk urgency calc, di-update tiap 30s (sama dgn tick).
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [details, setDetails] = useState<Record<string, TransactionWithItems>>(
     {},
   );
@@ -81,6 +88,9 @@ export function OpenBillPanel({
   );
   const [splittingBill, setSplittingBill] =
     useState<TransactionWithItems | null>(null);
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search.trim().toLowerCase(), 200);
+  const [filter, setFilter] = useState<"all" | "stale" | "fresh">("all");
   // Skeleton only on the very first fetch. Background polls (30s tick) and
   // parent-bumped refreshKey re-fetch silently — keeps card list visible
   // while kasir is interacting (sesi Z #1: "POS sering refresh sendiri").
@@ -118,10 +128,14 @@ export function OpenBillPanel({
   }, [refreshKey, tick, onCountChange]);
 
   // Auto-refresh every 30s — multi-cashier sync (another kasir may close
-  // a bill from a parallel device).
+  // a bill from a parallel device). Plus clock tick 15s untuk urgency.
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 30_000);
-    return () => clearInterval(id);
+    const dataInterval = setInterval(() => setTick((t) => t + 1), 30_000);
+    const clockInterval = setInterval(() => setNowMs(Date.now()), 15_000);
+    return () => {
+      clearInterval(dataInterval);
+      clearInterval(clockInterval);
+    };
   }, []);
 
   // Batch-fetch TransactionWithItems for all missing bills in a single
@@ -151,6 +165,54 @@ export function OpenBillPanel({
     [bills],
   );
 
+  // Sesi AE-36 — dashboard aggregates + filter
+  const dashboard = useMemo(() => {
+    let stale = 0;
+    let oldest = 0;
+    let withCustomer = 0;
+    let withNote = 0;
+    for (const b of bills) {
+      const age = nowMs - new Date(b.createdAt).getTime();
+      if (age > STALE_THRESHOLD_MS) stale++;
+      if (age > oldest) oldest = age;
+      if (b.customerName) withCustomer++;
+      if (b.note) withNote++;
+    }
+    return {
+      total: bills.length,
+      outstanding: totalOutstanding,
+      stale,
+      oldestMinutes: Math.floor(oldest / 60_000),
+      withCustomer,
+      withNote,
+    };
+  }, [bills, totalOutstanding, nowMs]);
+
+  const filteredBills = useMemo(() => {
+    return bills.filter((b) => {
+      if (filter === "stale") {
+        if (nowMs - new Date(b.createdAt).getTime() <= STALE_THRESHOLD_MS)
+          return false;
+      } else if (filter === "fresh") {
+        if (nowMs - new Date(b.createdAt).getTime() > STALE_THRESHOLD_MS)
+          return false;
+      }
+      if (debouncedSearch) {
+        const matchNum = b.transactionNumber
+          .toLowerCase()
+          .includes(debouncedSearch);
+        const matchPager =
+          b.pagerNumber !== null &&
+          String(b.pagerNumber).includes(debouncedSearch);
+        const matchCustomer = b.customerName
+          ?.toLowerCase()
+          .includes(debouncedSearch);
+        if (!matchNum && !matchPager && !matchCustomer) return false;
+      }
+      return true;
+    });
+  }, [bills, filter, debouncedSearch, nowMs]);
+
   function handleBillClosed(closedTrx: TransactionWithItems) {
     setClosingBill(null);
     setTick((t) => t + 1);
@@ -171,7 +233,7 @@ export function OpenBillPanel({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <header className="border-b border-neutral-200 bg-white p-4">
+      <header className="border-b border-neutral-200 bg-white px-4 pt-3 pb-2">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="flex items-center gap-2 text-lg font-semibold text-neutral-900">
@@ -179,12 +241,10 @@ export function OpenBillPanel({
                 className="size-5 text-mahakan-green-700"
                 aria-hidden
               />
-              Bill Aktif Hari Ini
+              Bill Aktif
             </h2>
-            <p className="text-sm text-neutral-500">
-              {bills.length === 0
-                ? "Tidak ada bill yang belum dibayar."
-                : `${bills.length} bill belum dibayar · total Rp ${totalOutstanding.toLocaleString("id-ID")}`}
+            <p className="text-xs text-neutral-500">
+              Tap kartu untuk bayar / split / edit. Auto-refresh 30s.
             </p>
           </div>
           <Button
@@ -195,22 +255,89 @@ export function OpenBillPanel({
             <RefreshCw className="size-4" aria-hidden /> Refresh
           </Button>
         </div>
+
+        {/* Sesi AE-36 — dashboard cards */}
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <BillStatCard
+            label="Total Bill"
+            value={String(dashboard.total)}
+            tone="neutral"
+            icon={<ClipboardList className="size-4" />}
+          />
+          <BillStatCard
+            label="Outstanding"
+            value={formatRupiah(dashboard.outstanding)}
+            tone="info"
+            icon={<Wallet className="size-4" />}
+          />
+          <BillStatCard
+            label="Bill Lama (>2j)"
+            value={String(dashboard.stale)}
+            tone={dashboard.stale > 0 ? "warning" : "muted"}
+            icon={<AlertTriangle className="size-4" />}
+          />
+          <BillStatCard
+            label="Bill Terlama"
+            value={
+              dashboard.oldestMinutes > 0
+                ? formatDuration(dashboard.oldestMinutes)
+                : "—"
+            }
+            tone={dashboard.oldestMinutes > 120 ? "warning" : "muted"}
+            icon={<Clock className="size-4" />}
+          />
+        </div>
+
+        {/* Filters + search */}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {([
+            { v: "all", l: "Semua", c: dashboard.total },
+            { v: "fresh", l: "Baru (<2j)", c: dashboard.total - dashboard.stale },
+            { v: "stale", l: "Lama (>2j)", c: dashboard.stale },
+          ] as const).map((f) => (
+            <button
+              key={f.v}
+              type="button"
+              onClick={() => setFilter(f.v)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                filter === f.v
+                  ? "border-mahakan-green-700 bg-mahakan-green-700 text-white"
+                  : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
+              )}
+            >
+              {f.l} ({f.c})
+            </button>
+          ))}
+          <div className="ml-auto min-w-[180px] relative">
+            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-neutral-400" />
+            <Input
+              type="text"
+              placeholder="Cari nomor / pager / customer…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-8 pl-8 text-xs"
+            />
+          </div>
+        </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto bg-neutral-50 p-3">
         {loading ? (
           <div className="space-y-3" role="status" aria-label="Memuat bill">
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className="h-32 w-full" />
             ))}
           </div>
-        ) : bills.length === 0 ? (
+        ) : filteredBills.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
             <div className="flex size-12 items-center justify-center rounded-full bg-neutral-100">
               <ClipboardList className="size-6 text-neutral-400" aria-hidden />
             </div>
             <p className="text-sm font-medium text-neutral-700">
-              Belum ada open bill.
+              {bills.length === 0
+                ? "Belum ada open bill."
+                : "Tidak ada bill yang match filter."}
             </p>
             <p className="max-w-xs text-xs text-neutral-500">
               Saat customer order tapi belum bayar, tap &ldquo;Simpan Bill&rdquo;
@@ -219,14 +346,11 @@ export function OpenBillPanel({
           </div>
         ) : (
           <ul className="space-y-3">
-            {bills.map((b) => (
+            {filteredBills.map((b) => (
               <BillCard
                 key={b.id}
                 summary={b}
                 detail={details[b.id]}
-                /* `tick` is bumped every 30s — we pipe it as a re-render
-                 * signal so age-based labels (e.g. "5m") refresh without
-                 * BillCard calling Date.now() directly during render. */
                 nowTick={tick}
                 onPay={() =>
                   details[b.id] ? setClosingBill(details[b.id]) : null
@@ -440,4 +564,35 @@ function useBillAge(
     ageMinutes: Math.max(0, Math.floor(ageMs / 60_000)),
     isStale: ageMs > STALE_THRESHOLD_MS,
   };
+}
+
+/** Sesi AE-36 — dashboard stat card kecil. */
+function BillStatCard({
+  label,
+  value,
+  tone,
+  icon,
+}: {
+  label: string;
+  value: string;
+  tone: "neutral" | "warning" | "info" | "success" | "muted";
+  icon: React.ReactNode;
+}) {
+  const toneClasses: Record<typeof tone, string> = {
+    neutral: "border-neutral-200 bg-white text-neutral-900",
+    warning: "border-warning-500/30 bg-warning-100/40 text-warning-500",
+    info: "border-info-300 bg-info-100/40 text-info-500",
+    success: "border-success-500/30 bg-success-100/40 text-success-500",
+    muted: "border-neutral-200 bg-neutral-100 text-neutral-600",
+  };
+  return (
+    <div className={cn("rounded-lg border px-3 py-2", toneClasses[tone])}>
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider opacity-80">
+        {icon} {label}
+      </div>
+      <div className="mt-0.5 font-mono text-sm font-bold sm:text-base">
+        {value}
+      </div>
+    </div>
+  );
 }
