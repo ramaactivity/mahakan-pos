@@ -1785,18 +1785,22 @@ export async function saveAsOpenBill(
   // Step 2: flip to open status + reset payment fields. cashReceived stays
   // 0 (NOT NULL) to satisfy ck_transactions_cash_fields when payment_method
   // remains 'cash' as placeholder.
-  const [updated] = await db
+  // Sesi AE-34 — perf: skip .returning() (don't need updated row, we have
+  // created.data + 2 changed fields). Saves 1 RTT serializing response.
+  const now = new Date();
+  await db
     .update(transactions)
     .set({
       status: "open",
       cashReceived: 0,
       cashChange: 0,
-      updatedAt: new Date(),
+      updatedAt: now,
     })
-    .where(eq(transactions.id, created.data.id))
-    .returning();
+    .where(eq(transactions.id, created.data.id));
 
-  await logAudit({
+  // Sesi AE-34 — fire-and-forget audit log (existing pattern di createTransaction).
+  // Audit advisory, tolerant brief delay; tidak perlu blocking response.
+  logAudit({
     eventType: "transaction.open_bill.create",
     userId: session.user.id,
     entityType: "transaction",
@@ -1813,10 +1817,19 @@ export async function saveAsOpenBill(
       outletId: session.user.outletId,
       actorRole: session.user.role,
     },
-  });
+  }).catch((e) => console.error("[audit open_bill]", e));
 
-  const refreshed = await fetchTransactionById(updated.id);
-  return refreshed ? ok(refreshed) : ok({ ...created.data, status: "open" });
+  // Sesi AE-34 — skip fetchTransactionById (yang trigger 3 round-trips:
+  // select trx + items + mods + customer). created.data sudah lengkap
+  // dari createTransaction(), cuma 3 field yang berubah di update. Merge
+  // langsung — saves 3 RTT ≈ 300-500ms.
+  return ok({
+    ...created.data,
+    status: "open",
+    cashReceived: 0,
+    cashChange: 0,
+    updatedAt: now,
+  });
 }
 
 /**

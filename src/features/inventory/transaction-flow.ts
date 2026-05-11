@@ -106,15 +106,22 @@ export async function computeStockFlowForOrder(
   }
 
   // Expand each unique recipe to atomic leaves once + load atomic costs.
+  // Sesi AE-34 — parallelize recipe expansion. Sebelumnya sequential await
+  // di for loop → N round-trip × ~150ms tiap. Order dengan 5 menu unik
+  // butuh 5 × RTT (~750ms). Sekarang Promise.all → 1 RTT (~150ms).
   const recipeKeyToRecipeId = new Map<string, string>();
   const recipeIdToWaste = new Map<string, number>();
   const recipeIdToLeaves = new Map<string, Map<string, number>>();
-  for (const r of recipeRows) {
-    if (!r.menuItemId) continue;
+  const validRecipes = recipeRows.filter((r) => r.menuItemId !== null);
+  const expandedLeaves = await Promise.all(
+    validRecipes.map((r) => expandRecipeToAtomicLeaves(tx, r.id, outletId)),
+  );
+  for (let i = 0; i < validRecipes.length; i++) {
+    const r = validRecipes[i]!;
     const key = `${r.menuItemId}|${r.variant ?? ""}`;
     recipeKeyToRecipeId.set(key, r.id);
     recipeIdToWaste.set(r.id, r.wasteFactorPct);
-    recipeIdToLeaves.set(r.id, await expandRecipeToAtomicLeaves(tx, r.id, outletId));
+    recipeIdToLeaves.set(r.id, expandedLeaves[i]!);
   }
 
   // Collect all atomic ingredient ids touched + load their cost_per_unit.
