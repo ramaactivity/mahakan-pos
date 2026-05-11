@@ -1,21 +1,34 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ArrowDownCircle,
   ArrowUpCircle,
+  Camera,
   Coins,
+  Delete,
+  ExternalLink,
+  Eraser,
   Flame,
   Hammer,
   HandHelping,
   Heart,
+  ImagePlus,
   ListTree,
+  Loader2,
   PartyPopper,
   RefreshCw,
   Scissors,
   Snowflake,
   TrendingUp,
   Wallet,
+  X,
 } from "lucide-react";
 import {
   Badge,
@@ -26,7 +39,6 @@ import {
   CardHeader,
   CardTitle,
   Input,
-  NumericInput,
   Select,
   Skeleton,
   toast,
@@ -43,21 +55,25 @@ import {
   type ExpenseCategory,
   type Income,
 } from "@/features/cash";
-import { formatRupiah, parseRupiah } from "@/lib/format";
+import { formatRupiah } from "@/lib/format";
 import { todayWibIso } from "@/features/cash/helpers";
 import { formatIndonesianTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
 type Mode = "expense" | "income";
 
-/** Sesi AE-38 — quick-pick chips untuk transaksi sehari-hari di toko.
- *  Owner: bukan corporate expense — fokus daily ops Mahakan Coffee.
- *  Chip keyword juga di-match ke category name (best-effort auto-select). */
+/** Sesi AE-40 — quick-pick chip dengan keyword priority list buat
+ *  match ke nama kategori (substring, case-insensitive). Fallback chain
+ *  ke "Lain-lain" → kategori pertama. Owner Mahakan punya kategori
+ *  generik (Belanja Bahan Baku, Listrik & Air, Gaji Harian, dll); chip
+ *  di-design untuk auto-pilih kategori yang paling relevan supaya staff
+ *  gak bingung pilih sendiri. */
 interface QuickPick {
   label: string;
   description: string;
   icon: typeof Flame;
-  /** Substring untuk match category name. */
+  /** Priority list — first match wins. Falls back ke "Lain-lain" kalau
+   *  tidak match. Kosong = jangan auto-pilih kategori. */
   categoryKeywords?: string[];
 }
 
@@ -66,48 +82,49 @@ const EXPENSE_QUICK_PICKS: QuickPick[] = [
     label: "Gas LPG",
     description: "Beli gas LPG dapur",
     icon: Flame,
-    categoryKeywords: ["gas", "lpg"],
+    categoryKeywords: ["belanja bahan", "lpg", "operasional"],
   },
   {
     label: "Ice Cube",
     description: "Beli es batu kristal",
     icon: Snowflake,
-    categoryKeywords: ["es batu", "ice"],
+    categoryKeywords: ["belanja bahan", "es", "operasional"],
   },
   {
     label: "Galon Karyawan",
     description: "Refill galon air karyawan",
     icon: Wallet,
-    categoryKeywords: ["galon", "air"],
+    categoryKeywords: ["listrik", "air", "galon"],
   },
   {
     label: "Galon Cleo",
     description: "Beli galon Cleo untuk produksi kopi",
     icon: Wallet,
-    categoryKeywords: ["galon cleo", "cleo", "air"],
+    categoryKeywords: ["belanja bahan", "cleo", "air", "galon"],
   },
   {
     label: "Tukang Rumput",
     description: "Bayar tukang rumput",
     icon: Scissors,
-    categoryKeywords: ["rumput", "kebersihan", "maintenance"],
+    categoryKeywords: ["perawatan", "rumput", "kebersihan", "maintenance"],
   },
   {
     label: "Perbaikan",
     description: "Perbaikan peralatan / fasilitas",
     icon: Hammer,
-    categoryKeywords: ["perbaikan", "maintenance", "service"],
+    categoryKeywords: ["perawatan", "perbaikan", "maintenance", "service"],
   },
   {
     label: "Sumbangan",
     description: "Sumbangan / donasi",
     icon: Heart,
-    categoryKeywords: ["sumbangan", "donasi"],
+    categoryKeywords: ["sumbangan", "donasi", "lain"],
   },
   {
     label: "Lainnya",
     description: "",
     icon: ListTree,
+    categoryKeywords: ["lain", "umum", "other"],
   },
 ];
 
@@ -129,28 +146,43 @@ const INCOME_QUICK_PICKS: QuickPick[] = [
   },
 ];
 
+const QUICK_AMOUNTS_EXPENSE: Array<{ label: string; value: string }> = [
+  { label: "5rb", value: "5000" },
+  { label: "10rb", value: "10000" },
+  { label: "20rb", value: "20000" },
+  { label: "50rb", value: "50000" },
+  { label: "100rb", value: "100000" },
+];
+
+const QUICK_AMOUNTS_INCOME: Array<{ label: string; value: string }> = [
+  { label: "50rb", value: "50000" },
+  { label: "100rb", value: "100000" },
+  { label: "200rb", value: "200000" },
+  { label: "300rb", value: "300000" },
+  { label: "500rb", value: "500000" },
+];
+
 /**
- * Sesi AE-38 redesign — Petty Cash UI mengikuti pattern AE-35/36/37
- * (Pesanan / Bill Aktif / Riwayat).
+ * Sesi AE-40 redesign — Petty Cash 2-col layout untuk Galaxy A7 Lite
+ * tablet (1340×800 landscape).
  *
- * Dashboard cards (4):
- *   - Pengeluaran hari ini | Pemasukan hari ini | Net Petty Cash | Entry
- *
- * Quick-pick chips per mode:
- *   - Pengeluaran: Gas LPG, Ice Cube, Galon Karyawan, Galon Cleo,
- *     Tukang Rumput, Perbaikan, Sumbangan, Lainnya
- *   - Pemasukan: DP Event, Tip Customer, Lainnya
- *   Tap chip → auto-fill description + (kalau ada) auto-select kategori
- *
- * Recent list:
- *   - Show 10 entri hari ini, newest first
- *   - Per row: time prominent, badge In/Out, description, category, amount
- *   - Search by description / category
+ * Fix dari sesi AE-38:
+ *   1. Kategori Cepat ↔ Kategori dropdown sekarang sync. Tap chip
+ *      → auto-pilih kategori yang match (priority keyword), fallback
+ *      ke "Lain-lain". Indicator visual ke dropdown supaya staff lihat.
+ *   2. Layout 2-col: KIRI = chips + deskripsi + kategori + bukti foto
+ *      (Drive). KANAN = hero amount + 5 quick amounts + numpad 3×4
+ *      + tombol submit. Mirror pattern OpenShiftModal AE-2.
+ *   3. Upload bukti transaksi reuse endpoint
+ *      `/api/v1/expense-receipts/upload` (Google Drive auto-folder
+ *      "STRUK PENGELUARAN/{YYYY}/{NN. MONTH}/"). Hanya untuk mode
+ *      pengeluaran — pemasukan belum punya kolom + endpoint.
  */
 export function PettyCashCard() {
   const [mode, setMode] = useState<Mode>("expense");
   const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
+  /** Raw digit string (no separator). Formatted display via formatRupiah. */
+  const [amountDigits, setAmountDigits] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -162,24 +194,34 @@ export function PettyCashCard() {
   const [refreshKey, setRefreshKey] = useState(0);
   const hasLoadedOnce = useRef(false);
   const [recentFilter, setRecentFilter] = useState<Mode | "all">("all");
+  const [activeChipLabel, setActiveChipLabel] = useState<string | null>(null);
 
-  // Load categories once on mount.
+  // Receipt upload (expense only — endpoint exists, income belum)
+  const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load categories once on mount + init categoryId ke "Lain-lain" (atau
+  // first non-system) supaya staff gak perlu pilih manual buat case umum.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       const res = await listExpenseCategories();
       if (cancelled) return;
       if (isOk(res)) {
-        setCategories(res.data.items);
-        if (res.data.items.length > 0 && categoryId === "") {
-          setCategoryId(res.data.items[0]!.id);
+        const items = res.data.items;
+        setCategories(items);
+        const visible = items.filter((c) => !c.isSystem);
+        if (visible.length > 0) {
+          const lainHit = visible.find((c) => /lain/i.test(c.name));
+          setCategoryId((cur) => (cur === "" ? (lainHit?.id ?? visible[0]!.id) : cur));
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [categoryId]);
+  }, []);
 
   // Load today's recent entries.
   useEffect(() => {
@@ -225,12 +267,7 @@ export function PettyCashCard() {
     };
   }, [refreshKey]);
 
-  let parsedAmount = 0;
-  try {
-    parsedAmount = amount.length > 0 ? parseRupiah(amount) : 0;
-  } catch {
-    parsedAmount = 0;
-  }
+  const parsedAmount = amountDigits.length === 0 ? 0 : Number(amountDigits);
 
   const dashboard = useMemo(() => {
     let outSum = 0;
@@ -261,37 +298,112 @@ export function PettyCashCard() {
     return recent.filter((r) => r.kind === recentFilter);
   }, [recent, recentFilter]);
 
-  // Find category by keyword match (case-insensitive). Returns first hit.
   const categoryById = useMemo(() => {
     const m = new Map<string, ExpenseCategory>();
     for (const c of categories) m.set(c.id, c);
     return m;
   }, [categories]);
 
-  function applyQuickPick(pick: QuickPick) {
-    setDescription(pick.description);
-    if (mode === "expense" && pick.categoryKeywords) {
-      const lcCats = categories.map((c) => ({
-        id: c.id,
-        lc: c.name.toLowerCase(),
-      }));
-      for (const kw of pick.categoryKeywords) {
+  // User-visible categories (hide system, e.g. Refund)
+  const visibleCategories = useMemo(
+    () => categories.filter((c) => !c.isSystem),
+    [categories],
+  );
+
+  /** Pick best-matching category id berdasarkan priority keywords.
+   *  Fallback chain: keyword match → kategori "Lain-lain" → first. */
+  function pickCategoryId(keywords: string[] | undefined): string | null {
+    const lcCats = visibleCategories.map((c) => ({
+      id: c.id,
+      lc: c.name.toLowerCase(),
+    }));
+    if (keywords && keywords.length > 0) {
+      for (const kw of keywords) {
         const hit = lcCats.find((c) => c.lc.includes(kw.toLowerCase()));
-        if (hit) {
-          setCategoryId(hit.id);
-          break;
-        }
+        if (hit) return hit.id;
       }
+    }
+    const lainHit = lcCats.find((c) => /lain/.test(c.lc));
+    if (lainHit) return lainHit.id;
+    return visibleCategories[0]?.id ?? null;
+  }
+
+  function applyQuickPick(pick: QuickPick) {
+    setActiveChipLabel(pick.label);
+    if (pick.description) setDescription(pick.description);
+    if (mode === "expense") {
+      const id = pickCategoryId(pick.categoryKeywords);
+      if (id) setCategoryId(id);
     }
   }
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
+  // Numpad helpers
+  function appendDigit(d: string) {
+    setAmountDigits((prev) => {
+      const next = (prev + d).replace(/^0+(?=\d)/, "");
+      // Cap at Rp 999.999.999 (9 digits)
+      return next.slice(0, 9);
+    });
+  }
+  function backspace() {
+    setAmountDigits((prev) => prev.slice(0, -1));
+  }
+  function clearAmount() {
+    setAmountDigits("");
+  }
+  function setQuickAmount(value: string) {
+    setAmountDigits(value);
+  }
+
+  // Receipt upload
+  async function handleReceiptUpload(file: File) {
+    if (uploadingReceipt) return;
+    setError(null);
+    if (file.size > 5 * 1024 * 1024) {
+      setError("Foto bukti maksimal 5 MB");
+      return;
+    }
+    setUploadingReceipt(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("expenseDate", todayWibIso());
+      const res = await fetch("/api/v1/expense-receipts/upload", {
+        method: "POST",
+        body: fd,
+      });
+      const json = (await res.json()) as
+        | { success: true; data: { url: string; folderPath: string } }
+        | { success: false; error: { code: string; message: string } };
+      if (!json.success) {
+        throw new Error(json.error.message);
+      }
+      setReceiptUrl(json.data.url);
+      toast.success(`Bukti tersimpan di Drive · ${json.data.folderPath}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload gagal");
+    } finally {
+      setUploadingReceipt(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  function resetForm() {
+    setDescription("");
+    setAmountDigits("");
+    setActiveChipLabel(null);
+    setReceiptUrl(null);
+    // Re-pick default category (Lain-lain or first)
+    const defId = pickCategoryId(undefined);
+    if (defId) setCategoryId(defId);
+  }
+
+  async function onSubmit() {
     if (submitting) return;
     setError(null);
 
     if (description.trim().length === 0) {
-      setError("Deskripsi wajib");
+      setError("Deskripsi wajib diisi");
       return;
     }
     if (parsedAmount <= 0) {
@@ -313,6 +425,7 @@ export function PettyCashCard() {
         description: description.trim(),
         amount: parsedAmount,
         paymentMethod: "cash",
+        receiptImageUrl: receiptUrl,
       });
       setSubmitting(false);
       if (!isOk(res)) {
@@ -335,12 +448,14 @@ export function PettyCashCard() {
       toast.success(`Pemasukan ${formatRupiah(parsedAmount)} dicatat`);
     }
 
-    setDescription("");
-    setAmount("");
+    resetForm();
     setRefreshKey((k) => k + 1);
   }
 
   const quickPicks = mode === "expense" ? EXPENSE_QUICK_PICKS : INCOME_QUICK_PICKS;
+  const quickAmounts =
+    mode === "expense" ? QUICK_AMOUNTS_EXPENSE : QUICK_AMOUNTS_INCOME;
+  const selectedCategory = categoryId ? categoryById.get(categoryId) : null;
 
   return (
     <Card>
@@ -353,8 +468,9 @@ export function PettyCashCard() {
             </CardTitle>
             <CardDescription>
               Catat pengeluaran / pemasukan kas sehari-hari (gas, es batu,
-              galon, tip, DP event, dll). Tap kategori cepat di bawah untuk
-              auto-fill, atau ketik manual. Otomatis terangkum saat tutup shift.
+              galon, tip, DP event, dll). Tap kategori cepat untuk auto-pilih
+              deskripsi + kategori, lalu masukkan nominal di numpad. Otomatis
+              terangkum saat tutup shift.
             </CardDescription>
           </div>
           <Button
@@ -398,8 +514,9 @@ export function PettyCashCard() {
           />
         </div>
       </CardHeader>
-      <CardContent className="space-y-4 px-6 pb-6">
-        {/* Mode toggle */}
+
+      <CardContent className="space-y-5 px-4 pb-6 sm:px-6">
+        {/* Mode toggle (full width) */}
         <div
           role="radiogroup"
           aria-label="Tipe entri petty cash"
@@ -426,11 +543,11 @@ export function PettyCashCard() {
               aria-checked={mode === opt.value}
               onClick={() => {
                 setMode(opt.value);
-                setDescription("");
+                resetForm();
               }}
               disabled={submitting}
               className={cn(
-                "flex items-center justify-center gap-2 rounded-md border-2 py-3 text-sm font-semibold transition-all",
+                "flex items-center justify-center gap-2 rounded-lg border-2 py-3 text-sm font-semibold transition-all",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
                 mode === opt.value
                   ? opt.value === "expense"
@@ -445,133 +562,342 @@ export function PettyCashCard() {
           ))}
         </div>
 
-        {/* Quick-pick chips */}
-        <div>
-          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
-            Kategori Cepat
-          </p>
-          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-            {quickPicks.map((q) => {
-              const Icon = q.icon;
-              const active = description === q.description && q.description !== "";
-              return (
-                <button
-                  key={q.label}
-                  type="button"
-                  onClick={() => applyQuickPick(q)}
+        {/* 2-col layout: KIRI = form, KANAN = numpad + amount */}
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          {/* ============ KIRI: Form ============ */}
+          <section className="space-y-4">
+            {/* Quick-pick chips */}
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                  Kategori Cepat
+                </p>
+                {activeChipLabel ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveChipLabel(null);
+                      setDescription("");
+                    }}
+                    className="text-[11px] font-medium text-neutral-500 hover:text-danger-500"
+                  >
+                    <Eraser className="mr-0.5 inline size-3" /> Bersihkan
+                  </button>
+                ) : null}
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {quickPicks.map((q) => {
+                  const Icon = q.icon;
+                  const active = activeChipLabel === q.label;
+                  return (
+                    <button
+                      key={q.label}
+                      type="button"
+                      onClick={() => applyQuickPick(q)}
+                      disabled={submitting}
+                      className={cn(
+                        "flex flex-col items-center gap-1 rounded-lg border-2 p-2.5 text-xs font-medium transition-all",
+                        active
+                          ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900 shadow-sm"
+                          : "border-neutral-200 bg-white text-neutral-700 hover:border-mahakan-green-700/50 hover:bg-mahakan-green-50/40",
+                        submitting && "opacity-50 cursor-not-allowed",
+                      )}
+                    >
+                      <Icon
+                        className={cn(
+                          "size-5",
+                          active ? "text-mahakan-green-700" : "text-neutral-500",
+                        )}
+                        aria-hidden
+                      />
+                      <span className="text-center leading-tight">
+                        {q.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Description */}
+            <Input
+              label="Deskripsi"
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value.slice(0, 200))}
+              placeholder={
+                mode === "expense"
+                  ? "Mis. beli es batu 3 pack, refill galon Cleo"
+                  : "Mis. DP event komunitas X tgl 20"
+              }
+              disabled={submitting}
+              required
+              hint={
+                description.length > 0
+                  ? `${description.length}/200 karakter`
+                  : undefined
+              }
+            />
+
+            {/* Category (expense only) */}
+            {mode === "expense" ? (
+              visibleCategories.length === 0 ? (
+                <div className="rounded-lg border border-warning-500/40 bg-warning-100/40 px-3 py-2 text-xs text-warning-500">
+                  ⚠️ Belum ada kategori pengeluaran. Owner / Manager perlu
+                  set di Back Office → Cash → Kategori dulu, supaya petty
+                  cash bisa dicatat. Saran: <em>Belanja Bahan Baku</em>,{" "}
+                  <em>Listrik & Air</em>, <em>Perawatan Alat</em>,{" "}
+                  <em>Lain-lain</em>.
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <Select
+                    label="Kategori"
+                    value={categoryId || undefined}
+                    onValueChange={(v) => setCategoryId(v)}
+                    disabled={submitting}
+                    placeholder="Pilih kategori"
+                    options={visibleCategories.map<SelectOption>((c) => ({
+                      value: c.id,
+                      label: c.name,
+                    }))}
+                  />
+                  {activeChipLabel && selectedCategory ? (
+                    <p className="text-[11px] text-mahakan-green-900">
+                      ✓ Otomatis dipilih dari chip{" "}
+                      <strong>{activeChipLabel}</strong> →{" "}
+                      <strong>{selectedCategory.name}</strong>. Bisa diubah
+                      manual kalau perlu.
+                    </p>
+                  ) : null}
+                </div>
+              )
+            ) : null}
+
+            {/* Receipt upload (expense only) */}
+            {mode === "expense" ? (
+              <div className="space-y-1.5">
+                <label className="block text-sm font-medium text-neutral-900">
+                  Bukti Transaksi (opsional)
+                </label>
+                {receiptUrl ? (
+                  <div className="flex items-center justify-between gap-2 rounded-lg border border-mahakan-green-700/30 bg-mahakan-green-50 px-3 py-2">
+                    <a
+                      href={receiptUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-mahakan-green-900 hover:underline"
+                    >
+                      <Camera className="size-4 shrink-0" aria-hidden />
+                      <span className="truncate">
+                        Bukti tersimpan di Drive — klik untuk lihat
+                      </span>
+                      <ExternalLink className="size-3 shrink-0" aria-hidden />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setReceiptUrl(null)}
+                      disabled={submitting || uploadingReceipt}
+                      className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-neutral-500 hover:bg-danger-100 hover:text-danger-500"
+                      aria-label="Hapus bukti dari form (file tetap di Drive)"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50/50 px-3 py-2.5">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,application/pdf"
+                      hidden
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void handleReceiptUpload(file);
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingReceipt || submitting}
+                    >
+                      {uploadingReceipt ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" />{" "}
+                          Mengupload…
+                        </>
+                      ) : (
+                        <>
+                          <ImagePlus className="size-4" /> Upload Foto Struk
+                        </>
+                      )}
+                    </Button>
+                    <p className="mt-1 text-[11px] text-neutral-500">
+                      JPG / PNG / WebP / PDF, max 5 MB. Disimpan otomatis ke
+                      Google Drive folder <em>STRUK PENGELUARAN</em>.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </section>
+
+          {/* ============ KANAN: Hero amount + numpad ============ */}
+          <section className="space-y-4">
+            {/* Hero amount */}
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                  Nominal
+                </span>
+                <span className="text-[11px] text-neutral-500">
+                  Tap angka di numpad
+                </span>
+              </div>
+              <div
+                className={cn(
+                  "flex h-20 items-center justify-end rounded-xl border-2 px-5 font-mono text-3xl font-bold tabular-nums transition-all sm:text-4xl",
+                  parsedAmount > 0
+                    ? mode === "expense"
+                      ? "border-danger-500 bg-danger-100/40 text-danger-500"
+                      : "border-success-500 bg-success-100/40 text-success-500"
+                    : "border-neutral-200 bg-neutral-50 text-neutral-400",
+                )}
+              >
+                {formatRupiah(parsedAmount)}
+              </div>
+            </div>
+
+            {/* Quick amounts */}
+            <div>
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                Nominal Cepat
+              </p>
+              <div className="grid grid-cols-5 gap-1.5">
+                {quickAmounts.map((q) => (
+                  <button
+                    key={q.value}
+                    type="button"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      setQuickAmount(q.value);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setQuickAmount(q.value);
+                      }
+                    }}
+                    style={{ touchAction: "manipulation" }}
+                    disabled={submitting}
+                    className={cn(
+                      "rounded-lg border-2 py-1.5 text-sm font-bold transition-all active:scale-95",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                      "disabled:cursor-not-allowed disabled:opacity-50",
+                      amountDigits === q.value
+                        ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                        : "border-neutral-200 bg-white text-neutral-800 hover:bg-neutral-50",
+                    )}
+                  >
+                    {q.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Numpad 3×4 */}
+            <div>
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                Numpad
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
+                  <NumKey
+                    key={d}
+                    label={d}
+                    onPress={() => appendDigit(d)}
+                    disabled={submitting}
+                  />
+                ))}
+                <NumKey
+                  label="C"
+                  onPress={clearAmount}
                   disabled={submitting}
-                  className={cn(
-                    "flex flex-col items-center gap-1 rounded-lg border px-2 py-2 text-xs font-medium transition-all",
-                    active
-                      ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
-                      : "border-neutral-200 bg-white text-neutral-700 hover:border-mahakan-green-700 hover:bg-mahakan-green-50",
-                    submitting && "opacity-50 cursor-not-allowed",
-                  )}
-                >
-                  <Icon className="size-4" aria-hidden />
-                  {q.label}
-                </button>
-              );
-            })}
-          </div>
+                  variant="muted"
+                />
+                <NumKey
+                  label="0"
+                  onPress={() => appendDigit("0")}
+                  disabled={submitting}
+                />
+                <NumKey
+                  label={<Delete className="size-5" aria-hidden />}
+                  onPress={backspace}
+                  disabled={submitting}
+                  variant="muted"
+                  ariaLabel="Hapus angka terakhir"
+                />
+              </div>
+            </div>
+          </section>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-3">
-          <Input
-            label="Deskripsi"
-            type="text"
-            value={description}
-            onChange={(e) => setDescription(e.target.value.slice(0, 200))}
-            placeholder={
-              mode === "expense"
-                ? "Mis. beli es batu 3 pack, refill galon Cleo"
-                : "Mis. DP event komunitas X tgl 20"
-            }
-            disabled={submitting}
-            required
-          />
-          <NumericInput
-            label="Nominal"
-            value={amount}
-            onChange={setAmount}
-            prefix="Rp"
-            hint={
-              parsedAmount > 0
-                ? `Preview: ${formatRupiah(parsedAmount)}`
-                : undefined
-            }
-            disabled={submitting}
-            required
-          />
-          {mode === "expense" ? (
-            categories.length === 0 ? (
-              <div className="rounded-md border border-warning-500/40 bg-warning-100/40 px-3 py-2 text-xs text-warning-500">
-                ⚠️ Belum ada kategori pengeluaran. Owner / Manager perlu
-                set di Back Office → Cash → Kategori dulu, supaya petty
-                cash bisa dicatat. Saran kategori: <em>Petty Cash Toko</em>{" "}
-                atau buat per-tipe (Gas, Es Batu, Galon, Maintenance,
-                Sumbangan).
-              </div>
-            ) : (
-              <Select
-                label="Kategori"
-                value={categoryId || undefined}
-                onValueChange={(v) => setCategoryId(v)}
-                disabled={submitting}
-                placeholder="Pilih kategori"
-                options={categories.map<SelectOption>((c) => ({
-                  value: c.id,
-                  label: c.name,
-                }))}
-              />
-            )
-          ) : null}
-          {error ? (
-            <p
-              role="alert"
-              className="rounded-md border border-danger-300 bg-danger-100/40 px-3 py-2 text-sm font-medium text-danger-500"
-            >
-              {error}
-            </p>
-          ) : null}
-          <Button
-            type="submit"
-            loading={submitting}
-            disabled={
-              submitting || (mode === "expense" && categories.length === 0)
-            }
-            fullWidth
-            className={cn(
-              "h-12 text-base",
-              mode === "expense"
-                ? "!bg-danger-500 hover:!bg-danger-700"
-                : "!bg-success-500 hover:!bg-success-500",
-            )}
+        {/* Error banner */}
+        {error ? (
+          <p
+            role="alert"
+            className="rounded-lg border border-danger-300 bg-danger-100/40 px-3 py-2 text-sm font-medium text-danger-500"
           >
-            {submitting
-              ? "Memproses…"
-              : `Catat ${mode === "expense" ? "Pengeluaran" : "Pemasukan"}${parsedAmount > 0 ? ` ${formatRupiah(parsedAmount)}` : ""}`}
-          </Button>
-        </form>
+            {error}
+          </p>
+        ) : null}
+
+        {/* Submit button (full width) */}
+        <Button
+          type="button"
+          onClick={onSubmit}
+          loading={submitting}
+          disabled={
+            submitting ||
+            (mode === "expense" && visibleCategories.length === 0)
+          }
+          fullWidth
+          className={cn(
+            "h-14 text-base font-semibold",
+            mode === "expense"
+              ? "!bg-danger-500 hover:!bg-danger-700"
+              : "!bg-success-500 hover:!bg-success-500",
+          )}
+        >
+          {submitting
+            ? "Memproses…"
+            : `Catat ${mode === "expense" ? "Pengeluaran" : "Pemasukan"}${
+                parsedAmount > 0 ? ` ${formatRupiah(parsedAmount)}` : ""
+              }`}
+        </Button>
 
         {/* Today's recent list */}
-        <div className="border-t border-neutral-200 pt-3">
+        <div className="border-t border-neutral-200 pt-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-semibold text-neutral-900">
               Riwayat Hari Ini ({recent.length})
             </p>
             <div className="flex gap-1">
-              {([
-                { v: "all" as const, l: "Semua", c: recent.length },
-                { v: "expense" as const, l: "Out", c: dashboard.outCount },
-                { v: "income" as const, l: "In", c: dashboard.inCount },
-              ]).map((f) => (
+              {(
+                [
+                  { v: "all" as const, l: "Semua", c: recent.length },
+                  { v: "expense" as const, l: "Out", c: dashboard.outCount },
+                  { v: "income" as const, l: "In", c: dashboard.inCount },
+                ]
+              ).map((f) => (
                 <button
                   key={f.v}
                   type="button"
                   onClick={() => setRecentFilter(f.v)}
                   className={cn(
-                    "rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors",
+                    "rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors",
                     recentFilter === f.v
                       ? "border-mahakan-green-700 bg-mahakan-green-700 text-white"
                       : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50",
@@ -603,11 +929,12 @@ export function PettyCashCard() {
                       ? categoryById.get((row as Expense).categoryId)
                       : null
                     : null;
+                const expRow = kind === "expense" ? (row as Expense) : null;
                 return (
                   <li
                     key={row.id}
                     className={cn(
-                      "flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-2",
+                      "flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2",
                       kind === "expense" && "border-l-4 border-l-danger-300",
                       kind === "income" && "border-l-4 border-l-success-500/40",
                     )}
@@ -625,8 +952,21 @@ export function PettyCashCard() {
                       <p className="text-[11px] text-neutral-500">
                         {formatIndonesianTime(new Date(ts))}
                         {cat ? ` · ${cat.name}` : ""}
+                        {expRow?.receiptImageUrl ? " · 📎 ada bukti" : ""}
                       </p>
                     </div>
+                    {expRow?.receiptImageUrl ? (
+                      <a
+                        href={expRow.receiptImageUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="shrink-0 rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-mahakan-green-700"
+                        aria-label="Lihat bukti transaksi"
+                        title="Lihat bukti transaksi"
+                      >
+                        <ExternalLink className="size-3.5" />
+                      </a>
+                    ) : null}
                     <span
                       className={cn(
                         "font-mono text-sm font-bold tabular-nums shrink-0",
@@ -660,7 +1000,7 @@ function StatCard({
   value: string;
   sublabel?: string;
   tone: "neutral" | "success" | "danger" | "warning";
-  icon: React.ReactNode;
+  icon: ReactNode;
 }) {
   const toneClasses: Record<typeof tone, string> = {
     neutral: "border-neutral-200 bg-white text-neutral-900",
@@ -680,5 +1020,50 @@ function StatCard({
         <div className="mt-0.5 text-[10px] opacity-70">{sublabel}</div>
       ) : null}
     </div>
+  );
+}
+
+function NumKey({
+  label,
+  onPress,
+  disabled,
+  variant,
+  ariaLabel,
+}: {
+  label: ReactNode;
+  onPress: () => void;
+  disabled?: boolean;
+  variant?: "muted";
+  ariaLabel?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      onPointerDown={(e) => {
+        if (disabled) return;
+        e.preventDefault();
+        onPress();
+      }}
+      onKeyDown={(e) => {
+        if (disabled) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onPress();
+        }
+      }}
+      style={{ touchAction: "manipulation" }}
+      disabled={disabled}
+      className={cn(
+        "flex h-12 items-center justify-center rounded-lg border-2 text-lg font-bold transition-all active:scale-95",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        variant === "muted"
+          ? "border-neutral-200 bg-neutral-50 text-neutral-700 hover:bg-neutral-100"
+          : "border-neutral-200 bg-white text-neutral-900 hover:bg-mahakan-green-50",
+      )}
+    >
+      {label}
+    </button>
   );
 }

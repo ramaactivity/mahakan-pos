@@ -11,8 +11,10 @@ import { PettyCashCard } from "./PettyCashCard";
  */
 export function PettyCashPanel() {
   return (
-    <div className="h-full overflow-y-auto bg-neutral-50 p-6">
-      <div className="mx-auto max-w-3xl space-y-4">
+    <div className="h-full overflow-y-auto bg-neutral-50 p-4 sm:p-6">
+      {/* Sesi AE-40 — bump max-w supaya 2-col layout (form | numpad)
+       * fit di Galaxy A7 Lite landscape (1340px) tanpa cramped. */}
+      <div className="mx-auto max-w-6xl space-y-4">
         <div className="flex items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-lg bg-mahakan-green-100 text-mahakan-green-900">
             <Coins className="size-5" aria-hidden />
