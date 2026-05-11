@@ -211,6 +211,10 @@ export function MarketItemFormModal({
       ? await updateMarketItem({
           id: target.id,
           patch: {
+            // Sesi AE-39 — kirim supplier+ingredient supaya backend
+            // bisa swap kalau staff ganti.
+            supplierId,
+            ingredientId,
             unitCost: cost,
             packSize: size,
             packUnit,
@@ -235,8 +239,6 @@ export function MarketItemFormModal({
     toast.success(target ? "Market item diupdate" : "Market item ditambah");
     onSaved();
   }
-
-  const selectedSupplier = suppliers.find((s) => s.id === supplierId);
 
   return (
     <Modal
@@ -264,12 +266,9 @@ export function MarketItemFormModal({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Combobox
                 label="Supplier"
-                placeholder={
-                  target ? selectedSupplier?.name ?? "—" : "Pilih supplier…"
-                }
+                placeholder="Pilih supplier…"
                 searchPlaceholder="Cari supplier…"
-                clearable={!target}
-                disabled={target !== null}
+                clearable
                 value={supplierId || null}
                 onChange={(v) => setSupplierId(v ?? "")}
                 groups={[
@@ -286,12 +285,9 @@ export function MarketItemFormModal({
               />
               <Combobox
                 label="Bahan"
-                placeholder={
-                  target ? selectedIngredient?.name ?? "—" : "Pilih bahan…"
-                }
+                placeholder="Pilih bahan…"
                 searchPlaceholder="Cari bahan…"
-                clearable={!target}
-                disabled={target !== null}
+                clearable
                 value={ingredientId || null}
                 onChange={(v) => setIngredientId(v ?? "")}
                 groups={[
@@ -307,6 +303,20 @@ export function MarketItemFormModal({
                 ]}
               />
             </div>
+            {target && (supplierId !== target.supplierId ||
+              ingredientId !== target.ingredientId) ? (
+              <div className="rounded-lg border border-warning-300 bg-warning-100/40 px-3 py-2 text-xs text-warning-500">
+                ⚠️ Mengganti{" "}
+                {supplierId !== target.supplierId &&
+                ingredientId !== target.ingredientId
+                  ? "supplier + bahan"
+                  : supplierId !== target.supplierId
+                    ? "supplier"
+                    : "bahan"}{" "}
+                pada entry yang sudah ada. Pastikan kombinasi baru belum
+                punya entry sendiri — kalau dup, akan ditolak.
+              </div>
+            ) : null}
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <Input

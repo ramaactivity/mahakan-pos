@@ -17,6 +17,10 @@ export const createMarketItemSchema = z.object({
 });
 
 export const updateMarketItemSchema = z.object({
+  /** Sesi AE-39 — staff minta bisa ganti supplier / bahan tanpa hapus
+   *  + buat ulang. Backend handle dup-check + cascade ulang. */
+  supplierId: z.string().uuid().optional(),
+  ingredientId: z.string().uuid().optional(),
   unitCost: z.number().int().positive().optional(),
   packSize: z.number().positive().max(100000).optional(),
   packUnit: z.string().min(1).max(20).optional(),

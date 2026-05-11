@@ -244,83 +244,134 @@ export function MarketListView() {
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white">
-          <table className="w-full text-sm">
-            <thead className="border-b border-neutral-200 bg-neutral-50 text-left text-xs uppercase tracking-wider text-neutral-500">
-              <tr>
-                <th className="px-3 py-2">Bahan</th>
-                <th className="px-3 py-2">Supplier</th>
-                <th className="px-3 py-2 text-right">Harga / Pack</th>
-                <th className="px-3 py-2">Pack Size</th>
-                <th className="px-3 py-2 text-right">Effective</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2 text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {grouped.flatMap((group) =>
-                group.rows.map((row, idx) => (
-                  <tr
+        /* Sesi AE-39 — Galaxy A7 Lite tablet (1340×800 landscape) — table
+         * 7-kolom kepotong di Android. Switch ke card-grouped layout per
+         * bahan: nama bahan jadi header card (gak truncate), 1 row per
+         * supplier dengan info pack/harga/effective rapi sejajar.
+         * Lebih wide, lebih informatif, edit/hapus tetap reachable. */
+        <div className="space-y-2.5">
+          {grouped.map((group) => (
+            <div
+              key={group.rows[0]!.ingredientId}
+              className="overflow-hidden rounded-lg border border-neutral-200 bg-white"
+            >
+              <header className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 bg-neutral-50 px-3 py-2 sm:px-4">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-neutral-900 sm:text-base">
+                    {group.ingredientName}
+                  </h3>
+                  <p className="text-[11px] text-neutral-500">
+                    Unit master:{" "}
+                    <span className="font-mono">{group.ingredientUnit}</span>{" "}
+                    · {group.rows.length} supplier
+                  </p>
+                </div>
+                <Badge
+                  variant={
+                    group.rows.some((r) => r.isPrimary)
+                      ? "success"
+                      : "warning"
+                  }
+                  className="shrink-0"
+                >
+                  {group.rows.some((r) => r.isPrimary)
+                    ? "✓ Primary set"
+                    : "⚠ Belum ada primary"}
+                </Badge>
+              </header>
+              <ul className="divide-y divide-neutral-100">
+                {group.rows.map((row) => (
+                  <li
                     key={row.id}
                     className={
-                      "border-b border-neutral-100 last:border-0 " +
-                      (idx === 0
-                        ? "border-t-2 border-t-neutral-200/60"
-                        : "")
+                      "px-3 py-2.5 sm:px-4 " +
+                      (row.isPrimary
+                        ? "border-l-4 border-l-success-500/60 bg-success-100/20"
+                        : "border-l-4 border-l-transparent")
                     }
                   >
-                    <td className="px-3 py-2">
-                      {idx === 0 ? (
-                        <div>
-                          <div className="font-semibold text-neutral-900">
-                            {group.ingredientName}
-                          </div>
-                          <div className="text-xs text-neutral-500">
-                            unit: {group.ingredientUnit}
-                          </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] sm:items-center">
+                      {/* Supplier */}
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {row.isPrimary ? (
+                            <Badge
+                              variant="success"
+                              className="shrink-0 px-1.5 py-0"
+                            >
+                              <Star className="size-3 fill-current" /> Primary
+                            </Badge>
+                          ) : (
+                            <Badge
+                              variant="neutral"
+                              className="shrink-0 px-1.5 py-0"
+                            >
+                              Alt
+                            </Badge>
+                          )}
+                          <span className="text-sm font-semibold text-neutral-900">
+                            {row.supplierName}
+                          </span>
                         </div>
-                      ) : (
-                        <span className="text-xs text-neutral-400">↳</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="font-medium text-neutral-900">
-                        {row.supplierName}
+                        {row.supplierContact ? (
+                          <div className="mt-0.5 truncate text-[11px] text-neutral-500">
+                            {row.supplierContact}
+                          </div>
+                        ) : null}
                       </div>
-                      {row.supplierContact ? (
-                        <div className="text-xs text-neutral-500">
-                          {row.supplierContact}
+
+                      {/* Harga, pack, effective */}
+                      <div className="grid grid-cols-3 gap-2 text-xs sm:gap-3">
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                            Harga / Pack
+                          </div>
+                          <div className="font-mono text-sm font-semibold tabular-nums text-neutral-900">
+                            {formatRupiah(row.unitCost)}
+                          </div>
                         </div>
-                      ) : null}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono tabular-nums">
-                      {formatRupiah(row.unitCost)}
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs">
-                      {row.packSize} {row.packUnit}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono tabular-nums text-xs">
-                      {formatRupiah(row.effectiveCostPerUnit)}/
-                      {row.ingredientUnit}
-                    </td>
-                    <td className="px-3 py-2">
-                      {row.isPrimary ? (
-                        <Badge variant="success">
-                          <Star className="size-3 fill-current" /> Primary
-                        </Badge>
-                      ) : (
-                        <Badge variant="neutral">Alt</Badge>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <div className="flex justify-end gap-1">
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                            Pack
+                          </div>
+                          <div className="font-mono text-sm tabular-nums text-neutral-900">
+                            {row.packSize}{" "}
+                            <span className="text-neutral-500">
+                              {row.packUnit}
+                            </span>
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                            Effective
+                          </div>
+                          <div
+                            className={
+                              "font-mono text-sm font-semibold tabular-nums " +
+                              (row.isPrimary
+                                ? "text-success-500"
+                                : "text-neutral-700")
+                            }
+                          >
+                            {formatRupiah(row.effectiveCostPerUnit)}
+                            <span className="text-[10px] font-normal text-neutral-500">
+                              /{row.ingredientUnit}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Aksi */}
+                      <div className="flex justify-end gap-1 sm:justify-end">
                         {canUpdate ? (
                           <Button
                             size="sm"
                             variant="outline"
                             onClick={() => setEditTarget(row)}
+                            title="Edit (bisa ganti supplier / bahan / harga)"
                           >
                             <Pencil className="size-3.5" />
+                            <span className="hidden sm:inline">Edit</span>
                           </Button>
                         ) : null}
                         {canDelete ? (
@@ -329,17 +380,23 @@ export function MarketListView() {
                             variant="ghost"
                             onClick={() => setDeleteTarget(row)}
                             className="text-danger-500 hover:bg-danger-100"
+                            title="Hapus entry ini"
                           >
                             <Trash2 className="size-3.5" />
                           </Button>
                         ) : null}
                       </div>
-                    </td>
-                  </tr>
-                )),
-              )}
-            </tbody>
-          </table>
+                    </div>
+                    {row.notes ? (
+                      <div className="mt-1 text-[11px] italic text-neutral-500">
+                        📝 {row.notes}
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
       )}
 

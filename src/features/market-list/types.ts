@@ -69,6 +69,8 @@ export interface CreateMarketItemInput {
 }
 
 export interface UpdateMarketItemInput {
+  supplierId?: string;
+  ingredientId?: string;
   unitCost?: number;
   packSize?: number;
   packUnit?: string;

@@ -426,17 +426,81 @@ export async function updateMarketItem(input: {
       .limit(1);
     if (!existing) return { __notFound: true } as const;
 
+    /* Sesi AE-39 — staff bisa ganti supplier / bahan langsung dari edit
+     * modal. Validate target keberadaan + cek duplikat (supplier × bahan)
+     * baru, lalu cascade ulang ke bahan lama (kalau sebelumnya primary)
+     * + bahan baru (kalau primary). */
+    const newSupplierId = v.supplierId ?? existing.supplierId;
+    const newIngredientId = v.ingredientId ?? existing.ingredientId;
+    const supplierChanged = newSupplierId !== existing.supplierId;
+    const ingredientChanged = newIngredientId !== existing.ingredientId;
+
+    if (supplierChanged) {
+      const [supRow] = await tx
+        .select({ id: suppliers.id, deletedAt: suppliers.deletedAt })
+        .from(suppliers)
+        .where(
+          and(
+            eq(suppliers.id, newSupplierId),
+            eq(suppliers.outletId, session.user.outletId),
+          ),
+        )
+        .limit(1);
+      if (!supRow || supRow.deletedAt) {
+        return {
+          __validation: "Supplier baru tidak ditemukan / sudah dihapus",
+        } as const;
+      }
+    }
+
+    // Resolve target ingredient untuk dapat unit + isPreparation. Kalau
+    // ingredient diganti, pakai data ingredient baru; kalau tidak,
+    // pakai existing.ingredientId.
     const [ingRow] = await tx
-      .select({ unit: ingredients.unit, isPreparation: ingredients.isPreparation })
+      .select({
+        id: ingredients.id,
+        unit: ingredients.unit,
+        isPreparation: ingredients.isPreparation,
+        deletedAt: ingredients.deletedAt,
+      })
       .from(ingredients)
-      .where(eq(ingredients.id, existing.ingredientId))
+      .where(eq(ingredients.id, newIngredientId))
       .limit(1);
-    if (!ingRow) return { __notFound: true } as const;
+    if (!ingRow || ingRow.deletedAt) {
+      return {
+        __validation: ingredientChanged
+          ? "Bahan baru tidak ditemukan / sudah dihapus"
+          : "Bahan tidak ditemukan",
+      } as const;
+    }
     if (ingRow.isPreparation) {
       return {
         __validation:
           "Preparation cost di-derived dari recipe, tidak bisa diubah via market list",
       } as const;
+    }
+
+    // Dup-check: kalau supplier ATAU bahan diganti, pastikan kombinasi
+    // baru belum ada (excluding self).
+    if (supplierChanged || ingredientChanged) {
+      const [dup] = await tx
+        .select({ id: supplierIngredients.id })
+        .from(supplierIngredients)
+        .where(
+          and(
+            eq(supplierIngredients.outletId, session.user.outletId),
+            eq(supplierIngredients.supplierId, newSupplierId),
+            eq(supplierIngredients.ingredientId, newIngredientId),
+            isNull(supplierIngredients.deletedAt),
+          ),
+        )
+        .limit(1);
+      if (dup && dup.id !== existing.id) {
+        return {
+          __validation:
+            "Supplier + bahan ini sudah punya entry. Edit entry yang sudah ada, atau pilih kombinasi lain.",
+        } as const;
+      }
     }
 
     const newUnitCost = v.unitCost ?? existing.unitCost;
@@ -458,15 +522,15 @@ export async function updateMarketItem(input: {
       } as const;
     }
 
-    // Demote primary lain di (outlet, ingredient) kalau toggle ke primary.
-    if (newIsPrimary && !existing.isPrimary) {
+    // Demote primary lain di (outlet, bahan target) kalau toggle ke primary.
+    if (newIsPrimary) {
       await tx
         .update(supplierIngredients)
         .set({ isPrimary: false, updatedAt: now })
         .where(
           and(
             eq(supplierIngredients.outletId, session.user.outletId),
-            eq(supplierIngredients.ingredientId, existing.ingredientId),
+            eq(supplierIngredients.ingredientId, newIngredientId),
             eq(supplierIngredients.isPrimary, true),
             isNull(supplierIngredients.deletedAt),
           ),
@@ -476,6 +540,8 @@ export async function updateMarketItem(input: {
     const [updated] = await tx
       .update(supplierIngredients)
       .set({
+        supplierId: newSupplierId,
+        ingredientId: newIngredientId,
         unitCost: newUnitCost,
         packSize: String(newPackSize),
         packUnit: newPackUnit,
@@ -487,12 +553,14 @@ export async function updateMarketItem(input: {
       .where(eq(supplierIngredients.id, input.id))
       .returning();
 
-    // Cascade kalau is_primary (sebelumnya OR sekarang) DAN price-affecting field changed.
+    // Cascade target ingredient kalau primary + harga relevant berubah.
     const priceChanged =
       newUnitCost !== existing.unitCost ||
       newPackSize !== parseFloat(existing.packSize) ||
       newPackUnit !== existing.packUnit ||
-      newIsPrimary !== existing.isPrimary;
+      newIsPrimary !== existing.isPrimary ||
+      ingredientChanged ||
+      supplierChanged;
     if (priceChanged && newIsPrimary) {
       await tx
         .update(ingredients)
@@ -502,7 +570,21 @@ export async function updateMarketItem(input: {
           updatedAt: now,
           updatedBy: session.user.id,
         })
-        .where(eq(ingredients.id, existing.ingredientId));
+        .where(eq(ingredients.id, newIngredientId));
+      await cascadeCostUpdate(
+        tx,
+        session.user.outletId,
+        newIngredientId,
+        session.user.id,
+      );
+    }
+
+    /* Kalau ingredient di-swap dan entry lama adalah primary untuk
+     * bahan lama, bahan lama jadi tidak punya primary. Cari fallback
+     * primary di bahan lama (entry existing dengan effective cost
+     * terendah), kalau tidak ada biarkan (master cost tetap nilai
+     * terakhir — sesuai behaviour delete primary). */
+    if (ingredientChanged && existing.isPrimary) {
       await cascadeCostUpdate(
         tx,
         session.user.outletId,
@@ -518,12 +600,16 @@ export async function updateMarketItem(input: {
       entityId: existing.id,
       payload: {
         before: {
+          supplierId: existing.supplierId,
+          ingredientId: existing.ingredientId,
           unitCost: existing.unitCost,
           packSize: existing.packSize,
           packUnit: existing.packUnit,
           isPrimary: existing.isPrimary,
         },
         after: {
+          supplierId: newSupplierId,
+          ingredientId: newIngredientId,
           unitCost: newUnitCost,
           packSize: newPackSize,
           packUnit: newPackUnit,
@@ -531,6 +617,8 @@ export async function updateMarketItem(input: {
         },
         effectiveCostPerUnit: effective,
         cascaded: priceChanged && newIsPrimary,
+        supplierChanged,
+        ingredientChanged,
       },
     });
 
