@@ -9,6 +9,7 @@ import {
   inventoryMovements,
   purchaseItems,
   purchases,
+  supplierIngredients,
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
@@ -19,6 +20,10 @@ import {
   formatMovementDelta,
   resolveStockDecimal,
 } from "@/lib/stock-decimal";
+import {
+  convertPurchaseQty,
+  type PackInfo,
+} from "@/lib/unit-conversion";
 import {
   cancelPurchaseSchema,
   createPurchaseSchema,
@@ -186,9 +191,66 @@ export async function createPurchase(
         }
       }
 
+      /* Sesi AE-43 — batch query supplier_ingredients buat resolve pack
+       * info ("1 Pack = X gr") yang dipakai convertPurchaseQty saat staff
+       * input discrete unit (Pack/Karton/Btl) untuk bahan yang master-nya
+       * continuous (gr/ml). Soft-delete aware + outlet-scoped.
+       *
+       * Skip kalau pembelian langsung (supplierId null) — Market List
+       * memang per-supplier; untuk direct purchase staff harus pakai
+       * unit sejenis dengan master (Kg/gr, L/ml). */
+      const packMap = new Map<string, PackInfo>();
+      if (v.supplierId) {
+        const packRows = await tx
+          .select({
+            ingredientId: supplierIngredients.ingredientId,
+            packSize: supplierIngredients.packSize,
+            packUnit: supplierIngredients.packUnit,
+          })
+          .from(supplierIngredients)
+          .where(
+            and(
+              eq(supplierIngredients.outletId, session.user.outletId),
+              eq(supplierIngredients.supplierId, v.supplierId),
+              inArray(supplierIngredients.ingredientId, ingIds),
+              isNull(supplierIngredients.deletedAt),
+            ),
+          );
+        for (const r of packRows) {
+          const size = parseFloat(r.packSize);
+          if (Number.isFinite(size) && size > 0) {
+            packMap.set(r.ingredientId, {
+              packSize: size,
+              packUnit: r.packUnit,
+            });
+          }
+        }
+      }
+
+      /* Sesi AE-43 — pre-resolve conversion buat semua item DULU (sebelum
+       * write apapun) supaya kalau ada satu item yang invalid, transaction
+       * fail tanpa partial side-effects. Hasil di-stash buat dipakai di
+       * loop write berikut. */
+      const resolved = v.items.map((item) => {
+        const ing = ingById.get(item.ingredientId)!;
+        const res = convertPurchaseQty({
+          qty: item.qty,
+          fromUnit: item.unit ?? ing.unit,
+          masterUnit: ing.unit,
+          pack: packMap.get(item.ingredientId) ?? null,
+        });
+        if (!res.ok) {
+          throw new Error(`UNIT_ERROR:${ing.name}:${res.message}`);
+        }
+        return { item, ing, res };
+      });
+
       // Compute total. Sesi AE — qty boleh decimal (mis. 0.5 kg × Rp 10.000),
       // jadi pakai floating math + round ke nearest rupiah di akhir per-line
       // untuk konsistensi sama UI live preview.
+      // Sesi AE-43 — totalCost tetap pakai raw qty × raw unitCost supaya
+      // rupiah identik dengan apa yang owner liat di nota; conversion
+      // hanya dipakai untuk stock + cost master.
       let total = 0;
       for (const item of v.items) {
         total += Math.round(item.qty * item.unitCost);
@@ -222,17 +284,33 @@ export async function createPurchase(
       // tracking decimal precision via current_stock_decimal kolom. bigint
       // tetap di-write rounded sebagai backward-compat. inventory_movements
       // qty_delta_decimal mirrors decimal delta (signed).
-      for (const item of v.items) {
-        const ing = ingById.get(item.ingredientId)!;
+      //
+      // Sesi AE-43 — qty di inventory_movements + ingredients.current_stock
+      // SUDAH di-convert ke master unit (lewat convertPurchaseQty). Cost
+      // master juga di-scale per master unit. purchase_items SIMPAN RAW
+      // input staff (qty + unitCost + totalCost) — total rupiah identik
+      // dengan apa yang di-display ke owner.
+      for (const { item, ing, res } of resolved) {
         const totalCost = Math.round(item.qty * item.unitCost);
-        const qtyDecimalStr = item.qty.toFixed(4);
+        const qtyDecimalStr = item.qty.toFixed(4); // raw input
         const unitOverride = item.unit?.trim() || null;
+
+        const qtyMaster = res.qtyMaster;
+        const costFactor = res.costFactor;
+        // unitCost (Rp per master-unit). Untuk no-op path (costFactor=1)
+        // identik dengan raw unitCost — backward-compat untuk ingredient
+        // yang sudah konsisten unit-nya.
+        const unitCostMaster = Math.max(
+          0,
+          Math.round(item.unitCost / costFactor),
+        );
+
         const newStock = computeNewStock({
           currentBigint: ing.currentStock,
           currentDecimal: ing.currentStockDecimal,
-          delta: item.qty,
+          delta: qtyMaster,
         });
-        const movementDelta = formatMovementDelta(item.qty);
+        const movementDelta = formatMovementDelta(qtyMaster);
 
         // Update stock.
         const updateValues: Record<string, unknown> = {
@@ -242,7 +320,7 @@ export async function createPurchase(
           updatedBy: session.user.id,
         };
         if (v.updateCost) {
-          updateValues.costPerUnit = item.unitCost;
+          updateValues.costPerUnit = unitCostMaster;
           updateValues.costLastChangedAt = new Date();
         }
         await tx
@@ -259,7 +337,7 @@ export async function createPurchase(
             kind: "purchase",
             qtyDelta: movementDelta.bigint,
             qtyDeltaDecimal: movementDelta.decimal,
-            unitCostAtMovement: item.unitCost,
+            unitCostAtMovement: unitCostMaster,
             referenceType: "manual",
             referenceId: created.id,
             reason: v.invoiceNo
@@ -269,13 +347,16 @@ export async function createPurchase(
           })
           .returning({ id: inventoryMovements.id });
 
-        // Item — qty bigint = rounded movement delta (matches movement bigint)
-        // for ck_purchase_items_qty_pos compliance (must be > 0). Decimal
-        // tetap exact untuk display + reporting.
+        // Item — qty bigint = rounded RAW staff input (matches purchase
+        // nota for owner audit). qtyDecimal = exact raw. unitCost +
+        // totalCost = raw rupiah (no scale). movement.qtyDeltaDecimal
+        // adalah source of truth untuk stock — purchase_items adalah
+        // jurnal nota / kas.
+        const rawQtyBigint = Math.max(1, Math.round(item.qty));
         await tx.insert(purchaseItems).values({
           purchaseId: created.id,
           ingredientId: item.ingredientId,
-          qty: Math.max(1, movementDelta.bigint),
+          qty: rawQtyBigint,
           qtyDecimal: qtyDecimalStr,
           unitCost: item.unitCost,
           totalCost,
@@ -341,6 +422,14 @@ export async function createPurchase(
       return fail("NOT_FOUND", "Salah satu bahan tidak ditemukan / non-aktif");
     if (msg === "OUTLET_MISMATCH")
       return fail("FORBIDDEN", "Bahan dari outlet lain — kontak admin");
+    if (msg.startsWith("UNIT_ERROR:")) {
+      // Format: UNIT_ERROR:<ingredientName>:<userMessage>
+      const rest = msg.slice("UNIT_ERROR:".length);
+      const sep = rest.indexOf(":");
+      const ingName = sep > 0 ? rest.slice(0, sep) : "?";
+      const userMsg = sep > 0 ? rest.slice(sep + 1) : rest;
+      return fail("VALIDATION_ERROR", `Bahan "${ingName}": ${userMsg}`);
+    }
     return fail(
       "DB_ERROR",
       logAndSanitize(e, "purchases.create", "Gagal menyimpan pembelian"),
@@ -456,13 +545,26 @@ export async function cancelPurchase(
       if (!p) throw new Error("NOT_FOUND");
       if (p.status === "cancelled") throw new Error("BAD_STATE");
 
-      // Reverse stock per item.
+      /* Sesi AE-43 — reverse pakai `inventory_movements.qty_delta_decimal`
+       * (master unit) via join `movementId`, BUKAN `purchase_items.qty_decimal`
+       * (raw input staff). Untuk legacy purchase pre-AE-43 keduanya identik
+       * (no conversion was applied), jadi backward-compat. Untuk purchase
+       * baru dengan conversion: reverse harus pakai master-unit delta supaya
+       * stock balance benar. */
       const items = await tx
-        .select()
+        .select({
+          purchaseItem: purchaseItems,
+          movementQtyDeltaDecimal: inventoryMovements.qtyDeltaDecimal,
+          movementUnitCost: inventoryMovements.unitCostAtMovement,
+        })
         .from(purchaseItems)
+        .leftJoin(
+          inventoryMovements,
+          eq(purchaseItems.movementId, inventoryMovements.id),
+        )
         .where(eq(purchaseItems.purchaseId, v.id));
 
-      for (const item of items) {
+      for (const { purchaseItem: item, movementQtyDeltaDecimal, movementUnitCost } of items) {
         const [ing] = await tx
           .select()
           .from(ingredients)
@@ -471,9 +573,16 @@ export async function cancelPurchase(
           .limit(1);
         if (!ing) continue; // ingredient deleted — skip
 
-        // Sesi AE-12 — reverse pakai qtyDecimal kalau ada (precise),
-        // fallback ke bigint qty untuk legacy purchase_items pre-AE.
-        const reverseQty = resolveStockDecimal(item.qty, item.qtyDecimal);
+        // Resolve master-unit qty dari movement. Kalau movement row hilang
+        // (data corrupt rare), fallback ke purchase_items.qtyDecimal (legacy
+        // raw — sama dengan behavior pre-AE-43).
+        let reverseQty: number;
+        if (movementQtyDeltaDecimal) {
+          const parsed = parseFloat(movementQtyDeltaDecimal);
+          reverseQty = Number.isFinite(parsed) ? parsed : 0;
+        } else {
+          reverseQty = resolveStockDecimal(item.qty, item.qtyDecimal);
+        }
         const newStock = computeNewStock({
           currentBigint: ing.currentStock,
           currentDecimal: ing.currentStockDecimal,
@@ -490,7 +599,8 @@ export async function cancelPurchase(
           })
           .where(eq(ingredients.id, item.ingredientId));
 
-        // Counter-movement for traceability.
+        // Counter-movement for traceability — pakai unit cost dari original
+        // movement (sudah di-scale ke master unit kalau ada conversion).
         const movementDelta = formatMovementDelta(-reverseQty);
         await tx.insert(inventoryMovements).values({
           outletId: session.user.outletId,
@@ -498,7 +608,7 @@ export async function cancelPurchase(
           kind: "adjust",
           qtyDelta: movementDelta.bigint,
           qtyDeltaDecimal: movementDelta.decimal,
-          unitCostAtMovement: item.unitCost,
+          unitCostAtMovement: movementUnitCost ?? item.unitCost,
           referenceType: "manual",
           referenceId: v.id,
           reason: `Cancel purchase ${p.id.slice(0, 8)} — ${v.reason}`,

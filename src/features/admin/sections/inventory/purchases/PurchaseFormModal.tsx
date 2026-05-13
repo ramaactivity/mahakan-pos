@@ -29,6 +29,11 @@ import {
 } from "@/features/suppliers";
 import { lookupMarketPriceForPurchase } from "@/features/market-list";
 import { formatRupiah, parseRupiah } from "@/lib/format";
+import {
+  convertPurchaseQty,
+  resolveUnit,
+  type PackInfo,
+} from "@/lib/unit-conversion";
 import { cn } from "@/lib/utils";
 
 interface PurchaseFormModalProps {
@@ -145,6 +150,12 @@ export function PurchaseFormModal({
   const [updateCost, setUpdateCost] = useState(true);
   const [createKas, setCreateKas] = useState(true);
   const [items, setItems] = useState<ItemRow[]>([newRow(), newRow()]);
+  /* Sesi AE-43 — pack info dari Market List per ingredient. Dipakai
+   * untuk live preview konversi (mis. "1 Pack = 1000 gr") + diteruskan
+   * ke server lewat lookup di transaction. Key: ingredientId. */
+  const [packByIngredient, setPackByIngredient] = useState<
+    Map<string, PackInfo>
+  >(() => new Map());
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -168,6 +179,7 @@ export function PurchaseFormModal({
     setUpdateCost(true);
     setCreateKas(true);
     setItems([newRow(), newRow()]);
+    setPackByIngredient(new Map());
     setError(null);
     setSubmitting(false);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -293,6 +305,13 @@ export function PurchaseFormModal({
           : r,
       ),
     );
+    // Sesi AE-43 — simpan pack info untuk preview conversion. Server akan
+    // re-lookup di transaction (source of truth tetap supplier_ingredients).
+    setPackByIngredient((prev) => {
+      const next = new Map(prev);
+      next.set(ingId, { packSize: m.packSize, packUnit: m.packUnit });
+      return next;
+    });
   }
 
   // Sesi AE-21 — re-lookup all rows saat supplier diganti (auto-fill ulang).
@@ -357,6 +376,24 @@ export function PurchaseFormModal({
     if (new Set(ids).size !== ids.length) {
       setError("Bahan duplikat dalam 1 purchase — gabungkan jadi 1 baris");
       return;
+    }
+
+    /* Sesi AE-43 — validasi konversi unit di client sebelum hit server.
+     * Server tetap re-validate (single source of truth), tapi feedback
+     * di client lebih instan dan staff bisa koreksi tanpa round-trip. */
+    for (const item of validItems) {
+      const ing = ingredientById.get(item.ingredientId);
+      if (!ing) continue;
+      const conv = convertPurchaseQty({
+        qty: item.qty,
+        fromUnit: item.unit ?? ing.unit,
+        masterUnit: ing.unit,
+        pack: packByIngredient.get(item.ingredientId) ?? null,
+      });
+      if (!conv.ok) {
+        setError(`Bahan "${ing.name}": ${conv.message}`);
+        return;
+      }
     }
 
     const term = parseInt(paymentTerm, 10);
@@ -578,6 +615,24 @@ export function PurchaseFormModal({
                   hasQty && costN >= 0 ? Math.round(qtyN * costN) : 0;
                 const unit = row.unit || ing?.unit || "";
                 const unitOptions = buildUnitOptions(ing?.unit);
+                /* Sesi AE-43 — preview konversi qty → master unit. Hanya
+                 * compute kalau ada ingredient + qty valid + unit beda
+                 * dari master. Server akan re-validate, tapi UI feedback
+                 * langsung supaya staff bisa koreksi sebelum submit. */
+                const conv =
+                  ing && hasQty
+                    ? convertPurchaseQty({
+                        qty: qtyN,
+                        fromUnit: unit || ing.unit,
+                        masterUnit: ing.unit,
+                        pack: packByIngredient.get(ing.id) ?? null,
+                      })
+                    : null;
+                const masterLabel = ing
+                  ? resolveUnit(ing.unit)?.label ?? ing.unit
+                  : "";
+                const unitChanged =
+                  ing && unit && unit !== ing.unit && unit !== masterLabel;
                 return (
                   <div
                     key={row.id}
@@ -658,6 +713,30 @@ export function PurchaseFormModal({
                       <div className="mt-1.5 flex justify-end pr-12 text-xs text-neutral-500">
                         <span>Isi QTY + Harga buat lihat total</span>
                       </div>
+                    ) : null}
+                    {/* Sesi AE-43 — preview konversi unit ke master. Hijau
+                     * = OK auto-convert; kuning = butuh Market List setup;
+                     * merah = unit ga compatible, harus ganti unit. */}
+                    {conv && unitChanged ? (
+                      conv.ok ? (
+                        <div className="mt-1 rounded-md bg-mahakan-green-100/60 px-2 py-1 text-[11px] text-mahakan-green-900">
+                          ≈ {formatQtyForDisplay(conv.qtyMaster)}{" "}
+                          {masterLabel}{" "}
+                          {conv.mode === "via-pack" ? (
+                            <span className="text-mahakan-green-900/70">
+                              ({conv.explain})
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : conv.error === "PACK_UNKNOWN" ? (
+                        <div className="mt-1 rounded-md bg-warning-100 px-2 py-1 text-[11px] text-warning-500">
+                          ⚠ {conv.message}
+                        </div>
+                      ) : (
+                        <div className="mt-1 rounded-md bg-danger-100 px-2 py-1 text-[11px] text-danger-500">
+                          ⛔ {conv.message}
+                        </div>
+                      )
                     ) : null}
                   </div>
                 );
