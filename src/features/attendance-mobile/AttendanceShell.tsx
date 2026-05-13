@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Button, PinPad } from "@/components/ui";
 import { verifyAttendancePin, type VerifiedKaryawan } from "./actions";
+import { compressSelfieJpeg } from "./compress-selfie";
 import { formatIndonesianDateTime } from "@/lib/date";
 import {
   formatClockTimeWib,
@@ -331,6 +332,10 @@ function ActStep({
   const [selfie, setSelfie] = useState<File | null>(null);
   const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /* Sesi AE-42 — status compression supaya staff lihat progress
+   * (kalau file gede, compress bisa 1-2s). */
+  const [compressing, setCompressing] = useState(false);
+  const [compressInfo, setCompressInfo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   /* Sesi AE-41 — track error code separately supaya UI bisa render
    * variant khusus untuk Drive auth issue (yg butuh action owner). */
@@ -387,14 +392,44 @@ function ActStep({
     );
   }
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
     if (selfiePreview) URL.revokeObjectURL(selfiePreview);
-    setSelfie(f);
-    setSelfiePreview(URL.createObjectURL(f));
     setError(null);
     setErrorCode(null);
+    setCompressInfo(null);
+
+    /* Sesi AE-42 — compress JPEG di client sebelum upload. Vercel
+     * Hobby plan reject body > 4.5 MB di edge dengan HTML 413; HP
+     * modern selfie 12MP bisa 3-8 MB. Compress preserve EXIF supaya
+     * server anti-fraud check (DateTimeOriginal) tetap lulus. */
+    setCompressing(true);
+    try {
+      const result = await compressSelfieJpeg(f, {
+        maxBytes: 1.5 * 1024 * 1024,
+        maxDimension: 1280,
+      });
+      setSelfie(result.file);
+      setSelfiePreview(URL.createObjectURL(result.file));
+      if (result.compressedSize < result.originalSize) {
+        const pct = Math.round(
+          (1 - result.compressedSize / result.originalSize) * 100,
+        );
+        setCompressInfo(
+          `Foto ter-kompres ${pct}% (${formatBytes(result.originalSize)} → ${formatBytes(result.compressedSize)})${
+            result.exifPreserved ? "" : " ⚠️ EXIF strip"
+          }`,
+        );
+      }
+    } catch {
+      // Defensive: kalau compression gagal, kirim original — server
+      // tetap reject kalau > limit, dengan pesan error yang lebih jelas.
+      setSelfie(f);
+      setSelfiePreview(URL.createObjectURL(f));
+    } finally {
+      setCompressing(false);
+    }
   }
 
   const inRadius =
@@ -402,7 +437,8 @@ function ActStep({
     typeof gps.distanceMeters === "number" &&
     gps.distanceMeters <= karyawan.outletGpsCenter.radiusMeters;
 
-  const canSubmit = inRadius && selfie !== null && !submitting;
+  const canSubmit =
+    inRadius && selfie !== null && !submitting && !compressing;
 
   async function handleSubmit() {
     if (!canSubmit || !selfie || gps.status !== "ok") return;
@@ -422,14 +458,47 @@ function ActStep({
         method: "POST",
         body: formData,
       });
-      const json = (await res.json()) as
+
+      /* Sesi AE-42 — safe response parse. Vercel platform errors
+       * (413 body too large, 502 bad gateway, dll) return HTML, bukan
+       * JSON. Parsing via res.json() langsung crash dengan "Unexpected
+       * token" yang nggak informatif. Read sebagai text dulu, parse
+       * JSON manual, fallback ke pesan diagnostic. */
+      const rawText = await res.text();
+      let json:
         | { ok: true; data: SubmitOk }
-        | { ok: false; error: { code: string; message: string } };
-      if (!res.ok || !json.ok) {
-        const msg =
-          (!json.ok && json.error?.message) ||
-          `Submit gagal (HTTP ${res.status})`;
-        const code = !json.ok ? json.error?.code ?? null : null;
+        | { ok: false; error: { code: string; message: string } }
+        | null = null;
+      try {
+        json = JSON.parse(rawText);
+      } catch {
+        json = null;
+      }
+
+      if (!res.ok || !json || !json.ok) {
+        let msg: string;
+        let code: string | null = null;
+        if (json && !json.ok) {
+          msg = json.error?.message ?? `Submit gagal (HTTP ${res.status})`;
+          code = json.error?.code ?? null;
+        } else if (res.status === 413) {
+          msg =
+            "File foto terlalu besar untuk server (>4.5 MB). Foto ulang dari kamera — biasanya kompresi otomatis sudah handle, kalau masih error hubungi Owner.";
+          code = "FILE_TOO_LARGE";
+        } else if (res.status >= 500 && res.status < 600) {
+          msg = `Server lagi gangguan (HTTP ${res.status}). Tunggu 30 detik lalu Submit lagi.`;
+          code = "SERVER_ERROR";
+        } else {
+          // Trim raw HTML/text supaya gak banjir error UI
+          const snippet = rawText
+            .replace(/<[^>]+>/g, "")
+            .trim()
+            .slice(0, 120);
+          msg = snippet
+            ? `Server response tidak valid (HTTP ${res.status}): ${snippet}`
+            : `Submit gagal (HTTP ${res.status})`;
+          code = "BAD_RESPONSE";
+        }
         setError(msg);
         setErrorCode(code);
         setSubmitting(false);
@@ -518,20 +587,28 @@ function ActStep({
         </p>
         {selfiePreview ? (
           <div className="space-y-2">
-            <div className="overflow-hidden rounded-lg">
+            <div className="relative overflow-hidden rounded-lg">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={selfiePreview}
                 alt="Selfie preview"
                 className="aspect-square w-full object-cover"
               />
+              {compressing ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-white">
+                  <div className="flex items-center gap-2 rounded-lg bg-black/60 px-3 py-2 text-sm">
+                    <Loader2 className="size-4 animate-spin" /> Memproses
+                    foto…
+                  </div>
+                </div>
+              ) : null}
             </div>
             <Button
               variant="outline"
               size="sm"
               fullWidth
               onClick={() => fileInputRef.current?.click()}
-              disabled={submitting}
+              disabled={submitting || compressing}
             >
               <Camera className="size-4" /> Foto Ulang
             </Button>
@@ -541,11 +618,20 @@ function ActStep({
             variant="outline"
             fullWidth
             onClick={() => fileInputRef.current?.click()}
-            disabled={submitting}
+            disabled={submitting || compressing}
             className="!h-16 !flex-col !gap-1"
           >
-            <Camera className="size-6" />
-            <span className="text-sm">Buka Kamera</span>
+            {compressing ? (
+              <>
+                <Loader2 className="size-6 animate-spin" />
+                <span className="text-sm">Memproses foto…</span>
+              </>
+            ) : (
+              <>
+                <Camera className="size-6" />
+                <span className="text-sm">Buka Kamera</span>
+              </>
+            )}
           </Button>
         )}
         <input
@@ -555,12 +641,17 @@ function ActStep({
           capture="user"
           className="hidden"
           onChange={handleFileChange}
-          disabled={submitting}
+          disabled={submitting || compressing}
         />
         <p className="mt-2 text-[11px] text-neutral-500">
           Foto harus diambil sekarang dari kamera depan. Upload galeri akan
           ditolak.
         </p>
+        {compressInfo ? (
+          <p className="mt-1 text-[11px] text-mahakan-green-900">
+            ✓ {compressInfo}
+          </p>
+        ) : null}
       </div>
 
       {error ? (
@@ -694,4 +785,10 @@ function DoneStep({
       </Button>
     </div>
   );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
