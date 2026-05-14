@@ -40,6 +40,20 @@ import { cn } from "@/lib/utils";
 
 const DAYS_OF_WEEK = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 
+/* Sesi AE-51 — template shift untuk percepat input HR. Mahakan Coffee
+ * lazimnya pakai 4 pola shift. Owner bisa request tambah/ubah di
+ * codebase kalau pola berubah (defer DB-stored templates ke sesi nanti). */
+const SHIFT_TEMPLATES: ReadonlyArray<{
+  label: string;
+  start: string;
+  end: string;
+}> = [
+  { label: "Pagi", start: "07:00", end: "15:00" },
+  { label: "Siang", start: "10:00", end: "18:00" },
+  { label: "Sore", start: "13:00", end: "22:00" },
+  { label: "Full", start: "09:00", end: "21:00" },
+];
+
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -198,7 +212,14 @@ export function SchedulesSection() {
   }, [attendance]);
 
   function refresh() {
+    /* Sesi AE-51 — bug fix: dulu cuma invalidate "schedules" → Edit Jadwal
+     * tab update tapi Historis Absen tab tetap stale (pakai cache lama
+     * dengan dayOff=false). Akibat: jadwal di-set OFF tapi Historis Absen
+     * tampil ALPHA. Sekarang invalidate kedua query supaya konsisten. */
     void queryClient.invalidateQueries({ queryKey: ["admin", "schedules"] });
+    void queryClient.invalidateQueries({
+      queryKey: ["admin", "attendance-calendar"],
+    });
   }
 
   // Index schedules by (employeeId, scheduleDate) for O(1) cell lookup.
@@ -901,22 +922,61 @@ function ScheduleEditDialog({
           </span>
         </label>
         {!dayOff ? (
-          <div className="grid grid-cols-2 gap-3">
-            <TimePicker
-              label="Mulai"
-              value={startTime || null}
-              onChange={(v) => setStartTime(v ?? "")}
-              disabled={submitting}
-              clearable={false}
-            />
-            <TimePicker
-              label="Selesai"
-              value={endTime || null}
-              onChange={(v) => setEndTime(v ?? "")}
-              disabled={submitting}
-              clearable={false}
-            />
-          </div>
+          <>
+            {/* Sesi AE-51 — quick template shift untuk percepat input HR.
+             * Tap template = auto-fill startTime + endTime. Staff Mahakan
+             * biasa pakai 4 pola: Pagi/Siang/Sore/Full Day. */}
+            <div>
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                Template Cepat
+              </p>
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                {SHIFT_TEMPLATES.map((tpl) => {
+                  const active =
+                    startTime === tpl.start && endTime === tpl.end;
+                  return (
+                    <button
+                      key={tpl.label}
+                      type="button"
+                      onClick={() => {
+                        setStartTime(tpl.start);
+                        setEndTime(tpl.end);
+                      }}
+                      disabled={submitting}
+                      className={cn(
+                        "flex flex-col items-center gap-0.5 rounded-md border px-2 py-1.5 text-xs transition-all",
+                        active
+                          ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                          : "border-neutral-200 bg-white text-neutral-700 hover:border-mahakan-green-700/60 hover:bg-mahakan-green-50/40",
+                        submitting && "opacity-50 cursor-not-allowed",
+                      )}
+                    >
+                      <span className="font-medium">{tpl.label}</span>
+                      <span className="font-mono text-[10px] opacity-80">
+                        {tpl.start}–{tpl.end}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <TimePicker
+                label="Mulai"
+                value={startTime || null}
+                onChange={(v) => setStartTime(v ?? "")}
+                disabled={submitting}
+                clearable={false}
+              />
+              <TimePicker
+                label="Selesai"
+                value={endTime || null}
+                onChange={(v) => setEndTime(v ?? "")}
+                disabled={submitting}
+                clearable={false}
+              />
+            </div>
+          </>
         ) : null}
         <div>
           <label className="block text-sm font-medium text-neutral-900">
