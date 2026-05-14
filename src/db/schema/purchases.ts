@@ -16,6 +16,7 @@ import { users } from "./users";
 import { suppliers } from "./suppliers";
 import { ingredients, inventoryMovements } from "./inventory";
 import { expenses } from "./expenses";
+import { purchaseRequestItems } from "./purchase_requests";
 
 /**
  * Purchase header (Sesi O). Replaces Owner's `Form Pembelanjaan Cash` +
@@ -127,6 +128,16 @@ export const purchaseItems = pgTable(
     /** Backlink to inventoryMovements row created on purchase confirm. */
     movementId: uuid("movement_id").references(() => inventoryMovements.id),
 
+    /** Sesi AE-57 — link ke PR item kalau purchase ini ditarik dari Permintaan
+     * Belanja. NULL untuk manual entry langsung. Saat di-set:
+     *  - PR.receivedQty auto bump += qtyMaster
+     *  - PR status auto-promote (open → partial → completed)
+     *  - audit event purchase.create_from_pr di-fire
+     * FK no-cascade (preserve traceability kalau PR item di-soft-delete). */
+    purchaseRequestItemId: uuid("purchase_request_item_id").references(
+      () => purchaseRequestItems.id,
+    ),
+
     /** Snapshot fields for reporting consistency even kalau ingredient
      * di-rename / di-soft-delete kemudian. */
     ingredientNameSnapshot: text("ingredient_name_snapshot").notNull(),
@@ -146,6 +157,7 @@ export const purchaseItems = pgTable(
   (t) => [
     index("idx_purchase_items_purchase").on(t.purchaseId),
     index("idx_purchase_items_ingredient").on(t.ingredientId),
+    index("idx_purchase_items_pr_item").on(t.purchaseRequestItemId),
     check("ck_purchase_items_qty_pos", sql`${t.qty} > 0`),
     check("ck_purchase_items_unit_cost_nonneg", sql`${t.unitCost} >= 0`),
     check("ck_purchase_items_total_nonneg", sql`${t.totalCost} >= 0`),

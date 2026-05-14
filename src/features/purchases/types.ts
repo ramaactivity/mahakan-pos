@@ -14,6 +14,9 @@ export interface PurchaseItemInput {
   /** Sesi AE — per-line unit override. NULL/undefined = pakai master
    * ingredient unit (unitSnapshot). Snapshot text-only. */
   unit?: string | null;
+  /** Sesi AE-57 — link ke PR item kalau item ini ditarik dari Permintaan
+   * Belanja. Server akan bump receivedQty + auto-promote PR status. */
+  purchaseRequestItemId?: string | null;
 }
 
 export interface CreatePurchaseInput {
@@ -31,6 +34,10 @@ export interface CreatePurchaseInput {
   /** Whether to auto-create kas expense. Default: true for non-TOP, false
    * for TOP (TOP creates expense at mark-paid). */
   createKasEntry?: boolean;
+  /** Sesi AE-57 — metadata: dari PR mana purchase ini ditarik. Digunakan
+   * untuk audit log + cluster traceability. Tidak disimpan ke purchases
+   * table (per-item linkage via purchaseRequestItemId cukup). */
+  fromPurchaseRequestId?: string | null;
   items: PurchaseItemInput[];
 }
 

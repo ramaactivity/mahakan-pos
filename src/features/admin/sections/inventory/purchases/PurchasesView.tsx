@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ClipboardList,
   Eye,
+  FileText,
   Plus,
   RefreshCw,
   ShoppingBag,
@@ -49,6 +50,7 @@ import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
 import { PurchaseFormModal } from "./PurchaseFormModal";
+import { CreatePurchaseFromPrModal } from "./CreatePurchaseFromPrModal";
 
 const STATUS_LABELS: Record<PurchaseStatus, string> = {
   pending_payment: "Belum Lunas",
@@ -153,6 +155,9 @@ export function PurchasesView() {
   const [supplierFilter, setSupplierFilter] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
+  /* Sesi AE-57 — tombol "Tarik dari PR" → wizard 2-step (pilih PR + assign
+   * supplier + split per vendor). */
+  const [pullFromPrOpen, setPullFromPrOpen] = useState(false);
   const [detailTarget, setDetailTarget] = useState<PurchaseDetail | null>(
     null,
   );
@@ -258,9 +263,18 @@ export function PurchasesView() {
         </div>
         <div className="flex items-center gap-2">
           {canCreate ? (
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="size-4" aria-hidden /> Catat Pembelian
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                onClick={() => setPullFromPrOpen(true)}
+                title="Tarik items dari Permintaan Belanja, bisa split per supplier"
+              >
+                <FileText className="size-4" aria-hidden /> Tarik dari PR
+              </Button>
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus className="size-4" aria-hidden /> Catat Pembelian
+              </Button>
+            </>
           ) : null}
           <Button variant="outline" size="sm" onClick={refresh}>
             <RefreshCw className="size-4" aria-hidden /> Refresh
@@ -467,6 +481,15 @@ export function PurchasesView() {
         onClose={() => setCreateOpen(false)}
         onSaved={() => {
           setCreateOpen(false);
+          refresh();
+        }}
+      />
+
+      <CreatePurchaseFromPrModal
+        open={pullFromPrOpen}
+        onClose={() => setPullFromPrOpen(false)}
+        onSaved={() => {
+          setPullFromPrOpen(false);
           refresh();
         }}
       />

@@ -42,6 +42,9 @@ const purchaseItemSchema = z.object({
     .max(20)
     .nullable()
     .optional(),
+  /** Sesi AE-57 — FK ke purchase_request_items.id. Server validate exist +
+   * outlet-match + outstanding qty cap. */
+  purchaseRequestItemId: z.uuid().nullable().optional(),
 });
 
 export const createPurchaseSchema = z
@@ -64,6 +67,9 @@ export const createPurchaseSchema = z
     receiptImageUrl: z.url().max(500).nullable().optional(),
     updateCost: z.boolean().optional().default(true),
     createKasEntry: z.boolean().optional(),
+    /** Sesi AE-57 — metadata: dari PR mana purchase ini ditarik. Digunakan
+     * untuk audit log. Bukan disimpan di table (per-item linkage cukup). */
+    fromPurchaseRequestId: z.uuid().nullable().optional(),
     items: z
       .array(purchaseItemSchema)
       .min(1, "Minimal 1 item pembelian")

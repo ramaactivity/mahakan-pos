@@ -8,9 +8,12 @@ import {
   ingredients,
   inventoryMovements,
   purchaseItems,
+  purchaseRequestItems,
+  purchaseRequests,
   purchases,
   supplierIngredients,
 } from "@/db/schema";
+import { computePrStatus } from "@/features/purchase-requests/group-items-pure";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
@@ -245,6 +248,62 @@ export async function createPurchase(
         return { item, ing, res };
       });
 
+      /* Sesi AE-57 — PR linkage: lock + validate PR items referenced di
+       * items[].purchaseRequestItemId. Per-item:
+       *  1. PR item exists + owner outlet match
+       *  2. PR.status != cancelled
+       *  3. receivedQty + qtyMaster <= requestedQty (anti-over-receive)
+       * Output: map prItemId → currentRow untuk post-loop receivedQty bump. */
+      const prItemIds = v.items
+        .map((i) => i.purchaseRequestItemId)
+        .filter((id): id is string => Boolean(id));
+      const prItemMap = new Map<string, typeof purchaseRequestItems.$inferSelect>();
+      const prHeaderMap = new Map<string, typeof purchaseRequests.$inferSelect>();
+      if (prItemIds.length > 0) {
+        const prItemRows = await tx
+          .select()
+          .from(purchaseRequestItems)
+          .where(inArray(purchaseRequestItems.id, prItemIds))
+          .for("update");
+        for (const row of prItemRows) prItemMap.set(row.id, row);
+
+        // Fetch PR headers untuk validasi outlet + status
+        const prIds = Array.from(new Set(prItemRows.map((r) => r.requestId)));
+        if (prIds.length > 0) {
+          const prRows = await tx
+            .select()
+            .from(purchaseRequests)
+            .where(inArray(purchaseRequests.id, prIds));
+          for (const row of prRows) prHeaderMap.set(row.id, row);
+        }
+
+        // Validate each linked item
+        for (const { item, ing, res } of resolved) {
+          if (!item.purchaseRequestItemId) continue;
+          const prItem = prItemMap.get(item.purchaseRequestItemId);
+          if (!prItem) throw new Error("PR_ITEM_NOT_FOUND");
+          const pr = prHeaderMap.get(prItem.requestId);
+          if (!pr) throw new Error("PR_NOT_FOUND");
+          if (pr.outletId !== session.user.outletId) {
+            throw new Error("OUTLET_MISMATCH");
+          }
+          if (pr.status === "cancelled") {
+            throw new Error(`PR_CANCELLED:${ing.name}`);
+          }
+          if (prItem.rejectedAt) {
+            throw new Error(`PR_ITEM_REJECTED:${ing.name}`);
+          }
+          const requested = Number(prItem.requestedQty);
+          const received = Number(prItem.receivedQty);
+          const incoming = Math.max(1, Math.round(res.qtyMaster));
+          if (received + incoming > requested) {
+            throw new Error(
+              `PR_OVER_RECEIVE:${ing.name}:${requested - received}`,
+            );
+          }
+        }
+      }
+
       // Compute total. Sesi AE — qty boleh decimal (mis. 0.5 kg × Rp 10.000),
       // jadi pakai floating math + round ke nearest rupiah di akhir per-line
       // untuk konsistensi sama UI live preview.
@@ -365,9 +424,84 @@ export async function createPurchase(
           unitSnapshot: ing.unit,
           unitOverride,
           sectionSnapshot: ing.section,
+          purchaseRequestItemId: item.purchaseRequestItemId ?? null,
         });
 
         movementsCreated++;
+      }
+
+      /* Sesi AE-57 — post-loop: bump receivedQty di PR items + auto-promote
+       * PR status (open → partial → completed). Group by requestId supaya
+       * status update per-PR cuma sekali (efficient + atomic). */
+      if (prItemIds.length > 0) {
+        const bumpByRequest = new Map<
+          string,
+          Array<{ prItemId: string; addQty: number; addQtyDecimal: number }>
+        >();
+        for (const { item, res } of resolved) {
+          if (!item.purchaseRequestItemId) continue;
+          const prItem = prItemMap.get(item.purchaseRequestItemId);
+          if (!prItem) continue;
+          const addQty = Math.max(1, Math.round(res.qtyMaster));
+          const list = bumpByRequest.get(prItem.requestId) ?? [];
+          list.push({
+            prItemId: prItem.id,
+            addQty,
+            addQtyDecimal: res.qtyMaster,
+          });
+          bumpByRequest.set(prItem.requestId, list);
+        }
+
+        for (const [requestId, bumps] of bumpByRequest) {
+          // Update each PR item receivedQty (additive)
+          for (const b of bumps) {
+            const prItem = prItemMap.get(b.prItemId)!;
+            const newReceivedQty = Number(prItem.receivedQty) + b.addQty;
+            const currentDecimal = prItem.receivedQtyDecimal
+              ? Number(prItem.receivedQtyDecimal)
+              : 0;
+            const newDecimal = (currentDecimal + b.addQtyDecimal).toFixed(4);
+            await tx
+              .update(purchaseRequestItems)
+              .set({
+                receivedQty: newReceivedQty,
+                receivedQtyDecimal: newDecimal,
+                updatedAt: new Date(),
+              })
+              .where(eq(purchaseRequestItems.id, b.prItemId));
+            // Update in-memory snapshot supaya status compute pakai data terbaru
+            prItemMap.set(b.prItemId, {
+              ...prItem,
+              receivedQty: newReceivedQty,
+              receivedQtyDecimal: newDecimal,
+            });
+          }
+
+          // Re-fetch ALL items for this PR (untuk hitung status accurate)
+          const allItems = await tx
+            .select()
+            .from(purchaseRequestItems)
+            .where(eq(purchaseRequestItems.requestId, requestId));
+          const newStatus = computePrStatus(
+            allItems.map((r) => ({
+              requestedQty: Number(r.requestedQty),
+              receivedQty: Number(r.receivedQty),
+              rejectedAt: r.rejectedAt,
+            })),
+          );
+          const pr = prHeaderMap.get(requestId)!;
+          const updates: Record<string, unknown> = { updatedAt: new Date() };
+          if (newStatus !== pr.status && newStatus !== "cancelled") {
+            updates.status = newStatus;
+            if (newStatus === "completed") {
+              updates.completedAt = new Date();
+            }
+          }
+          await tx
+            .update(purchaseRequests)
+            .set(updates)
+            .where(eq(purchaseRequests.id, requestId));
+        }
       }
 
       // Optional: auto-create kas expense.
@@ -430,25 +564,71 @@ export async function createPurchase(
       const userMsg = sep > 0 ? rest.slice(sep + 1) : rest;
       return fail("VALIDATION_ERROR", `Bahan "${ingName}": ${userMsg}`);
     }
+    /* Sesi AE-57 — PR-linked errors */
+    if (msg === "PR_ITEM_NOT_FOUND") {
+      return fail("NOT_FOUND", "Item Permintaan Belanja tidak ditemukan");
+    }
+    if (msg === "PR_NOT_FOUND") {
+      return fail("NOT_FOUND", "Permintaan Belanja tidak ditemukan");
+    }
+    if (msg.startsWith("PR_CANCELLED:")) {
+      const ingName = msg.slice("PR_CANCELLED:".length);
+      return fail(
+        "CONFLICT",
+        `Bahan "${ingName}": Permintaan Belanja-nya sudah dibatalkan`,
+      );
+    }
+    if (msg.startsWith("PR_ITEM_REJECTED:")) {
+      const ingName = msg.slice("PR_ITEM_REJECTED:".length);
+      return fail(
+        "CONFLICT",
+        `Bahan "${ingName}": item PR sudah ditolak, tidak bisa di-belikan`,
+      );
+    }
+    if (msg.startsWith("PR_OVER_RECEIVE:")) {
+      // Format: PR_OVER_RECEIVE:<ingredientName>:<remainingQty>
+      const rest = msg.slice("PR_OVER_RECEIVE:".length);
+      const sep = rest.indexOf(":");
+      const ingName = sep > 0 ? rest.slice(0, sep) : "?";
+      const remaining = sep > 0 ? rest.slice(sep + 1) : "?";
+      return fail(
+        "VALIDATION_ERROR",
+        `Bahan "${ingName}": maks ${remaining} (sisa outstanding PR)`,
+      );
+    }
     return fail(
       "DB_ERROR",
       logAndSanitize(e, "purchases.create", "Gagal menyimpan pembelian"),
     );
   }
 
+  /* Sesi AE-57 — kalau purchase ini di-tarik dari PR, fire audit event
+   * `purchase.create_from_pr` dengan PR ID + linked item count untuk
+   * traceability di Audit Log. Selain itu tetap fire `purchase.create`
+   * supaya existing dashboards + filter tidak break. */
+  const prLinkedCount = v.items.filter((i) => i.purchaseRequestItemId).length;
+  const fromPrId = v.fromPurchaseRequestId ?? null;
+
   await logAudit({
-    eventType: "purchase.create",
+    eventType:
+      fromPrId && prLinkedCount > 0 ? "purchase.create_from_pr" : "purchase.create",
     userId: session.user.id,
     entityType: "purchase",
     entityId: resultId,
     payload: {
-      summary: `Purchase ${paymentMethodLabel(v.paymentMethod)} ${v.purchaseDate} (${v.items.length} item, total ${totalAmount})`,
+      summary: `Purchase ${paymentMethodLabel(v.paymentMethod)} ${v.purchaseDate} (${v.items.length} item, total ${totalAmount})${
+        fromPrId
+          ? ` · dari PR ${fromPrId.slice(0, 8)} (${prLinkedCount} item ter-link)`
+          : ""
+      }`,
       context: {
         purchaseDate: v.purchaseDate,
         paymentMethod: v.paymentMethod,
         itemCount: v.items.length,
         totalAmount,
         autoExpense: shouldCreateKas && !isTop,
+        fromPurchaseRequestId: fromPrId,
+        prLinkedItemCount: prLinkedCount,
       },
     },
     metadata: {

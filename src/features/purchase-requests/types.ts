@@ -47,6 +47,39 @@ export interface PurchaseRequestWithItems extends PurchaseRequest {
   shiftStartedAt: Date | null;
 }
 
+/* Sesi AE-57 — PR items siap di-tarik ke Pembelian. Per item include
+ * outstanding qty + suggested supplier (primary dari supplier_ingredients)
+ * + suggested unitCost. Sort: oldest first untuk FIFO. */
+export interface PrItemForPurchase {
+  purchaseRequestItemId: string;
+  ingredientId: string | null;
+  ingredientName: string;
+  unit: string;
+  requestedQty: number;
+  receivedQty: number;
+  outstandingQty: number;
+  /** Suggested supplier dari supplier_ingredients WHERE isPrimary=true.
+   * NULL kalau belum ada mapping. */
+  suggestedSupplierId: string | null;
+  suggestedSupplierName: string | null;
+  /** Suggested unit cost dari supplier_ingredients.unitCost (per pack).
+   * NULL kalau belum ada. */
+  suggestedUnitCost: number | null;
+  notes: string | null;
+}
+
+export interface PrForPurchase {
+  requestId: string;
+  label: string;
+  status: PurchaseRequestStatus;
+  createdAt: Date;
+  createdByName: string | null;
+  notes: string | null;
+  outstandingItemCount: number;
+  totalOutstandingQty: number;
+  items: PrItemForPurchase[];
+}
+
 export interface LowStockIngredient {
   id: string;
   name: string;

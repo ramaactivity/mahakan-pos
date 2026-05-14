@@ -10,7 +10,6 @@ import {
   MessageCircle,
   Package,
   TrendingUp,
-  X,
 } from "lucide-react";
 import {
   Badge,
@@ -23,10 +22,8 @@ import {
   Input,
   Modal,
   NumericInput,
-  ResponsiveTable,
   Spinner,
   toast,
-  type ResponsiveColumn,
 } from "@/components/ui";
 import {
   bulkReceiveItems,
@@ -43,6 +40,8 @@ import {
   type PurchaseRequestWithItems,
 } from "@/features/purchase-requests/types";
 import { cn } from "@/lib/utils";
+import { PurchaseRequestDetailModal } from "./PurchaseRequestDetailModal";
+import { CreatePurchaseFromPrModal } from "./inventory/purchases/CreatePurchaseFromPrModal";
 
 type FilterTab = "open" | "partial" | "completed" | "cancelled" | "all";
 
@@ -100,6 +99,12 @@ export function PurchaseRequestsSection() {
   } | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
+
+  // Sesi AE-57 — detail modal state (klik card → modal items)
+  const [detailRequest, setDetailRequest] =
+    useState<PurchaseRequestWithItems | null>(null);
+  // Sesi AE-57 — "Tarik ke Pembelian" wizard, pre-fill dengan PR yang dipilih
+  const [pullPrId, setPullPrId] = useState<string | null>(null);
 
   const {
     data: requests = [],
@@ -413,18 +418,12 @@ export function PurchaseRequestsSection() {
           description="Kasir belum membuat permintaan belanja untuk filter ini."
         />
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {requests.map((req) => (
             <RequestCard
               key={req.id}
               request={req}
-              onReceive={openReceive}
-              onBulkReceive={openBulk}
-              onRejectItem={openReject}
-              onCancel={(r) => {
-                setCancelTarget(r);
-                setCancelReason("");
-              }}
+              onShowDetail={(r) => setDetailRequest(r)}
             />
           ))}
         </div>
@@ -757,30 +756,58 @@ export function PurchaseRequestsSection() {
           </div>
         </div>
       </Modal>
+
+      {/* Sesi AE-57 — PR detail modal (replaces inline card items) */}
+      <PurchaseRequestDetailModal
+        request={detailRequest}
+        onClose={() => setDetailRequest(null)}
+        onReceive={(item, reqStatus) => {
+          setDetailRequest(null);
+          openReceive(item, reqStatus);
+        }}
+        onBulkReceive={(r) => {
+          setDetailRequest(null);
+          openBulk(r);
+        }}
+        onRejectItem={(item) => {
+          setDetailRequest(null);
+          openReject(item);
+        }}
+        onCancel={(r) => {
+          setDetailRequest(null);
+          setCancelTarget(r);
+          setCancelReason("");
+        }}
+        onPullToPurchase={(r) => {
+          setDetailRequest(null);
+          setPullPrId(r.id);
+        }}
+      />
+
+      {/* Sesi AE-57 — Tarik dari PR wizard (pre-fill PR yang dipilih) */}
+      <CreatePurchaseFromPrModal
+        open={pullPrId !== null}
+        prefilledPrId={pullPrId}
+        onClose={() => setPullPrId(null)}
+        onSaved={() => {
+          setPullPrId(null);
+          void refresh();
+        }}
+      />
     </div>
   );
 }
 
 interface RequestCardProps {
   request: PurchaseRequestWithItems;
-  onReceive: (
-    item: PurchaseRequestItem,
-    requestStatus: PurchaseRequestStatus,
-  ) => void;
-  onBulkReceive: (r: PurchaseRequestWithItems) => void;
-  onRejectItem: (item: PurchaseRequestItem) => void;
-  onCancel: (r: PurchaseRequestWithItems) => void;
+  onShowDetail: (r: PurchaseRequestWithItems) => void;
 }
 
-function RequestCard({
-  request,
-  onReceive,
-  onBulkReceive,
-  onRejectItem,
-  onCancel,
-}: RequestCardProps) {
-  const canEdit =
-    request.status !== "cancelled" && request.status !== "completed";
+/* Sesi AE-57 — RequestCard sekarang summary-only.
+ * Items table di-pindah ke PurchaseRequestDetailModal yang dibuka via
+ * "Lihat Detail" / klik card. Owner request: list compact biar gampang
+ * scan saat ada banyak PR. */
+function RequestCard({ request, onShowDetail }: RequestCardProps) {
   const totalRequested = request.items.reduce(
     (sum, i) => sum + Number(i.requestedQty),
     0,
@@ -793,32 +820,31 @@ function RequestCard({
     totalRequested > 0
       ? Math.round((totalReceived / totalRequested) * 100)
       : 0;
+  const outstandingItemCount = request.items.filter(
+    (i) => !i.rejectedAt && Number(i.receivedQty) < Number(i.requestedQty),
+  ).length;
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0 px-6 py-4">
+    <Card
+      className="cursor-pointer transition-colors hover:border-mahakan-green-700 hover:shadow-sm"
+      onClick={() => onShowDetail(request)}
+    >
+      <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0 px-5 py-3">
         <div className="space-y-1">
-          <CardTitle className="text-base">
+          <CardTitle className="text-sm">
             {formatRequestLabel(request)}
           </CardTitle>
           <p className="text-xs text-neutral-600">
-            Dibuat oleh {request.createdByName ?? "—"} ·{" "}
+            {request.createdByName ?? "—"} ·{" "}
             {request.createdAt.toLocaleString("id-ID", {
               dateStyle: "medium",
               timeStyle: "short",
             })}
           </p>
-          {request.notes ? (
-            <p className="text-xs text-neutral-700">Catatan: {request.notes}</p>
-          ) : null}
         </div>
         <div className="flex flex-col items-end gap-1">
           <Badge variant={STATUS_VARIANT[request.status]}>
             {STATUS_LABEL[request.status]}
           </Badge>
-          <p className="text-xs text-neutral-600">
-            {totalReceived.toLocaleString("id-ID")} /{" "}
-            {totalRequested.toLocaleString("id-ID")}
-          </p>
           {request.whatsappSentAt ? (
             <p className="flex items-center gap-1 text-[10px] text-neutral-400">
               <MessageCircle className="size-3" /> WA dikirim
@@ -826,109 +852,51 @@ function RequestCard({
           ) : null}
         </div>
       </CardHeader>
-      <CardContent className="px-6 pb-4 pt-0">
-        {/* Sesi AE-18 — fulfillment progress bar */}
-        {totalRequested > 0 ? (
-          <div className="mb-3 space-y-1">
-            <div className="flex items-center justify-between text-xs text-neutral-600">
-              <span>Pemenuhan</span>
-              <span className="font-mono font-semibold">
-                {fulfillPercent}% ({totalReceived.toLocaleString("id-ID")}/
-                {totalRequested.toLocaleString("id-ID")})
-              </span>
-            </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">
-              <div
-                className={cn(
-                  "h-full transition-all",
-                  fulfillPercent === 100
-                    ? "bg-mahakan-green-700"
-                    : fulfillPercent > 0
-                      ? "bg-info-400"
-                      : "bg-warning-400",
-                )}
-                style={{ width: `${Math.min(100, fulfillPercent)}%` }}
-              />
-            </div>
+      <CardContent className="px-5 pb-3 pt-0">
+        {/* Summary row: item count + qty + progress bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-neutral-700">
+          <div className="flex items-center gap-3">
+            <span>
+              <Package className="mr-1 inline size-3.5 text-neutral-500" />
+              {request.items.length} bahan
+              {outstandingItemCount > 0 ? (
+                <span className="ml-1 text-warning-500">
+                  ({outstandingItemCount} outstanding)
+                </span>
+              ) : null}
+            </span>
+            <span className="font-mono">
+              {totalReceived.toLocaleString("id-ID")} /{" "}
+              {totalRequested.toLocaleString("id-ID")}
+            </span>
           </div>
-        ) : null}
-        <ResponsiveTable<PurchaseRequestItem>
-          rows={request.items}
-          rowKey={(it) => it.id}
-          columns={purchaseRequestItemColumns()}
-          rowActions={
-            canEdit
-              ? (it) => {
-                  if (it.rejectedAt) {
-                    return (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-danger-100 px-2 py-0.5 text-[10px] font-semibold text-danger-700">
-                        <X className="size-3" /> Rejected
-                      </span>
-                    );
-                  }
-                  const remaining =
-                    Number(it.requestedQty) - Number(it.receivedQty);
-                  const itemDone = remaining === 0;
-                  return (
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                      <Button
-                        size="sm"
-                        variant={itemDone ? "outline" : "primary"}
-                        onClick={() => onReceive(it, request.status)}
-                      >
-                        <CheckCheck className="size-4" />
-                        {itemDone ? "Edit Terima" : "Terima"}
-                      </Button>
-                      {/* Sesi AE-20 — per-item reject button. Sebelumnya
-                       * hanya icon X kecil ghost variant — owner feedback
-                       * "tidak jelas, bingung". Sekarang outline danger
-                       * dengan label "Tolak" + icon biar sebanding visual
-                       * dengan tombol "Terima". */}
-                      {!itemDone ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onRejectItem(it)}
-                          className="border-danger-300 text-danger-500 hover:bg-danger-50 hover:border-danger-400"
-                          title="Tolak item ini"
-                        >
-                          <X className="size-4" />
-                          Tolak
-                        </Button>
-                      ) : null}
-                    </div>
-                  );
-                }
-              : undefined
-          }
-        />
-      </CardContent>
-      {canEdit ? (
-        <div className="flex flex-wrap justify-end gap-2 border-t border-neutral-100 px-6 py-3">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => onCancel(request)}
-          >
-            <X className="size-4" /> Batalkan
-          </Button>
-          {/* Sesi AE-18 — bulk receive shortcut. */}
-          <Button
-            size="sm"
-            onClick={() => onBulkReceive(request)}
-          >
-            <CheckCheck className="size-4" /> Terima Banyak
-          </Button>
-        </div>
-      ) : request.status === "cancelled" && request.cancelReason ? (
-        <div className="border-t border-neutral-100 px-6 py-3 text-xs text-neutral-600">
-          <span className="font-medium">Alasan batal:</span>{" "}
-          {request.cancelReason}
-          {request.cancelledByName ? (
-            <span> · oleh {request.cancelledByName}</span>
+          {totalRequested > 0 ? (
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[11px] font-semibold">
+                {fulfillPercent}%
+              </span>
+              <div className="h-1.5 w-32 overflow-hidden rounded-full bg-neutral-100">
+                <div
+                  className={cn(
+                    "h-full transition-all",
+                    fulfillPercent === 100
+                      ? "bg-mahakan-green-700"
+                      : fulfillPercent > 0
+                        ? "bg-info-400"
+                        : "bg-warning-400",
+                  )}
+                  style={{ width: `${Math.min(100, fulfillPercent)}%` }}
+                />
+              </div>
+            </div>
           ) : null}
         </div>
-      ) : null}
+        {request.notes ? (
+          <p className="mt-2 line-clamp-1 text-[11px] italic text-neutral-500">
+            Catatan: {request.notes}
+          </p>
+        ) : null}
+      </CardContent>
     </Card>
   );
 }
@@ -946,65 +914,6 @@ function formatRequestLabel(request: PurchaseRequestWithItems): string {
     month: "short",
     year: "numeric",
   })}`;
-}
-
-function purchaseRequestItemColumns(): ResponsiveColumn<PurchaseRequestItem>[] {
-  return [
-    {
-      key: "ingredient",
-      label: "Bahan",
-      primary: true,
-      render: (it) => (
-        <div>
-          <p className="font-medium text-neutral-900">
-            {it.ingredientNameSnapshot}
-          </p>
-          {it.notes ? (
-            <p className="text-xs text-neutral-600">{it.notes}</p>
-          ) : null}
-        </div>
-      ),
-    },
-    {
-      key: "requested",
-      label: "Diminta",
-      align: "right",
-      render: (it) => (
-        <span>
-          {Number(it.requestedQty).toLocaleString("id-ID")}{" "}
-          <span className="text-xs text-neutral-500">{it.unitSnapshot}</span>
-        </span>
-      ),
-    },
-    {
-      key: "received",
-      label: "Diterima",
-      align: "right",
-      render: (it) => Number(it.receivedQty).toLocaleString("id-ID"),
-    },
-    {
-      key: "remaining",
-      label: "Sisa",
-      align: "right",
-      render: (it) => {
-        const remaining = Number(it.requestedQty) - Number(it.receivedQty);
-        const itemDone = remaining === 0;
-        return (
-          <span
-            className={cn(
-              itemDone
-                ? "text-emerald-700"
-                : remaining > 0
-                  ? "text-amber-700"
-                  : "text-neutral-900",
-            )}
-          >
-            {remaining.toLocaleString("id-ID")}
-          </span>
-        );
-      },
-    },
-  ];
 }
 
 // ============================================================

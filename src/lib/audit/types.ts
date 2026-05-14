@@ -79,6 +79,10 @@ export const AUDIT_EVENT_TYPES = [
   "supplier.delete",
   // Purchases (Sesi O)
   "purchase.create",
+  /* Sesi AE-57 — purchase yang ditarik dari Permintaan Belanja (PR).
+   * Trigger: items[].purchaseRequestItemId terisi minimal 1. Payload
+   * include fromPurchaseRequestId + prLinkedItemCount. */
+  "purchase.create_from_pr",
   "purchase.update",
   "purchase.cancel",
   "purchase.mark_paid",

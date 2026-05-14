@@ -7,6 +7,8 @@ import {
   purchaseRequestItems,
   purchaseRequests,
   shifts,
+  supplierIngredients,
+  suppliers,
   users,
 } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
@@ -18,6 +20,8 @@ import {
   type CancelPurchaseRequestInput,
   type CreatePurchaseRequestInput,
   type LowStockIngredient,
+  type PrForPurchase,
+  type PrItemForPurchase,
   type PurchaseRequest,
   type PurchaseRequestStatus,
   type PurchaseRequestWithItems,
@@ -966,4 +970,168 @@ export async function markWhatsappSent(
   }).catch((e) => console.error("[audit purchase_request.whatsapp_sent]", e));
 
   return ok({ ok: true });
+}
+
+/* ============================================================================
+ * Sesi AE-57 — List PR yang siap di-tarik ke Pembelian.
+ *
+ * Filter: status open OR partial, items yang masih outstanding (received <
+ * requested AND !rejected). Sort: oldest first (FIFO).
+ *
+ * Per item enriched dengan:
+ *  - outstandingQty = requestedQty - receivedQty
+ *  - suggestedSupplierId = supplier_ingredients WHERE isPrimary=true
+ *  - suggestedUnitCost = supplier_ingredients.unitCost
+ *
+ * Hard limit 50 PR untuk avoid heavy payload.
+ * ========================================================================== */
+export async function listOpenPurchaseRequestsForPurchase(): Promise<
+  ApiResult<PrForPurchase[]>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase_request.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak akses");
+  }
+  if (!hasPermission(session.user.role, "purchase.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak buat pembelian");
+  }
+
+  const requestRows = await db
+    .select({
+      request: purchaseRequests,
+      createdByName: users.name,
+    })
+    .from(purchaseRequests)
+    .leftJoin(users, eq(users.id, purchaseRequests.createdBy))
+    .where(
+      and(
+        eq(purchaseRequests.outletId, session.user.outletId),
+        isNull(purchaseRequests.deletedAt),
+        inArray(purchaseRequests.status, ["open", "partial"]),
+      ),
+    )
+    .orderBy(purchaseRequests.createdAt) // oldest first
+    .limit(50);
+
+  if (requestRows.length === 0) return ok([]);
+
+  const requestIds = requestRows.map((r) => r.request.id);
+  const itemRows = await db
+    .select()
+    .from(purchaseRequestItems)
+    .where(
+      and(
+        inArray(purchaseRequestItems.requestId, requestIds),
+        isNull(purchaseRequestItems.rejectedAt),
+      ),
+    )
+    .orderBy(purchaseRequestItems.requestId, purchaseRequestItems.displayOrder);
+
+  // Resolve suggested supplier per ingredient (only ingredient-linked items)
+  const ingIds = Array.from(
+    new Set(
+      itemRows
+        .map((i) => i.ingredientId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const suggestedSupplierByIng = new Map<
+    string,
+    { supplierId: string; supplierName: string; unitCost: number }
+  >();
+  if (ingIds.length > 0) {
+    const sup = await db
+      .select({
+        ingredientId: supplierIngredients.ingredientId,
+        supplierId: supplierIngredients.supplierId,
+        supplierName: suppliers.name,
+        unitCost: supplierIngredients.unitCost,
+        isPrimary: supplierIngredients.isPrimary,
+      })
+      .from(supplierIngredients)
+      .innerJoin(suppliers, eq(suppliers.id, supplierIngredients.supplierId))
+      .where(
+        and(
+          eq(supplierIngredients.outletId, session.user.outletId),
+          inArray(supplierIngredients.ingredientId, ingIds),
+          isNull(supplierIngredients.deletedAt),
+        ),
+      );
+    // Prefer isPrimary=true; fallback ke first row jika ingredient tidak punya primary
+    for (const r of sup) {
+      const existing = suggestedSupplierByIng.get(r.ingredientId);
+      if (!existing || (r.isPrimary && !existing)) {
+        suggestedSupplierByIng.set(r.ingredientId, {
+          supplierId: r.supplierId,
+          supplierName: r.supplierName,
+          unitCost: Number(r.unitCost),
+        });
+      } else if (r.isPrimary) {
+        // Override fallback with primary
+        suggestedSupplierByIng.set(r.ingredientId, {
+          supplierId: r.supplierId,
+          supplierName: r.supplierName,
+          unitCost: Number(r.unitCost),
+        });
+      }
+    }
+  }
+
+  // Group items per request
+  const itemsByRequest = new Map<string, PrItemForPurchase[]>();
+  for (const it of itemRows) {
+    const requestedQty = Number(it.requestedQty);
+    const receivedQty = Number(it.receivedQty);
+    const outstandingQty = requestedQty - receivedQty;
+    if (outstandingQty <= 0) continue; // skip fully-received items
+
+    const suggested = it.ingredientId
+      ? suggestedSupplierByIng.get(it.ingredientId)
+      : null;
+
+    const list = itemsByRequest.get(it.requestId) ?? [];
+    list.push({
+      purchaseRequestItemId: it.id,
+      ingredientId: it.ingredientId,
+      ingredientName: it.ingredientNameSnapshot,
+      unit: it.unitSnapshot,
+      requestedQty,
+      receivedQty,
+      outstandingQty,
+      suggestedSupplierId: suggested?.supplierId ?? null,
+      suggestedSupplierName: suggested?.supplierName ?? null,
+      suggestedUnitCost: suggested?.unitCost ?? null,
+      notes: it.notes,
+    });
+    itemsByRequest.set(it.requestId, list);
+  }
+
+  // Build PrForPurchase[] — skip PRs that have no outstanding items
+  const result: PrForPurchase[] = [];
+  for (const r of requestRows) {
+    const items = itemsByRequest.get(r.request.id) ?? [];
+    if (items.length === 0) continue;
+    const totalOutstanding = items.reduce(
+      (sum, i) => sum + i.outstandingQty,
+      0,
+    );
+    const labelDate = r.request.createdAt.toLocaleDateString("id-ID", {
+      day: "2-digit",
+      month: "short",
+      year: "2-digit",
+    });
+    result.push({
+      requestId: r.request.id,
+      label: `PR ${r.request.id.slice(0, 8)} · ${labelDate}`,
+      status: r.request.status as PurchaseRequestStatus,
+      createdAt: r.request.createdAt,
+      createdByName: r.createdByName,
+      notes: r.request.notes,
+      outstandingItemCount: items.length,
+      totalOutstandingQty: totalOutstanding,
+      items,
+    });
+  }
+
+  return ok(result);
 }
