@@ -170,13 +170,21 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
 
   // Items — bold name on own line, mods/notes indented with "- ", price line
   // dual-aligned (unit×qty left, subtotal right).
+  // Sesi AE-48 — wrap header per-word + reset size mode defensive antar item
+  // supaya printer tidak stuck di double-width kalau byte drop di BLE
+  // transmission. Detail wrap logic di `wrapItemName` (pure, tested).
   for (const item of d.items) {
-    const variantLabel = item.variant
-      ? ` (${item.variant === "hot" ? "Hot" : "Iced"})`
-      : "";
-    const itemHeader = `${item.quantity}x ${item.name}${variantLabel}`;
+    const itemLines = wrapItemName(
+      item.quantity,
+      item.name,
+      item.variant,
+      COLS,
+    );
+    parts.push(sizeReset()); // defensive: ensure normal size before each item
     parts.push(bold(true));
-    parts.push(text(`${itemHeader}\n`));
+    for (const line of itemLines) {
+      parts.push(text(`${line}\n`));
+    }
     parts.push(bold(false));
 
     if (item.modifiers.length > 0) {
@@ -312,6 +320,46 @@ function wrapAddress(addr: string): string[] {
 
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 2)}..` : s;
+}
+
+/**
+ * Sesi AE-48 — wrap item header (`{qty}x {name} (Variant)`) per-word
+ * boundary kalau melebihi `cols`. Hard-cut fallback untuk ultra-long
+ * token (mis. name tanpa spasi). Tanpa wrap, printer 58mm akan
+ * hard-wrap per-char → output garbled.
+ *
+ * Exported untuk unit test direct (pure function, no side effect).
+ */
+export function wrapItemName(
+  qty: number,
+  name: string,
+  variant: "hot" | "iced" | null | undefined,
+  cols: number,
+): string[] {
+  const variantLabel = variant
+    ? ` (${variant === "hot" ? "Hot" : "Iced"})`
+    : "";
+  const header = `${qty}x ${name}${variantLabel}`;
+  if (header.length <= cols) return [header];
+
+  const words = header.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    // Hard-cut single word ultra-long (e.g. "AaaaaaaaaaaaaaaBbbbbbbbbbbbb"
+    // tanpa spasi) — slice ke fit cols, drop overflow.
+    const piece = w.length > cols ? w.slice(0, cols) : w;
+    if (cur.length === 0) {
+      cur = piece;
+    } else if (cur.length + 1 + piece.length <= cols) {
+      cur += ` ${piece}`;
+    } else {
+      lines.push(cur);
+      cur = piece;
+    }
+  }
+  if (cur.length > 0) lines.push(cur);
+  return lines;
 }
 
 function wrapNote(note: string, width: number): string[] {

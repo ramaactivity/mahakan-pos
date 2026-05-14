@@ -1466,6 +1466,16 @@ export async function editOpenBill(
   }
   const v = parsed.data;
 
+  /* Sesi AE-48 — same rule: nama pemilik bill wajib (sama dengan
+   * saveAsOpenBill). Edit tidak boleh hapus nama. */
+  const editCustomerNameTrimmed = v.customerName?.trim() ?? "";
+  if (editCustomerNameTrimmed.length === 0) {
+    return fail(
+      "CUSTOMER_NAME_REQUIRED",
+      "Nama pemilik bill wajib diisi. Edit bill tidak boleh menghilangkan nama.",
+    );
+  }
+
   const current = await fetchTransactionById(v.transactionId);
   if (!current) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
   if (current.status !== "open") {
@@ -1556,7 +1566,8 @@ export async function editOpenBill(
   // un-link by leaving the field blank). To explicitly remove a member
   // the Owner uses Admin → Customers.
   let customerId: string | null = current.customerId;
-  let customerNameSnapshot = v.customerName ?? current.customerName;
+  // Sesi AE-48 — pakai trimmed value supaya whitespace tidak lolos ke DB.
+  let customerNameSnapshot = editCustomerNameTrimmed;
   if (v.customerPhone) {
     const customerRes = await findOrCreateCustomer({
       phone: v.customerPhone,
@@ -1841,6 +1852,20 @@ export async function saveAsOpenBill(
 ): Promise<ApiResult<TransactionWithItems>> {
   const session = await requireSession();
 
+  /* Sesi AE-48 (audit Tier 2) — owner directive: nama pemilik bill wajib
+   * supaya staff bisa tracking siapa belum bayar di Bill Aktif & Riwayat.
+   * Sebelumnya client-side modal block tapi server tidak enforce → API
+   * direct call bisa simpan bill tanpa nama → defeat purpose. Sekarang
+   * server reject empty/whitespace-only customerName dengan code
+   * CUSTOMER_NAME_REQUIRED supaya UI bisa render pesan jelas. */
+  const customerNameTrimmed = input.customerName?.trim() ?? "";
+  if (customerNameTrimmed.length === 0) {
+    return fail(
+      "CUSTOMER_NAME_REQUIRED",
+      "Nama pemilik bill wajib diisi. Tanpa nama, staff susah tracking siapa belum bayar.",
+    );
+  }
+
   // Step 1: createTransaction with placeholder payment so validation passes
   // (cashReceived === total, cashChange === 0). Stock deduction + audit log
   // for discount fire as normal during this step.
@@ -1850,7 +1875,7 @@ export async function saveAsOpenBill(
     cashierId: input.cashierId,
     pagerNumber: input.pagerNumber,
     orderType: input.orderType,
-    customerName: input.customerName,
+    customerName: customerNameTrimmed,
     customerPhone: input.customerPhone,
     note: input.note,
     items: input.items,

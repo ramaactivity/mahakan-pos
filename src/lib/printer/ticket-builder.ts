@@ -17,6 +17,7 @@ import {
   text,
 } from "./esc-pos";
 import { categoryToStation, type Station } from "./station-mapping";
+import { wrapItemName } from "./receipt-builder";
 
 const COLS = 32;
 
@@ -115,12 +116,21 @@ export function buildPrepTicket(
   parts.push(divider("-", COLS));
 
   // Items — emphasized item lines, quiet "- "-prefixed sub-lines.
+  // Sesi AE-48 — sama treatment dengan receipt-builder: wrap header
+  // per-word + sizeReset defensive (kalau item name panjang atau ada
+  // BLE byte drop, printer tidak stuck di double-width mode).
   for (const item of filtered) {
-    const variantLabel = item.variant
-      ? ` (${item.variant === "hot" ? "Hot" : "Iced"})`
-      : "";
+    const itemLines = wrapItemName(
+      item.quantity,
+      item.name,
+      item.variant,
+      COLS,
+    );
+    parts.push(sizeReset());
     parts.push(bold(true));
-    parts.push(text(`${item.quantity}x ${item.name}${variantLabel}\n`));
+    for (const line of itemLines) {
+      parts.push(text(`${line}\n`));
+    }
     parts.push(bold(false));
 
     if (item.modifiers.length > 0) {

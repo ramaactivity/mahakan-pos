@@ -15,6 +15,7 @@ import {
 } from "@/lib/printer/esc-pos";
 import {
   buildReceipt,
+  wrapItemName,
   type ReceiptData,
   type ReceiptItem,
 } from "@/lib/printer/receipt-builder";
@@ -283,6 +284,154 @@ describe("buildReceipt", () => {
     const match = t.match(/Nama : (.+)/);
     expect(match?.[1].length).toBeLessThanOrEqual(25);
     expect(match?.[1]).toContain("..");
+  });
+});
+
+// --------------------------------------------------------------------------
+// wrapItemName (sesi AE-48) — defense against thermal printer hardwrap
+// --------------------------------------------------------------------------
+
+describe("wrapItemName", () => {
+  it("short header (≤ cols) — single line, no wrap", () => {
+    const lines = wrapItemName(1, "Americano", "iced", 32);
+    expect(lines).toEqual(["1x Americano (Iced)"]);
+  });
+
+  it("exactly at cols — single line, no wrap", () => {
+    // "1x Strawberry Frappe (Iced)" = exactly 28 chars; fits 32
+    const lines = wrapItemName(1, "Strawberry Frappe", "iced", 32);
+    expect(lines).toEqual(["1x Strawberry Frappe (Iced)"]);
+    expect(lines[0].length).toBeLessThanOrEqual(32);
+  });
+
+  it("long multi-word — wraps at word boundary", () => {
+    // "1x Butterscotch Caramel Latte Special (Iced)" = 44 chars
+    const lines = wrapItemName(
+      1,
+      "Butterscotch Caramel Latte Special",
+      "iced",
+      32,
+    );
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    // Each line ≤ 32 chars
+    for (const line of lines) {
+      expect(line.length).toBeLessThanOrEqual(32);
+    }
+    // No partial words (each word ada di salah satu line)
+    const flat = lines.join(" ");
+    expect(flat).toContain("Butterscotch");
+    expect(flat).toContain("Caramel");
+    expect(flat).toContain("Latte");
+    expect(flat).toContain("(Iced)");
+  });
+
+  it("ultra-long single word — hard cut at cols", () => {
+    const longWord = "AaaaaaaaaaaaaaaBbbbbbbbbbbbbbbbCccccccccccccc"; // 45 chars
+    const lines = wrapItemName(1, longWord, null, 32);
+    for (const line of lines) {
+      expect(line.length).toBeLessThanOrEqual(32);
+    }
+  });
+
+  it("variant null — no suffix", () => {
+    const lines = wrapItemName(2, "Matcha & The Bear", null, 32);
+    expect(lines).toEqual(["2x Matcha & The Bear"]);
+  });
+
+  it("variant hot — '(Hot)' suffix", () => {
+    const lines = wrapItemName(1, "Caramel Macchiato", "hot", 32);
+    expect(lines[0]).toContain("(Hot)");
+  });
+
+  it("qty large — fits in prefix", () => {
+    const lines = wrapItemName(99, "Espresso", "iced", 32);
+    expect(lines).toEqual(["99x Espresso (Iced)"]);
+  });
+});
+
+describe("buildReceipt — many items + long names (sesi AE-48 print bug)", () => {
+  it("10-item receipt: setiap item line ≤ 32 chars (no garbled hardwrap)", () => {
+    const items = Array.from({ length: 10 }, (_, i) =>
+      sampleItem({
+        name: `Item ${i + 1} Nama Sangat Panjang Sekali`,
+        quantity: 1,
+        subtotal: 25_000,
+      }),
+    );
+    const t = decode(
+      buildReceipt(
+        sample({
+          items,
+          subtotal: 250_000,
+          total: 250_000,
+          cashReceived: 250_000,
+          cashChange: 0,
+        }),
+      ),
+    );
+    // Tiap item name harus muncul (di-wrap, tidak hilang).
+    for (let i = 1; i <= 10; i++) {
+      expect(t).toContain(`Item ${i}`);
+    }
+    // Item terakhir tidak boleh terpotong.
+    expect(t).toContain("TOTAL");
+    expect(t).toContain("Rp 250.000");
+  });
+
+  it("long item name: tidak ada line text > 35 chars (32 cols + line ending)", () => {
+    const longName = "Strawberry Cheesecake Caramel Latte Special Edition";
+    const bytes = buildReceipt(
+      sample({
+        items: [
+          sampleItem({
+            name: longName,
+            quantity: 1,
+            subtotal: 50_000,
+          }),
+        ],
+        subtotal: 50_000,
+        total: 50_000,
+        cashReceived: 50_000,
+        cashChange: 0,
+      }),
+    );
+    const t = decode(bytes);
+    // Split by \n, check each non-empty line ≤ 35 chars (32 + space buffer).
+    // Lines yang exceed = bug print garbled.
+    const lines = t.split("\n");
+    for (const line of lines) {
+      // Skip lines yang punya double-byte chars dari ESC (binary commands)
+      const isPrintable = line.split("").every((c) => c.charCodeAt(0) >= 0x20);
+      if (isPrintable && line.length > 0) {
+        expect(line.length).toBeLessThanOrEqual(35);
+      }
+    }
+  });
+
+  it("size reset di-emit antara items (defense ESC mode bleed)", () => {
+    const bytes = buildReceipt(
+      sample({
+        items: [
+          sampleItem({ name: "Item A", quantity: 1, subtotal: 10_000 }),
+          sampleItem({ name: "Item B", quantity: 1, subtotal: 10_000 }),
+          sampleItem({ name: "Item C", quantity: 1, subtotal: 10_000 }),
+        ],
+        subtotal: 30_000,
+        total: 30_000,
+        cashReceived: 30_000,
+        cashChange: 0,
+      }),
+    );
+    // Count GS ! 0 (size reset = GS=0x1d, '!'=0x21, value=0x00 untuk 1x1)
+    // Each item should emit one sizeReset.
+    let sizeResetCount = 0;
+    for (let i = 0; i < bytes.length - 2; i++) {
+      if (bytes[i] === 0x1d && bytes[i + 1] === 0x21 && bytes[i + 2] === 0x00) {
+        sizeResetCount++;
+      }
+    }
+    // ≥ 3 (1 per item) + 1 from outlet header = 4+. Conservative check ≥ 3.
+    expect(sizeResetCount).toBeGreaterThanOrEqual(3);
   });
 });
 

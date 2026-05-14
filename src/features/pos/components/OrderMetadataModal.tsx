@@ -190,19 +190,26 @@ export function OrderMetadataModal({
         <Input
           label={
             mode === "save_bill"
-              ? "Nama Customer (wajib)"
+              ? "Nama Pemilik Bill *"
               : "Nama Customer (opsional)"
           }
           type="text"
           value={customerName}
           onChange={(e) => setCustomerName(e.target.value.slice(0, 60))}
-          placeholder="mis. Andi / Meja 5 / Gojek"
+          placeholder={
+            mode === "save_bill"
+              ? "Wajib: nama / meja / pelanggan"
+              : "mis. Andi / Meja 5 / Gojek"
+          }
           maxLength={60}
           required={mode === "save_bill"}
+          autoFocus={mode === "save_bill"}
           hint={
-            memberMatch
-              ? "Auto-isi dari member. Edit di sini = update nama member."
-              : "Bantu kasir + dapur call out by name. Boleh label apa saja."
+            mode === "save_bill"
+              ? "⚠ Wajib diisi — staff & owner butuh tracking siapa belum bayar di Bill Aktif & Riwayat. Tanpa nama, bill rentan terlupa."
+              : memberMatch
+                ? "Auto-isi dari member. Edit di sini = update nama member."
+                : "Bantu kasir + dapur call out by name. Boleh label apa saja."
           }
         />
         {error ? (

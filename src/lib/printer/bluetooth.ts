@@ -10,16 +10,24 @@
  * BLE quirks:
  * - GATT connection drops if the page goes to background → re-connect
  *   on next print attempt.
- * - Default MTU is 20 bytes per write; we chunk at 256 since most
- *   modern printers negotiate a larger MTU but don't crash on smaller.
+ * - Default MTU is 20 bytes per write; we chunk at 180 (closer to BLE
+ *   standard MTU 185 + 5 byte ATT overhead) since printer murah suka
+ *   reject chunk > negotiated MTU.
  * - First requestDevice MUST happen inside a click handler — browser
  *   blocks programmatic prompts.
+ * - Sesi AE-48 (audit Tier 2) — staff feedback: struk berantakan kalau
+ *   pesanan banyak (>3 item). Root cause: chunks dikirim back-to-back
+ *   tanpa delay → printer buffer overflow / byte drop → printer
+ *   mis-interpret data lanjut sebagai ESC commands acak → output
+ *   garbled mulai item ke-4. Fix: 20ms inter-chunk delay. Total
+ *   overhead ~80ms untuk receipt 4-chunk (acceptable trade-off).
  */
 
 const SERVICE_UUID = "000018f0-0000-1000-8000-00805f9b34fb";
 const WRITE_CHARACTERISTIC_UUID = "00002af1-0000-1000-8000-00805f9b34fb";
 const STORAGE_KEY = "mahakan-pos.bluetooth.device-id";
-const CHUNK_SIZE = 256;
+const CHUNK_SIZE = 180;
+const INTER_CHUNK_DELAY_MS = 20;
 
 // Minimal Web Bluetooth surface — TS lib.dom has these only in newer
 // versions / behind opt-in flags. Inlining keeps deps small and explicit.
@@ -226,6 +234,14 @@ class PrinterClient {
     for (let off = 0; off < bytes.length; off += CHUNK_SIZE) {
       const chunk = bytes.slice(off, off + CHUNK_SIZE);
       await this.characteristic.writeValue(chunk);
+      // Inter-chunk delay (sesi AE-48) — kasih waktu printer process
+      // buffer sebelum chunk berikutnya. Tanpa delay → byte drop di
+      // BLE thermal printer murah (RPP02 + klone) saat receipt panjang.
+      if (off + CHUNK_SIZE < bytes.length) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, INTER_CHUNK_DELAY_MS),
+        );
+      }
     }
   }
 
