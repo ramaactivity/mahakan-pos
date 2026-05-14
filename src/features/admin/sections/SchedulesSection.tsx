@@ -859,7 +859,13 @@ function BulkAssignDialog({
   >("this_week");
   const [customStart, setCustomStart] = useState(isoDate(weekStart));
   const [customEnd, setCustomEnd] = useState(isoDate(addDays(weekStart, 6)));
-  const [includeWeekend, setIncludeWeekend] = useState(true);
+  /* Sesi AE-54 — owner request: bisa pilih hari tertentu (mis. cuma Senin
+   * + Rabu + Jumat untuk libur tertentu, atau cuma Sabtu shift weekend).
+   * Pre-AE-54: cuma boolean includeWeekend. Sekarang Set hari tertentu
+   * dengan 7 toggle. Default semua hari aktif (matches existing behavior). */
+  const [selectedDays, setSelectedDays] = useState<Set<number>>(
+    () => new Set([0, 1, 2, 3, 4, 5, 6]),
+  );
   const [templateIdx, setTemplateIdx] = useState(0);
   const [markOff, setMarkOff] = useState(false);
   const [notes, setNotes] = useState("");
@@ -886,14 +892,23 @@ function BulkAssignDialog({
     const out: string[] = [];
     const cursor = new Date(start.getTime());
     while (cursor.getTime() <= end.getTime()) {
-      const dow = cursor.getUTCDay(); // 0=Sun, 6=Sat
-      if (includeWeekend || (dow !== 0 && dow !== 6)) {
+      const dow = cursor.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+      if (selectedDays.has(dow)) {
         out.push(isoDate(cursor));
       }
       cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
     return out;
-  }, [rangeMode, weekStart, customStart, customEnd, includeWeekend]);
+  }, [rangeMode, weekStart, customStart, customEnd, selectedDays]);
+
+  function toggleDay(dow: number) {
+    setSelectedDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(dow)) next.delete(dow);
+      else next.add(dow);
+      return next;
+    });
+  }
 
   const tpl = templates[templateIdx];
 
@@ -1054,15 +1069,75 @@ function BulkAssignDialog({
               />
             </div>
           ) : null}
-          <label className="mt-2 flex items-center gap-2 text-xs text-neutral-700">
-            <input
-              type="checkbox"
-              checked={includeWeekend}
-              onChange={(e) => setIncludeWeekend(e.target.checked)}
-              className="size-3.5"
-            />
-            Include weekend (Sabtu/Minggu)
-          </label>
+          <div className="mt-3 space-y-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+              Pilih hari
+            </p>
+            <div className="grid grid-cols-7 gap-1">
+              {[
+                { dow: 1, label: "Sen" },
+                { dow: 2, label: "Sel" },
+                { dow: 3, label: "Rab" },
+                { dow: 4, label: "Kam" },
+                { dow: 5, label: "Jum" },
+                { dow: 6, label: "Sab" },
+                { dow: 0, label: "Min" },
+              ].map(({ dow, label }) => {
+                const active = selectedDays.has(dow);
+                const isWeekend = dow === 0 || dow === 6;
+                return (
+                  <button
+                    key={dow}
+                    type="button"
+                    onClick={() => toggleDay(dow)}
+                    className={cn(
+                      "rounded-md border py-1.5 text-xs font-semibold transition-colors",
+                      active
+                        ? isWeekend
+                          ? "border-amber-500 bg-amber-50 text-amber-900"
+                          : "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                        : "border-neutral-200 bg-white text-neutral-400 hover:bg-neutral-50",
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setSelectedDays(new Set([0, 1, 2, 3, 4, 5, 6]))}
+                className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 hover:bg-neutral-50"
+              >
+                Semua hari
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedDays(new Set([1, 2, 3, 4, 5]))}
+                className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 hover:bg-neutral-50"
+              >
+                Senin–Jumat
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedDays(new Set([0, 6]))}
+                className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 hover:bg-neutral-50"
+              >
+                Weekend saja
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedDays(new Set())}
+                className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-500 hover:bg-neutral-50"
+              >
+                Reset
+              </button>
+            </div>
+            <p className="pt-0.5 text-[11px] text-neutral-500">
+              Tap hari untuk pilih. Cuma hari yang aktif yang akan di-assign / OFF.
+            </p>
+          </div>
         </section>
 
         <section>
@@ -1221,42 +1296,88 @@ function EditTemplatesDialog({
         </div>
       }
     >
-      <div className="space-y-2">
+      {/* Sesi AE-54 — card layout per template dengan labeled fields supaya
+       * lebih rapih + jelas mana name/start/end. */}
+      <div className="space-y-2.5">
+        <p className="text-xs text-neutral-600">
+          Atur jam preset shift untuk outlet. Template muncul sebagai tombol
+          quick-fill di Edit Schedule dan Bulk Assign.
+        </p>
         {items.map((t, idx) => (
           <div
             key={idx}
-            className="grid grid-cols-[1fr_90px_90px_36px] gap-2 rounded-md border border-neutral-200 bg-white p-2"
+            className="rounded-lg border border-neutral-200 bg-white p-3"
           >
-            <input
-              type="text"
-              value={t.label}
-              onChange={(e) => updateItem(idx, { label: e.target.value })}
-              placeholder="Nama (mis. Pagi)"
-              className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
-              maxLength={20}
-            />
-            <input
-              type="time"
-              value={t.start}
-              onChange={(e) => updateItem(idx, { start: e.target.value })}
-              className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm font-mono"
-            />
-            <input
-              type="time"
-              value={t.end}
-              onChange={(e) => updateItem(idx, { end: e.target.value })}
-              className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm font-mono"
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => removeItem(idx)}
-              disabled={submitting || items.length <= 1}
-              className="!text-danger-500 hover:!bg-danger-100/40"
-              title="Hapus template"
-            >
-              <Trash2Icon />
-            </Button>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end">
+              <div className="space-y-1">
+                <label
+                  htmlFor={`tpl-name-${idx}`}
+                  className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500"
+                >
+                  Nama Shift
+                </label>
+                <input
+                  id={`tpl-name-${idx}`}
+                  type="text"
+                  value={t.label}
+                  onChange={(e) =>
+                    updateItem(idx, { label: e.target.value })
+                  }
+                  placeholder="mis. Pagi"
+                  className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+                  maxLength={20}
+                />
+              </div>
+              <div className="space-y-1">
+                <label
+                  htmlFor={`tpl-start-${idx}`}
+                  className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500"
+                >
+                  Mulai
+                </label>
+                <input
+                  id={`tpl-start-${idx}`}
+                  type="time"
+                  value={t.start}
+                  onChange={(e) =>
+                    updateItem(idx, { start: e.target.value })
+                  }
+                  className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+                />
+              </div>
+              <div className="space-y-1">
+                <label
+                  htmlFor={`tpl-end-${idx}`}
+                  className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500"
+                >
+                  Selesai
+                </label>
+                <input
+                  id={`tpl-end-${idx}`}
+                  type="time"
+                  value={t.end}
+                  onChange={(e) =>
+                    updateItem(idx, { end: e.target.value })
+                  }
+                  className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+                />
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => removeItem(idx)}
+                disabled={submitting || items.length <= 1}
+                className="!text-danger-500 hover:!bg-danger-100/40"
+                title={
+                  items.length <= 1
+                    ? "Minimal 1 template wajib ada"
+                    : `Hapus ${t.label || "template"}`
+                }
+              >
+                <Trash2Icon />
+                <span className="sm:hidden ml-1">Hapus</span>
+              </Button>
+            </div>
           </div>
         ))}
         {items.length < 10 ? (
@@ -1265,10 +1386,15 @@ function EditTemplatesDialog({
             size="sm"
             onClick={addItem}
             disabled={submitting}
+            fullWidth
           >
             + Tambah Template
           </Button>
-        ) : null}
+        ) : (
+          <p className="text-center text-[11px] italic text-neutral-500">
+            Maksimal 10 template
+          </p>
+        )}
         {error ? (
           <p role="alert" className="text-sm font-medium text-danger-500">
             {error}
