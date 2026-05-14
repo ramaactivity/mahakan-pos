@@ -8,6 +8,7 @@ export {
   updateOperationalHours,
   updatePayrollSettings,
   updateReceiptSettings,
+  updateScheduleTemplates,
   updateThresholds,
   updateFeatures,
   type UpdateBusinessInfoInput,

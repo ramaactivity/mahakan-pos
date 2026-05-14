@@ -7,6 +7,7 @@ export type {
 export { isOk } from "./types";
 
 export {
+  bulkAssignSchedule,
   copyWeekSchedules,
   deleteSchedule,
   getMyScheduleWeek,

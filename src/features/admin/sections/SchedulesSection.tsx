@@ -9,18 +9,21 @@ import {
   ChevronRight,
   Clock,
   Copy,
+  Layers,
   Pencil,
 } from "lucide-react";
 import {
   Button,
   Card,
   CardContent,
+  Input,
   Modal,
   Skeleton,
   TimePicker,
   toast,
 } from "@/components/ui";
 import {
+  bulkAssignSchedule,
   copyWeekSchedules,
   deleteSchedule,
   isOk,
@@ -36,22 +39,27 @@ import {
   type AttendanceCalendarCell,
   type AttendanceDayStatus,
 } from "@/features/hr-reports";
+import {
+  getOwnOutlet,
+  isOk as isOutletOk,
+  updateScheduleTemplates,
+} from "@/features/outlets";
 import { cn } from "@/lib/utils";
 
 const DAYS_OF_WEEK = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 
-/* Sesi AE-51 — template shift untuk percepat input HR. Mahakan Coffee
- * lazimnya pakai 4 pola shift. Owner bisa request tambah/ubah di
- * codebase kalau pola berubah (defer DB-stored templates ke sesi nanti). */
-const SHIFT_TEMPLATES: ReadonlyArray<{
+/* Sesi AE-51/53 — template shift untuk percepat input HR. Defaults
+ * jadi fallback kalau outlet belum custom templates di Settings.
+ * AE-53: defaults disesuaikan dengan jam operasional Mahakan owner ask. */
+export const DEFAULT_SHIFT_TEMPLATES: ReadonlyArray<{
   label: string;
   start: string;
   end: string;
 }> = [
-  { label: "Pagi", start: "07:00", end: "15:00" },
-  { label: "Siang", start: "10:00", end: "18:00" },
-  { label: "Sore", start: "13:00", end: "22:00" },
-  { label: "Full", start: "09:00", end: "21:00" },
+  { label: "Pagi", start: "08:00", end: "17:00" },
+  { label: "Siang", start: "10:00", end: "19:00" },
+  { label: "Sore", start: "14:00", end: "23:00" },
+  { label: "Full", start: "08:00", end: "23:00" },
 ];
 
 function isoDate(d: Date): string {
@@ -144,6 +152,10 @@ export function SchedulesSection() {
     existing: ScheduleWithEmployee | null;
   } | null>(null);
 
+  // Sesi AE-53 — bulk assign + edit templates modals.
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+
   // Sesi AE-23 — week count: 1 untuk weekly, 5 untuk monthly stack.
   const weekCount = rangeMode === "month" ? 5 : 1;
   const allWeekDates = useMemo(() => {
@@ -167,6 +179,26 @@ export function SchedulesSection() {
       return res.data;
     },
   });
+
+  // Sesi AE-53 — outlet settings untuk schedule templates (editable per
+  // outlet, fallback DEFAULT_SHIFT_TEMPLATES kalau belum di-set).
+  const outletQuery = useQuery({
+    queryKey: ["admin", "outlet", "own"],
+    queryFn: async () => {
+      const res = await getOwnOutlet();
+      if (!isOutletOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+  const shiftTemplates = useMemo<
+    ReadonlyArray<{ label: string; start: string; end: string }>
+  >(() => {
+    const fromSettings =
+      outletQuery.data?.settings?.scheduleTemplates ?? null;
+    return fromSettings && fromSettings.length > 0
+      ? fromSettings
+      : DEFAULT_SHIFT_TEMPLATES;
+  }, [outletQuery.data]);
   const schedulesQuery = useQuery({
     queryKey: ["admin", "schedules", "list", fromIso, toIso],
     queryFn: async () => {
@@ -275,11 +307,23 @@ export function SchedulesSection() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {viewMode === "schedule" ? (
-            <Button variant="outline" onClick={handleCopyLastWeek}>
-              <Copy className="size-4" aria-hidden /> Salin Minggu Lalu
-            </Button>
+            <>
+              <Button variant="outline" onClick={() => setBulkOpen(true)}>
+                <Layers className="size-4" aria-hidden /> Bulk Assign
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setTemplatesOpen(true)}
+                title="Edit template jam shift (Pagi/Siang/Sore/Full)"
+              >
+                <Pencil className="size-4" aria-hidden /> Template
+              </Button>
+              <Button variant="outline" onClick={handleCopyLastWeek}>
+                <Copy className="size-4" aria-hidden /> Salin Minggu Lalu
+              </Button>
+            </>
           ) : null}
           <Button
             variant="outline"
@@ -516,12 +560,39 @@ export function SchedulesSection() {
 
       <ScheduleEditDialog
         editing={editing}
+        templates={shiftTemplates}
         onClose={() => setEditing(null)}
         onSaved={() => {
           setEditing(null);
           refresh();
         }}
       />
+
+      {bulkOpen ? (
+        <BulkAssignDialog
+          employees={employees}
+          templates={shiftTemplates}
+          weekStart={weekStart}
+          onClose={() => setBulkOpen(false)}
+          onSaved={() => {
+            setBulkOpen(false);
+            refresh();
+          }}
+        />
+      ) : null}
+
+      {templatesOpen ? (
+        <EditTemplatesDialog
+          current={shiftTemplates}
+          onClose={() => setTemplatesOpen(false)}
+          onSaved={() => {
+            setTemplatesOpen(false);
+            void queryClient.invalidateQueries({
+              queryKey: ["admin", "outlet"],
+            });
+          }}
+        />
+      ) : null}
 
       <AttendanceDetailModal
         detail={attendanceDetail}
@@ -763,6 +834,471 @@ function formatClockTime(iso: string): string {
   }).format(d);
 }
 
+/**
+ * Sesi AE-53 — Bulk Assign Schedule modal. HR pick employees + date
+ * range + template, server insert rows (skip existing dates).
+ */
+function BulkAssignDialog({
+  employees,
+  templates,
+  weekStart,
+  onClose,
+  onSaved,
+}: {
+  employees: ActiveEmployee[];
+  templates: ReadonlyArray<{ label: string; start: string; end: string }>;
+  weekStart: Date;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [selectedEmployees, setSelectedEmployees] = useState<Set<string>>(
+    () => new Set(employees.map((e) => e.id)),
+  );
+  const [rangeMode, setRangeMode] = useState<
+    "this_week" | "next_week" | "this_month" | "custom"
+  >("this_week");
+  const [customStart, setCustomStart] = useState(isoDate(weekStart));
+  const [customEnd, setCustomEnd] = useState(isoDate(addDays(weekStart, 6)));
+  const [includeWeekend, setIncludeWeekend] = useState(true);
+  const [templateIdx, setTemplateIdx] = useState(0);
+  const [markOff, setMarkOff] = useState(false);
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const dates = useMemo(() => {
+    let start: Date;
+    let end: Date;
+    if (rangeMode === "this_week") {
+      start = weekStart;
+      end = addDays(weekStart, 6);
+    } else if (rangeMode === "next_week") {
+      start = addDays(weekStart, 7);
+      end = addDays(weekStart, 13);
+    } else if (rangeMode === "this_month") {
+      const d = new Date(weekStart);
+      start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+      end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
+    } else {
+      start = new Date(`${customStart}T00:00:00Z`);
+      end = new Date(`${customEnd}T00:00:00Z`);
+    }
+    const out: string[] = [];
+    const cursor = new Date(start.getTime());
+    while (cursor.getTime() <= end.getTime()) {
+      const dow = cursor.getUTCDay(); // 0=Sun, 6=Sat
+      if (includeWeekend || (dow !== 0 && dow !== 6)) {
+        out.push(isoDate(cursor));
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return out;
+  }, [rangeMode, weekStart, customStart, customEnd, includeWeekend]);
+
+  const tpl = templates[templateIdx];
+
+  function toggleEmployee(id: string) {
+    setSelectedEmployees((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleSave() {
+    if (submitting) return;
+    setError(null);
+    if (selectedEmployees.size === 0) {
+      setError("Pilih minimal 1 karyawan");
+      return;
+    }
+    if (dates.length === 0) {
+      setError("Range tanggal kosong");
+      return;
+    }
+    if (!markOff && !tpl) {
+      setError("Pilih template");
+      return;
+    }
+    setSubmitting(true);
+    const res = await bulkAssignSchedule({
+      employeeIds: Array.from(selectedEmployees),
+      dates,
+      template: markOff
+        ? { dayOff: true }
+        : { dayOff: false, startTime: tpl!.start, endTime: tpl!.end },
+      notes: notes.trim() || null,
+    });
+    setSubmitting(false);
+    if (!isOk(res)) {
+      setError(res.error.message);
+      return;
+    }
+    toast.success(
+      `${res.data.created} jadwal dibuat${res.data.skipped > 0 ? `, ${res.data.skipped} dilewati (sudah ada)` : ""}`,
+    );
+    onSaved();
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Bulk Assign Jadwal"
+      description={`Apply 1 template ke banyak karyawan × tanggal sekaligus. Skip tanggal yang sudah ada jadwal.`}
+      size="lg"
+      footer={
+        <div className="flex w-full justify-end gap-2">
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+            Batal
+          </Button>
+          <Button onClick={handleSave} loading={submitting} size="lg">
+            Apply ke {selectedEmployees.size} × {dates.length} jadwal
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        <section>
+          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            Karyawan ({selectedEmployees.size}/{employees.length})
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                setSelectedEmployees(new Set(employees.map((e) => e.id)))
+              }
+            >
+              Semua
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelectedEmployees(new Set())}
+            >
+              Hapus
+            </Button>
+          </div>
+          <div className="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+            {employees.map((e) => {
+              const active = selectedEmployees.has(e.id);
+              return (
+                <button
+                  key={e.id}
+                  type="button"
+                  onClick={() => toggleEmployee(e.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs transition-colors",
+                    active
+                      ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                      : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    readOnly
+                    className="size-3.5"
+                  />
+                  <span className="truncate font-medium">{e.fullName}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section>
+          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            Range Tanggal ({dates.length} hari)
+          </p>
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+            {(
+              [
+                { v: "this_week", l: "Minggu Ini" },
+                { v: "next_week", l: "Minggu Depan" },
+                { v: "this_month", l: "Bulan Ini" },
+                { v: "custom", l: "Custom" },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.v}
+                type="button"
+                onClick={() => setRangeMode(opt.v)}
+                className={cn(
+                  "rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
+                  rangeMode === opt.v
+                    ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                    : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
+                )}
+              >
+                {opt.l}
+              </button>
+            ))}
+          </div>
+          {rangeMode === "custom" ? (
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <Input
+                label="Dari"
+                type="date"
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+              />
+              <Input
+                label="Sampai"
+                type="date"
+                value={customEnd}
+                onChange={(e) => setCustomEnd(e.target.value)}
+              />
+            </div>
+          ) : null}
+          <label className="mt-2 flex items-center gap-2 text-xs text-neutral-700">
+            <input
+              type="checkbox"
+              checked={includeWeekend}
+              onChange={(e) => setIncludeWeekend(e.target.checked)}
+              className="size-3.5"
+            />
+            Include weekend (Sabtu/Minggu)
+          </label>
+        </section>
+
+        <section>
+          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            Template
+          </p>
+          <label className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white p-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={markOff}
+              onChange={(e) => setMarkOff(e.target.checked)}
+              className="size-4"
+            />
+            <span className="text-sm font-medium text-neutral-900">
+              Tandai semua sebagai Hari libur (OFF)
+            </span>
+          </label>
+          {!markOff ? (
+            <div className="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+              {templates.map((t, i) => {
+                const active = templateIdx === i;
+                return (
+                  <button
+                    key={t.label}
+                    type="button"
+                    onClick={() => setTemplateIdx(i)}
+                    className={cn(
+                      "flex flex-col items-center gap-0.5 rounded-md border px-2 py-1.5 text-xs",
+                      active
+                        ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                        : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
+                    )}
+                  >
+                    <span className="font-medium">{t.label}</span>
+                    <span className="font-mono text-[10px] opacity-80">
+                      {t.start}–{t.end}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
+
+        <Input
+          label="Catatan (opsional)"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value.slice(0, 200))}
+          placeholder="Mis. shift soft-opening week"
+        />
+
+        {error ? (
+          <p role="alert" className="text-sm font-medium text-danger-500">
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Sesi AE-53 — Edit Shift Templates modal. HR edit jam Pagi/Siang/Sore/Full
+ * (atau tambah template baru). Tersimpan di outlet.settings.scheduleTemplates.
+ */
+function EditTemplatesDialog({
+  current,
+  onClose,
+  onSaved,
+}: {
+  current: ReadonlyArray<{ label: string; start: string; end: string }>;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [items, setItems] = useState(
+    current.map((t) => ({ ...t })),
+  );
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function updateItem(
+    idx: number,
+    patch: Partial<{ label: string; start: string; end: string }>,
+  ) {
+    setItems((prev) =>
+      prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)),
+    );
+  }
+  function addItem() {
+    if (items.length >= 10) return;
+    setItems((prev) => [
+      ...prev,
+      { label: "Baru", start: "09:00", end: "17:00" },
+    ]);
+  }
+  function removeItem(idx: number) {
+    if (items.length <= 1) return;
+    setItems((prev) => prev.filter((_, i) => i !== idx));
+  }
+  function resetDefaults() {
+    setItems(DEFAULT_SHIFT_TEMPLATES.map((t) => ({ ...t })));
+  }
+
+  async function handleSave() {
+    if (submitting) return;
+    setError(null);
+    // Client-side validate (server juga validate via Zod).
+    const re = /^([01]\d|2[0-3]):[0-5]\d$/;
+    for (const t of items) {
+      if (!t.label.trim()) {
+        setError("Semua template butuh nama");
+        return;
+      }
+      if (!re.test(t.start) || !re.test(t.end)) {
+        setError(`Format jam HH:mm tidak valid (${t.label})`);
+        return;
+      }
+    }
+    setSubmitting(true);
+    const res = await updateScheduleTemplates({
+      templates: items.map((t) => ({
+        label: t.label.trim(),
+        start: t.start,
+        end: t.end,
+      })),
+    });
+    setSubmitting(false);
+    if (!isOutletOk(res)) {
+      setError(res.error.message);
+      return;
+    }
+    toast.success("Template shift tersimpan");
+    onSaved();
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Edit Template Shift"
+      description="Atur jam preset (Pagi/Siang/Sore/Full atau custom). Dipakai di Edit Schedule + Bulk Assign."
+      size="md"
+      footer={
+        <div className="flex w-full justify-between gap-2">
+          <Button variant="ghost" onClick={resetDefaults} disabled={submitting}>
+            Reset Default
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={submitting}>
+              Batal
+            </Button>
+            <Button onClick={handleSave} loading={submitting}>
+              Simpan
+            </Button>
+          </div>
+        </div>
+      }
+    >
+      <div className="space-y-2">
+        {items.map((t, idx) => (
+          <div
+            key={idx}
+            className="grid grid-cols-[1fr_90px_90px_36px] gap-2 rounded-md border border-neutral-200 bg-white p-2"
+          >
+            <input
+              type="text"
+              value={t.label}
+              onChange={(e) => updateItem(idx, { label: e.target.value })}
+              placeholder="Nama (mis. Pagi)"
+              className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+              maxLength={20}
+            />
+            <input
+              type="time"
+              value={t.start}
+              onChange={(e) => updateItem(idx, { start: e.target.value })}
+              className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm font-mono"
+            />
+            <input
+              type="time"
+              value={t.end}
+              onChange={(e) => updateItem(idx, { end: e.target.value })}
+              className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm font-mono"
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => removeItem(idx)}
+              disabled={submitting || items.length <= 1}
+              className="!text-danger-500 hover:!bg-danger-100/40"
+              title="Hapus template"
+            >
+              <Trash2Icon />
+            </Button>
+          </div>
+        ))}
+        {items.length < 10 ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={addItem}
+            disabled={submitting}
+          >
+            + Tambah Template
+          </Button>
+        ) : null}
+        {error ? (
+          <p role="alert" className="text-sm font-medium text-danger-500">
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}
+
+function Trash2Icon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
 function ScheduleCell({
   schedule,
   onClick,
@@ -805,6 +1341,7 @@ function ScheduleCell({
 
 function ScheduleEditDialog({
   editing,
+  templates,
   onClose,
   onSaved,
 }: {
@@ -813,6 +1350,10 @@ function ScheduleEditDialog({
     date: string;
     existing: ScheduleWithEmployee | null;
   } | null;
+  /** Sesi AE-53 — templates dari outlet settings; fallback defaults
+   * kalau owner belum custom. Pass dari parent supaya 1× fetch per
+   * SchedulesSection lifecycle (di-share antara modal + bulk assign). */
+  templates: ReadonlyArray<{ label: string; start: string; end: string }>;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -931,7 +1472,7 @@ function ScheduleEditDialog({
                 Template Cepat
               </p>
               <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-                {SHIFT_TEMPLATES.map((tpl) => {
+                {templates.map((tpl) => {
                   const active =
                     startTime === tpl.start && endTime === tpl.end;
                   return (

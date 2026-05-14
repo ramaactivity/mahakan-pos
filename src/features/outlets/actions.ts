@@ -249,6 +249,25 @@ const payrollSettingsSchema = z.object({
   overtimePerMinute: z.number().int().min(0).max(99_999).optional(),
 });
 
+/* Sesi AE-53 — schedule shift templates editable per outlet.
+ * Validate label unique + HH:mm format + start < end (atau OFF). */
+const timeHHmm = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Format HH:mm");
+
+const scheduleTemplatesSchema = z.object({
+  templates: z
+    .array(
+      z.object({
+        label: z.string().trim().min(1).max(20),
+        start: timeHHmm,
+        end: timeHHmm,
+      }),
+    )
+    .min(1, "Minimal 1 template")
+    .max(10, "Maksimal 10 template"),
+});
+
 const approvalSchema = z.object({
   voidMode: z.enum(["pin", "code"]).optional(),
   refundMode: z.enum(["pin", "code"]).optional(),
@@ -415,4 +434,62 @@ export async function updatePayrollSettings(
     "payroll",
     parsed.data,
   );
+}
+
+/**
+ * Sesi AE-53 — update schedule shift templates per outlet. Replace whole
+ * array (bukan merge per field karena value adalah array, bukan object).
+ *
+ * Permission: schedule.update (Owner + Manager). Validation: 1-10 entries,
+ * label 1-20 char, time HH:mm format.
+ */
+export async function updateScheduleTemplates(
+  input: z.input<typeof scheduleTemplatesSchema>,
+): Promise<ApiResult<Outlet>> {
+  const parsed = scheduleTemplatesSchema.safeParse(input);
+  if (!parsed.success) {
+    return err("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "");
+  }
+
+  let session;
+  try {
+    session = await requirePerm("schedule.update");
+  } catch (e) {
+    return err("FORBIDDEN", e instanceof Error ? e.message : "FORBIDDEN");
+  }
+
+  const [before] = await db
+    .select()
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  if (!before) return err("NOT_FOUND", "Outlet tidak ditemukan");
+
+  const beforeSettings: OutletSettings = before.settings ?? {};
+  const merged: OutletSettings = {
+    ...beforeSettings,
+    scheduleTemplates: parsed.data.templates,
+  };
+
+  const [row] = await db
+    .update(outlets)
+    .set({ settings: merged, updatedAt: new Date() })
+    .where(eq(outlets.id, session.user.outletId))
+    .returning();
+
+  await logAudit({
+    eventType: "settings.update",
+    userId: session.user.id,
+    entityType: "outlet",
+    entityId: row.id,
+    payload: {
+      summary: `Update settings.scheduleTemplates (${parsed.data.templates.length} templates)`,
+      before: { scheduleTemplates: beforeSettings.scheduleTemplates ?? [] },
+      after: { scheduleTemplates: parsed.data.templates },
+      context: { section: "scheduleTemplates" },
+    },
+    metadata: { outletId: row.id, actorRole: session.user.role },
+  });
+
+  return { success: true, data: row };
 }

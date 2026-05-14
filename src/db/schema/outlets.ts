@@ -76,6 +76,15 @@ export type OutletSettings = {
       radiusMeters: number;
     };
   };
+  /** Sesi AE-53 — Schedule shift templates editable per outlet.
+   * HR pakai untuk quick-fill jam saat edit schedule (Pagi/Siang/Sore/Full).
+   * Default kalau tidak set: lihat DEFAULT_SHIFT_TEMPLATES di SchedulesSection.tsx.
+   * Owner edit via Back Office → Settings → Template Shift. */
+  scheduleTemplates?: Array<{
+    label: string;
+    start: string; // HH:mm
+    end: string; // HH:mm
+  }>;
   /** Payroll formula auto-fill (Sesi E). When set, computePayrollLines
    * derives late_deduction + overtime_pay from these rates × the
    * matching minute totals on each line. Owner can still override per

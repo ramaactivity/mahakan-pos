@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { db } from "@/db";
 import { employeeSchedules, employees } from "@/db/schema";
 import { auth } from "@/lib/auth";
@@ -259,6 +259,124 @@ export async function deleteSchedule(
   }
   await db.delete(employeeSchedules).where(eq(employeeSchedules.id, id));
   return ok({ id });
+}
+
+/**
+ * Sesi AE-53 — bulk assign template ke multiple employees + multiple dates.
+ * HR ngomong: "saya mau apply Sore ke Galih + Parhan untuk Senin-Sabtu
+ * sekaligus". Mode existing per-cell edit terlalu lambat.
+ *
+ * Skip dates yang sudah punya schedule (jangan overwrite — defensive).
+ * Owner clear manual dulu kalau mau replace.
+ *
+ * Permission: schedule.update. Audit log fire dengan count created/skipped.
+ */
+export async function bulkAssignSchedule(input: {
+  employeeIds: string[];
+  /** Array of YYYY-MM-DD dates (caller decides which dates di range). */
+  dates: string[];
+  template:
+    | { dayOff: true }
+    | { dayOff: false; startTime: string; endTime: string };
+  notes?: string | null;
+}): Promise<ApiResult<{ created: number; skipped: number }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "schedule.update")) {
+    return fail("FORBIDDEN", "Tidak punya hak set jadwal");
+  }
+  if (input.employeeIds.length === 0) {
+    return fail("VALIDATION_ERROR", "Pilih minimal 1 karyawan");
+  }
+  if (input.dates.length === 0) {
+    return fail("VALIDATION_ERROR", "Pilih minimal 1 tanggal");
+  }
+  if (input.dates.length > 62) {
+    return fail("VALIDATION_ERROR", "Maksimal 62 tanggal per bulk apply");
+  }
+  if (input.employeeIds.length > 30) {
+    return fail("VALIDATION_ERROR", "Maksimal 30 karyawan per bulk apply");
+  }
+
+  // Validate semua employees milik outlet user.
+  const empRows = await db
+    .select({ id: employees.id, outletId: employees.outletId })
+    .from(employees)
+    .where(inArray(employees.id, input.employeeIds));
+  if (empRows.length !== input.employeeIds.length) {
+    return fail("NOT_FOUND", "Sebagian karyawan tidak ditemukan");
+  }
+  for (const e of empRows) {
+    if (e.outletId !== session.user.outletId) {
+      return fail("FORBIDDEN", "Karyawan dari outlet lain");
+    }
+  }
+
+  // Fetch existing schedules untuk skip dates yang sudah ada.
+  const existingRows = await db
+    .select({
+      employeeId: employeeSchedules.employeeId,
+      scheduleDate: employeeSchedules.scheduleDate,
+    })
+    .from(employeeSchedules)
+    .where(
+      and(
+        eq(employeeSchedules.outletId, session.user.outletId),
+        inArray(employeeSchedules.employeeId, input.employeeIds),
+        inArray(employeeSchedules.scheduleDate, input.dates),
+      ),
+    );
+  const existingKey = new Set(
+    existingRows.map((r) => `${r.employeeId}::${r.scheduleDate}`),
+  );
+
+  const inserts: Array<typeof employeeSchedules.$inferInsert> = [];
+  let skipped = 0;
+  for (const empId of input.employeeIds) {
+    for (const date of input.dates) {
+      const key = `${empId}::${date}`;
+      if (existingKey.has(key)) {
+        skipped++;
+        continue;
+      }
+      inserts.push({
+        outletId: session.user.outletId,
+        employeeId: empId,
+        scheduleDate: date,
+        startTime: input.template.dayOff ? null : input.template.startTime,
+        endTime: input.template.dayOff ? null : input.template.endTime,
+        dayOff: input.template.dayOff,
+        notes: input.notes ?? null,
+        createdBy: session.user.id,
+      });
+    }
+  }
+
+  if (inserts.length > 0) {
+    await db.insert(employeeSchedules).values(inserts);
+  }
+
+  logAudit({
+    eventType: "schedule.copy_week",
+    userId: session.user.id,
+    entityType: "schedule",
+    entityId: null,
+    payload: {
+      summary: `Bulk assign ${input.employeeIds.length} karyawan × ${input.dates.length} hari: ${inserts.length} dibuat, ${skipped} dilewati`,
+      context: {
+        employeeCount: input.employeeIds.length,
+        dateCount: input.dates.length,
+        created: inserts.length,
+        skipped,
+        template: input.template,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  }).catch((e) => console.error("[audit schedule.bulk_assign]", e));
+
+  return ok({ created: inserts.length, skipped });
 }
 
 /** Bulk-copy a week's schedules from one start date to another (e.g.
