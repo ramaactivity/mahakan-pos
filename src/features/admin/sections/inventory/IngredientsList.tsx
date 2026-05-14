@@ -174,6 +174,30 @@ export function IngredientsList() {
     [lowStock],
   );
 
+  /* Sesi AE-52 — bahan dengan stok negatif (lebih kritis dari low-stock).
+   * Counts ingredients yang currentStock < 0 — biasanya akibat sales
+   * deduct tapi belum di-restock, atau opname adjustment. */
+  const negativeStock = useMemo(
+    () => ingredients.filter((i) => i.currentStock < 0),
+    [ingredients],
+  );
+
+  /* Sesi AE-52 — Stok rendah collapsible. Default show top 12 paling
+   * kritikal (sorted by deficit), klik "Lihat semua" untuk full list.
+   * Reduce overwhelming wall of 140 chip pills jadi compact table actionable. */
+  const [showAllLowStock, setShowAllLowStock] = useState(false);
+  const sortedLowStock = useMemo(() => {
+    // Sort by deficit (threshold - stock) descending — paling parah di atas
+    return [...lowStock].sort((a, b) => {
+      const deficitA = (a.reorderThreshold ?? 0) - (a.currentStock ?? 0);
+      const deficitB = (b.reorderThreshold ?? 0) - (b.currentStock ?? 0);
+      return deficitB - deficitA;
+    });
+  }, [lowStock]);
+  const visibleLowStock = showAllLowStock
+    ? sortedLowStock
+    : sortedLowStock.slice(0, 12);
+
   const filtered = useMemo(
     () => (lowOnly ? ingredients.filter((i) => lowStockIds.has(i.id)) : ingredients),
     [ingredients, lowStockIds, lowOnly],
@@ -225,24 +249,16 @@ export function IngredientsList() {
 
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+      {/* Sesi AE-52 — header redesign: title compact + Tambah Bahan
+       * right-aligned, paragraph description di-collapse jadi 1-line ringkas. */}
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
           <h2 className="text-lg font-semibold text-neutral-900">
-            Bahan Baku ({ingredients.length})
-            {canSeeCost && totalStockValue > 0 ? (
-              <span className="ml-2 text-sm font-normal text-neutral-500">
-                · nilai stok{" "}
-                <span className="font-mono font-medium text-neutral-700">
-                  {formatRupiah(totalStockValue)}
-                </span>
-              </span>
-            ) : null}
+            Bahan Baku
           </h2>
           <p className="text-xs text-neutral-500">
-            Bahan atomik (raw ingredient). Untuk bahan turunan seperti
-            Prep-Espresso, Prep-Sambal-Matah, lihat tab Preparations. Stok
-            terupdate via Terima / Adjust / Waste dan otomatis terkurang saat
-            transaksi POS.
+            Raw ingredient (atomik). Preparation di tab Preparations. Stok
+            update via Terima / Adjust / Waste, otomatis terkurang dari sales.
           </p>
         </div>
         {canCreate ? (
@@ -252,39 +268,151 @@ export function IngredientsList() {
         ) : null}
       </header>
 
+      {/* Sesi AE-52 — dashboard cards 4-metric overview supaya owner
+       * langsung scan kondisi stok tanpa scroll. */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <InventoryStat
+          label="Total Bahan"
+          value={String(ingredients.length)}
+          tone="neutral"
+        />
+        {canSeeCost ? (
+          <InventoryStat
+            label="Nilai Stok"
+            value={formatRupiah(totalStockValue)}
+            tone="neutral"
+          />
+        ) : null}
+        <InventoryStat
+          label="Stok Rendah"
+          value={String(lowStock.length)}
+          tone={lowStock.length > 0 ? "warning" : "neutral"}
+          onClick={
+            lowStock.length > 0 ? () => setLowOnly((v) => !v) : undefined
+          }
+          active={lowOnly}
+        />
+        <InventoryStat
+          label="Stok Negatif"
+          value={String(negativeStock.length)}
+          tone={negativeStock.length > 0 ? "danger" : "neutral"}
+        />
+      </div>
+
+      {/* Sesi AE-52 — Stok rendah compact list (top 12 deficit terbesar)
+       * + collapse toggle. Replace pill chip wall dengan readable list. */}
       {lowStock.length > 0 ? (
-        <Card className="border-warning-500/40 bg-warning-100/40">
+        <Card className="border-warning-500/40 bg-warning-100/30">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-warning-500">
-              <AlertTriangle className="size-4" aria-hidden /> Stok rendah ({lowStock.length})
+              <AlertTriangle className="size-4" aria-hidden />
+              Stok Rendah — perlu reorder ({lowStock.length})
             </h3>
             <Button
               variant={lowOnly ? "primary" : "outline"}
               size="sm"
               onClick={() => setLowOnly((v) => !v)}
             >
-              {lowOnly ? "Tampilkan semua" : "Filter list"}
+              {lowOnly ? "Tampilkan semua bahan" : "Filter di table bawah"}
             </Button>
           </CardHeader>
           <CardContent className="pt-0">
-            <ul className="flex flex-wrap gap-2 text-xs">
-              {lowStock.map((i) => (
-                <li
-                  key={i.id}
-                  className="rounded-md bg-white px-2 py-1 ring-1 ring-warning-500/30"
-                >
-                  <span className="font-medium text-neutral-900">{i.name}</span>{" "}
-                  <span className="text-neutral-500">
-                    sisa{" "}
-                    {formatStockQty(
+            <div className="overflow-x-auto rounded-md border border-warning-500/20 bg-white">
+              <table className="w-full text-xs">
+                <thead className="border-b border-warning-500/20 bg-warning-100/40 text-[10px] uppercase tracking-wider text-warning-500">
+                  <tr>
+                    <th className="px-3 py-1.5 text-left font-medium">
+                      Bahan
+                    </th>
+                    <th className="px-3 py-1.5 text-right font-medium">
+                      Sisa
+                    </th>
+                    <th className="px-3 py-1.5 text-right font-medium">
+                      Threshold
+                    </th>
+                    <th className="px-3 py-1.5 text-right font-medium">
+                      Defisit
+                    </th>
+                    {canReceive ? (
+                      <th className="px-3 py-1.5 text-right font-medium">
+                        Aksi
+                      </th>
+                    ) : null}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-warning-500/10">
+                  {visibleLowStock.map((i) => {
+                    const sisa = formatStockQty(
                       i.currentStock,
                       i.currentStockDecimal ?? null,
-                    )}{" "}
-                    {i.unit} / threshold {i.reorderThreshold}
-                  </span>
-                </li>
-              ))}
-            </ul>
+                    );
+                    const deficit =
+                      (i.reorderThreshold ?? 0) - (i.currentStock ?? 0);
+                    const isNegative = i.currentStock < 0;
+                    return (
+                      <tr key={i.id} className="hover:bg-warning-100/30">
+                        <td className="px-3 py-1.5">
+                          <span className="font-medium text-neutral-900">
+                            {i.name}
+                          </span>
+                          {isNegative ? (
+                            <Badge variant="danger" className="ml-1.5">
+                              minus
+                            </Badge>
+                          ) : null}
+                        </td>
+                        <td
+                          className={cn(
+                            "px-3 py-1.5 text-right font-mono tabular-nums",
+                            isNegative
+                              ? "text-danger-500 font-semibold"
+                              : "text-neutral-900",
+                          )}
+                        >
+                          {sisa} {i.unit}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono tabular-nums text-neutral-500">
+                          {i.reorderThreshold} {i.unit}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono tabular-nums text-warning-500">
+                          {deficit} {i.unit}
+                        </td>
+                        {canReceive ? (
+                          <td className="px-3 py-1.5 text-right">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                setTarget({ kind: "receive", ingredient: i })
+                              }
+                            >
+                              <PackagePlus
+                                className="size-3.5"
+                                aria-hidden
+                              />{" "}
+                              Terima
+                            </Button>
+                          </td>
+                        ) : null}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {lowStock.length > 12 ? (
+              <div className="mt-2 text-center">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowAllLowStock((v) => !v)}
+                >
+                  {showAllLowStock
+                    ? `Sembunyikan ${lowStock.length - 12} lainnya`
+                    : `Lihat ${lowStock.length - 12} bahan lainnya`}
+                </Button>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       ) : null}
@@ -691,4 +819,60 @@ export function IngredientsList() {
       </Modal>
     </div>
   );
+}
+
+/**
+ * Sesi AE-52 — dashboard stat card untuk Inventory overview. Tone color
+ * + optional onClick (untuk Stok Rendah → toggle filter). Active state
+ * visual kalau onClick + active prop set.
+ */
+function InventoryStat({
+  label,
+  value,
+  tone,
+  onClick,
+  active,
+}: {
+  label: string;
+  value: string;
+  tone: "neutral" | "warning" | "danger";
+  onClick?: () => void;
+  active?: boolean;
+}) {
+  const toneClasses: Record<typeof tone, string> = {
+    neutral: "border-neutral-200 bg-white text-neutral-900",
+    warning:
+      "border-warning-500/40 bg-warning-100/30 text-warning-500",
+    danger:
+      "border-danger-500/40 bg-danger-100/30 text-danger-500",
+  };
+  const activeRing = active ? "ring-2 ring-mahakan-green-700" : "";
+  const interactive = onClick
+    ? "cursor-pointer hover:shadow-sm transition-shadow"
+    : "";
+  const content = (
+    <div
+      className={cn(
+        "rounded-lg border px-3 py-2",
+        toneClasses[tone],
+        activeRing,
+        interactive,
+      )}
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-wider opacity-80">
+        {label}
+      </div>
+      <div className="mt-0.5 font-mono text-lg font-bold tabular-nums sm:text-xl">
+        {value}
+      </div>
+    </div>
+  );
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className="text-left">
+        {content}
+      </button>
+    );
+  }
+  return content;
 }
