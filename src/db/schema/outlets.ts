@@ -98,6 +98,16 @@ export type OutletSettings = {
      * = Rp 18,000 OT pay. */
     overtimePerMinute?: number;
   };
+  /** Sesi AE-55 — Revenue targets untuk indikator progress di Laporan.
+   * Semua nilai dalam Rupiah, optional. Null/undefined = belum ada target. */
+  targets?: {
+    dailyRevenue?: number;
+    weeklyRevenue?: number;
+    monthlyRevenue?: number;
+    yearlyRevenue?: number;
+    /** ISO timestamp last edit, untuk audit/staleness check. */
+    updatedAt?: string;
+  };
 };
 
 export const outlets = pgTable("outlets", {

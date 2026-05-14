@@ -225,8 +225,99 @@ export interface HppReport {
 }
 
 // ============================================================================
-// Purchase Rollup (Sesi O) — replaces Owner's Rekap Inv Detail
+// Sesi AE-55 — Closing Shift Report
 // ============================================================================
+
+export interface ClosingShiftRow {
+  shiftId: string;
+  shiftDate: string; // YYYY-MM-DD WIB (dari closedAt)
+  openedAt: string; // ISO
+  closedAt: string; // ISO
+  durationMinutes: number;
+  userId: string;
+  userName: string;
+  openingCash: number;
+  paidCash: number;
+  refundedCash: number;
+  expectedCash: number;
+  actualCash: number;
+  variance: number;
+  edcSettlement: number;
+  gofoodSettlement: number;
+  grabfoodSettlement: number;
+  shopeefoodSettlement: number;
+  settlementTotal: number;
+  notes: string | null;
+}
+
+export interface ClosingShiftReport {
+  period: { from: string; to: string };
+  rows: ClosingShiftRow[];
+  totals: {
+    shiftCount: number;
+    totalPaidCash: number;
+    totalActualCash: number;
+    totalVariance: number;
+    totalSettlement: number;
+    avgVariance: number;
+    biggestPositiveVariance: number;
+    biggestNegativeVariance: number;
+    /** Count shift dengan |variance| > thresholdAlert */
+    overThresholdCount: number;
+  };
+  varianceThreshold: number;
+}
+
+// ============================================================================
+// Sesi AE-55 — Per-Bill Report
+// ============================================================================
+
+export type BillBucketKey = "small" | "medium" | "large" | "premium";
+
+export interface BillBucket {
+  key: BillBucketKey;
+  label: string;
+  min: number;
+  max: number | null; // null = no upper bound
+  count: number;
+  revenue: number;
+  pctOfCount: number;
+}
+
+export interface BillRow {
+  transactionId: string;
+  transactionNumber: string;
+  closedAt: string; // ISO
+  userId: string | null;
+  userName: string | null;
+  customerName: string | null;
+  total: number;
+  refundedAmount: number;
+  netTotal: number;
+  paymentMethod: PaymentMethod;
+  status: "paid" | "partially_refunded";
+}
+
+export interface BillStats {
+  count: number;
+  totalRevenue: number;
+  avgBill: number;
+  medianBill: number;
+  minBill: number;
+  maxBill: number;
+  /** Histogram bucket dengan count terbanyak (untuk display "mayoritas bill X"). */
+  modeBucket: BillBucketKey | null;
+}
+
+export interface BillPerformanceReport {
+  period: { from: string; to: string };
+  paymentFilter: PaymentMethod | "all";
+  stats: BillStats;
+  buckets: BillBucket[];
+  rows: BillRow[];
+  /** True kalau hasil dipotong (>1000 row). */
+  truncated: boolean;
+}
 
 export interface PurchaseRollupCell {
   date: string; // YYYY-MM-DD

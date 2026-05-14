@@ -141,6 +141,7 @@ export const permissions = {
   "settings.thresholds.update": ["owner"],
   "settings.features.update": ["owner"],
   "settings.approval.update": ["owner"],
+  "settings.targets.update": ["owner"],
 
   // Inventory — Supervisor view + receive + waste (operational), TIDAK
   // CRUD master ingredient/recipe (master data) atau adjust (sensitive).

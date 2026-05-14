@@ -1,9 +1,14 @@
 "use server";
 
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { outlets } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { todayWibIso } from "@/features/cash/helpers";
 import {
+  fetchBillPerformance,
+  fetchClosingShiftReport,
   fetchDailySalesReport,
   fetchItemPerformance,
   fetchMenuEngineeringMatrix,
@@ -18,6 +23,8 @@ import {
   fail,
   ok,
   type ApiResult,
+  type BillPerformanceReport,
+  type ClosingShiftReport,
   type DailySalesReport,
   type HppReport,
   type ItemPerformanceRow,
@@ -26,6 +33,7 @@ import {
   type PurchaseRollupReport,
   type SalesRangeReport,
 } from "./types";
+import type { PaymentMethod } from "@/features/transactions";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -137,6 +145,98 @@ export async function getHppReport(
     return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
   }
   return ok(await fetchHppReport(session.user.outletId, from, to));
+}
+
+/* Sesi AE-55 — Closing Shift Report.
+ * Permission: report.shift.view_all (owner+manager+supervisor).
+ * Variance threshold dari OutletSettings.thresholds.shiftVarianceAlert
+ * (default 5000 kalau tidak set). */
+const DEFAULT_VARIANCE_THRESHOLD = 5_000;
+
+export async function getClosingShiftReport(
+  from: string,
+  to: string,
+): Promise<ApiResult<ClosingShiftReport>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "report.shift.view_all")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat laporan shift");
+  }
+  if (!ISO_DATE.test(from) || !ISO_DATE.test(to)) {
+    return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
+  }
+  if (from > to) {
+    return fail("VALIDATION_ERROR", "Tanggal mulai > tanggal selesai");
+  }
+  const fromMs = new Date(`${from}T00:00:00+07:00`).getTime();
+  const toMs = new Date(`${to}T00:00:00+07:00`).getTime();
+  if (toMs - fromMs > 366 * 24 * 60 * 60 * 1000) {
+    return fail("VALIDATION_ERROR", "Range maksimal 1 tahun");
+  }
+
+  const [outletRow] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  const threshold =
+    outletRow?.settings?.thresholds?.shiftVarianceAlert ??
+    DEFAULT_VARIANCE_THRESHOLD;
+
+  return ok(
+    await fetchClosingShiftReport(
+      session.user.outletId,
+      from,
+      to,
+      threshold,
+    ),
+  );
+}
+
+/* Sesi AE-55 — Per-Bill Report.
+ * Permission: report.sales.view. */
+const PAYMENT_METHODS: ReadonlyArray<PaymentMethod | "all"> = [
+  "all",
+  "cash",
+  "qris",
+  "card_bca",
+  "card_bni",
+  "card_mandiri",
+  "card_bri",
+  "card_other",
+  "split",
+];
+
+export async function getBillPerformanceReport(
+  from: string,
+  to: string,
+  paymentFilter: PaymentMethod | "all" = "all",
+): Promise<ApiResult<BillPerformanceReport>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "report.sales.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat laporan penjualan");
+  }
+  if (!ISO_DATE.test(from) || !ISO_DATE.test(to)) {
+    return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
+  }
+  if (from > to) {
+    return fail("VALIDATION_ERROR", "Tanggal mulai > tanggal selesai");
+  }
+  const fromMs = new Date(`${from}T00:00:00+07:00`).getTime();
+  const toMs = new Date(`${to}T00:00:00+07:00`).getTime();
+  if (toMs - fromMs > 92 * 24 * 60 * 60 * 1000) {
+    return fail("VALIDATION_ERROR", "Range maksimal 92 hari");
+  }
+  if (!PAYMENT_METHODS.includes(paymentFilter)) {
+    return fail("VALIDATION_ERROR", "Payment filter tidak valid");
+  }
+  return ok(
+    await fetchBillPerformance(
+      session.user.outletId,
+      from,
+      to,
+      paymentFilter,
+    ),
+  );
 }
 
 export async function getPurchaseRollupReport(

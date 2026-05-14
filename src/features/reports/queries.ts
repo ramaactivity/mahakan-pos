@@ -2,19 +2,26 @@ import "server-only";
 import { and, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  customers,
   expenseCategories,
   expenses,
   incomes,
   menuItems,
+  shifts,
   transactionItems,
   transactions,
+  users,
 } from "@/db/schema";
 import {
   endOfWibDateUtc,
   startOfWibDateUtc,
 } from "@/features/cash/helpers";
 import type {
+  BillPerformanceReport,
+  BillRow,
   CategoryBreakdown,
+  ClosingShiftReport,
+  ClosingShiftRow,
   DailySalesReport,
   HourlyBucket,
   ItemPerformanceRow,
@@ -25,6 +32,10 @@ import type {
   TopItem,
 } from "./types";
 import { classifyMenuMatrix } from "./menu-engineering-pure";
+import {
+  aggregateClosingShifts,
+  computeBillStats,
+} from "./bill-targets-pure";
 import type { PaymentMethod } from "@/features/transactions";
 
 export async function fetchDailySalesReport(
@@ -527,3 +538,238 @@ export async function fetchSalesRangeReport(
 
 // keep menuItems referenced for future per-item metrics expansion
 export const _kp = menuItems;
+
+// ============================================================================
+// Sesi AE-55 — Closing Shift Report
+// ============================================================================
+
+/**
+ * List shift closed dalam range tanggal + aggregate variance/settlement.
+ * Per shift, hitung paidCash/refundedCash dari transactions di shift itu
+ * (pakai pattern aggregate SUM, bukan loop per-row).
+ */
+export async function fetchClosingShiftReport(
+  outletId: string,
+  from: string,
+  to: string,
+  varianceThreshold: number,
+): Promise<ClosingShiftReport> {
+  const fromUtc = startOfWibDateUtc(from);
+  const toUtc = endOfWibDateUtc(to);
+
+  const shiftRows = await db
+    .select({
+      id: shifts.id,
+      userId: shifts.userId,
+      userName: users.name,
+      openingCash: shifts.openingCash,
+      actualCash: shifts.actualCash,
+      variance: shifts.variance,
+      edcSettlement: shifts.edcSettlement,
+      gofoodSettlement: shifts.gofoodSettlement,
+      grabfoodSettlement: shifts.grabfoodSettlement,
+      shopeefoodSettlement: shifts.shopeefoodSettlement,
+      openedAt: shifts.openedAt,
+      closedAt: shifts.closedAt,
+      notes: shifts.notes,
+    })
+    .from(shifts)
+    .innerJoin(users, eq(users.id, shifts.userId))
+    .where(
+      and(
+        eq(shifts.outletId, outletId),
+        eq(shifts.status, "closed"),
+        gte(shifts.closedAt, fromUtc),
+        lt(shifts.closedAt, toUtc),
+      ),
+    )
+    .orderBy(shifts.closedAt);
+
+  let rows: ClosingShiftRow[] = [];
+  if (shiftRows.length > 0) {
+    const shiftIds = shiftRows.map((s) => s.id);
+    const cashAgg = await db
+      .select({
+        shiftId: transactions.shiftId,
+        paidCash: sql<number>`coalesce(sum(case
+            when ${transactions.paymentMethod} = 'cash'
+             and ${transactions.status} in ('paid','partially_refunded','refunded')
+            then ${transactions.total} else 0 end), 0)::bigint`,
+        refundedCash: sql<number>`coalesce(sum(case
+            when ${transactions.paymentMethod} = 'cash'
+             and ${transactions.status} = 'partially_refunded'
+            then ${transactions.refundedAmount}
+            when ${transactions.paymentMethod} = 'cash'
+             and ${transactions.status} = 'refunded'
+            then ${transactions.total} else 0 end), 0)::bigint`,
+      })
+      .from(transactions)
+      .where(inArray(transactions.shiftId, shiftIds))
+      .groupBy(transactions.shiftId);
+
+    const cashByShift = new Map<string, { paidCash: number; refundedCash: number }>();
+    for (const r of cashAgg) {
+      cashByShift.set(r.shiftId, {
+        paidCash: Number(r.paidCash),
+        refundedCash: Number(r.refundedCash),
+      });
+    }
+
+    rows = shiftRows.map((s) => {
+      const cash = cashByShift.get(s.id) ?? { paidCash: 0, refundedCash: 0 };
+      const opening = Number(s.openingCash);
+      const expected = opening + cash.paidCash - cash.refundedCash;
+      const actual = s.actualCash == null ? 0 : Number(s.actualCash);
+      const variance = s.variance == null ? actual - expected : Number(s.variance);
+      const edc = s.edcSettlement == null ? 0 : Number(s.edcSettlement);
+      const gofood = s.gofoodSettlement == null ? 0 : Number(s.gofoodSettlement);
+      const grab = s.grabfoodSettlement == null ? 0 : Number(s.grabfoodSettlement);
+      const shopee = s.shopeefoodSettlement == null
+        ? 0
+        : Number(s.shopeefoodSettlement);
+      const closedAt = s.closedAt ?? s.openedAt;
+      const durationMinutes = Math.max(
+        0,
+        Math.round((closedAt.getTime() - s.openedAt.getTime()) / 60_000),
+      );
+      const closedAtIso = closedAt.toISOString();
+      const wibDate = new Date(closedAt.getTime() + 7 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      return {
+        shiftId: s.id,
+        shiftDate: wibDate,
+        openedAt: s.openedAt.toISOString(),
+        closedAt: closedAtIso,
+        durationMinutes,
+        userId: s.userId,
+        userName: s.userName,
+        openingCash: opening,
+        paidCash: cash.paidCash,
+        refundedCash: cash.refundedCash,
+        expectedCash: expected,
+        actualCash: actual,
+        variance,
+        edcSettlement: edc,
+        gofoodSettlement: gofood,
+        grabfoodSettlement: grab,
+        shopeefoodSettlement: shopee,
+        settlementTotal: edc + gofood + grab + shopee,
+        notes: s.notes,
+      };
+    });
+  }
+
+  const totals = aggregateClosingShifts(rows, varianceThreshold);
+  return {
+    period: { from, to },
+    rows,
+    totals,
+    varianceThreshold,
+  };
+}
+
+// ============================================================================
+// Sesi AE-55 — Per-Bill Report
+// ============================================================================
+
+const BILL_HARD_LIMIT = 1000;
+
+export async function fetchBillPerformance(
+  outletId: string,
+  from: string,
+  to: string,
+  paymentFilter: PaymentMethod | "all",
+): Promise<BillPerformanceReport> {
+  const fromUtc = startOfWibDateUtc(from);
+  const toUtc = endOfWibDateUtc(to);
+
+  const baseWhere = [
+    eq(transactions.outletId, outletId),
+    inArray(transactions.status, ["paid", "partially_refunded"]),
+    gte(transactions.createdAt, fromUtc),
+    lt(transactions.createdAt, toUtc),
+  ];
+  if (paymentFilter !== "all") {
+    baseWhere.push(eq(transactions.paymentMethod, paymentFilter));
+  }
+
+  // Hitung count terlebih dahulu untuk deteksi truncation.
+  const [{ count }] = await db
+    .select({
+      count: sql<number>`count(*)::int`,
+    })
+    .from(transactions)
+    .where(and(...baseWhere));
+
+  const totalCount = Number(count);
+  const truncated = totalCount > BILL_HARD_LIMIT;
+
+  const trxRows = await db
+    .select({
+      id: transactions.id,
+      transactionNumber: transactions.transactionNumber,
+      createdAt: transactions.createdAt,
+      cashierId: transactions.cashierId,
+      cashierName: users.name,
+      customerName: transactions.customerName,
+      customerMasterName: customers.name,
+      total: transactions.total,
+      refundedAmount: transactions.refundedAmount,
+      paymentMethod: transactions.paymentMethod,
+      status: transactions.status,
+    })
+    .from(transactions)
+    .leftJoin(users, eq(users.id, transactions.cashierId))
+    .leftJoin(customers, eq(customers.id, transactions.customerId))
+    .where(and(...baseWhere))
+    .orderBy(sql`${transactions.createdAt} desc`)
+    .limit(BILL_HARD_LIMIT);
+
+  const rows: BillRow[] = trxRows.map((t) => {
+    const total = Number(t.total);
+    const refunded = Number(t.refundedAmount);
+    return {
+      transactionId: t.id,
+      transactionNumber: t.transactionNumber,
+      closedAt: t.createdAt.toISOString(),
+      userId: t.cashierId,
+      userName: t.cashierName,
+      customerName: t.customerMasterName ?? t.customerName,
+      total,
+      refundedAmount: refunded,
+      netTotal: total - refunded,
+      paymentMethod: t.paymentMethod as PaymentMethod,
+      status: t.status as "paid" | "partially_refunded",
+    };
+  });
+
+  // Hitung stats dari SEMUA row (bukan cuma 1000 limit) — buat akurasi.
+  // Kalau truncated, gunakan SUM aggregate untuk total + avg.
+  let allNetTotals: number[];
+  if (truncated) {
+    const aggRows = await db
+      .select({
+        total: transactions.total,
+        refundedAmount: transactions.refundedAmount,
+      })
+      .from(transactions)
+      .where(and(...baseWhere));
+    allNetTotals = aggRows.map(
+      (r) => Number(r.total) - Number(r.refundedAmount),
+    );
+  } else {
+    allNetTotals = rows.map((r) => r.netTotal);
+  }
+
+  const { stats, buckets } = computeBillStats(allNetTotals);
+
+  return {
+    period: { from, to },
+    paymentFilter,
+    stats,
+    buckets,
+    rows,
+    truncated,
+  };
+}

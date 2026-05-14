@@ -1,13 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import { ClosingShiftView } from "./reports/ClosingShiftView";
 import { DailySalesView } from "./reports/DailySalesView";
 import { HppView } from "./reports/HppView";
 import { ItemPerformanceView } from "./reports/ItemPerformanceView";
 import { MenuEngineeringView } from "./reports/MenuEngineeringView";
+import { PerBillView } from "./reports/PerBillView";
 import { PnlView } from "./reports/PnlView";
 import { PurchaseRollupView } from "./reports/PurchaseRollupView";
 import { SalesRangeView } from "./reports/SalesRangeView";
+import { TargetsView } from "./reports/TargetsView";
 import { TopCustomersView } from "./reports/TopCustomersView";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -15,12 +18,58 @@ import { cn } from "@/lib/utils";
 type ReportTab =
   | "sales"
   | "range"
+  | "closing_shift"
+  | "per_bill"
   | "items"
   | "matrix"
   | "members"
   | "pnl"
   | "hpp"
-  | "purchase_rollup";
+  | "purchase_rollup"
+  | "targets";
+
+interface ReportTabDef {
+  key: ReportTab;
+  label: string;
+  ownerOnly?: boolean;
+}
+
+interface ReportGroup {
+  heading: string;
+  tabs: ReportTabDef[];
+}
+
+/* Sesi AE-55 — 3 group inline supaya 11 tab nggak desak satu baris.
+ * Penjualan (operational, semua role) — Performa (analitik, semua + matrix
+ * owner) — Owner (P&L, HPP, Target, Pembelanjaan + matrix owner only). */
+const REPORT_GROUPS: ReportGroup[] = [
+  {
+    heading: "Penjualan",
+    tabs: [
+      { key: "sales", label: "Harian" },
+      { key: "range", label: "Mingguan/Bulanan" },
+      { key: "closing_shift", label: "Closing Shift" },
+      { key: "per_bill", label: "Per-Bill" },
+    ],
+  },
+  {
+    heading: "Performa",
+    tabs: [
+      { key: "items", label: "Performa Item" },
+      { key: "members", label: "Top Member" },
+      { key: "matrix", label: "Matriks Menu", ownerOnly: true },
+    ],
+  },
+  {
+    heading: "Owner",
+    tabs: [
+      { key: "targets", label: "Target & Progress", ownerOnly: true },
+      { key: "purchase_rollup", label: "Pembelanjaan" },
+      { key: "hpp", label: "HPP/COGS", ownerOnly: true },
+      { key: "pnl", label: "P&L", ownerOnly: true },
+    ],
+  },
+];
 
 interface ReportsSectionProps {
   viewerRole: Role;
@@ -28,51 +77,56 @@ interface ReportsSectionProps {
 
 export function ReportsSection({ viewerRole }: ReportsSectionProps) {
   const [tab, setTab] = useState<ReportTab>("sales");
-
   const isOwner = viewerRole === "owner";
-  const ALL_TABS: Array<{ key: ReportTab; label: string; ownerOnly?: boolean }> = [
-    { key: "sales", label: "Penjualan Harian" },
-    { key: "range", label: "Mingguan / Bulanan" },
-    { key: "items", label: "Performa Item" },
-    { key: "matrix", label: "Matriks Menu", ownerOnly: true },
-    { key: "members", label: "Top Member" },
-    { key: "purchase_rollup", label: "Pembelanjaan (Pivot)" },
-    { key: "hpp", label: "HPP / COGS", ownerOnly: true },
-    { key: "pnl", label: "P&L (Owner)", ownerOnly: true },
-  ];
-  const TABS = ALL_TABS.filter((t) => !t.ownerOnly || isOwner);
+
+  const visibleGroups = REPORT_GROUPS.map((g) => ({
+    heading: g.heading,
+    tabs: g.tabs.filter((t) => !t.ownerOnly || isOwner),
+  })).filter((g) => g.tabs.length > 0);
 
   return (
     <div className="p-6 space-y-4">
       <header>
         <h1 className="text-2xl font-bold text-mahakan-green-900">Laporan</h1>
         <p className="text-sm text-neutral-700">
-          Penjualan harian, performa item, dan P&amp;L sederhana.
+          Penjualan, performa item, target, dan owner reports.
         </p>
       </header>
 
-      <div
-        role="tablist"
-        aria-label="Reports tabs"
-        className="flex gap-1 border-b border-neutral-200"
-      >
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.key}
-            onClick={() => setTab(t.key)}
-            className={cn(
-              "border-b-2 px-4 py-2 text-sm font-medium transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
-              tab === t.key
-                ? "border-mahakan-green-700 text-mahakan-green-900"
-                : "border-transparent text-neutral-500 hover:text-neutral-900",
-            )}
-          >
-            {t.label}
-          </button>
+      <div className="flex flex-wrap gap-x-6 gap-y-3 border-b border-neutral-200 pb-3">
+        {visibleGroups.map((group) => (
+          <div key={group.heading} className="space-y-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+              {group.heading}
+            </p>
+            <div
+              role="tablist"
+              aria-label={`Tab grup ${group.heading}`}
+              className="flex flex-wrap gap-1.5"
+            >
+              {group.tabs.map((t) => {
+                const active = tab === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setTab(t.key)}
+                    className={cn(
+                      "rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                      active
+                        ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                        : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
+                    )}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         ))}
       </div>
 
@@ -81,6 +135,10 @@ export function ReportsSection({ viewerRole }: ReportsSectionProps) {
           <DailySalesView />
         ) : tab === "range" ? (
           <SalesRangeView />
+        ) : tab === "closing_shift" ? (
+          <ClosingShiftView />
+        ) : tab === "per_bill" ? (
+          <PerBillView />
         ) : tab === "items" ? (
           <ItemPerformanceView />
         ) : tab === "matrix" ? (
@@ -91,6 +149,8 @@ export function ReportsSection({ viewerRole }: ReportsSectionProps) {
           <PurchaseRollupView />
         ) : tab === "hpp" ? (
           <HppView />
+        ) : tab === "targets" ? (
+          <TargetsView />
         ) : (
           <PnlView viewerRole={viewerRole} />
         )}

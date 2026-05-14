@@ -11,5 +11,6 @@ export {
   updateScheduleTemplates,
   updateThresholds,
   updateFeatures,
+  updateRevenueTargets,
   type UpdateBusinessInfoInput,
 } from "./actions";

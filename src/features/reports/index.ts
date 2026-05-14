@@ -1,6 +1,13 @@
 export type {
   ApiResult,
+  BillBucket,
+  BillBucketKey,
+  BillPerformanceReport,
+  BillRow,
+  BillStats,
   CategoryBreakdown,
+  ClosingShiftReport,
+  ClosingShiftRow,
   DailySalesReport,
   HourlyBucket,
   ItemPerformanceRow,
@@ -19,6 +26,17 @@ export type {
 export { isOk } from "./types";
 
 export {
+  computeBillStats,
+  computeProgress,
+  aggregateClosingShifts,
+  BILL_BUCKET_THRESHOLDS,
+  type ProgressResult,
+  type ProgressTier,
+} from "./bill-targets-pure";
+
+export {
+  getBillPerformanceReport,
+  getClosingShiftReport,
   getDailySalesReport,
   getItemPerformance,
   getMenuEngineeringMatrix,

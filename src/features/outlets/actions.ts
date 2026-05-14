@@ -436,6 +436,70 @@ export async function updatePayrollSettings(
   );
 }
 
+/* Sesi AE-55 — revenue targets harian/mingguan/bulanan/tahunan.
+ * Owner-only. Semua field optional non-negative integer. Kosong = hapus. */
+const targetsSchema = z.object({
+  dailyRevenue: z.number().int().min(0).max(9_999_999_999).optional(),
+  weeklyRevenue: z.number().int().min(0).max(9_999_999_999).optional(),
+  monthlyRevenue: z.number().int().min(0).max(9_999_999_999).optional(),
+  yearlyRevenue: z.number().int().min(0).max(9_999_999_999).optional(),
+});
+
+export async function updateRevenueTargets(
+  input: z.input<typeof targetsSchema>,
+): Promise<ApiResult<Outlet>> {
+  const parsed = targetsSchema.safeParse(input);
+  if (!parsed.success) {
+    return err("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "");
+  }
+
+  let session;
+  try {
+    session = await requirePerm("settings.targets.update");
+  } catch (e) {
+    return err("FORBIDDEN", e instanceof Error ? e.message : "FORBIDDEN");
+  }
+
+  const [before] = await db
+    .select()
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  if (!before) return err("NOT_FOUND", "Outlet tidak ditemukan");
+
+  const beforeSettings: OutletSettings = before.settings ?? {};
+  const merged: OutletSettings = {
+    ...beforeSettings,
+    targets: {
+      ...(beforeSettings.targets ?? {}),
+      ...parsed.data,
+      updatedAt: new Date().toISOString(),
+    },
+  };
+
+  const [row] = await db
+    .update(outlets)
+    .set({ settings: merged, updatedAt: new Date() })
+    .where(eq(outlets.id, session.user.outletId))
+    .returning();
+
+  await logAudit({
+    eventType: "settings.update",
+    userId: session.user.id,
+    entityType: "outlet",
+    entityId: row.id,
+    payload: {
+      summary: "Update revenue targets",
+      before: { targets: beforeSettings.targets ?? null },
+      after: { targets: row.settings?.targets ?? null },
+      context: { section: "targets" },
+    },
+    metadata: { outletId: row.id, actorRole: session.user.role },
+  });
+
+  return { success: true, data: row };
+}
+
 /**
  * Sesi AE-53 — update schedule shift templates per outlet. Replace whole
  * array (bukan merge per field karena value adalah array, bukan object).
