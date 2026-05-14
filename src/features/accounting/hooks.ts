@@ -13,6 +13,10 @@ import {
 import { isAutoJournalEnabled } from "./flag";
 import { recordJournal } from "./posting";
 import {
+  findInvalidSplitMethods,
+  formatInvalidSplitMethodsError,
+} from "./split-validation";
+import {
   mapAggregatorSettlement,
   mapCashDepositVerified,
   mapExpenseCreate,
@@ -140,16 +144,26 @@ export async function postJournalForPosSale(args: {
       .select()
       .from(splitPayments)
       .where(eq(splitPayments.transactionId, args.transactionId));
-    splitsInput = splits
-      .filter((s) =>
-        (VALID_SETTLE_METHODS as readonly string[]).includes(
-          s.paymentMethod ?? "",
+    /* Sesi AE-47 (audit Tier 2) — dulu pakai filter silent yang drop row
+     * dengan paymentMethod tidak dikenali (mis. "split" nested, atau
+     * future enum extension yang belum di-update di hooks). Effect:
+     * journal kehilangan amount → GL silently undercounted → owner
+     * gak tahu. Sekarang explicit validate: throw kalau ada row
+     * dengan method invalid → fireJournalHook (AE-46) catch + audit log
+     * `journal.posting_failed` → owner visibility di Back Office. */
+    const invalidRows = findInvalidSplitMethods(splits, VALID_SETTLE_METHODS);
+    if (invalidRows.length > 0) {
+      throw new Error(
+        formatInvalidSplitMethodsError(
+          invalidRows,
+          `pos_sale ${args.transactionId.slice(0, 8)}`,
         ),
-      )
-      .map((s) => ({
-        paymentMethod: s.paymentMethod as SettleMethod,
-        amount: Number(s.amount),
-      }));
+      );
+    }
+    splitsInput = splits.map((s) => ({
+      paymentMethod: s.paymentMethod as SettleMethod,
+      amount: Number(s.amount),
+    }));
   }
 
   const lines = mapPosSale({
@@ -227,25 +241,34 @@ export async function postJournalForPosRefund(args: {
         "card_other",
       ] as const;
       type RefundMethod = (typeof VALID_REFUND_METHODS)[number];
-      const allocs = splits
-        .filter((s) =>
-          (VALID_REFUND_METHODS as readonly string[]).includes(
-            s.paymentMethod ?? "",
+      /* Sesi AE-47 — same fix as postJournalForPosSale: explicit
+       * validation supaya invalid split row tidak silently di-drop
+       * dari refund journal (akan bikin refund total != journal total). */
+      const invalidRefundRows = findInvalidSplitMethods(
+        splits,
+        VALID_REFUND_METHODS,
+      );
+      if (invalidRefundRows.length > 0) {
+        throw new Error(
+          formatInvalidSplitMethodsError(
+            invalidRefundRows,
+            `pos_refund ${args.transactionId.slice(0, 8)}`,
           ),
-        )
-        .map((s, idx, arr) => {
-          const isLast = idx === arr.length - 1;
-          const amt = isLast
-            ? args.refundedAmount - allocated
-            : Math.round(
-                (Number(s.amount) / splitTotal) * args.refundedAmount,
-              );
-          allocated += amt;
-          return {
-            paymentMethod: s.paymentMethod as RefundMethod,
-            amount: amt,
-          };
-        });
+        );
+      }
+      const allocs = splits.map((s, idx, arr) => {
+        const isLast = idx === arr.length - 1;
+        const amt = isLast
+          ? args.refundedAmount - allocated
+          : Math.round(
+              (Number(s.amount) / splitTotal) * args.refundedAmount,
+            );
+        allocated += amt;
+        return {
+          paymentMethod: s.paymentMethod as RefundMethod,
+          amount: amt,
+        };
+      });
       splitsInput = allocs;
     }
   }
