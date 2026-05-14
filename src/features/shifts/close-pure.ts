@@ -72,9 +72,27 @@ export function computeShiftCashSummary(
       voidedCount += 1;
       voidedAmount += t.total;
     } else if (t.status === "refunded") {
+      /* Sesi AE-45 (continuation audit AE-44 finding) — full refund:
+       * dulu cuma count `refundedCash += total` TANPA add original
+       * payment ke paidCash. Effect: expectedCash = opening + 0 - total
+       * = opening - total, padahal physical drawer opening + total
+       * (received) - total (refunded) = opening. Variance = +total per
+       * full refund (false POSITIVE alarm).
+       *
+       * Fix: count original payment di paidCash/paidQris/paidCard.
+       * Net dengan refundedCash = 0, matches physical drawer. Konsisten
+       * dengan branch partially_refunded (AE-44). */
+      paidCount += 1;
       refundedCount += 1;
       refundedAmount += t.total;
-      if (t.paymentMethod === "cash") refundedCash += t.total;
+      if (t.paymentMethod === "cash") {
+        paidCash += t.total;
+        refundedCash += t.total;
+      } else if (t.paymentMethod === "qris") {
+        paidQris += t.total;
+      } else {
+        paidCard += t.total;
+      }
     } else if (t.status === "partially_refunded") {
       paidCount += 1;
       refundedCount += 1;

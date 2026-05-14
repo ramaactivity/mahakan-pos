@@ -50,23 +50,50 @@ describe("computeShiftCashSummary — voided status", () => {
   });
 });
 
-describe("computeShiftCashSummary — refunded (full) status", () => {
-  it("full refund cash: added ke refundedCash dengan total", () => {
+describe("computeShiftCashSummary — refunded (full) status (sesi AE-45 FIX)", () => {
+  // Sebelum AE-45: full refund cuma count refundedCash += total tanpa
+  // add original payment ke paidCash → expectedCash bias -total dari
+  // physical drawer → variance +total alarm palsu.
+
+  it("full refund cash: paidCash counts original + refundedCash counts refund (net 0)", () => {
     const summary = computeShiftCashSummary([
       txn("refunded", "cash", 50_000, 50_000),
     ]);
     expect(summary.refundedCount).toBe(1);
+    expect(summary.paidCount).toBe(1); // AE-45: count original payment
     expect(summary.refundedAmount).toBe(50_000);
     expect(summary.refundedCash).toBe(50_000);
-    expect(summary.paidCash).toBe(0);
+    expect(summary.paidCash).toBe(50_000); // AE-45: original payment came in drawer
+    // Net cash drawer impact = paidCash - refundedCash = 0 ✓ matches physical
   });
 
-  it("full refund qris: refundedCash tidak terpengaruh", () => {
+  it("full refund qris: paidQris counts original, refundedCash tidak terpengaruh", () => {
     const summary = computeShiftCashSummary([
       txn("refunded", "qris", 30_000, 30_000),
     ]);
     expect(summary.refundedAmount).toBe(30_000);
     expect(summary.refundedCash).toBe(0);
+    expect(summary.paidQris).toBe(30_000); // AE-45: original qris counted
+  });
+
+  it("full refund card: paidCard counts original", () => {
+    const summary = computeShiftCashSummary([
+      txn("refunded", "card_bca", 75_000, 75_000),
+    ]);
+    expect(summary.paidCard).toBe(75_000);
+    expect(summary.refundedAmount).toBe(75_000);
+    expect(summary.refundedCash).toBe(0);
+  });
+
+  it("multiple full cash refunds — variance net 0", () => {
+    const summary = computeShiftCashSummary([
+      txn("refunded", "cash", 50_000, 50_000),
+      txn("refunded", "cash", 30_000, 30_000),
+      txn("refunded", "cash", 20_000, 20_000),
+    ]);
+    expect(summary.paidCash).toBe(100_000);
+    expect(summary.refundedCash).toBe(100_000);
+    // Net drawer = 0 ✓
   });
 });
 
@@ -107,7 +134,7 @@ describe("computeShiftCashSummary — partially_refunded status (sesi AE-44 FIX)
 });
 
 describe("computeShiftCashSummary — mixed scenario", () => {
-  it("real-world shift: paid + voided + full refund + partial refund", () => {
+  it("real-world shift: paid + voided + full refund + partial refund (post-AE-45 net 0)", () => {
     const summary = computeShiftCashSummary([
       txn("paid", "cash", 50_000),
       txn("paid", "qris", 30_000),
@@ -115,11 +142,12 @@ describe("computeShiftCashSummary — mixed scenario", () => {
       txn("refunded", "cash", 40_000, 40_000),
       txn("partially_refunded", "cash", 60_000, 25_000),
     ]);
-    // Paid: cash 50k + partial-original 60k = 110k cash, qris 30k.
+    // Paid: cash 50k + full-refund-original 40k + partial-original 60k = 150k cash
+    // Qris: 30k
     // Refunded: full 40k cash + partial 25k cash = 65k cash refund.
     // Voided: 25k tracked.
-    expect(summary.paidCount).toBe(3); // 2 paid + 1 partial
-    expect(summary.paidCash).toBe(110_000);
+    expect(summary.paidCount).toBe(4); // 2 paid + 1 full refund + 1 partial
+    expect(summary.paidCash).toBe(150_000);
     expect(summary.paidQris).toBe(30_000);
     expect(summary.voidedCount).toBe(1);
     expect(summary.voidedAmount).toBe(25_000);
@@ -127,20 +155,13 @@ describe("computeShiftCashSummary — mixed scenario", () => {
     expect(summary.refundedAmount).toBe(65_000);
     expect(summary.refundedCash).toBe(65_000);
 
-    // Net drawer for cash: opening + 110_000 - 65_000 = opening + 45_000
+    // Net drawer cash: paidCash - refundedCash = 150k - 65k = 85k
     // Physical reality:
-    //   paid: +50k (paid cash) → drawer +50k
-    //   partial: +60k (original cash) -25k (refund) = +35k → drawer +35k
-    //   refund (full): +40k (original) -40k (refund) = 0 → drawer 0
+    //   paid: +50k → drawer +50k
+    //   partial: +60k - 25k = +35k → drawer +35k
+    //   refund (full): +40k - 40k = 0 → drawer 0
     //   voided: 0 (assume cancelled before settle)
-    // Total drawer = +85k. But formula gives +45k.
-    //
-    // Diskrepansi = 40k (the full refund cash). Ini bug pre-existing
-    // (out of scope AE-44 fix per owner directive). Out-of-scope DOC:
-    // formula treat full refund sebagai net negative impact (-total),
-    // padahal physically 0 (received then returned). Future fix: also
-    // add total to paidCash for "refunded" branch. For sekarang, partial
-    // sudah benar.
+    // Total drawer = +85k ✓ formula matches physical (no variance bias).
   });
 
   it("multiple partial refunds — accumulates correctly", () => {

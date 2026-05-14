@@ -375,23 +375,32 @@ export async function POST(request: Request): Promise<NextResponse> {
     /* Sesi AE-41 — staff feedback: clock-in error "invalid_grant" tidak
      * jelas. Detect kondisi spesifik (refresh token expired/revoked,
      * env vars hilang, quota) → pesan staff-friendly + audit log
-     * supaya owner langsung tahu harus re-auth. */
+     * supaya owner langsung tahu harus re-auth.
+     *
+     * Sesi AE-45 (audit fix Tier 2) — SANITIZE user-facing message.
+     * Sebelumnya bocorin nama env var `GOOGLE_OAUTH_REFRESH_TOKEN` +
+     * `npm run drive:auth` command + struktur Vercel ke client (info
+     * disclosure: attacker bisa fingerprint infra). Sekarang user
+     * dapat pesan generik "hubungi Owner"; detail teknis tetap di
+     * audit log (server-only, owner-readable di Back Office). */
     const rawMessage = e instanceof Error ? e.message : "Upload gagal";
     const lc = rawMessage.toLowerCase();
     let code = "DRIVE_UPLOAD_FAILED";
-    let userMessage = `Upload selfie gagal: ${rawMessage}. Coba lagi.`;
+    let userMessage = "Upload selfie gagal. Coba foto ulang. Kalau masih gagal hubungi Owner.";
     let auditSummary = `Drive upload gagal saat absen ${matched.fullName}: ${rawMessage}`;
 
     if (lc.includes("invalid_grant") || lc.includes("invalid grant")) {
       code = "DRIVE_AUTH_EXPIRED";
+      // User-facing: generic, no env var / CLI hint.
       userMessage =
-        "Sistem absen lagi gangguan akses Google Drive — refresh token expired. Hubungi Owner buat refresh akses (jalankan 'npm run drive:auth' + update env Vercel). Sementara absen lewat WhatsApp ke Owner.";
+        "Sistem absen sementara gangguan. Hubungi Owner — sementara catat absen via WhatsApp.";
+      // Audit (server-side, owner-only): full diagnostic.
       auditSummary =
         "🚨 Drive refresh token EXPIRED — semua absen mobile ter-block. Owner perlu re-auth: 'npm run drive:auth' lalu update GOOGLE_OAUTH_REFRESH_TOKEN di Vercel.";
     } else if (lc.includes("quota") || lc.includes("rate")) {
       code = "DRIVE_QUOTA";
       userMessage =
-        "Google Drive quota habis sementara. Tunggu 1-2 menit lalu Foto Ulang + Submit lagi.";
+        "Sistem absen sibuk sebentar. Tunggu 1-2 menit lalu Foto Ulang + Submit lagi.";
     } else if (
       lc.includes("env") ||
       lc.includes("client_id") ||
@@ -400,8 +409,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       lc.includes("root_parent_id")
     ) {
       code = "DRIVE_NOT_CONFIGURED";
+      // No env var name di message — generic.
       userMessage =
-        "Sistem Drive belum di-setup oleh Owner. Hubungi Owner buat config env vars.";
+        "Sistem absen belum di-setup. Hubungi Owner untuk aktifkan.";
     }
 
     await logAudit({
