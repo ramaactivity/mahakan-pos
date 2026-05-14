@@ -274,6 +274,13 @@
       "when": 1778467104173,
       "tag": "0038_cold_captain_flint",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1778763979886,
+      "tag": "0039_handy_wilson_fisk",
+      "breakpoints": true
     }
   ]
 }

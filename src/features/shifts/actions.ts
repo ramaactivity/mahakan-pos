@@ -1,9 +1,9 @@
 "use server";
 
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, eq, gte, isNull, lte } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { shifts, transactions } from "@/db/schema";
+import { expenses, incomes, shifts, transactions } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAndSanitize } from "@/lib/server-error";
@@ -15,7 +15,10 @@ import {
   fetchShifts,
   type ListShiftsOptions,
 } from "./queries";
-import { computeShiftCashSummary } from "./close-pure";
+import {
+  computeExpectedCash,
+  computeShiftCashSummary,
+} from "./close-pure";
 import {
   fail,
   ok,
@@ -252,7 +255,54 @@ export async function closeShift(
     .from(transactions)
     .where(eq(transactions.shiftId, current.id));
 
-  const cashSummary = computeShiftCashSummary(txns);
+  /* Sesi AE-49 — fetch petty cash expense + income yang affect kas drawer
+   * fisik. Filter:
+   *   - outletId = session outlet
+   *   - paymentMethod = 'cash' (transfer/other tidak affect laci kasir)
+   *   - deletedAt IS NULL
+   *   - date dalam range shift (open → close). Pakai expenseDate per WIB.
+   *     Untuk handle overnight shift, range = WIB date of shift.openedAt
+   *     sampai WIB date of close (= today saat tutup).
+   *
+   * Sum di server (bukan trust client) — single source of truth supaya
+   * tidak bisa di-bypass dari client. */
+  const shiftStartDate = toJakartaDateOnly(current.openedAt);
+  const todayDate = toJakartaDateOnly(new Date());
+
+  const pettyExpenseRows = await db
+    .select({ amount: expenses.amount })
+    .from(expenses)
+    .where(
+      and(
+        eq(expenses.outletId, current.outletId),
+        eq(expenses.paymentMethod, "cash"),
+        gte(expenses.expenseDate, shiftStartDate),
+        lte(expenses.expenseDate, todayDate),
+        isNull(expenses.deletedAt),
+      ),
+    );
+  const pettyExpenseCash = pettyExpenseRows.reduce((s, r) => s + r.amount, 0);
+
+  const pettyIncomeRows = await db
+    .select({ amount: incomes.amount })
+    .from(incomes)
+    .where(
+      and(
+        eq(incomes.outletId, current.outletId),
+        eq(incomes.paymentMethod, "cash"),
+        gte(incomes.incomeDate, shiftStartDate),
+        lte(incomes.incomeDate, todayDate),
+        isNull(incomes.deletedAt),
+      ),
+    );
+  const pettyIncomeCash = pettyIncomeRows.reduce((s, r) => s + r.amount, 0);
+
+  const cashSummary = computeShiftCashSummary(txns, {
+    expenseCash: pettyExpenseCash,
+    incomeCash: pettyIncomeCash,
+  });
+  // refundedCash dipakai di computeExpectedCash internal — destructure
+  // di sini cuma untuk audit log + response. Skip refundedCash di destructure.
   const {
     paidCount,
     paidCash,
@@ -262,10 +312,11 @@ export async function closeShift(
     voidedAmount,
     refundedCount,
     refundedAmount,
-    refundedCash,
   } = cashSummary;
 
-  const expectedCash = current.openingCash + paidCash - refundedCash;
+  // Sesi AE-49 — pakai helper terpadu supaya formula konsisten di
+  // server + UI preview. Kas Harusnya sekarang include petty cash.
+  const expectedCash = computeExpectedCash(current.openingCash, cashSummary);
   const variance = v.actualCash - expectedCash;
 
   const [updated] = await db
@@ -349,6 +400,10 @@ export async function closeShift(
       voided: { count: voidedCount, totalAmount: voidedAmount },
       refunded: { count: refundedCount, totalAmount: refundedAmount },
       expectedCash,
+      // Sesi AE-49 — expose petty cash di response supaya UI bisa
+      // verifikasi & owner punya audit trail jelas.
+      pettyExpenseCash,
+      pettyIncomeCash,
       depositId: autoDepositId,
     },
   });

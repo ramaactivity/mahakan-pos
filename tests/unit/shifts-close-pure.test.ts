@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  computeExpectedCash,
   computeShiftCashSummary,
   type ShiftTxnRow,
 } from "@/features/shifts/close-pure";
@@ -175,5 +176,94 @@ describe("computeShiftCashSummary — mixed scenario", () => {
     expect(summary.paidCash).toBe(230_000);
     expect(summary.refundedCash).toBe(65_000);
     expect(summary.refundedAmount).toBe(65_000);
+  });
+});
+
+describe("computeShiftCashSummary — petty cash (sesi AE-49 FIX)", () => {
+  // Owner bug report: petty cash expense -Rp 38.000 tampil di modal tutup
+  // shift TAPI tidak dikurangi dari Kas Harusnya. Result: variance alarm
+  // palsu (kasir tampak punya lebihan padahal udah balikin uang ke petty).
+
+  it("default empty petty — fields default 0 (backward-compat)", () => {
+    const s = computeShiftCashSummary([txn("paid", "cash", 50_000)]);
+    expect(s.pettyExpenseCash).toBe(0);
+    expect(s.pettyIncomeCash).toBe(0);
+  });
+
+  it("petty expense passed-through ke summary field", () => {
+    const s = computeShiftCashSummary(
+      [txn("paid", "cash", 605_000)],
+      { expenseCash: 38_000, incomeCash: 0 },
+    );
+    expect(s.pettyExpenseCash).toBe(38_000);
+    expect(s.pettyIncomeCash).toBe(0);
+  });
+
+  it("petty income passed-through ke summary field", () => {
+    const s = computeShiftCashSummary(
+      [txn("paid", "cash", 100_000)],
+      { expenseCash: 0, incomeCash: 50_000 },
+    );
+    expect(s.pettyExpenseCash).toBe(0);
+    expect(s.pettyIncomeCash).toBe(50_000);
+  });
+
+  it("both petty expense + income", () => {
+    const s = computeShiftCashSummary(
+      [txn("paid", "cash", 200_000)],
+      { expenseCash: 20_000, incomeCash: 5_000 },
+    );
+    expect(s.pettyExpenseCash).toBe(20_000);
+    expect(s.pettyIncomeCash).toBe(5_000);
+  });
+});
+
+describe("computeExpectedCash (sesi AE-49)", () => {
+  it("formula tanpa petty: opening + paid - refunded", () => {
+    const s = computeShiftCashSummary([txn("paid", "cash", 605_000)]);
+    expect(computeExpectedCash(200_000, s)).toBe(805_000);
+  });
+
+  it("formula dengan petty expense: opening + paid - refunded - pettyExpense", () => {
+    // Reproduce owner bug scenario:
+    // Opening 200k + Penjualan Tunai 605k = 805k
+    // Minus petty cash expense 38k = 767k expected
+    const s = computeShiftCashSummary(
+      [txn("paid", "cash", 605_000)],
+      { expenseCash: 38_000, incomeCash: 0 },
+    );
+    expect(computeExpectedCash(200_000, s)).toBe(767_000);
+  });
+
+  it("formula dengan petty income: opening + paid - refunded + pettyIncome", () => {
+    // Tip Customer cash 50k masuk laci → kas harusnya +50k
+    const s = computeShiftCashSummary(
+      [txn("paid", "cash", 100_000)],
+      { expenseCash: 0, incomeCash: 50_000 },
+    );
+    expect(computeExpectedCash(200_000, s)).toBe(350_000);
+  });
+
+  it("formula dengan both petty + partial refund", () => {
+    // Mixed real-world: paid 605k + partial refund 30k cash (return 30k drawer)
+    // + petty expense 38k + petty income 10k
+    // Expected = 200 + 605 - 30 - 38 + 10 = 747k
+    const s = computeShiftCashSummary(
+      [
+        txn("paid", "cash", 575_000),
+        txn("partially_refunded", "cash", 30_000, 30_000),
+      ],
+      { expenseCash: 38_000, incomeCash: 10_000 },
+    );
+    expect(computeExpectedCash(200_000, s)).toBe(747_000);
+  });
+
+  it("edge: petty expense > paid → expectedCash bisa negatif (owner liat alarm)", () => {
+    // Theoretical edge case (kasir hutang lebih besar dari penjualan)
+    const s = computeShiftCashSummary(
+      [txn("paid", "cash", 10_000)],
+      { expenseCash: 50_000, incomeCash: 0 },
+    );
+    expect(computeExpectedCash(20_000, s)).toBe(-20_000);
   });
 });

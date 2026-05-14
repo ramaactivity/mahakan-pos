@@ -48,11 +48,18 @@ interface SummaryPreview {
   voided: { count: number; totalAmount: number };
   refunded: { count: number; totalAmount: number };
   expectedCash: number;
+  /** Sesi AE-49 — pisah cash vs non-cash. Cuma cash yang affect Kas Harusnya. */
   petty: {
-    expensesTotal: number;
-    expensesCount: number;
-    incomesTotal: number;
-    incomesCount: number;
+    // cash-only (affect drawer)
+    expenseCash: number;
+    expenseCashCount: number;
+    incomeCash: number;
+    incomeCashCount: number;
+    // non-cash (display only)
+    expenseNonCash: number;
+    expenseNonCashCount: number;
+    incomeNonCash: number;
+    incomeNonCashCount: number;
   };
 }
 
@@ -220,6 +227,13 @@ export function CloseShiftModal({
 
       const cashSummary = isOk(cashRes) ? cashRes.data : null;
 
+      /* Sesi AE-49 — petty cash cash-only affect Kas Harusnya. Filter
+       * paymentMethod=cash di queries.ts sudah expose cashField di summary.
+       * Formula: expectedCash = opening + paidCash - refundedCash
+       *                       - pettyExpenseCash + pettyIncomeCash */
+      const pettyExpenseCash = cashSummary?.expenses.cash ?? 0;
+      const pettyIncomeCash = cashSummary?.income.manual.cash ?? 0;
+
       setSummary({
         paid: {
           count: paid.length,
@@ -239,16 +253,21 @@ export function CloseShiftModal({
           count: refunded.length,
           totalAmount: refunded.reduce((s, t) => s + t.total, 0),
         },
-        expectedCash: shift.openingCash + paidCash - refundedCash,
+        expectedCash:
+          shift.openingCash +
+          paidCash -
+          refundedCash -
+          pettyExpenseCash +
+          pettyIncomeCash,
         petty: {
-          expensesTotal: cashSummary?.expenses.total ?? 0,
-          expensesCount:
-            cashSummary?.expenses.byCategory.reduce(
-              (s, c) => s + c.count,
-              0,
-            ) ?? 0,
-          incomesTotal: cashSummary?.income.manual.total ?? 0,
-          incomesCount: cashSummary?.income.manual.count ?? 0,
+          expenseCash: pettyExpenseCash,
+          expenseCashCount: cashSummary?.expenses.cashCount ?? 0,
+          incomeCash: pettyIncomeCash,
+          incomeCashCount: cashSummary?.income.manual.cashCount ?? 0,
+          expenseNonCash: cashSummary?.expenses.nonCash ?? 0,
+          expenseNonCashCount: cashSummary?.expenses.nonCashCount ?? 0,
+          incomeNonCash: cashSummary?.income.manual.nonCash ?? 0,
+          incomeNonCashCount: cashSummary?.income.manual.nonCashCount ?? 0,
         },
       });
       setLoading(false);
@@ -549,8 +568,10 @@ export function CloseShiftModal({
                 variance={variance}
                 varianceFlag={varianceFlag}
               />
-              {(summary.petty.expensesCount > 0 ||
-                summary.petty.incomesCount > 0) && (
+              {(summary.petty.expenseCashCount > 0 ||
+                summary.petty.incomeCashCount > 0 ||
+                summary.petty.expenseNonCashCount > 0 ||
+                summary.petty.incomeNonCashCount > 0) && (
                 <PettyCashSection petty={summary.petty} />
               )}
               <DepositSection
@@ -659,6 +680,10 @@ function SummarySection({
   shift: Shift;
   summary: SummaryPreview;
 }) {
+  /* Sesi AE-49 — display full formula breakdown supaya owner & kasir
+   * paham angka Kas Harusnya dari mana. Petty cash sekarang TERMASUK di
+   * formula (sebelumnya display-only di section terpisah → confusing). */
+  const refundedCashApprox = summary.refunded.totalAmount; // approx; exact split di server
   return (
     <section className="rounded-xl border border-neutral-200 bg-white p-4 touch:p-3">
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-600">
@@ -693,7 +718,20 @@ function SummarySection({
         {summary.refunded.count > 0 ? (
           <SummaryRow
             label={`Refund Tunai (${summary.refunded.count} trx)`}
-            value={`- ${formatRupiah(summary.refunded.totalAmount)}`}
+            value={`- ${formatRupiah(refundedCashApprox)}`}
+          />
+        ) : null}
+        {/* Sesi AE-49 — petty cash cash-only di breakdown ringkasan. */}
+        {summary.petty.expenseCashCount > 0 ? (
+          <SummaryRow
+            label={`Petty Pengeluaran Cash (${summary.petty.expenseCashCount}×)`}
+            value={`- ${formatRupiah(summary.petty.expenseCash)}`}
+          />
+        ) : null}
+        {summary.petty.incomeCashCount > 0 ? (
+          <SummaryRow
+            label={`Petty Pemasukan Cash (${summary.petty.incomeCashCount}×)`}
+            value={`+ ${formatRupiah(summary.petty.incomeCash)}`}
           />
         ) : null}
         <div className="my-2 border-t border-dashed border-neutral-200" />
@@ -705,6 +743,10 @@ function SummarySection({
             {formatRupiah(summary.expectedCash)}
           </span>
         </div>
+        <p className="mt-1 text-[10px] text-neutral-500">
+          Formula: Kas Awal + Penjualan Tunai − Refund Tunai − Petty
+          Pengeluaran Cash + Petty Pemasukan Cash
+        </p>
       </div>
     </section>
   );
@@ -777,26 +819,67 @@ function PettyCashSection({
 }: {
   petty: SummaryPreview["petty"];
 }) {
+  /* Sesi AE-49 — pisah display cash vs non-cash. Cash AFFECT Kas Harusnya
+   * (sudah dihitung di formula expectedCash di SummarySection). Non-cash
+   * (transfer/other) info-only — tidak affect drawer fisik. */
+  const hasCash =
+    petty.expenseCashCount > 0 || petty.incomeCashCount > 0;
+  const hasNonCash =
+    petty.expenseNonCashCount > 0 || petty.incomeNonCashCount > 0;
+
+  if (!hasCash && !hasNonCash) return null;
+
   return (
     <section className="rounded-xl border border-neutral-200 bg-white p-3">
       <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-600">
         Petty Cash Hari Ini
       </h3>
-      {petty.incomesCount > 0 ? (
-        <SummaryRow
-          label={`Pemasukan (${petty.incomesCount}×)`}
-          value={`+ ${formatRupiah(petty.incomesTotal)}`}
-        />
+
+      {hasCash ? (
+        <div className="rounded-md border border-mahakan-green-700/20 bg-mahakan-green-50/40 p-2">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-mahakan-green-900">
+            Cash (affect Kas Harusnya)
+          </p>
+          {petty.incomeCashCount > 0 ? (
+            <SummaryRow
+              label={`Pemasukan tunai (${petty.incomeCashCount}×)`}
+              value={`+ ${formatRupiah(petty.incomeCash)}`}
+            />
+          ) : null}
+          {petty.expenseCashCount > 0 ? (
+            <SummaryRow
+              label={`Pengeluaran tunai (${petty.expenseCashCount}×)`}
+              value={`- ${formatRupiah(petty.expenseCash)}`}
+            />
+          ) : null}
+          <p className="mt-1 text-[11px] font-medium text-mahakan-green-900">
+            ✓ Sudah dikurangi/ditambah ke Kas Harusnya di atas
+          </p>
+        </div>
       ) : null}
-      {petty.expensesCount > 0 ? (
-        <SummaryRow
-          label={`Pengeluaran (${petty.expensesCount}×)`}
-          value={`- ${formatRupiah(petty.expensesTotal)}`}
-        />
+
+      {hasNonCash ? (
+        <div className="mt-2 rounded-md border border-neutral-200 bg-neutral-50 p-2">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
+            Non-cash (info — tidak affect kas laci)
+          </p>
+          {petty.incomeNonCashCount > 0 ? (
+            <SummaryRow
+              label={`Pemasukan transfer/other (${petty.incomeNonCashCount}×)`}
+              value={`+ ${formatRupiah(petty.incomeNonCash)}`}
+            />
+          ) : null}
+          {petty.expenseNonCashCount > 0 ? (
+            <SummaryRow
+              label={`Pengeluaran transfer/other (${petty.expenseNonCashCount}×)`}
+              value={`- ${formatRupiah(petty.expenseNonCash)}`}
+            />
+          ) : null}
+          <p className="mt-1 text-[11px] text-neutral-500">
+            Untuk audit. Affect bank/aggregator, bukan laci kasir.
+          </p>
+        </div>
       ) : null}
-      <p className="mt-1 text-[11px] text-neutral-600">
-        Otomatis dari Petty Cash tab.
-      </p>
     </section>
   );
 }

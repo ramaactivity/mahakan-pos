@@ -138,6 +138,8 @@ export const incomes = pgTable(
       .notNull()
       .references(() => users.id),
     updatedBy: uuid("updated_by").references(() => users.id),
+    // Sesi AE-49 — audit trail untuk soft delete (parity dengan expenses).
+    deletedBy: uuid("deleted_by").references(() => users.id),
   },
   (t) => [
     index("idx_incomes_outlet_date").on(t.outletId, t.incomeDate),

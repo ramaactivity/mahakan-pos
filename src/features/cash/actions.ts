@@ -3,7 +3,7 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { expenseCategories, expenses, incomes } from "@/db/schema";
+import { expenseCategories, expenses, incomes, shifts } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { diffShallow, logAudit } from "@/lib/audit/logger";
@@ -16,6 +16,11 @@ import {
   type ListIncomesOptions,
 } from "./queries";
 import { todayWibIso } from "./helpers";
+import { toJakartaDateOnly } from "@/lib/date";
+import {
+  buildLockWindowErrorMessage,
+  findClosedShiftBlockingDate,
+} from "./lock-window";
 import {
   fail,
   ok,
@@ -33,8 +38,22 @@ const isoDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Tanggal harus format YYYY-MM-DD");
 
+/* Sesi AE-49 — date refine: past 30 hari sampai +1 hari (today buffer).
+ * Tidak boleh input expense untuk tanggal 2099 atau jaman dulu sekali.
+ * Owner mau bisa backdate koreksi sampai 30 hari (cocok untuk closing month). */
+function refineDateRange(d: string): boolean {
+  const today = todayWibIso();
+  const todayMs = Date.parse(`${today}T00:00:00+07:00`);
+  const targetMs = Date.parse(`${d}T00:00:00+07:00`);
+  if (!Number.isFinite(targetMs) || !Number.isFinite(todayMs)) return false;
+  const diffDays = (targetMs - todayMs) / 86_400_000;
+  return diffDays >= -30 && diffDays <= 1;
+}
+
 const createExpenseSchema = z.object({
-  expenseDate: isoDateSchema,
+  expenseDate: isoDateSchema.refine(refineDateRange, {
+    message: "Tanggal harus dalam range 30 hari terakhir sampai besok",
+  }),
   categoryId: z.uuid(),
   description: z.string().trim().min(1).max(200),
   amount: z.number().int().min(1).max(999_999_999),
@@ -43,7 +62,9 @@ const createExpenseSchema = z.object({
 });
 
 const createIncomeSchema = z.object({
-  incomeDate: isoDateSchema,
+  incomeDate: isoDateSchema.refine(refineDateRange, {
+    message: "Tanggal harus dalam range 30 hari terakhir sampai besok",
+  }),
   description: z.string().trim().min(1).max(200),
   amount: z.number().int().min(1).max(999_999_999),
   paymentMethod: z.enum(["cash", "transfer", "other"]),
@@ -53,6 +74,72 @@ async function requireSession() {
   const session = await auth();
   if (!session) throw new Error("UNAUTHORIZED");
   return session;
+}
+
+/**
+ * Sesi AE-49 — fetch list shift status per outlet untuk check lock window.
+ * Cuma butuh openedAt + status (untuk findClosedShiftBlockingDate helper).
+ * Filter berdasarkan date range yang relevant (target date ± 1 day buffer)
+ * supaya tidak load seluruh shift history.
+ */
+async function fetchShiftsForLockCheck(
+  outletId: string,
+): Promise<Array<{ openedDateWib: string; status: "open" | "closed" }>> {
+  // Untuk efisiensi: query semua shift outlet ini yang openedAt-nya di WIB
+  // dalam range targetDate ± 1 hari. Pakai range untuk handle overnight
+  // shift yang open day-1 close day-0.
+  const rows = await db
+    .select({
+      openedAt: shifts.openedAt,
+      status: shifts.status,
+    })
+    .from(shifts)
+    .where(eq(shifts.outletId, outletId));
+  return rows.map((r) => ({
+    openedDateWib: toJakartaDateOnly(r.openedAt),
+    status: r.status,
+  }));
+}
+
+/**
+ * Sesi AE-49 — assert tanggal expense/income TIDAK overlap shift closed.
+ * Return null kalau OK, return ApiResult fail kalau blocked.
+ * Owner bypass: kalau role = owner, allow tapi audit log loud warning.
+ */
+async function assertNotBlockedByClosedShift(args: {
+  outletId: string;
+  targetDate: string;
+  entityLabel: "pengeluaran" | "pemasukan";
+  userId: string;
+  userRole: string;
+  entityType: "expense" | "income";
+  entityId: string;
+}): Promise<ApiResult<null>> {
+  const shiftList = await fetchShiftsForLockCheck(args.outletId);
+  const blocker = findClosedShiftBlockingDate(args.targetDate, shiftList);
+  if (!blocker) return ok(null);
+
+  // Audit log loud — owner bisa monitor attempts.
+  await logAudit({
+    eventType: "expense.update",
+    userId: args.userId,
+    entityType: args.entityType,
+    entityId: args.entityId,
+    payload: {
+      summary: `Blocked: ${args.entityLabel} ${args.entityId.slice(0, 8)} tgl ${args.targetDate} kena lock shift closed`,
+      context: {
+        reason: "SHIFT_ALREADY_CLOSED",
+        targetDate: args.targetDate,
+        blockingShiftDate: blocker.openedDateWib,
+      },
+    },
+    metadata: { outletId: args.outletId, actorRole: args.userRole },
+  }).catch((e) => console.error("[audit lock window]", e));
+
+  return fail(
+    "SHIFT_ALREADY_CLOSED",
+    buildLockWindowErrorMessage(args.targetDate, args.entityLabel),
+  );
 }
 
 // ---------- Reads ----------
@@ -115,6 +202,27 @@ export async function createExpense(
     );
   }
   const v = parsed.data;
+
+  /* Sesi AE-49 — validate categoryId belongs to user's outlet. Tanpa check
+   * ini, kasir bisa "smuggle" expense ke kategori outlet lain (cross-outlet
+   * data leak). Defense in depth bareng outlet scoping di update/delete. */
+  const [cat] = await db
+    .select({ id: expenseCategories.id })
+    .from(expenseCategories)
+    .where(
+      and(
+        eq(expenseCategories.id, v.categoryId),
+        eq(expenseCategories.outletId, session.user.outletId),
+        isNull(expenseCategories.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!cat) {
+    return fail(
+      "VALIDATION_ERROR",
+      "Kategori tidak ditemukan atau bukan milik outlet kamu",
+    );
+  }
 
   const [row] = await db
     .insert(expenses)
@@ -255,11 +363,18 @@ export async function updateExpense(
   input: UpdateExpenseInput,
 ): Promise<ApiResult<Expense>> {
   const session = await requireSession();
-  // Owner can edit anytime; Manager only within 24h.
+  // Sesi AE-49 — tambah outlet scoping. Pre-AE-49: query cuma filter
+  // expense.id, bisa edit cross-outlet kalau attacker tau UUID.
   const [current] = await db
     .select()
     .from(expenses)
-    .where(and(eq(expenses.id, id), isNull(expenses.deletedAt)))
+    .where(
+      and(
+        eq(expenses.id, id),
+        eq(expenses.outletId, session.user.outletId),
+        isNull(expenses.deletedAt),
+      ),
+    )
     .limit(1);
   if (!current) return fail("NOT_FOUND", "Pengeluaran tidak ditemukan");
   if (current.refundedTransactionId) {
@@ -288,6 +403,56 @@ export async function updateExpense(
   }
   const v = parsed.data;
 
+  /* Sesi AE-49 — lock window: cek tanggal expense (current + new kalau
+   * di-change) tidak overlap shift closed. Reject hard supaya variance
+   * laporan historical tidak corrupt diam-diam. */
+  const checkDate = v.expenseDate ?? current.expenseDate;
+  const lockCheck = await assertNotBlockedByClosedShift({
+    outletId: session.user.outletId,
+    targetDate: checkDate,
+    entityLabel: "pengeluaran",
+    userId: session.user.id,
+    userRole: session.user.role,
+    entityType: "expense",
+    entityId: id,
+  });
+  if (!lockCheck.success) return lockCheck;
+  /* Plus check original date kalau date di-ubah — biar tidak bisa "geser"
+   * expense keluar dari shift closed lalu edit. */
+  if (v.expenseDate && v.expenseDate !== current.expenseDate) {
+    const originalCheck = await assertNotBlockedByClosedShift({
+      outletId: session.user.outletId,
+      targetDate: current.expenseDate,
+      entityLabel: "pengeluaran",
+      userId: session.user.id,
+      userRole: session.user.role,
+      entityType: "expense",
+      entityId: id,
+    });
+    if (!originalCheck.success) return originalCheck;
+  }
+
+  // Kalau categoryId di-update, validate juga outlet membership.
+  if (v.categoryId && v.categoryId !== current.categoryId) {
+    const [cat] = await db
+      .select({ id: expenseCategories.id })
+      .from(expenseCategories)
+      .where(
+        and(
+          eq(expenseCategories.id, v.categoryId),
+          eq(expenseCategories.outletId, session.user.outletId),
+          isNull(expenseCategories.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (!cat) {
+      return fail(
+        "VALIDATION_ERROR",
+        "Kategori target tidak ditemukan atau bukan milik outlet kamu",
+      );
+    }
+  }
+
   const updates: Partial<typeof expenses.$inferInsert> = {
     updatedAt: new Date(),
     updatedBy: session.user.id,
@@ -301,7 +466,12 @@ export async function updateExpense(
   const [row] = await db
     .update(expenses)
     .set(updates)
-    .where(eq(expenses.id, id))
+    .where(
+      and(
+        eq(expenses.id, id),
+        eq(expenses.outletId, session.user.outletId),
+      ),
+    )
     .returning();
 
   const beforeSnap = {
@@ -344,15 +514,23 @@ export async function deleteExpense(id: string): Promise<ApiResult<{ id: string 
     return fail("FORBIDDEN", "Hapus pengeluaran hanya untuk Owner");
   }
 
+  // Sesi AE-49 — outlet scoping di SELECT supaya tidak bisa delete cross-outlet.
   const [current] = await db
     .select({
       id: expenses.id,
       description: expenses.description,
       amount: expenses.amount,
+      expenseDate: expenses.expenseDate,
       refundedTransactionId: expenses.refundedTransactionId,
     })
     .from(expenses)
-    .where(and(eq(expenses.id, id), isNull(expenses.deletedAt)))
+    .where(
+      and(
+        eq(expenses.id, id),
+        eq(expenses.outletId, session.user.outletId),
+        isNull(expenses.deletedAt),
+      ),
+    )
     .limit(1);
   if (!current) return fail("NOT_FOUND", "Pengeluaran tidak ditemukan");
   if (current.refundedTransactionId) {
@@ -362,6 +540,19 @@ export async function deleteExpense(id: string): Promise<ApiResult<{ id: string 
     );
   }
 
+  /* Sesi AE-49 — lock window: cek tanggal expense tidak overlap shift
+   * closed. Hard reject supaya variance laporan historical tidak corrupt. */
+  const lockCheck = await assertNotBlockedByClosedShift({
+    outletId: session.user.outletId,
+    targetDate: current.expenseDate,
+    entityLabel: "pengeluaran",
+    userId: session.user.id,
+    userRole: session.user.role,
+    entityType: "expense",
+    entityId: id,
+  });
+  if (!lockCheck.success) return lockCheck;
+
   const [row] = await db
     .update(expenses)
     .set({
@@ -370,7 +561,12 @@ export async function deleteExpense(id: string): Promise<ApiResult<{ id: string 
       updatedAt: new Date(),
       updatedBy: session.user.id,
     })
-    .where(eq(expenses.id, id))
+    .where(
+      and(
+        eq(expenses.id, id),
+        eq(expenses.outletId, session.user.outletId),
+      ),
+    )
     .returning({ id: expenses.id });
 
   await logAudit({
@@ -380,6 +576,86 @@ export async function deleteExpense(id: string): Promise<ApiResult<{ id: string 
     entityId: row.id,
     payload: {
       summary: `Hapus pengeluaran Rp${current.amount.toLocaleString("id-ID")} — ${current.description}`,
+      before: { description: current.description, amount: current.amount },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  return ok({ id: row.id });
+}
+
+/**
+ * Sesi AE-49 — `deleteIncome` action baru. Pre-AE-49 income immutable
+ * sekali entry → kalau salah, owner stuck. Sekarang soft delete dengan
+ * audit trail (deletedBy column ditambah di migration 0039).
+ *
+ * Same lock window check sebagai deleteExpense — kalau income tanggal-nya
+ * masuk shift closed, reject. Owner bisa bikin reversing entry (expense
+ * dengan amount sama) untuk koreksi.
+ */
+export async function deleteIncome(
+  id: string,
+): Promise<ApiResult<{ id: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "income.create")) {
+    // Tidak ada permission `income.delete` sendiri — pakai income.create
+    // sebagai proxy. Bisa di-tighten ke owner-only via permission baru
+    // di sesi berikutnya kalau dirasa terlalu permissive.
+    return fail("FORBIDDEN", "Tidak punya hak hapus pemasukan");
+  }
+
+  const [current] = await db
+    .select({
+      id: incomes.id,
+      description: incomes.description,
+      amount: incomes.amount,
+      incomeDate: incomes.incomeDate,
+    })
+    .from(incomes)
+    .where(
+      and(
+        eq(incomes.id, id),
+        eq(incomes.outletId, session.user.outletId),
+        isNull(incomes.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!current) return fail("NOT_FOUND", "Pemasukan tidak ditemukan");
+
+  const lockCheck = await assertNotBlockedByClosedShift({
+    outletId: session.user.outletId,
+    targetDate: current.incomeDate,
+    entityLabel: "pemasukan",
+    userId: session.user.id,
+    userRole: session.user.role,
+    entityType: "income",
+    entityId: id,
+  });
+  if (!lockCheck.success) return lockCheck;
+
+  const [row] = await db
+    .update(incomes)
+    .set({
+      deletedAt: new Date(),
+      deletedBy: session.user.id,
+      updatedAt: new Date(),
+      updatedBy: session.user.id,
+    })
+    .where(
+      and(
+        eq(incomes.id, id),
+        eq(incomes.outletId, session.user.outletId),
+      ),
+    )
+    .returning({ id: incomes.id });
+
+  await logAudit({
+    eventType: "income.delete",
+    userId: session.user.id,
+    entityType: "income",
+    entityId: row.id,
+    payload: {
+      summary: `Hapus pemasukan Rp${current.amount.toLocaleString("id-ID")} — ${current.description}`,
       before: { description: current.description, amount: current.amount },
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },

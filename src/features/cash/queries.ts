@@ -153,12 +153,28 @@ export async function fetchDailyCashSummary(
       ),
     );
   const manualTotal = incomeRows.reduce((s, i) => s + i.amount, 0);
+  /* Sesi AE-49 — split income manual by paymentMethod. Cuma cash yang
+   * affect kas drawer (laci kasir). Transfer/other affect bank account. */
+  let manualCash = 0;
+  let manualCashCount = 0;
+  let manualNonCash = 0;
+  let manualNonCashCount = 0;
+  for (const i of incomeRows) {
+    if (i.paymentMethod === "cash") {
+      manualCash += i.amount;
+      manualCashCount++;
+    } else {
+      manualNonCash += i.amount;
+      manualNonCashCount++;
+    }
+  }
 
   const expenseRows = await db
     .select({
       categoryId: expenses.categoryId,
       categoryName: expenseCategories.name,
       amount: expenses.amount,
+      paymentMethod: expenses.paymentMethod,
     })
     .from(expenses)
     .innerJoin(
@@ -178,8 +194,20 @@ export async function fetchDailyCashSummary(
     { categoryId: string; name: string; total: number; count: number }
   >();
   let expensesTotal = 0;
+  /* Sesi AE-49 — split expenses by paymentMethod (same reasoning as income). */
+  let expensesCash = 0;
+  let expensesCashCount = 0;
+  let expensesNonCash = 0;
+  let expensesNonCashCount = 0;
   for (const e of expenseRows) {
     expensesTotal += e.amount;
+    if (e.paymentMethod === "cash") {
+      expensesCash += e.amount;
+      expensesCashCount++;
+    } else {
+      expensesNonCash += e.amount;
+      expensesNonCashCount++;
+    }
     const existing = byCategoryMap.get(e.categoryId);
     if (existing) {
       existing.total += e.amount;
@@ -198,12 +226,23 @@ export async function fetchDailyCashSummary(
     date,
     income: {
       pos: { cash: posCash, qris: posQris, cardBca: posCard, total: posTotal },
-      manual: { total: manualTotal, count: incomeRows.length },
+      manual: {
+        total: manualTotal,
+        count: incomeRows.length,
+        cash: manualCash,
+        cashCount: manualCashCount,
+        nonCash: manualNonCash,
+        nonCashCount: manualNonCashCount,
+      },
       total: posTotal + manualTotal,
     },
     expenses: {
       byCategory: Array.from(byCategoryMap.values()),
       total: expensesTotal,
+      cash: expensesCash,
+      cashCount: expensesCashCount,
+      nonCash: expensesNonCash,
+      nonCashCount: expensesNonCashCount,
     },
     refunds: { count: refundedCount, total: refundedTotal },
     netCashFlow: posTotal + manualTotal - expensesTotal - refundedTotal,

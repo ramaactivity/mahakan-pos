@@ -17,6 +17,7 @@ export {
   createIncome,
   deleteExpense,
   deleteExpenseCategory,
+  deleteIncome,
   getDailyCashSummary,
   listExpenseCategories,
   listExpenses,

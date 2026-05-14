@@ -22,6 +22,21 @@ export interface ShiftTxnRow {
   refundedAmount: number;
 }
 
+export interface PettyCashSummary {
+  /** Total petty expense cash (Rp). Sudah filtered paymentMethod=cash. */
+  expenseCash: number;
+  expenseCashCount: number;
+  /** Total petty income cash (Rp). Sudah filtered paymentMethod=cash. */
+  incomeCash: number;
+  incomeCashCount: number;
+  /** Non-cash petty expenses (transfer/other) — tidak affect drawer
+   *  tapi di-track untuk display. */
+  expenseNonCash: number;
+  expenseNonCashCount: number;
+  incomeNonCash: number;
+  incomeNonCashCount: number;
+}
+
 export interface ShiftCashSummary {
   paidCount: number;
   paidCash: number;
@@ -32,6 +47,10 @@ export interface ShiftCashSummary {
   refundedCount: number;
   refundedAmount: number;
   refundedCash: number;
+  /** Sesi AE-49 — petty cash impact pada drawer. expense_cash kurangi
+   *  expectedCash, income_cash tambahi. Default 0 = backward-compat. */
+  pettyExpenseCash: number;
+  pettyIncomeCash: number;
 }
 
 /**
@@ -49,8 +68,21 @@ export interface ShiftCashSummary {
  *     (paidCash += total) DAN refund cash keluar (refundedCash += refundedAmount).
  *     Net = total - refundedAmount, matches physical drawer.
  */
+/**
+ * Sesi AE-49 — extend signature dengan petty cash (optional, default 0
+ * untuk backward-compat existing tests). Petty cash dihitung di queries
+ * caller (filter paymentMethod=cash), lalu di-pass sebagai sums.
+ *
+ * Formula expectedCash (di caller, mis. closeShift action):
+ *   expectedCash = openingCash + paidCash - refundedCash
+ *                  - pettyExpenseCash + pettyIncomeCash
+ *
+ * Pure helper ini cuma agregat transaksi; petty cash di-pass-through
+ * supaya field tersedia di summary output untuk display.
+ */
 export function computeShiftCashSummary(
   txns: ShiftTxnRow[],
+  petty: { expenseCash?: number; incomeCash?: number } = {},
 ): ShiftCashSummary {
   let paidCount = 0;
   let paidCash = 0;
@@ -119,5 +151,32 @@ export function computeShiftCashSummary(
     refundedCount,
     refundedAmount,
     refundedCash,
+    pettyExpenseCash: petty.expenseCash ?? 0,
+    pettyIncomeCash: petty.incomeCash ?? 0,
   };
+}
+
+/**
+ * Sesi AE-49 — compute expectedCash dari ringkasan + opening cash.
+ * Pure function — testable terpisah dari computeShiftCashSummary.
+ *
+ * Formula:
+ *   expectedCash = openingCash + paidCash - refundedCash
+ *                  - pettyExpenseCash + pettyIncomeCash
+ *
+ * Petty cash sudah dilakukan filter `paymentMethod = "cash"` di caller
+ * (queries.ts fetchDailyCashSummary). Transfer/other tidak masuk sini —
+ * mereka tidak affect kas drawer fisik (laci kasir), affect bank account.
+ */
+export function computeExpectedCash(
+  openingCash: number,
+  summary: ShiftCashSummary,
+): number {
+  return (
+    openingCash +
+    summary.paidCash -
+    summary.refundedCash -
+    summary.pettyExpenseCash +
+    summary.pettyIncomeCash
+  );
 }

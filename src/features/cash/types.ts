@@ -59,7 +59,16 @@ export interface DailyCashSummary {
   date: string;
   income: {
     pos: { cash: number; qris: number; cardBca: number; total: number };
-    manual: { total: number; count: number };
+    manual: {
+      total: number;
+      count: number;
+      /** Sesi AE-49 — breakdown by payment method. Cash only affect kas drawer
+       * fisik (laci kasir); transfer/other affect bank account, bukan kas. */
+      cash: number;
+      cashCount: number;
+      nonCash: number;
+      nonCashCount: number;
+    };
     total: number;
   };
   expenses: {
@@ -70,6 +79,13 @@ export interface DailyCashSummary {
       count: number;
     }>;
     total: number;
+    /** Sesi AE-49 — breakdown by payment method. Cuma cash yang dikurangi
+     * dari Kas Harusnya saat tutup shift. Transfer/other tampil terpisah
+     * di modal sebagai info (tidak affect drawer fisik). */
+    cash: number;
+    cashCount: number;
+    nonCash: number;
+    nonCashCount: number;
   };
   refunds: { count: number; total: number };
   netCashFlow: number;

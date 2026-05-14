@@ -74,6 +74,10 @@ export interface ShiftSummary {
   voided: { count: number; totalAmount: number };
   refunded: { count: number; totalAmount: number };
   expectedCash: number;
+  /** Sesi AE-49 — petty cash yang affect kas drawer (cash only). Audit
+   * trail untuk owner: total expense vs income cash selama shift. */
+  pettyExpenseCash: number;
+  pettyIncomeCash: number;
   /** Phase 2.4 — set kalau kasir input setoran ke owner saat tutup shift,
    * dan cash_deposit pending sukses dibuat. UI bisa surface "menunggu
    * verifikasi" toast. */

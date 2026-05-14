@@ -22,6 +22,7 @@ import {
 } from "@/components/ui";
 import type { Shift } from "@/features/shifts";
 import { listTransactions, isOk } from "@/features/transactions";
+import { getDailyCashSummary, isOk as isCashOk } from "@/features/cash";
 import { CashOnHandTile } from "@/features/admin/sections/finance/CashOnHandTile";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianTime } from "@/lib/date";
@@ -48,6 +49,12 @@ interface ShiftStats {
     total: number;
     createdAt: string;
   }>;
+  /** Sesi AE-49 — petty cash preview supaya kasir lihat sebelum tutup shift
+   * berapa yang akan affect Kas Harusnya. Cuma cash (transfer/other info-only). */
+  pettyExpenseCash: number;
+  pettyExpenseCashCount: number;
+  pettyIncomeCash: number;
+  pettyIncomeCashCount: number;
 }
 
 /** Format duration like "2 jam 14 menit" or "23 menit" or "kurang 1 menit". */
@@ -104,16 +111,19 @@ export function ShiftPanel({
     setStatsLoading(true);
     /* eslint-enable react-hooks/set-state-in-effect */
     void (async () => {
-      const res = await listTransactions({
-        shiftId: shift.id,
-        limit: 1000,
-      });
+      const [res, cashRes] = await Promise.all([
+        listTransactions({ shiftId: shift.id, limit: 1000 }),
+        // Sesi AE-49 — petty cash summary hari ini untuk preview affect ke
+        // Kas Harusnya. Filter cash-only sudah di queries.ts level.
+        getDailyCashSummary(),
+      ]);
       if (cancelled) return;
       if (!isOk(res)) {
         setStatsLoading(false);
         return;
       }
       const items = res.data.items;
+      const cashSummary = isCashOk(cashRes) ? cashRes.data : null;
       const paid = items.filter((t) => t.status === "paid");
       const voided = items.filter((t) => t.status === "voided");
       const refunded = items.filter((t) => t.status === "refunded");
@@ -157,6 +167,10 @@ export function ShiftPanel({
             total: t.total,
             createdAt: t.createdAt as unknown as string,
           })),
+        pettyExpenseCash: cashSummary?.expenses.cash ?? 0,
+        pettyExpenseCashCount: cashSummary?.expenses.cashCount ?? 0,
+        pettyIncomeCash: cashSummary?.income.manual.cash ?? 0,
+        pettyIncomeCashCount: cashSummary?.income.manual.cashCount ?? 0,
       });
       setStatsLoading(false);
     })();
@@ -336,6 +350,46 @@ export function ShiftPanel({
               <SalesRow
                 label="Total Revenue"
                 value={stats.totalRevenue}
+                bold
+                showCount={false}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Sesi AE-49 — petty cash preview, supaya kasir lihat sebelum tutup
+       * shift berapa cash yang akan dikurangi/ditambah ke Kas Harusnya. */}
+      {stats &&
+      (stats.pettyExpenseCashCount > 0 || stats.pettyIncomeCashCount > 0) ? (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Petty Cash Hari Ini</CardTitle>
+            <CardDescription>
+              Akan dikurangi/ditambah ke Kas Harusnya saat tutup shift.
+              Cuma cash (transfer/other terpisah).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 px-5 pb-4">
+            {stats.pettyExpenseCashCount > 0 ? (
+              <SalesRow
+                label={`Pengeluaran tunai (${stats.pettyExpenseCashCount}×)`}
+                value={-stats.pettyExpenseCash}
+                showCount={false}
+                tone="warning"
+              />
+            ) : null}
+            {stats.pettyIncomeCashCount > 0 ? (
+              <SalesRow
+                label={`Pemasukan tunai (${stats.pettyIncomeCashCount}×)`}
+                value={stats.pettyIncomeCash}
+                showCount={false}
+              />
+            ) : null}
+            <div className="border-t border-dashed border-neutral-200 pt-2">
+              <SalesRow
+                label="Net Petty Cash"
+                value={stats.pettyIncomeCash - stats.pettyExpenseCash}
                 bold
                 showCount={false}
               />

@@ -399,23 +399,29 @@ export function PettyCashCard() {
   }
 
   async function onSubmit() {
+    /* Sesi AE-49 — defense against double-submit race. setSubmitting di
+     * awal supaya block re-entry sebelum validation/network call selesai.
+     * Sebelumnya: setSubmitting di tengah → window race kalau user double-tap. */
     if (submitting) return;
+    setSubmitting(true);
     setError(null);
 
     if (description.trim().length === 0) {
       setError("Deskripsi wajib diisi");
+      setSubmitting(false);
       return;
     }
     if (parsedAmount <= 0) {
       setError("Nominal harus lebih dari nol");
+      setSubmitting(false);
       return;
     }
     if (mode === "expense" && categoryId.length === 0) {
       setError("Pilih kategori untuk pengeluaran");
+      setSubmitting(false);
       return;
     }
 
-    setSubmitting(true);
     const today = todayWibIso();
 
     if (mode === "expense") {
