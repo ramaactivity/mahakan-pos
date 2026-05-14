@@ -116,12 +116,25 @@ export function computePartialRefund(
     //   item.subtotal share of total = item.subtotal / transactionSubtotal
     //   discount allocated to item = transactionDiscountAmount * (item.subtotal / transactionSubtotal)
     //   item effective rupiah = item.subtotal - allocated discount
-    //   per-unit = item effective / item.quantity
     //
-    // Integer-safe: compute the discount allocation to floor, refund = subtotal_share - discount_alloc.
-    // Per-unit refund uses integer division; remainder absorbed by the last unit refunded —
-    // but for *partial* refunds we don't have a "last" semantics, so we keep flat per-unit
-    // (final unit's rounding goes back via the close-out check on full refund of the item).
+    // Sesi AE-44 (audit fix) — Cumulative-entitled formula:
+    //   amount(now) = floor(itemEffective × (refundedBefore + reqQty) / itemQty)
+    //              - floor(itemEffective × refundedBefore / itemQty)
+    //
+    // Why: dulu pakai `perUnit × reqQty` yang kehilangan sisa rounding
+    // (mis. itemEffective 67000 ÷ 3 unit = 22333 perUnit; refund 3 unit
+    // sequential = 22333+22333+22333 = 66999, kehilangan Rp 1 per item
+    // per partial sequence — akumulatif Rp 1-2 juta/tahun di laporan kas).
+    //
+    // Formula baru pakai "cumulative entitled minus already entitled":
+    // sisa pembulatan otomatis nyebar ke unit terakhir. Untuk full refund
+    // dalam satu call: floor(eff × N/N) = eff = zero loss. Untuk partial
+    // sequential: total terkumpul akhirnya = itemEffective (zero loss).
+    //
+    // Backward-compat: untuk legacy refund pre-AE-44 yang sudah disimpan
+    // pakai formula lama, `entitledBefore` (computed dari refundedQuantity)
+    // ≡ jumlah yang sebenarnya sudah dibayar (bedanya max 1 rupiah per
+    // line per partial sequence sebelumnya). Safe.
     const discountAllocation =
       transactionSubtotal > 0
         ? Math.floor(
@@ -129,8 +142,14 @@ export function computePartialRefund(
           )
         : 0;
     const itemEffective = item.subtotal - discountAllocation;
-    const perUnit = Math.floor(itemEffective / item.quantity);
-    const amountRefunded = perUnit * req.quantity;
+    const entitledBefore = Math.floor(
+      (itemEffective * item.refundedQuantity) / item.quantity,
+    );
+    const entitledAfter = Math.floor(
+      (itemEffective * (item.refundedQuantity + req.quantity)) /
+        item.quantity,
+    );
+    const amountRefunded = entitledAfter - entitledBefore;
 
     perItem.push({
       transactionItemId: req.transactionItemId,

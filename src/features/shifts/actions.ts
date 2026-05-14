@@ -15,6 +15,7 @@ import {
   fetchShifts,
   type ListShiftsOptions,
 } from "./queries";
+import { computeShiftCashSummary } from "./close-pure";
 import {
   fail,
   ok,
@@ -238,41 +239,31 @@ export async function closeShift(
     );
   }
 
-  // Aggregate transactions in this shift
+  // Aggregate transactions in this shift via pure helper (sesi AE-44).
+  // refundedAmount column wajib di-select supaya partial refund bisa
+  // di-deduct presisi (bukan over-deduct pakai total).
   const txns = await db
     .select({
       status: transactions.status,
       paymentMethod: transactions.paymentMethod,
       total: transactions.total,
+      refundedAmount: transactions.refundedAmount,
     })
     .from(transactions)
     .where(eq(transactions.shiftId, current.id));
 
-  let paidCount = 0;
-  let paidCash = 0;
-  let paidQris = 0;
-  let paidCard = 0;
-  let voidedCount = 0;
-  let voidedAmount = 0;
-  let refundedCount = 0;
-  let refundedAmount = 0;
-  let refundedCash = 0;
-
-  for (const t of txns) {
-    if (t.status === "paid") {
-      paidCount += 1;
-      if (t.paymentMethod === "cash") paidCash += t.total;
-      else if (t.paymentMethod === "qris") paidQris += t.total;
-      else paidCard += t.total;
-    } else if (t.status === "voided") {
-      voidedCount += 1;
-      voidedAmount += t.total;
-    } else if (t.status === "refunded") {
-      refundedCount += 1;
-      refundedAmount += t.total;
-      if (t.paymentMethod === "cash") refundedCash += t.total;
-    }
-  }
+  const cashSummary = computeShiftCashSummary(txns);
+  const {
+    paidCount,
+    paidCash,
+    paidQris,
+    paidCard,
+    voidedCount,
+    voidedAmount,
+    refundedCount,
+    refundedAmount,
+    refundedCash,
+  } = cashSummary;
 
   const expectedCash = current.openingCash + paidCash - refundedCash;
   const variance = v.actualCash - expectedCash;

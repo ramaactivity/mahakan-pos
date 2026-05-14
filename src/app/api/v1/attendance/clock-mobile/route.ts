@@ -12,6 +12,12 @@ import { haversineDistanceMeters } from "@/lib/haversine";
 import { fetchScheduleByEmployeeAndDate } from "@/features/schedules/queries";
 import { logAudit } from "@/lib/audit/logger";
 import { toJakartaDateOnly } from "@/lib/date";
+import {
+  checkRateLimit,
+  clearRateLimit,
+  extractClientIp,
+  recordFailedAttempt,
+} from "@/lib/rate-limit";
 
 /**
  * POST /api/v1/attendance/clock-mobile — Phase 4-C (sesi AB).
@@ -79,6 +85,39 @@ async function resolveLateGrace(outletId: string): Promise<number> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  /* Sesi AE-44 (audit fix) — rate limit per IP buat block brute force
+   * PIN. 10 failed attempt / 15 menit lockout. Threat model: attacker
+   * iterasi PIN 4-6 digit untuk ghost clock-in. Pre-AE-44 zero
+   * protection. Lockout di-cek SEBELUM heavy work (PIN bcrypt + GPS +
+   * EXIF + Drive upload). */
+  const clientIp = extractClientIp(request);
+  const rateKey = `attendance:${clientIp}`;
+  const rateState = checkRateLimit(rateKey);
+  if (rateState.locked) {
+    await logAudit({
+      eventType: "attendance.mobile_rejected",
+      userId: null,
+      entityType: "attendance",
+      payload: {
+        summary: `IP ${clientIp} di-lockout (terlalu banyak PIN salah)`,
+        context: {
+          ip: clientIp,
+          until: new Date(rateState.resetAt).toISOString(),
+        },
+      },
+      metadata: { actorRole: "system" },
+    }).catch((e) => console.error("[audit rate limit]", e));
+    const waitMinutes = Math.max(
+      1,
+      Math.ceil((rateState.resetAt - Date.now()) / 60_000),
+    );
+    return jsonError(
+      "RATE_LIMITED",
+      `Terlalu banyak percobaan PIN salah. Tunggu ${waitMinutes} menit lagi, atau hubungi Owner kalau lupa PIN.`,
+      429,
+    );
+  }
+
   if (!isDriveConfigured()) {
     return jsonError(
       "DRIVE_NOT_CONFIGURED",
@@ -152,12 +191,37 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
   if (!matched) {
+    /* Sesi AE-44 — track failed PIN attempt per IP. Setelah threshold
+     * (default 10/15min) IP di-lockout dan request berikutnya langsung
+     * 429 sebelum hit bcrypt. */
+    const afterFail = recordFailedAttempt(rateKey);
+    if (afterFail.locked) {
+      await logAudit({
+        eventType: "attendance.mobile_rejected",
+        userId: null,
+        entityType: "attendance",
+        entityId: null,
+        payload: {
+          summary: `IP ${clientIp} hit lockout threshold (PIN salah ${afterFail.remaining === 0 ? "10+" : ""}× berturut-turut)`,
+          context: {
+            ip: clientIp,
+            until: new Date(afterFail.resetAt).toISOString(),
+            mode,
+          },
+        },
+        metadata: { actorRole: "system" },
+      }).catch((e) => console.error("[audit pin lockout]", e));
+    }
     return jsonError(
       "INVALID_PIN",
       "PIN tidak dikenali. Hubungi Owner kalau lupa.",
       401,
     );
   }
+  // Sesi AE-44 — PIN benar: reset counter supaya legit user yg sempat
+  // typo tidak ke-lock di session ini.
+  clearRateLimit(rateKey);
+
   if (matched.status !== "active") {
     return jsonError(
       "EMPLOYEE_NOT_ACTIVE",

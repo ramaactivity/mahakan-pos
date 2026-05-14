@@ -91,6 +91,171 @@ describe("computePartialRefund — happy paths", () => {
   });
 });
 
+describe("computePartialRefund — round-last-unit (sesi AE-44 audit fix)", () => {
+  // Test cases proving zero loss vs pre-AE-44 formula yang kehilangan
+  // 1-2 rupiah per partial sequence (akumulatif Rp 1-2 jt/tahun).
+
+  it("full refund all units one-shot — exactly itemEffective (no loss)", () => {
+    // subtotal 100k, discount 33k → effective 67k, 3 units
+    // Old formula: floor(67k/3) × 3 = 22333 × 3 = 66999 (loss 1)
+    // New formula: floor(67k × 3/3) - 0 = 67000 ✓
+    const snap = [item("a", 3, 100_000)];
+    const r = computePartialRefund(
+      [{ transactionItemId: "a", quantity: 3 }],
+      snap,
+      100_000,
+      33_000,
+      0,
+      67_000,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.totalRefunded).toBe(67_000);
+  });
+
+  it("partial sequence 1+1+1 of 3 with discount — accumulates to itemEffective", () => {
+    // Same item: effective 67k, qty 3. Refund 1, then 1, then 1.
+    // Old: 22333 × 3 = 66999 (loss 1)
+    // New: 22333 + 22333 + 22334 = 67000 ✓ (last unit absorbs remainder)
+    const effective = 67_000;
+    // Refund #1: refundedQuantity = 0
+    const snap1 = [item("a", 3, 100_000, 0)];
+    const r1 = computePartialRefund(
+      [{ transactionItemId: "a", quantity: 1 }],
+      snap1,
+      100_000,
+      33_000,
+      0,
+      effective,
+    );
+    expect(r1.ok).toBe(true);
+    expect(r1.totalRefunded).toBe(22_333);
+
+    // Refund #2: refundedQuantity = 1
+    const snap2 = [item("a", 3, 100_000, 1)];
+    const r2 = computePartialRefund(
+      [{ transactionItemId: "a", quantity: 1 }],
+      snap2,
+      100_000,
+      33_000,
+      22_333,
+      effective,
+    );
+    expect(r2.ok).toBe(true);
+    expect(r2.totalRefunded).toBe(22_333);
+
+    // Refund #3: refundedQuantity = 2 — last unit eats the remainder
+    const snap3 = [item("a", 3, 100_000, 2)];
+    const r3 = computePartialRefund(
+      [{ transactionItemId: "a", quantity: 1 }],
+      snap3,
+      100_000,
+      33_000,
+      44_666,
+      effective,
+    );
+    expect(r3.ok).toBe(true);
+    expect(r3.totalRefunded).toBe(22_334); // remainder absorbed
+
+    const cumulative = r1.totalRefunded + r2.totalRefunded + r3.totalRefunded;
+    expect(cumulative).toBe(67_000); // ZERO LOSS — full restoration
+  });
+
+  it("partial batch 2-then-1 of 3 with discount — total entitled", () => {
+    // effective 67k, qty 3. Refund 2 in batch, then 1.
+    // Old: (22333 × 2) + (22333 × 1) = 44666 + 22333 = 66999 (loss 1)
+    // New: 44666 + 22334 = 67000 ✓
+    const effective = 67_000;
+    const snap1 = [item("a", 3, 100_000, 0)];
+    const r1 = computePartialRefund(
+      [{ transactionItemId: "a", quantity: 2 }],
+      snap1,
+      100_000,
+      33_000,
+      0,
+      effective,
+    );
+    expect(r1.ok).toBe(true);
+    expect(r1.totalRefunded).toBe(44_666);
+
+    const snap2 = [item("a", 3, 100_000, 2)];
+    const r2 = computePartialRefund(
+      [{ transactionItemId: "a", quantity: 1 }],
+      snap2,
+      100_000,
+      33_000,
+      44_666,
+      effective,
+    );
+    expect(r2.ok).toBe(true);
+    expect(r2.totalRefunded).toBe(22_334);
+
+    expect(r1.totalRefunded + r2.totalRefunded).toBe(67_000);
+  });
+
+  it("no discount full refund — clean integer no remainder", () => {
+    const snap = [item("a", 4, 100_000)];
+    const r = computePartialRefund(
+      [{ transactionItemId: "a", quantity: 4 }],
+      snap,
+      100_000,
+      0,
+      0,
+      100_000,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.totalRefunded).toBe(100_000);
+  });
+
+  it("partial 1 of 7 with awkward divisor — first unit gets floor", () => {
+    // subtotal 10k, qty 7 → effective 10k. floor(10000 × 1/7) = 1428
+    const snap = [item("a", 7, 10_000)];
+    const r = computePartialRefund(
+      [{ transactionItemId: "a", quantity: 1 }],
+      snap,
+      10_000,
+      0,
+      0,
+      10_000,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.totalRefunded).toBe(1_428);
+  });
+
+  it("partial 7 of 7 awkward divisor — exactly subtotal", () => {
+    // Refund all 7 in one go: floor(10000 × 7/7) = 10000 (zero loss)
+    const snap = [item("a", 7, 10_000)];
+    const r = computePartialRefund(
+      [{ transactionItemId: "a", quantity: 7 }],
+      snap,
+      10_000,
+      0,
+      0,
+      10_000,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.totalRefunded).toBe(10_000);
+  });
+
+  it("legacy compat — prior refund stored via old formula still refundable", () => {
+    // Skenario: pre-AE-44 sudah refund 1 of 3 (22333 stored). Sekarang refund 2 lagi.
+    // entitledBefore = floor(67000 × 1/3) = 22333 (kebetulan match legacy stored)
+    // entitledAfter = floor(67000 × 3/3) = 67000
+    // delta = 67000 - 22333 = 44667 → kasi balikin sisa benar.
+    const snap = [item("a", 3, 100_000, 1)];
+    const r = computePartialRefund(
+      [{ transactionItemId: "a", quantity: 2 }],
+      snap,
+      100_000,
+      33_000,
+      22_333, // legacy stored amount
+      67_000,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.totalRefunded).toBe(44_667);
+    // Total restored = 22333 (legacy) + 44667 (new) = 67000 ✓
+  });
+});
+
 describe("computePartialRefund — validation errors", () => {
   it("empty input rejected", () => {
     const r = computePartialRefund([], [], 0, 0, 0, 0);
