@@ -128,6 +128,9 @@ export const AUDIT_EVENT_TYPES = [
   "cash_deposit.reject",
   "aggregator_settlement.create",
   "aggregator_settlement.update",
+  /* Sesi AE-56 — workflow status set untuk Rekonsiliasi audit (open →
+   * investigating → resolved/disputed) + free-form note. */
+  "reconciliation.update",
   // Promos / Campaigns (Sesi K).
   "promo.create",
   "promo.update",
@@ -212,6 +215,7 @@ export type AuditEntityType =
   | "settlement_log"
   | "cash_deposit"
   | "aggregator_settlement"
+  | "reconciliation_note"
   | "chart_of_accounts"
   | "accounting_period"
   | "journal_entry"

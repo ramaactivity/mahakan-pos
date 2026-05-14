@@ -122,22 +122,25 @@ export function ShiftsSection() {
               <table className="w-full text-sm">
                 <thead className="border-b border-neutral-200 bg-neutral-50 text-xs uppercase tracking-wider text-neutral-500">
                   <tr>
-                    <th className="px-4 py-2 text-left font-medium">User</th>
-                    <th className="px-4 py-2 text-left font-medium">Buka</th>
-                    <th className="px-4 py-2 text-left font-medium">Tutup</th>
-                    <th className="px-4 py-2 text-right font-medium">
+                    <th className="px-3 py-2 text-left font-medium">User</th>
+                    <th className="px-3 py-2 text-left font-medium">Tutup</th>
+                    <th className="px-3 py-2 text-right font-medium">
                       Kas Awal
                     </th>
-                    <th className="px-4 py-2 text-right font-medium">
+                    <th className="px-3 py-2 text-right font-medium">
                       Kas Aktual
                     </th>
-                    <th className="px-4 py-2 text-right font-medium">
+                    <th className="px-3 py-2 text-right font-medium">QRIS</th>
+                    <th className="px-3 py-2 text-right font-medium">
+                      Settlement
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium">
                       Selisih
                     </th>
-                    <th className="px-4 py-2 text-center font-medium">
+                    <th className="px-3 py-2 text-center font-medium">
                       Status
                     </th>
-                    <th className="px-4 py-2 text-right font-medium">Aksi</th>
+                    <th className="px-3 py-2 text-right font-medium">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
@@ -146,6 +149,21 @@ export function ShiftsSection() {
                     const flagged =
                       shift.variance !== null &&
                       Math.abs(shift.variance) > VARIANCE_THRESHOLD;
+                    // Sesi AE-56 — tampilkan QRIS + total settlement aggregator
+                    // langsung di list, kasih insight tanpa buka modal detail
+                    const sh = shift as Shift & {
+                      qrisSettlement?: number | null;
+                      edcSettlement?: number | null;
+                      gofoodSettlement?: number | null;
+                      grabfoodSettlement?: number | null;
+                      shopeefoodSettlement?: number | null;
+                    };
+                    const qris = sh.qrisSettlement ?? null;
+                    const settlementTotal =
+                      (sh.edcSettlement ?? 0) +
+                      (sh.gofoodSettlement ?? 0) +
+                      (sh.grabfoodSettlement ?? 0) +
+                      (sh.shopeefoodSettlement ?? 0);
                     return (
                       <tr
                         key={shift.id}
@@ -154,28 +172,36 @@ export function ShiftsSection() {
                           flagged && "bg-danger-100/30",
                         )}
                       >
-                        <td className="px-4 py-3 font-medium text-neutral-900">
-                          {user?.name ?? shift.userId}
+                        <td className="px-3 py-3 font-medium text-neutral-900">
+                          <div>{user?.name ?? shift.userId}</div>
+                          <div className="text-[10px] font-normal text-neutral-500">
+                            Buka {formatIndonesianDateTime(shift.openedAt)}
+                          </div>
                         </td>
-                        <td className="px-4 py-3 text-xs text-neutral-700">
-                          {formatIndonesianDateTime(shift.openedAt)}
-                        </td>
-                        <td className="px-4 py-3 text-xs text-neutral-700">
+                        <td className="px-3 py-3 text-xs text-neutral-700">
                           {shift.closedAt
                             ? formatIndonesianDateTime(shift.closedAt)
                             : "—"}
                         </td>
-                        <td className="px-4 py-3 text-right font-mono">
+                        <td className="px-3 py-3 text-right font-mono text-xs">
                           {formatRupiah(shift.openingCash)}
                         </td>
-                        <td className="px-4 py-3 text-right font-mono">
+                        <td className="px-3 py-3 text-right font-mono text-xs">
                           {shift.actualCash !== null
                             ? formatRupiah(shift.actualCash)
                             : "—"}
                         </td>
+                        <td className="px-3 py-3 text-right font-mono text-xs text-neutral-700">
+                          {qris === null ? "—" : formatRupiah(qris)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-mono text-xs text-neutral-700">
+                          {settlementTotal > 0
+                            ? formatRupiah(settlementTotal)
+                            : "—"}
+                        </td>
                         <td
                           className={cn(
-                            "px-4 py-3 text-right font-mono",
+                            "px-3 py-3 text-right font-mono text-xs",
                             shift.variance === null
                               ? "text-neutral-400"
                               : shift.variance === 0
@@ -189,14 +215,14 @@ export function ShiftsSection() {
                             ? `${shift.variance >= 0 ? "+" : ""}${formatRupiah(shift.variance)}`
                             : "—"}
                         </td>
-                        <td className="px-4 py-3 text-center">
+                        <td className="px-3 py-3 text-center">
                           {shift.status === "open" ? (
                             <Badge variant="success">Open</Badge>
                           ) : (
                             <Badge variant="neutral">Closed</Badge>
                           )}
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-3">
                           <div className="flex justify-end">
                             <Button
                               size="sm"

@@ -319,6 +319,12 @@ export async function closeShift(
   const expectedCash = computeExpectedCash(current.openingCash, cashSummary);
   const variance = v.actualCash - expectedCash;
 
+  /* Sesi AE-56 — auto-fill qrisSettlement dari sum paidQris.
+   * Pre AE-56: shifts tidak punya qris field → rekonsiliasi tabel hardcoded
+   * Reported QRIS = 0 → false-positive selisih Rp 1.722.000. Sekarang
+   * stored di shift untuk konsistensi dengan EDC/GoFood/Grab/Shopee. */
+  const qrisSettlement = paidQris;
+
   const [updated] = await db
     .update(shifts)
     .set({
@@ -331,6 +337,7 @@ export async function closeShift(
       gofoodSettlement: v.gofoodSettlement,
       grabfoodSettlement: v.grabfoodSettlement,
       shopeefoodSettlement: v.shopeefoodSettlement,
+      qrisSettlement,
       closedAt: new Date(),
       updatedAt: new Date(),
     })

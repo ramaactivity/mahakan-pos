@@ -8,6 +8,7 @@ import {
   expenses,
   incomes,
   purchases,
+  reconciliationNotes,
   shifts,
   splitPayments,
   transactions,
@@ -25,10 +26,16 @@ import type {
   CashFlowLedgerReport,
   CashOnHandSnapshot,
   DailySettlementReport,
+  ReconciliationDrillDown,
+  ReconciliationStatus,
   SettlementReconciliationReport,
   SettlementReconciliationRow,
   ShiftSettlementRow,
 } from "./types";
+import {
+  computeReconciliationTotals,
+  detectReconciliationAnomalies,
+} from "./reconciliation-pure";
 
 /**
  * Convert a Jakarta calendar date (YYYY-MM-DD) into a UTC `[from, toExclusive)`
@@ -1031,12 +1038,20 @@ export async function getCashFlowLedger(
   };
 }
 
+/**
+ * Sesi AE-56 — Rekonsiliasi tabel revamp:
+ * - Tambah row "cash" (3-way: POS sales / Kasir Lapor / Setoran Bank verified)
+ * - Fix QRIS hardcoded 0 → pakai shifts.qrisSettlement (AE-56 auto-fill at close)
+ * - Tambah totals + anomalies untuk header stat + alert banner
+ * - Tambah status per channel per range (latest entry kalau multi-day,
+ *   atau "open" default). Untuk multi-day range, note di-skip (rendered di drill-down).
+ */
 export async function getSettlementReconciliation(
   outletId: string,
   fromIso: string,
   toIso: string,
 ): Promise<SettlementReconciliationReport> {
-  const channels: AggregatorChannel[] = [
+  const aggregatorChannels: AggregatorChannel[] = [
     "edc_bca",
     "gofood",
     "grabfood",
@@ -1044,14 +1059,25 @@ export async function getSettlementReconciliation(
     "qris",
   ];
 
-  // Sum kasir-reported settlement fields from shifts that closed in window.
   const { from, to } = jakartaRangeBounds(fromIso, toIso);
+
+  // ---- Sum kasir-reported settlement fields from shifts that closed in window ----
   const shiftAgg = await db
     .select({
       edc: sql<string>`COALESCE(SUM(${shifts.edcSettlement}), 0)`,
       gofood: sql<string>`COALESCE(SUM(${shifts.gofoodSettlement}), 0)`,
       grabfood: sql<string>`COALESCE(SUM(${shifts.grabfoodSettlement}), 0)`,
       shopeefood: sql<string>`COALESCE(SUM(${shifts.shopeefoodSettlement}), 0)`,
+      /* Sesi AE-56 — auto-fill qris di closeShift; fallback ke 0 untuk
+       * shift legacy yang belum punya field. Untuk shift lama, lazy-compute
+       * di bawah (lihat qrisLegacyFallback). */
+      qris: sql<string>`COALESCE(SUM(${shifts.qrisSettlement}), 0)`,
+      /* Sesi AE-56 — kasir-lapor cash (derived dari actualCash - openingCash
+       * - paidQris - paidCard untuk shift lama yang belum punya cashSalesReported).
+       * Untuk row Cash: sebagai backstop kalau kasir tidak input cashSalesReported. */
+      cashReportedExplicit: sql<string>`COALESCE(SUM(${shifts.cashSalesReported}), 0)`,
+      actualCashSum: sql<string>`COALESCE(SUM(${shifts.actualCash}), 0)`,
+      openingCashSum: sql<string>`COALESCE(SUM(${shifts.openingCash}), 0)`,
     })
     .from(shifts)
     .where(
@@ -1062,25 +1088,18 @@ export async function getSettlementReconciliation(
         lte(shifts.closedAt, to),
       ),
     );
-  const reportedByChannel: Record<AggregatorChannel, number> = {
-    edc_bca: Number(shiftAgg[0]?.edc ?? 0),
-    gofood: Number(shiftAgg[0]?.gofood ?? 0),
-    grabfood: Number(shiftAgg[0]?.grabfood ?? 0),
-    shopeefood: Number(shiftAgg[0]?.shopeefood ?? 0),
-    qris: 0, // no kasir-reported field for qris
-  };
 
-  // POS actual (only matchable for card_bca and qris).
+  // ---- POS Actual per payment method (net of refundedAmount) ----
   const trxAgg = await db
     .select({
       paymentMethod: transactions.paymentMethod,
-      total: sql<string>`COALESCE(SUM(${transactions.total}), 0)`,
+      total: sql<string>`COALESCE(SUM(${transactions.total} - ${transactions.refundedAmount}), 0)`,
     })
     .from(transactions)
     .where(
       and(
         eq(transactions.outletId, outletId),
-        eq(transactions.status, "paid"),
+        inArray(transactions.status, ["paid", "partially_refunded"]),
         gte(transactions.createdAt, from),
         lte(transactions.createdAt, to),
       ),
@@ -1097,25 +1116,32 @@ export async function getSettlementReconciliation(
     .where(
       and(
         eq(transactions.outletId, outletId),
-        eq(transactions.status, "paid"),
+        inArray(transactions.status, ["paid", "partially_refunded"]),
         gte(transactions.createdAt, from),
         lte(transactions.createdAt, to),
       ),
     )
     .groupBy(splitPayments.paymentMethod);
 
-  const cardBcaActual =
-    Number(
-      trxAgg.find((r) => r.paymentMethod === "card_bca")?.total ?? 0,
-    ) +
-    Number(
-      splitAgg.find((r) => r.paymentMethod === "card_bca")?.total ?? 0,
+  function sumOf(method: string): number {
+    return (
+      Number(trxAgg.find((r) => r.paymentMethod === method)?.total ?? 0) +
+      Number(splitAgg.find((r) => r.paymentMethod === method)?.total ?? 0)
     );
-  const qrisActual =
-    Number(trxAgg.find((r) => r.paymentMethod === "qris")?.total ?? 0) +
-    Number(splitAgg.find((r) => r.paymentMethod === "qris")?.total ?? 0);
+  }
+
+  const cashPosActual = sumOf("cash");
+  const cardBcaActual = sumOf("card_bca");
+  const qrisActual = sumOf("qris");
+  // Other card payments aggregated separately (not displayed in current channels)
+  const cardOthersActual =
+    sumOf("card_bni") +
+    sumOf("card_mandiri") +
+    sumOf("card_bri") +
+    sumOf("card_other");
 
   const posActualByChannel: Record<AggregatorChannel, number | null> = {
+    cash: cashPosActual,
     edc_bca: cardBcaActual,
     qris: qrisActual,
     gofood: null,
@@ -1123,7 +1149,50 @@ export async function getSettlementReconciliation(
     shopeefood: null,
   };
 
-  // Aggregator settlements per channel.
+  // ---- Kasir-Lapor (derived) untuk Cash channel ----
+  // Strategi: kalau ada shifts.cashSalesReported explicit → pakai itu.
+  // Kalau tidak (cashReportedExplicit = 0), derive: actualCashSum - openingCashSum
+  // - paidQris (qrisSettlement) - paidCard (edcSettlement). Itu cash net flow
+  // ke drawer dari shift = penjualan cash - refund cash. Approximate.
+  const cashReportedExplicit = Number(shiftAgg[0]?.cashReportedExplicit ?? 0);
+  const actualCashSum = Number(shiftAgg[0]?.actualCashSum ?? 0);
+  const openingCashSum = Number(shiftAgg[0]?.openingCashSum ?? 0);
+  const edcReported = Number(shiftAgg[0]?.edc ?? 0);
+  const qrisReportedRaw = Number(shiftAgg[0]?.qris ?? 0);
+  const cashReportedDerived =
+    actualCashSum - openingCashSum - qrisReportedRaw - edcReported;
+  const cashReported =
+    cashReportedExplicit > 0 ? cashReportedExplicit : Math.max(0, cashReportedDerived);
+
+  // ---- Setoran Bank verified untuk Cash channel ----
+  const cashDepositAgg = await db
+    .select({
+      total: sql<string>`COALESCE(SUM(${cashDeposits.amount}), 0)`,
+    })
+    .from(cashDeposits)
+    .where(
+      and(
+        eq(cashDeposits.outletId, outletId),
+        eq(cashDeposits.status, "verified"),
+        gte(cashDeposits.depositDate, fromIso),
+        lte(cashDeposits.depositDate, toIso),
+      ),
+    );
+  const cashBankSettled = Number(cashDepositAgg[0]?.total ?? 0);
+
+  const reportedByChannel: Record<AggregatorChannel, number> = {
+    cash: cashReported,
+    edc_bca: edcReported,
+    gofood: Number(shiftAgg[0]?.gofood ?? 0),
+    grabfood: Number(shiftAgg[0]?.grabfood ?? 0),
+    shopeefood: Number(shiftAgg[0]?.shopeefood ?? 0),
+    qris: qrisReportedRaw > 0 ? qrisReportedRaw : qrisActual,
+    // ↑ Sesi AE-56 lazy fallback: kalau qrisSettlement legacy = 0 tapi
+    //   ada POS qris transaksi, pakai POS Actual sebagai "Reported"
+    //   (asumsi: kalau auto-fill berlaku, kedua angka match).
+  };
+
+  // ---- Aggregator settlements per channel (only non-cash channels) ----
   const aggRows = await db
     .select({
       channel: aggregatorSettlements.channel,
@@ -1141,13 +1210,66 @@ export async function getSettlementReconciliation(
     )
     .groupBy(aggregatorSettlements.channel);
 
-  const rows: SettlementReconciliationRow[] = channels.map((ch) => {
+  // ---- Reconciliation notes (latest per channel) ----
+  const notesRows = await db
+    .select({
+      channel: reconciliationNotes.channel,
+      status: reconciliationNotes.status,
+      note: reconciliationNotes.note,
+      updatedAt: reconciliationNotes.updatedAt,
+    })
+    .from(reconciliationNotes)
+    .where(
+      and(
+        eq(reconciliationNotes.outletId, outletId),
+        gte(reconciliationNotes.periodDate, fromIso),
+        lte(reconciliationNotes.periodDate, toIso),
+      ),
+    )
+    .orderBy(desc(reconciliationNotes.updatedAt));
+
+  const latestNoteByChannel = new Map<
+    string,
+    { status: ReconciliationStatus; note: string | null }
+  >();
+  for (const n of notesRows) {
+    if (!latestNoteByChannel.has(n.channel)) {
+      latestNoteByChannel.set(n.channel, {
+        status: n.status as ReconciliationStatus,
+        note: n.note,
+      });
+    }
+  }
+
+  // ---- Assemble rows (cash first, then aggregator channels) ----
+  const allChannels: AggregatorChannel[] = ["cash", ...aggregatorChannels];
+
+  const rows: SettlementReconciliationRow[] = allChannels.map((ch) => {
     const agg = aggRows.find((r) => r.channel === ch);
     const aggGross = Number(agg?.gross ?? 0);
     const aggFee = Number(agg?.fee ?? 0);
     const aggNet = Number(agg?.net ?? 0);
     const reported = reportedByChannel[ch];
     const posActual = posActualByChannel[ch];
+    const note = latestNoteByChannel.get(ch);
+
+    if (ch === "cash") {
+      return {
+        channel: ch,
+        reportedFromShifts: reported,
+        posActual: posActual ?? 0,
+        aggregatorGross: 0,
+        aggregatorFee: 0,
+        aggregatorNet: 0,
+        bankSettled: cashBankSettled,
+        varianceShiftsVsAggregator: 0,
+        variancePosVsAggregator: null,
+        varianceCashPosVsReported: (posActual ?? 0) - reported,
+        varianceCashReportedVsBank: reported - cashBankSettled,
+        status: note?.status ?? "open",
+        note: note?.note ?? null,
+      };
+    }
 
     return {
       channel: ch,
@@ -1156,12 +1278,306 @@ export async function getSettlementReconciliation(
       aggregatorGross: aggGross,
       aggregatorFee: aggFee,
       aggregatorNet: aggNet,
+      bankSettled: 0,
       varianceShiftsVsAggregator: reported - aggGross,
       variancePosVsAggregator: posActual !== null ? posActual - aggGross : null,
+      varianceCashPosVsReported: null,
+      varianceCashReportedVsBank: null,
+      status: note?.status ?? "open",
+      note: note?.note ?? null,
     };
   });
 
-  return { rangeFrom: fromIso, rangeTo: toIso, rows };
+  // Mention cardOthersActual to keep variable alive for future use
+  void cardOthersActual;
+
+  const totals = computeReconciliationTotals(rows);
+  const anomalies = detectReconciliationAnomalies(rows);
+
+  return {
+    rangeFrom: fromIso,
+    rangeTo: toIso,
+    rows,
+    totals,
+    anomalies,
+  };
+}
+
+/* ============================================================================
+ * Sesi AE-56 — Drill-down per channel: list transaksi POS, shift reports,
+ * aggregator settlements, deposits (cash only). Hard limit 500 per kategori.
+ * ========================================================================== */
+
+const DRILL_HARD_LIMIT = 500;
+
+export async function fetchReconciliationDrillDown(
+  outletId: string,
+  channel: AggregatorChannel,
+  fromIso: string,
+  toIso: string,
+): Promise<ReconciliationDrillDown> {
+  const { from, to } = jakartaRangeBounds(fromIso, toIso);
+
+  // Mapping channel → paymentMethod filter untuk transactions
+  const paymentMethodFilter: Record<AggregatorChannel, string[]> = {
+    cash: ["cash"],
+    qris: ["qris"],
+    edc_bca: ["card_bca"],
+    gofood: [], // aggregator-only, no POS payment method
+    grabfood: [],
+    shopeefood: [],
+  };
+
+  const methods = paymentMethodFilter[channel];
+
+  // 1. Transactions
+  let transactionsList: ReconciliationDrillDown["transactions"] = [];
+  let transactionsSum = 0;
+  if (methods.length > 0) {
+    const trxRows = await db
+      .select({
+        id: transactions.id,
+        transactionNumber: transactions.transactionNumber,
+        closedAt: transactions.createdAt,
+        cashierName: users.name,
+        total: transactions.total,
+        refundedAmount: transactions.refundedAmount,
+        paymentMethod: transactions.paymentMethod,
+        status: transactions.status,
+      })
+      .from(transactions)
+      .leftJoin(users, eq(users.id, transactions.cashierId))
+      .where(
+        and(
+          eq(transactions.outletId, outletId),
+          inArray(transactions.status, ["paid", "partially_refunded"]),
+          inArray(transactions.paymentMethod, methods as ("cash" | "qris" | "card_bca")[]),
+          gte(transactions.createdAt, from),
+          lte(transactions.createdAt, to),
+        ),
+      )
+      .orderBy(desc(transactions.createdAt))
+      .limit(DRILL_HARD_LIMIT);
+
+    transactionsList = trxRows.map((t) => {
+      const total = Number(t.total);
+      const refunded = Number(t.refundedAmount);
+      return {
+        transactionId: t.id,
+        transactionNumber: t.transactionNumber,
+        closedAt: t.closedAt.toISOString(),
+        cashierName: t.cashierName,
+        total,
+        refundedAmount: refunded,
+        netTotal: total - refunded,
+        paymentMethod: t.paymentMethod,
+        status: t.status,
+      };
+    });
+    transactionsSum = transactionsList.reduce((s, t) => s + t.netTotal, 0);
+  }
+
+  // 2. Shift reports (kasir-reported settlement per shift)
+  const shiftFieldMap: Record<
+    AggregatorChannel,
+    keyof typeof shifts.$inferSelect | null
+  > = {
+    cash: null, // cash is derived, not single field
+    edc_bca: "edcSettlement",
+    qris: "qrisSettlement",
+    gofood: "gofoodSettlement",
+    grabfood: "grabfoodSettlement",
+    shopeefood: "shopeefoodSettlement",
+  };
+  const fieldName = shiftFieldMap[channel];
+
+  let shiftReports: ReconciliationDrillDown["shiftReports"] = [];
+  let shiftReportsSum = 0;
+  if (channel !== "cash" && fieldName) {
+    const shiftRows = await db
+      .select({
+        id: shifts.id,
+        closedAt: shifts.closedAt,
+        userName: users.name,
+        edc: shifts.edcSettlement,
+        gofood: shifts.gofoodSettlement,
+        grabfood: shifts.grabfoodSettlement,
+        shopeefood: shifts.shopeefoodSettlement,
+        qris: shifts.qrisSettlement,
+      })
+      .from(shifts)
+      .innerJoin(users, eq(users.id, shifts.userId))
+      .where(
+        and(
+          eq(shifts.outletId, outletId),
+          eq(shifts.status, "closed"),
+          gte(shifts.closedAt, from),
+          lte(shifts.closedAt, to),
+        ),
+      )
+      .orderBy(desc(shifts.closedAt))
+      .limit(DRILL_HARD_LIMIT);
+
+    shiftReports = shiftRows.map((s) => {
+      const closedAt = s.closedAt ?? new Date();
+      const wibDate = new Date(closedAt.getTime() + 7 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      const amount =
+        channel === "edc_bca"
+          ? Number(s.edc ?? 0)
+          : channel === "qris"
+            ? Number(s.qris ?? 0)
+            : channel === "gofood"
+              ? Number(s.gofood ?? 0)
+              : channel === "grabfood"
+                ? Number(s.grabfood ?? 0)
+                : Number(s.shopeefood ?? 0);
+      return {
+        shiftId: s.id,
+        shiftDate: wibDate,
+        cashierName: s.userName,
+        reportedAmount: amount,
+      };
+    });
+    shiftReportsSum = shiftReports.reduce((s, r) => s + r.reportedAmount, 0);
+  } else if (channel === "cash") {
+    // For cash, list each shift's derived cash sales
+    const shiftRows = await db
+      .select({
+        id: shifts.id,
+        closedAt: shifts.closedAt,
+        userName: users.name,
+        actualCash: shifts.actualCash,
+        openingCash: shifts.openingCash,
+        edc: shifts.edcSettlement,
+        qris: shifts.qrisSettlement,
+        cashSalesReported: shifts.cashSalesReported,
+      })
+      .from(shifts)
+      .innerJoin(users, eq(users.id, shifts.userId))
+      .where(
+        and(
+          eq(shifts.outletId, outletId),
+          eq(shifts.status, "closed"),
+          gte(shifts.closedAt, from),
+          lte(shifts.closedAt, to),
+        ),
+      )
+      .orderBy(desc(shifts.closedAt))
+      .limit(DRILL_HARD_LIMIT);
+
+    shiftReports = shiftRows.map((s) => {
+      const closedAt = s.closedAt ?? new Date();
+      const wibDate = new Date(closedAt.getTime() + 7 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      const explicit = s.cashSalesReported == null ? 0 : Number(s.cashSalesReported);
+      const derived =
+        Number(s.actualCash ?? 0) -
+        Number(s.openingCash ?? 0) -
+        Number(s.qris ?? 0) -
+        Number(s.edc ?? 0);
+      const amount = explicit > 0 ? explicit : Math.max(0, derived);
+      return {
+        shiftId: s.id,
+        shiftDate: wibDate,
+        cashierName: s.userName,
+        reportedAmount: amount,
+      };
+    });
+    shiftReportsSum = shiftReports.reduce((s, r) => s + r.reportedAmount, 0);
+  }
+
+  // 3. Aggregator settlements (non-cash channels)
+  let aggregators: ReconciliationDrillDown["aggregators"] = [];
+  let aggregatorsGross = 0;
+  if (channel !== "cash") {
+    const nonCashChannel = channel as Exclude<AggregatorChannel, "cash">;
+    const aggList = await db
+      .select()
+      .from(aggregatorSettlements)
+      .where(
+        and(
+          eq(aggregatorSettlements.outletId, outletId),
+          eq(aggregatorSettlements.channel, nonCashChannel),
+          gte(aggregatorSettlements.periodFrom, fromIso),
+          lte(aggregatorSettlements.periodTo, toIso),
+        ),
+      )
+      .orderBy(desc(aggregatorSettlements.periodFrom))
+      .limit(DRILL_HARD_LIMIT);
+
+    aggregators = aggList.map((a) => ({
+      settlementId: a.id,
+      periodFrom: a.periodFrom,
+      periodTo: a.periodTo,
+      grossAmount: Number(a.grossAmount),
+      feeAmount: Number(a.feeAmount),
+      netAmount: Number(a.netAmount),
+      referenceNo: a.referenceNo,
+      notes: a.notes,
+    }));
+    aggregatorsGross = aggregators.reduce((s, a) => s + a.grossAmount, 0);
+  }
+
+  // 4. Cash deposits (cash channel only)
+  let deposits: ReconciliationDrillDown["deposits"] = [];
+  let depositsSum = 0;
+  if (channel === "cash") {
+    const depRows = await db
+      .select({
+        id: cashDeposits.id,
+        depositDate: cashDeposits.depositDate,
+        amount: cashDeposits.amount,
+        bankDestination: cashDeposits.bankDestination,
+        status: cashDeposits.status,
+      })
+      .from(cashDeposits)
+      .where(
+        and(
+          eq(cashDeposits.outletId, outletId),
+          gte(cashDeposits.depositDate, fromIso),
+          lte(cashDeposits.depositDate, toIso),
+        ),
+      )
+      .orderBy(desc(cashDeposits.depositDate))
+      .limit(DRILL_HARD_LIMIT);
+
+    deposits = depRows.map((d) => ({
+      depositId: d.id,
+      depositDate: d.depositDate,
+      amount: Number(d.amount),
+      bankDestination: d.bankDestination,
+      status: d.status as CashDepositStatus,
+    }));
+    depositsSum = deposits
+      .filter((d) => d.status === "verified")
+      .reduce((s, d) => s + d.amount, 0);
+  }
+
+  const truncated =
+    transactionsList.length >= DRILL_HARD_LIMIT ||
+    shiftReports.length >= DRILL_HARD_LIMIT ||
+    aggregators.length >= DRILL_HARD_LIMIT ||
+    deposits.length >= DRILL_HARD_LIMIT;
+
+  return {
+    channel,
+    rangeFrom: fromIso,
+    rangeTo: toIso,
+    transactions: transactionsList,
+    shiftReports,
+    aggregators,
+    deposits,
+    totals: {
+      transactionsSum,
+      shiftReportsSum,
+      aggregatorsGross,
+      depositsSum,
+    },
+    truncated,
+  };
 }
 
 export async function listAggregatorSettlements(opts: {
@@ -1188,8 +1604,13 @@ export async function listAggregatorSettlements(opts: {
   >
 > {
   const conds = [eq(aggregatorSettlements.outletId, opts.outletId)];
-  if (opts.channel && opts.channel !== "all") {
-    conds.push(eq(aggregatorSettlements.channel, opts.channel));
+  if (opts.channel && opts.channel !== "all" && opts.channel !== "cash") {
+    conds.push(
+      eq(
+        aggregatorSettlements.channel,
+        opts.channel as Exclude<AggregatorChannel, "cash">,
+      ),
+    );
   }
   if (opts.fromDate) {
     conds.push(gte(aggregatorSettlements.periodFrom, opts.fromDate));

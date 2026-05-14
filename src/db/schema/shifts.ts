@@ -45,6 +45,16 @@ export const shifts = pgTable(
     gofoodSettlement: bigint("gofood_settlement", { mode: "number" }),
     grabfoodSettlement: bigint("grabfood_settlement", { mode: "number" }),
     shopeefoodSettlement: bigint("shopeefood_settlement", { mode: "number" }),
+    /** Sesi AE-56 — auto-filled saat closeShift dari sum transactions QRIS shift.
+     * Sebelum AE-56, rekonsiliasi QRIS pakai hardcode 0 → Reported Shifts selalu
+     * 0 padahal POS Actual ada → false-positive selisih. Nullable backward-compat;
+     * lazy-compute di query kalau null. */
+    qrisSettlement: bigint("qris_settlement", { mode: "number" }),
+    /** Sesi AE-56 — opsional, jumlah cash yang kasir claim ada di drawer
+     * saat tutup shift (pisah dari paidCash hitung POS). Future-use untuk
+     * 3-way cash reconciliation kalau owner pakai. Default null = pakai
+     * (actualCash - openingCash + refundedCash - paidQris - paidCard). */
+    cashSalesReported: bigint("cash_sales_reported", { mode: "number" }),
 
     openedAt: timestamp("opened_at", { withTimezone: true })
       .notNull()

@@ -259,6 +259,9 @@ export const permissions = {
   "report.cash_flow.view": ["owner"],
   "aggregator_settlement.view": ["owner", "manager", "supervisor"],
   "aggregator_settlement.create": ["owner", "manager", "supervisor"],
+  /* Sesi AE-56 — set status/note untuk rekonsiliasi audit workflow.
+   * Owner + manager bisa mark Open/Investigating/Resolved/Disputed. */
+  "reconciliation.update": ["owner", "manager"],
   "settings.cash_threshold.update": ["owner"],
 
   // Bank accounts master (sesi AE-13). Owner manage, manager+supervisor

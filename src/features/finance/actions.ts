@@ -6,6 +6,7 @@ import {
   aggregatorSettlements,
   cashDeposits,
   chartOfAccounts,
+  reconciliationNotes,
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
@@ -19,6 +20,7 @@ import {
   verifyCashDepositSchema,
 } from "./schemas";
 import {
+  fetchReconciliationDrillDown,
   getCashDepositDashboard,
   getCashFlowLedger,
   getCashOnHand,
@@ -42,8 +44,11 @@ import {
   type CreateAggregatorSettlementInput,
   type CreateCashDepositInput,
   type DailySettlementReport,
+  type AggregatorChannel,
+  type ReconciliationDrillDown,
   type RejectCashDepositInput,
   type SettlementReconciliationReport,
+  type SetReconciliationStatusInput,
   type UpdateAggregatorSettlementInput,
   type UpdateCashDepositInput,
   type VerifyCashDepositInput,
@@ -669,3 +674,158 @@ export async function updateAggregatorSettlement(
 
 // Re-export for symmetry with other features that also expose getOutletThreshold.
 export { getOutletThreshold };
+
+/* ============================================================================
+ * Sesi AE-56 — Reconciliation drill-down + status workflow
+ * ========================================================================== */
+
+const RECONCILIATION_CHANNELS: AggregatorChannel[] = [
+  "cash",
+  "edc_bca",
+  "qris",
+  "gofood",
+  "grabfood",
+  "shopeefood",
+];
+const RECONCILIATION_STATUSES = [
+  "open",
+  "investigating",
+  "resolved",
+  "disputed",
+] as const;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export async function fetchReconciliationDrillDownAction(
+  channel: AggregatorChannel,
+  fromDate: string,
+  toDate: string,
+): Promise<ApiResult<ReconciliationDrillDown>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "aggregator_settlement.view")) {
+    return fail("FORBIDDEN", "Tidak punya akses drill-down rekonsiliasi");
+  }
+  if (!RECONCILIATION_CHANNELS.includes(channel)) {
+    return fail("VALIDATION", "Channel tidak valid");
+  }
+  if (!ISO_DATE_RE.test(fromDate) || !ISO_DATE_RE.test(toDate)) {
+    return fail("VALIDATION", "Tanggal harus YYYY-MM-DD");
+  }
+  if (fromDate > toDate) {
+    return fail("VALIDATION", "Tanggal mulai > tanggal selesai");
+  }
+  const data = await fetchReconciliationDrillDown(
+    session.user.outletId,
+    channel,
+    fromDate,
+    toDate,
+  );
+  return ok(data);
+}
+
+export async function setReconciliationStatus(
+  input: SetReconciliationStatusInput,
+): Promise<ApiResult<{ id: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "reconciliation.update")) {
+    return fail("FORBIDDEN", "Tidak punya akses set status rekonsiliasi");
+  }
+  if (!RECONCILIATION_CHANNELS.includes(input.channel)) {
+    return fail("VALIDATION", "Channel tidak valid");
+  }
+  if (!RECONCILIATION_STATUSES.includes(input.status)) {
+    return fail("VALIDATION", "Status tidak valid");
+  }
+  if (!ISO_DATE_RE.test(input.periodDate)) {
+    return fail("VALIDATION", "Tanggal harus YYYY-MM-DD");
+  }
+  const trimmedNote = input.note ? input.note.trim().slice(0, 2000) : null;
+
+  // Upsert: existing row by (outletId, channel, periodDate) → update; else insert
+  const [existing] = await db
+    .select()
+    .from(reconciliationNotes)
+    .where(
+      and(
+        eq(reconciliationNotes.outletId, session.user.outletId),
+        eq(reconciliationNotes.channel, input.channel),
+        eq(reconciliationNotes.periodDate, input.periodDate),
+      ),
+    )
+    .limit(1);
+
+  const isResolved = input.status === "resolved";
+  const now = new Date();
+
+  let rowId: string;
+  if (existing) {
+    const [updated] = await db
+      .update(reconciliationNotes)
+      .set({
+        status: input.status,
+        note: trimmedNote,
+        resolvedBy: isResolved ? session.user.id : existing.resolvedBy,
+        resolvedAt: isResolved ? now : existing.resolvedAt,
+        updatedAt: now,
+      })
+      .where(eq(reconciliationNotes.id, existing.id))
+      .returning({ id: reconciliationNotes.id });
+    rowId = updated.id;
+
+    logAudit({
+      eventType: "reconciliation.update",
+      userId: session.user.id,
+      entityType: "reconciliation_note",
+      entityId: rowId,
+      payload: {
+        summary: `Set status ${input.channel} ${input.periodDate} → ${input.status}`,
+        before: {
+          status: existing.status,
+          note: existing.note,
+        },
+        after: {
+          status: input.status,
+          note: trimmedNote,
+        },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }).catch((e) => console.error("[audit reconciliation.update]", e));
+  } else {
+    const [created] = await db
+      .insert(reconciliationNotes)
+      .values({
+        outletId: session.user.outletId,
+        channel: input.channel,
+        periodDate: input.periodDate,
+        status: input.status,
+        note: trimmedNote,
+        resolvedBy: isResolved ? session.user.id : null,
+        resolvedAt: isResolved ? now : null,
+        createdBy: session.user.id,
+      })
+      .returning({ id: reconciliationNotes.id });
+    rowId = created.id;
+
+    logAudit({
+      eventType: "reconciliation.update",
+      userId: session.user.id,
+      entityType: "reconciliation_note",
+      entityId: rowId,
+      payload: {
+        summary: `Buat status ${input.channel} ${input.periodDate}: ${input.status}`,
+        after: {
+          status: input.status,
+          note: trimmedNote,
+        },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }).catch((e) => console.error("[audit reconciliation.update]", e));
+  }
+
+  return ok({ id: rowId });
+}
