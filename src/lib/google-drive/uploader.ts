@@ -249,6 +249,14 @@ export interface DriveUploadResult {
   /** Path label like "NOTA MAHAKAN/2026/05. MEI" — surface ke toast
    * supaya user tahu file masuk folder mana. */
   folderPath: string;
+  /** Sesi AE-50 — parent folder Drive ID. Untuk attendance, ini folder
+   * `ABSENSI/{Nama}/{date}/` yang berisi semua selfie hari itu. Caller
+   * bisa simpan ke DB supaya UI bisa render "Buka folder hari ini" link
+   * tanpa hit Drive API saat display. */
+  folderId: string;
+  /** Folder URL (drive.google.com/drive/folders/{id}) — pre-built untuk
+   * convenience, anyone-with-link reader sudah di-set di parent. */
+  folderUrl: string;
 }
 
 /**
@@ -319,7 +327,22 @@ export async function uploadToDrive(
   const url = meta.data.webViewLink ?? created.data.webViewLink;
   if (!url) throw new Error("Drive tidak return webViewLink");
 
-  return { url, fileId, folderPath: pathLabel };
+  /* Sesi AE-50 — set folder permission anyone-with-link reader supaya
+   * kalau HR klik tombol "Buka folder hari ini" di Back Office, langsung
+   * bisa view tanpa request access. Best-effort: kalau gagal (e.g. owner
+   * sudah set folder permission manual), tidak block upload result. */
+  try {
+    await d.permissions.create({
+      fileId: folderId,
+      requestBody: { role: "reader", type: "anyone" },
+      supportsAllDrives: true,
+    });
+  } catch (permErr) {
+    console.warn("[drive] folder permission set failed (non-fatal):", permErr);
+  }
+
+  const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
+  return { url, fileId, folderPath: pathLabel, folderId, folderUrl };
 }
 
 export { buildFriendlyFilename } from "./filename";

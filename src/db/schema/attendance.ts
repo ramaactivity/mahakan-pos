@@ -70,6 +70,12 @@ export const attendanceRecords = pgTable(
      * yang gagal upload Drive. */
     selfieDriveUrl: text("selfie_drive_url"),
     selfieDriveFileId: text("selfie_drive_file_id"),
+    /* Sesi AE-50 — folder parent (ABSENSI/{Nama}/{date}/) tempat selfie
+     * di-store. URL bisa di-click HR di Back Office buat browse semua
+     * selfie hari itu. ID di-cache supaya tidak perlu hit Drive API saat
+     * display. NULL untuk legacy records pre-AE-50. */
+    selfieDriveFolderId: text("selfie_drive_folder_id"),
+    selfieDriveFolderUrl: text("selfie_drive_folder_url"),
 
     /** Phase 4 — GPS coords karyawan saat absen (mobile flow only).
      * Distance dihitung saat insert pakai haversine vs outlet center;

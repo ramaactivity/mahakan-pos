@@ -347,6 +347,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   // Upload selfie to Drive (hard-fail per owner directive)
   let driveUrl: string;
   let driveFileId: string;
+  let driveFolderId: string;
+  let driveFolderUrl: string;
   try {
     const ts = Date.now();
     const safeName = matched.fullName.replace(/[\\/?*<>:|"]/g, "_").slice(0, 60);
@@ -371,6 +373,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
     driveUrl = result.url;
     driveFileId = result.fileId;
+    // Sesi AE-50 — store folder URL juga supaya HR bisa browse semua
+    // selfie hari itu di Back Office tanpa hit Drive API saat display.
+    driveFolderId = result.folderId;
+    driveFolderUrl = result.folderUrl;
   } catch (e) {
     /* Sesi AE-41 — staff feedback: clock-in error "invalid_grant" tidak
      * jelas. Detect kondisi spesifik (refresh token expired/revoked,
@@ -480,6 +486,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         lateMinutes,
         selfieDriveUrl: driveUrl,
         selfieDriveFileId: driveFileId,
+        selfieDriveFolderId: driveFolderId,
+        selfieDriveFolderUrl: driveFolderUrl,
         gpsLat,
         gpsLng,
         gpsDistanceMeters: distance,
@@ -544,6 +552,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       // di clockOut url field — keep selfie_in URL kalau perlu di audit.
       selfieDriveUrl: driveUrl,
       selfieDriveFileId: driveFileId,
+      selfieDriveFolderId: driveFolderId,
+      selfieDriveFolderUrl: driveFolderUrl,
       gpsLat,
       gpsLng,
       gpsDistanceMeters: distance,

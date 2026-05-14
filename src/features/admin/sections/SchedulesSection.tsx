@@ -566,13 +566,21 @@ function AttendanceDetailModal({
     "id-ID",
     { weekday: "long", day: "numeric", month: "long", year: "numeric" },
   );
+  /* Sesi AE-50 — HR request: tampil info lengkap (clock-in/out time, GPS,
+   * selfie preview + Drive links) bukan cuma badge status. */
+  const clockInTime = detail.cell.clockInAt
+    ? formatClockTime(detail.cell.clockInAt)
+    : null;
+  const clockOutTime = detail.cell.clockOutAt
+    ? formatClockTime(detail.cell.clockOutAt)
+    : null;
   return (
     <Modal
       open
       onClose={onClose}
       title={`Detail Absen — ${detail.employeeName}`}
       description={dateLabel}
-      size="sm"
+      size="md"
       footer={
         <Button variant="ghost" onClick={onClose}>
           Tutup
@@ -591,6 +599,31 @@ function AttendanceDetailModal({
           </div>
           <div className="mt-0.5 text-base font-bold">{meta.legend}</div>
         </div>
+
+        {/* Sesi AE-50 — Clock In/Out times */}
+        {(clockInTime || clockOutTime) && (
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-md border border-neutral-200 bg-white p-3">
+              <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                Clock In
+              </div>
+              <div className="mt-0.5 font-mono text-base font-semibold text-neutral-900">
+                {clockInTime ?? "—"}
+              </div>
+            </div>
+            <div className="rounded-md border border-neutral-200 bg-white p-3">
+              <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                Clock Out
+              </div>
+              <div className="mt-0.5 font-mono text-base font-semibold text-neutral-900">
+                {clockOutTime ?? (
+                  <span className="text-neutral-500">belum</span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {detail.cell.workMinutes !== undefined &&
         detail.cell.workMinutes > 0 ? (
           <div className="flex items-center justify-between rounded-md border border-neutral-200 bg-white p-3">
@@ -618,6 +651,66 @@ function AttendanceDetailModal({
             </span>
           </div>
         ) : null}
+
+        {/* Sesi AE-50 — GPS distance dari outlet center */}
+        {detail.cell.gpsDistanceMeters !== undefined &&
+        detail.cell.gpsDistanceMeters !== null ? (
+          <div className="flex items-center justify-between rounded-md border border-neutral-200 bg-neutral-50 p-3">
+            <span className="text-neutral-600">📍 Jarak dari outlet</span>
+            <span className="font-mono text-xs text-neutral-700">
+              {detail.cell.gpsDistanceMeters}m
+            </span>
+          </div>
+        ) : null}
+
+        {/* Sesi AE-50 — Selfie preview + Drive links */}
+        {detail.cell.selfieDriveUrl ? (
+          <div className="rounded-lg border border-mahakan-green-700/30 bg-mahakan-green-50/40 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-mahakan-green-900">
+                Selfie & Drive
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <a
+                href={detail.cell.selfieDriveUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-md bg-mahakan-green-700 px-3 py-2 text-xs font-semibold text-white hover:bg-mahakan-green-700/90"
+              >
+                📷 Buka Foto Selfie
+              </a>
+              {detail.cell.selfieDriveFolderUrl ? (
+                <a
+                  href={detail.cell.selfieDriveFolderUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-mahakan-green-700 bg-white px-3 py-2 text-xs font-semibold text-mahakan-green-900 hover:bg-mahakan-green-50"
+                >
+                  📁 Folder Hari Ini
+                </a>
+              ) : null}
+              <a
+                href="https://drive.google.com/drive/folders/root"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+              >
+                📂 Drive Mahakan
+              </a>
+            </div>
+            <p className="mt-2 text-[10px] text-neutral-500">
+              &ldquo;Folder Hari Ini&rdquo; buka folder Drive berisi semua
+              selfie karyawan ini di tanggal{" "}
+              {new Date(`${detail.date}T00:00:00Z`).toLocaleDateString(
+                "id-ID",
+                { day: "numeric", month: "short" },
+              )}{" "}
+              (clock-in + clock-out).
+            </p>
+          </div>
+        ) : null}
+
         {detail.cell.status === "alpa" ? (
           <p className="rounded-md border border-danger-300 bg-danger-100/40 p-3 text-xs text-danger-500">
             ⚠️ Karyawan dijadwalkan kerja tapi tidak ada record clock-in.
@@ -636,6 +729,17 @@ function AttendanceDetailModal({
       </div>
     </Modal>
   );
+}
+
+/** Format clockInAt/clockOutAt ISO ke WIB "HH:mm". */
+function formatClockTime(iso: string): string {
+  const d = new Date(iso);
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
 }
 
 function ScheduleCell({

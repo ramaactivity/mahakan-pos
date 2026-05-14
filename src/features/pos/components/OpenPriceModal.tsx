@@ -51,10 +51,10 @@ export function OpenPriceModal({
       setError("Harga di atas batas wajar");
       return;
     }
-    if (beans.trim().length === 0) {
-      setError("Catatan beans wajib diisi (misal: Ethiopia Yirgacheffe)");
-      return;
-    }
+    /* Sesi AE-50 — staff feedback: nama beans tidak wajib (boleh kosong)
+     * supaya flow checkout cepat. Kalau kosong, openPriceNote = null →
+     * tidak dicetak di struk. */
+    const trimmedBeans = beans.trim();
     const line = buildLineItem({
       menuItemId: item.id,
       name: item.name,
@@ -65,7 +65,7 @@ export function OpenPriceModal({
       quantity: 1,
       modifiers: [],
       note: null,
-      openPriceNote: beans.trim(),
+      openPriceNote: trimmedBeans.length > 0 ? trimmedBeans : null,
     });
     onAdd(line);
     onClose();
@@ -86,7 +86,7 @@ export function OpenPriceModal({
           <Button
             onClick={onSubmit}
             size="lg"
-            disabled={parsed < 1_000 || beans.trim().length === 0}
+            disabled={parsed < 1_000}
           >
             Tambah · {parsed > 0 ? formatRupiah(parsed) : ""}
           </Button>
@@ -105,15 +105,15 @@ export function OpenPriceModal({
           hint={`Preview: ${formatRupiah(parsed)}`}
         />
         <Input
-          label="Catatan Beans"
+          label="Catatan Beans (opsional)"
           type="text"
           value={beans}
           onChange={(e) => {
             setBeans(e.target.value);
             setError(null);
           }}
-          placeholder="Ethiopia Yirgacheffe"
-          hint="Akan dicetak di struk"
+          placeholder="mis. Ethiopia Yirgacheffe (boleh kosong)"
+          hint="Akan dicetak di struk kalau diisi. Kosongkan supaya flow lebih cepat."
           maxLength={120}
         />
         {error ? (

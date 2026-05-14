@@ -208,6 +208,8 @@ export async function getAttendanceCalendar(input: {
     });
   }
 
+  // Sesi AE-50 — tambah field clockIn/Out, selfie URL/folder URL, GPS
+  // untuk modal detail absen di Back Office (HR request).
   const records = await db
     .select({
       employeeId: attendanceRecords.employeeId,
@@ -216,6 +218,11 @@ export async function getAttendanceCalendar(input: {
       lateMinutes: attendanceRecords.lateMinutes,
       isLate: attendanceRecords.isLate,
       overtimeMinutes: attendanceRecords.overtimeMinutes,
+      clockInAt: attendanceRecords.clockInAt,
+      clockOutAt: attendanceRecords.clockOutAt,
+      selfieDriveUrl: attendanceRecords.selfieDriveUrl,
+      selfieDriveFolderUrl: attendanceRecords.selfieDriveFolderUrl,
+      gpsDistanceMeters: attendanceRecords.gpsDistanceMeters,
     })
     .from(attendanceRecords)
     .where(
@@ -264,6 +271,16 @@ export async function getAttendanceCalendar(input: {
         cell.workMinutes = rec.workMinutes ?? undefined;
         cell.lateMinutes = rec.lateMinutes ?? undefined;
         cell.overtimeMinutes = rec.overtimeMinutes ?? undefined;
+        // Sesi AE-50 — propagate detail fields untuk modal Back Office.
+        cell.clockInAt = rec.clockInAt
+          ? new Date(rec.clockInAt).toISOString()
+          : null;
+        cell.clockOutAt = rec.clockOutAt
+          ? new Date(rec.clockOutAt).toISOString()
+          : null;
+        cell.selfieDriveUrl = rec.selfieDriveUrl;
+        cell.selfieDriveFolderUrl = rec.selfieDriveFolderUrl;
+        cell.gpsDistanceMeters = rec.gpsDistanceMeters;
       } else if (sched && sched.dayOff) {
         status = "off";
       } else if (sched && !sched.dayOff) {

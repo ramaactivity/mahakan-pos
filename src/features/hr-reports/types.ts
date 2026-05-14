@@ -67,6 +67,15 @@ export interface AttendanceCalendarCell {
   workMinutes?: number;
   lateMinutes?: number;
   overtimeMinutes?: number;
+  /** Sesi AE-50 — info detail dari attendance_records untuk modal HR.
+   * Semua optional karena kiosk/legacy records mungkin tidak punya. */
+  clockInAt?: string | null;
+  clockOutAt?: string | null;
+  selfieDriveUrl?: string | null;
+  /** Folder URL Drive `ABSENSI/{Nama}/{date}/` — HR klik buat browse
+   * semua selfie hari itu (clock-in + clock-out). */
+  selfieDriveFolderUrl?: string | null;
+  gpsDistanceMeters?: number | null;
 }
 
 export interface AttendanceCalendarRow {

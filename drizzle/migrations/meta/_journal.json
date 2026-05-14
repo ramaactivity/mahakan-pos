@@ -281,6 +281,13 @@
       "when": 1778763979886,
       "tag": "0039_handy_wilson_fisk",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1778767002717,
+      "tag": "0040_yielding_millenium_guard",
+      "breakpoints": true
     }
   ]
 }
