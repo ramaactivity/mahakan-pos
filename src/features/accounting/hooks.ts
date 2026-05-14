@@ -725,13 +725,57 @@ export async function postJournalForOpnameAdjustment(args: {
  * Generic safe-fire wrapper. All hooks are best-effort; errors logged but
  * don't propagate. Caller should NOT await with await — wrap in this and
  * detach from main flow.
+ *
+ * Sesi AE-46 — selain console.error, write ke audit log
+ * `journal.posting_failed` supaya owner dapat visibility di Back Office
+ * tanpa harus check Vercel runtime logs. Detail tersimpan di payload
+ * (label = sourceType, context.sourceId = ID kalau bisa di-extract, raw
+ * error message). Audit log juga survive cold start (DB-backed). Future
+ * enhancement: Back Office action "Re-trigger failed journal posts".
+ *
+ * @param fn       — async function yang panggil postJournalForXxx
+ * @param label    — sourceType (mis. "purchase_create", "pos_sale")
+ * @param context  — optional metadata buat traceability (sourceId, outletId)
  */
 export function fireJournalHook(
   fn: () => Promise<void>,
   label: string,
+  context?: {
+    sourceId?: string;
+    outletId?: string;
+    actorId?: string;
+  },
 ): void {
-  fn().catch((e) => {
+  fn().catch(async (e) => {
     const msg = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
     console.error(`[journal:${label}] ${msg}`);
+
+    // Audit log buat owner visibility. Defensive: catch + console kalau
+    // audit itu sendiri gagal (rare — DB down). Hindari infinite loop:
+    // logAudit failure tidak fire-journal-hook.
+    try {
+      const { logAudit } = await import("@/lib/audit/logger");
+      await logAudit({
+        eventType: "journal.posting_failed",
+        userId: context?.actorId ?? null,
+        entityType: "journal_entry",
+        entityId: context?.sourceId ?? null,
+        payload: {
+          summary: `🚨 Journal post gagal: ${label} — ${msg}`,
+          context: {
+            sourceType: label,
+            sourceId: context?.sourceId,
+            rawError: msg,
+            stackPreview: stack?.split("\n").slice(0, 5).join("\n"),
+          },
+        },
+        metadata: context?.outletId
+          ? { outletId: context.outletId, actorRole: "system" }
+          : { actorRole: "system" },
+      });
+    } catch (auditErr) {
+      console.error(`[journal:${label}] audit log failure`, auditErr);
+    }
   });
 }

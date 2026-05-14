@@ -156,6 +156,12 @@ export const AUDIT_EVENT_TYPES = [
   "journal_entry.post",
   "journal_entry.update_draft",
   "journal_entry.reverse",
+  /* Sesi AE-46 — fire-and-forget journal hook gagal post-commit.
+   * Source action sudah committed (sale/refund/expense/purchase/payroll/
+   * etc) tapi journal posting throw. Owner liat di Back Office buat
+   * manual retry/reconcile. Detail full di payload (sourceType + sourceId
+   * + error message). */
+  "journal.posting_failed",
   "opening_balance.posted",
   "report.income_statement.export",
   "report.balance_sheet.export",
