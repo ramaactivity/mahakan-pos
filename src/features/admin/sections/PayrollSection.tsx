@@ -22,10 +22,8 @@ import {
   EmptyCard,
   Input,
   Modal,
-  ResponsiveTable,
   Skeleton,
   toast,
-  type ResponsiveColumn,
 } from "@/components/ui";
 import {
   applyThr,
@@ -351,7 +349,8 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
         </div>
       </Modal>
 
-      <div className="grid gap-4 md:grid-cols-[280px_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+        {/* Period sidebar — wider untuk fit "2026-05-31" + label */}
         <Card>
           <CardContent className="px-0 py-2">
             <p className="border-b border-neutral-200 px-4 py-2 text-xs uppercase tracking-wider text-neutral-500">
@@ -360,7 +359,7 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
             {loadingPeriods ? (
               <div className="space-y-2 p-3">
                 {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-12 w-full" />
+                  <Skeleton key={i} className="h-14 w-full" />
                 ))}
               </div>
             ) : periods.length === 0 ? (
@@ -381,24 +380,26 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
                         type="button"
                         onClick={() => setSelectedPeriodId(p.id)}
                         className={cn(
-                          "w-full rounded-md px-3 py-2 text-left text-sm transition-colors",
+                          "w-full rounded-md px-3 py-2.5 text-left text-sm transition-colors",
                           selectedPeriodId === p.id
                             ? "bg-mahakan-green-100 text-mahakan-green-900"
                             : "hover:bg-neutral-100",
                         )}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="truncate font-medium">
+                          <span className="truncate font-semibold">
                             {p.label}
                           </span>
                           <Badge variant={status.variant}>{status.label}</Badge>
                         </div>
-                        <div className="mt-0.5 text-xs text-neutral-600">
+                        <div className="mt-1 font-mono text-[11px] text-neutral-600">
                           {p.periodStart} → {p.periodEnd}
                         </div>
-                        <div className="text-xs text-neutral-600">
-                          {p.lineCount} karyawan ·{" "}
-                          {formatRupiah(p.netPayTotal)}
+                        <div className="mt-0.5 flex items-center justify-between text-[11px] text-neutral-500">
+                          <span>{p.lineCount} karyawan</span>
+                          <span className="font-mono font-semibold text-neutral-700">
+                            {formatRupiah(p.netPayTotal)}
+                          </span>
                         </div>
                       </button>
                     </li>
@@ -409,129 +410,158 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="space-y-3 px-6 py-4">
-            {!selectedPeriod ? (
-              <p className="py-12 text-center text-sm italic text-neutral-500">
-                Pilih periode di kiri untuk lihat detail.
-              </p>
-            ) : (
-              <>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h2 className="text-lg font-semibold text-neutral-900">
-                      {selectedPeriod.label}
-                    </h2>
-                    <p className="text-xs text-neutral-600">
-                      {selectedPeriod.periodStart} → {selectedPeriod.periodEnd}
-                    </p>
-                    {selectedPeriod.finalizedAt ? (
-                      <p className="text-xs text-neutral-600">
-                        Finalized{" "}
-                        {formatIndonesianDateTime(selectedPeriod.finalizedAt)}
-                      </p>
-                    ) : null}
-                    {selectedPeriod.paidAt ? (
-                      <p className="text-xs text-neutral-600">
-                        Paid {formatIndonesianDateTime(selectedPeriod.paidAt)}
-                      </p>
-                    ) : null}
-                  </div>
-                  {canManage ? (
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleCompute(false)}
-                        disabled={selectedPeriod.status !== "draft"}
-                      >
-                        <RefreshCw className="size-3.5" aria-hidden /> Recompute
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={handleApplyThr}
-                        disabled={selectedPeriod.status !== "draft"}
-                        title="Hitung THR semua line × multiplier (default 1× baseSalary)"
-                      >
-                        <Gift className="size-3.5" aria-hidden /> Hitung THR
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={handleFinalize}
-                        disabled={selectedPeriod.status !== "draft"}
-                      >
-                        <Lock className="size-3.5" aria-hidden /> Finalize
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={handleMarkPaid}
-                        disabled={selectedPeriod.status !== "finalized"}
-                      >
-                        <CheckCircle2 className="size-3.5" aria-hidden /> Mark Paid
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={handleDelete}
-                        disabled={selectedPeriod.status === "paid"}
-                        className="!text-danger-500 hover:!bg-danger-100/40"
-                      >
-                        <Trash2 className="size-3.5" aria-hidden />
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
-
-                {loadingLines ? (
-                  <div className="space-y-2">
-                    {Array.from({ length: 3 }).map((_, i) => (
-                      <Skeleton key={i} className="h-10 w-full" />
-                    ))}
-                  </div>
-                ) : lines.length === 0 ? (
-                  <EmptyCard
-                    icon={RefreshCw}
-                    title="Belum ada line"
-                    description="Klik “Recompute” untuk generate line dari attendance periode ini."
-                  />
-                ) : (
-                  <ResponsiveTable<PayrollLineWithEmployee>
-                    rows={lines}
-                    rowKey={(l) => l.id}
-                    columns={payrollLineColumns()}
-                    rowActions={
-                      canManage
-                        ? (l) => (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setEditingLine(l)}
-                              disabled={selectedPeriod.status === "paid"}
-                              aria-label={`Edit ${l.employeeFullName}`}
-                            >
-                              <Pencil className="size-3.5" aria-hidden />
-                            </Button>
-                          )
-                        : undefined
-                    }
-                    footer={
-                      <div className="flex items-center justify-between font-semibold">
-                        <span>Total Net Pay</span>
-                        <span className="font-mono text-base">
-                          {formatRupiah(
-                            lines.reduce((s, l) => s + l.netPay, 0),
-                          )}
-                        </span>
+        {/* Detail panel */}
+        <div className="space-y-4 min-w-0">
+          {!selectedPeriod ? (
+            <Card>
+              <CardContent className="py-12">
+                <p className="text-center text-sm italic text-neutral-500">
+                  Pilih periode di kiri untuk lihat detail.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {/* Header card: title + status + meta + action buttons grouped */}
+              <Card>
+                <CardContent className="space-y-3 px-5 py-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-lg font-bold text-neutral-900">
+                          {selectedPeriod.label}
+                        </h2>
+                        <Badge
+                          variant={
+                            STATUS_LABELS[
+                              selectedPeriod.status as PayrollStatus
+                            ].variant
+                          }
+                        >
+                          {
+                            STATUS_LABELS[
+                              selectedPeriod.status as PayrollStatus
+                            ].label
+                          }
+                        </Badge>
                       </div>
-                    }
-                  />
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
+                      <p className="mt-1 font-mono text-xs text-neutral-600">
+                        {selectedPeriod.periodStart} →{" "}
+                        {selectedPeriod.periodEnd}
+                      </p>
+                      {selectedPeriod.finalizedAt ? (
+                        <p className="text-[11px] text-neutral-500">
+                          Finalized{" "}
+                          {formatIndonesianDateTime(
+                            selectedPeriod.finalizedAt,
+                          )}
+                        </p>
+                      ) : null}
+                      {selectedPeriod.paidAt ? (
+                        <p className="text-[11px] text-mahakan-green-700">
+                          Paid{" "}
+                          {formatIndonesianDateTime(selectedPeriod.paidAt)}
+                        </p>
+                      ) : null}
+                    </div>
+                    {canManage ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Group 1: compute */}
+                        <div className="flex gap-1 rounded-md border border-neutral-200 bg-white p-0.5">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleCompute(false)}
+                            disabled={selectedPeriod.status !== "draft"}
+                          >
+                            <RefreshCw className="size-3.5" aria-hidden />{" "}
+                            Recompute
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={handleApplyThr}
+                            disabled={selectedPeriod.status !== "draft"}
+                            title="Hitung THR semua line × multiplier (default 1× baseSalary)"
+                          >
+                            <Gift className="size-3.5" aria-hidden /> THR
+                          </Button>
+                        </div>
+                        {/* Group 2: status flow */}
+                        <div className="flex gap-1 rounded-md border border-neutral-200 bg-white p-0.5">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={handleFinalize}
+                            disabled={selectedPeriod.status !== "draft"}
+                          >
+                            <Lock className="size-3.5" aria-hidden />{" "}
+                            Finalize
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={handleMarkPaid}
+                            disabled={selectedPeriod.status !== "finalized"}
+                          >
+                            <CheckCircle2
+                              className="size-3.5"
+                              aria-hidden
+                            />{" "}
+                            Mark Paid
+                          </Button>
+                        </div>
+                        {/* Group 3: danger */}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={handleDelete}
+                          disabled={selectedPeriod.status === "paid"}
+                          className="!text-danger-500 hover:!bg-danger-100/40"
+                          aria-label="Hapus periode"
+                        >
+                          <Trash2 className="size-3.5" aria-hidden />
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Stat cards */}
+              {lines.length > 0 ? (
+                <PayrollStatsRow lines={lines} />
+              ) : null}
+
+              {/* Lines table */}
+              <Card>
+                <CardContent className="p-0">
+                  {loadingLines ? (
+                    <div className="space-y-2 p-4">
+                      {Array.from({ length: 4 }).map((_, i) => (
+                        <Skeleton key={i} className="h-12 w-full" />
+                      ))}
+                    </div>
+                  ) : lines.length === 0 ? (
+                    <div className="p-4">
+                      <EmptyCard
+                        icon={RefreshCw}
+                        title="Belum ada line"
+                        description="Klik &ldquo;Recompute&rdquo; untuk generate line dari attendance periode ini."
+                      />
+                    </div>
+                  ) : (
+                    <PayrollLinesTable
+                      lines={lines}
+                      canManage={canManage}
+                      isPaid={selectedPeriod.status === "paid"}
+                      onEdit={(l) => setEditingLine(l)}
+                    />
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </div>
       </div>
 
       <CreatePeriodDialog
@@ -885,164 +915,341 @@ function EditLineDialog({
   );
 }
 
-function payrollLineColumns(): ResponsiveColumn<PayrollLineWithEmployee>[] {
-  return [
-    {
-      key: "employee",
-      label: "Karyawan",
-      primary: true,
-      render: (l) => {
-        const ptLabel =
-          l.employeePaymentType === "daily"
-            ? "Harian"
-            : l.employeePaymentType === "monthly"
-              ? "Bulanan"
-              : "Legacy";
-        const ptVariant =
-          l.employeePaymentType === "daily"
-            ? "info"
-            : l.employeePaymentType === "monthly"
-              ? "success"
-              : "neutral";
-        return (
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-medium text-neutral-900">
-                {l.employeeFullName}
-              </span>
-              <Badge variant={ptVariant}>{ptLabel}</Badge>
-            </div>
-            {l.employeePosition ? (
-              <div className="text-[10px] text-neutral-500">
-                {l.employeePosition}
-              </div>
+/* ============================================================
+ * Sesi AE-60 polish — PayrollStatsRow + PayrollLinesTable
+ *
+ * Custom layout untuk fix HR feedback "kurang rapih dan bocor":
+ * - Stat cards summary 4-up untuk visual hierarchy jelas
+ * - Tabel custom dengan sticky-left Karyawan + grouped columns
+ *   (Income vs Deduction) supaya 12+ kolom muat tanpa overlap
+ * ============================================================ */
+
+function PayrollStatsRow({ lines }: { lines: PayrollLineWithEmployee[] }) {
+  const totals = useMemo(() => {
+    const totalEmployees = lines.length;
+    let dailyCount = 0;
+    let monthlyCount = 0;
+    let totalGross = 0;
+    let totalDeductions = 0;
+    let totalNet = 0;
+    for (const l of lines) {
+      if (l.employeePaymentType === "daily") dailyCount++;
+      else monthlyCount++;
+      totalGross += l.grossPay;
+      totalDeductions += l.lateDeduction + l.advanceDeduction + l.otherDeductions;
+      totalNet += l.netPay;
+    }
+    return {
+      totalEmployees,
+      dailyCount,
+      monthlyCount,
+      totalGross,
+      totalDeductions,
+      totalNet,
+    };
+  }, [lines]);
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <PayrollStatCard
+        label="Karyawan"
+        value={String(totals.totalEmployees)}
+        sublabel={`${totals.dailyCount} harian · ${totals.monthlyCount} bulanan`}
+        tone="neutral"
+      />
+      <PayrollStatCard
+        label="Gross Pay"
+        value={formatRupiah(totals.totalGross)}
+        sublabel="Base + OT + Bonus + THR"
+        tone="info"
+      />
+      <PayrollStatCard
+        label="Total Deductions"
+        value={formatRupiah(totals.totalDeductions)}
+        sublabel="Telat + Kasbon + Other"
+        tone="warn"
+      />
+      <PayrollStatCard
+        label="Net Pay"
+        value={formatRupiah(totals.totalNet)}
+        sublabel="Yang akan dibayar"
+        tone="success"
+      />
+    </div>
+  );
+}
+
+function PayrollStatCard({
+  label,
+  value,
+  sublabel,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sublabel: string;
+  tone: "neutral" | "info" | "warn" | "success";
+}) {
+  const toneCls = {
+    neutral: "text-neutral-900",
+    info: "text-info-500",
+    warn: "text-warning-500",
+    success: "text-mahakan-green-700",
+  }[tone];
+  return (
+    <Card>
+      <CardContent className="px-4 py-3">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+          {label}
+        </p>
+        <p className={cn("mt-1 font-mono text-xl font-bold", toneCls)}>
+          {value}
+        </p>
+        <p className="mt-0.5 text-[11px] text-neutral-500">{sublabel}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PayrollLinesTable({
+  lines,
+  canManage,
+  isPaid,
+  onEdit,
+}: {
+  lines: PayrollLineWithEmployee[];
+  canManage: boolean;
+  isPaid: boolean;
+  onEdit: (l: PayrollLineWithEmployee) => void;
+}) {
+  const totalNet = lines.reduce((s, l) => s + l.netPay, 0);
+  const totalGross = lines.reduce((s, l) => s + l.grossPay, 0);
+  const totalDed = lines.reduce(
+    (s, l) => s + l.lateDeduction + l.advanceDeduction + l.otherDeductions,
+    0,
+  );
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead className="border-b border-neutral-200 bg-neutral-50">
+          {/* Group header row */}
+          <tr className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+            <th
+              className="sticky left-0 z-20 bg-neutral-50 px-3 py-1.5 text-left"
+              colSpan={2}
+              rowSpan={2}
+            >
+              Karyawan
+            </th>
+            <th className="px-2 py-1.5" colSpan={3}>
+              Attendance
+            </th>
+            <th
+              className="border-l border-neutral-200 bg-mahakan-green-50/50 px-2 py-1.5 text-mahakan-green-900"
+              colSpan={4}
+            >
+              Income
+            </th>
+            <th
+              className="border-l border-neutral-200 bg-warning-50/40 px-2 py-1.5 text-warning-500"
+              colSpan={3}
+            >
+              Deductions
+            </th>
+            <th
+              className="border-l border-neutral-200 px-2 py-1.5"
+              rowSpan={2}
+            >
+              Net
+            </th>
+            {canManage ? (
+              <th className="px-2 py-1.5 text-right" rowSpan={2}>
+                Aksi
+              </th>
             ) : null}
-          </div>
-        );
-      },
-    },
-    {
-      key: "workDays",
-      label: "Hari",
-      align: "right",
-      mono: true,
-      render: (l) => l.workDays,
-    },
-    {
-      key: "lateMinutes",
-      label: "Telat (m)",
-      align: "right",
-      mono: true,
-      desktopOnly: true,
-      render: (l) => l.totalLateMinutes,
-    },
-    {
-      key: "otMinutes",
-      label: "OT (m)",
-      align: "right",
-      mono: true,
-      desktopOnly: true,
-      render: (l) => l.totalOvertimeMinutes,
-    },
-    {
-      key: "base",
-      label: "Base",
-      align: "right",
-      mono: true,
-      render: (l) => {
-        const formula =
-          l.employeePaymentType === "daily" && l.employeeDailyRate
-            ? `Rp ${l.employeeDailyRate.toLocaleString("id-ID")} × ${l.workDays}`
-            : l.employeePaymentType === "monthly"
-              ? "Bulanan flat"
-              : "Legacy fallback";
-        return (
-          <div title={formula}>
-            <div>{formatRupiah(l.baseSalary)}</div>
-            <div className="text-[9px] text-neutral-400">{formula}</div>
-          </div>
-        );
-      },
-    },
-    {
-      key: "ot",
-      label: "OT",
-      align: "right",
-      mono: true,
-      desktopOnly: true,
-      render: (l) => formatRupiah(l.overtimePay),
-    },
-    {
-      key: "bonus",
-      label: "Bonus",
-      align: "right",
-      mono: true,
-      desktopOnly: true,
-      render: (l) => formatRupiah(l.bonus),
-    },
-    {
-      key: "thr",
-      label: "THR",
-      align: "right",
-      mono: true,
-      render: (l) => (
-        <span className={l.thr > 0 ? "text-info-500 font-semibold" : ""}>
-          {formatRupiah(l.thr)}
-        </span>
-      ),
-    },
-    {
-      key: "lateDed",
-      label: "- Telat",
-      align: "right",
-      mono: true,
-      desktopOnly: true,
-      render: (l) =>
-        l.lateDeduction > 0 ? (
-          <span className="text-danger-500">
-            -{formatRupiah(l.lateDeduction)}
-          </span>
-        ) : (
-          "—"
-        ),
-    },
-    {
-      key: "advanceDed",
-      label: "- Kasbon",
-      align: "right",
-      mono: true,
-      render: (l) =>
-        l.advanceDeduction > 0 ? (
-          <span className="text-warning-500">
-            -{formatRupiah(l.advanceDeduction)}
-          </span>
-        ) : (
-          "—"
-        ),
-    },
-    {
-      key: "otherDed",
-      label: "- Other",
-      align: "right",
-      mono: true,
-      desktopOnly: true,
-      render: (l) =>
-        l.otherDeductions > 0 ? (
-          <span className="text-danger-500">
-            -{formatRupiah(l.otherDeductions)}
-          </span>
-        ) : (
-          "—"
-        ),
-    },
-    {
-      key: "net",
-      label: "Net",
-      align: "right",
-      mono: true,
-      render: (l) => (
-        <span className="font-bold">{formatRupiah(l.netPay)}</span>
-      ),
-    },
-  ];
+          </tr>
+          {/* Sub header row */}
+          <tr className="text-[10px] uppercase tracking-wider text-neutral-500">
+            <th className="px-2 py-1.5 text-right font-medium">Hari</th>
+            <th className="px-2 py-1.5 text-right font-medium">Telat</th>
+            <th className="px-2 py-1.5 text-right font-medium">OT</th>
+            <th className="border-l border-neutral-200 bg-mahakan-green-50/30 px-2 py-1.5 text-right font-medium">
+              Base
+            </th>
+            <th className="bg-mahakan-green-50/30 px-2 py-1.5 text-right font-medium">
+              OT
+            </th>
+            <th className="bg-mahakan-green-50/30 px-2 py-1.5 text-right font-medium">
+              Bonus
+            </th>
+            <th className="bg-mahakan-green-50/30 px-2 py-1.5 text-right font-medium">
+              THR
+            </th>
+            <th className="border-l border-neutral-200 bg-warning-50/30 px-2 py-1.5 text-right font-medium">
+              Telat
+            </th>
+            <th className="bg-warning-50/30 px-2 py-1.5 text-right font-medium">
+              Kasbon
+            </th>
+            <th className="bg-warning-50/30 px-2 py-1.5 text-right font-medium">
+              Other
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-neutral-100">
+          {lines.map((l) => {
+            const ptLabel =
+              l.employeePaymentType === "daily"
+                ? "Harian"
+                : l.employeePaymentType === "monthly"
+                  ? "Bulanan"
+                  : "Legacy";
+            const ptVariant =
+              l.employeePaymentType === "daily"
+                ? "info"
+                : l.employeePaymentType === "monthly"
+                  ? "success"
+                  : "neutral";
+            const formula =
+              l.employeePaymentType === "daily" && l.employeeDailyRate
+                ? `Rp ${l.employeeDailyRate.toLocaleString("id-ID")} × ${l.workDays} hari`
+                : l.employeePaymentType === "monthly"
+                  ? "Bulanan flat"
+                  : "Legacy fallback";
+            return (
+              <tr key={l.id} className="hover:bg-neutral-50/50">
+                {/* Sticky left: nama + position */}
+                <td className="sticky left-0 z-10 bg-white px-3 py-2 hover:bg-neutral-50/50">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-semibold text-neutral-900">
+                      {l.employeeFullName}
+                    </span>
+                  </div>
+                  {l.employeePosition ? (
+                    <div className="text-[10px] text-neutral-500">
+                      {l.employeePosition}
+                    </div>
+                  ) : null}
+                </td>
+                {/* Type badge col */}
+                <td className="bg-white px-1 py-2">
+                  <Badge variant={ptVariant}>{ptLabel}</Badge>
+                </td>
+                {/* Attendance group */}
+                <td className="px-2 py-2 text-right font-mono">{l.workDays}</td>
+                <td className="px-2 py-2 text-right font-mono text-neutral-500">
+                  {l.totalLateMinutes}
+                </td>
+                <td className="px-2 py-2 text-right font-mono text-neutral-500">
+                  {l.totalOvertimeMinutes}
+                </td>
+                {/* Income group */}
+                <td className="border-l border-neutral-100 bg-mahakan-green-50/20 px-2 py-2 text-right font-mono">
+                  <div title={formula}>{formatRupiah(l.baseSalary)}</div>
+                  <div className="text-[9px] font-normal text-neutral-400">
+                    {formula}
+                  </div>
+                </td>
+                <td className="bg-mahakan-green-50/20 px-2 py-2 text-right font-mono">
+                  {l.overtimePay > 0 ? (
+                    formatRupiah(l.overtimePay)
+                  ) : (
+                    <span className="text-neutral-300">—</span>
+                  )}
+                </td>
+                <td className="bg-mahakan-green-50/20 px-2 py-2 text-right font-mono">
+                  {l.bonus > 0 ? (
+                    formatRupiah(l.bonus)
+                  ) : (
+                    <span className="text-neutral-300">—</span>
+                  )}
+                </td>
+                <td className="bg-mahakan-green-50/20 px-2 py-2 text-right font-mono">
+                  {l.thr > 0 ? (
+                    <span className="font-semibold text-info-500">
+                      {formatRupiah(l.thr)}
+                    </span>
+                  ) : (
+                    <span className="text-neutral-300">—</span>
+                  )}
+                </td>
+                {/* Deduction group */}
+                <td className="border-l border-neutral-100 bg-warning-50/20 px-2 py-2 text-right font-mono">
+                  {l.lateDeduction > 0 ? (
+                    <span className="text-danger-500">
+                      -{formatRupiah(l.lateDeduction)}
+                    </span>
+                  ) : (
+                    <span className="text-neutral-300">—</span>
+                  )}
+                </td>
+                <td className="bg-warning-50/20 px-2 py-2 text-right font-mono">
+                  {l.advanceDeduction > 0 ? (
+                    <span className="text-warning-500">
+                      -{formatRupiah(l.advanceDeduction)}
+                    </span>
+                  ) : (
+                    <span className="text-neutral-300">—</span>
+                  )}
+                </td>
+                <td className="bg-warning-50/20 px-2 py-2 text-right font-mono">
+                  {l.otherDeductions > 0 ? (
+                    <span className="text-danger-500">
+                      -{formatRupiah(l.otherDeductions)}
+                    </span>
+                  ) : (
+                    <span className="text-neutral-300">—</span>
+                  )}
+                </td>
+                {/* Net */}
+                <td className="border-l border-neutral-100 px-3 py-2 text-right font-mono font-bold text-neutral-900">
+                  {formatRupiah(l.netPay)}
+                </td>
+                {canManage ? (
+                  <td className="px-2 py-2 text-right">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => onEdit(l)}
+                      disabled={isPaid}
+                      aria-label={`Edit ${l.employeeFullName}`}
+                    >
+                      <Pencil className="size-3.5" aria-hidden />
+                    </Button>
+                  </td>
+                ) : null}
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot className="border-t-2 border-neutral-200 bg-neutral-50 text-[11px] font-semibold">
+          <tr>
+            <td
+              className="sticky left-0 z-10 bg-neutral-50 px-3 py-2 text-neutral-700"
+              colSpan={5}
+            >
+              TOTAL ({lines.length} karyawan)
+            </td>
+            <td
+              className="border-l border-neutral-200 bg-mahakan-green-50/30 px-2 py-2 text-right font-mono text-mahakan-green-900"
+              colSpan={4}
+            >
+              {formatRupiah(totalGross)}
+            </td>
+            <td
+              className="border-l border-neutral-200 bg-warning-50/30 px-2 py-2 text-right font-mono text-warning-500"
+              colSpan={3}
+            >
+              -{formatRupiah(totalDed)}
+            </td>
+            <td className="border-l border-neutral-200 px-3 py-2 text-right font-mono text-base font-bold text-neutral-900">
+              {formatRupiah(totalNet)}
+            </td>
+            {canManage ? <td></td> : null}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
 }
