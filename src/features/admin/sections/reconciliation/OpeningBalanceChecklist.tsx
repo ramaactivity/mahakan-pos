@@ -14,7 +14,7 @@ import {
   PiggyBank,
   Truck,
 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui";
+import { Card, CardContent, DatePicker } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 /**
@@ -250,18 +250,14 @@ export function OpeningBalanceChecklist() {
                     </div>
 
                     {isFirst ? (
-                      <div className="mt-3 flex items-center gap-2">
-                        <input
-                          type="date"
-                          value={state.trialStartDate}
-                          onChange={(e) => setTrialDate(e.target.value)}
-                          className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+                      <div className="mt-3 max-w-xs">
+                        <DatePicker
+                          value={state.trialStartDate || null}
+                          onChange={(v) => setTrialDate(v ?? "")}
+                          placeholder="Pilih tanggal trial"
+                          ariaLabel="Tanggal mulai trial"
+                          clearable
                         />
-                        {state.trialStartDate ? (
-                          <span className="text-xs text-neutral-500">
-                            Trial start: {state.trialStartDate}
-                          </span>
-                        ) : null}
                       </div>
                     ) : (
                       <div className="mt-3 rounded-md border border-neutral-200 bg-neutral-50 p-3">

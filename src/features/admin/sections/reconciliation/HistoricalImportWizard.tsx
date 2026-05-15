@@ -7,6 +7,7 @@ import {
   ArrowRight,
   CheckCircle2,
   Database,
+  Download,
   FileSpreadsheet,
   Loader2,
   Sliders,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import { Button, Card, CardContent, Input, toast } from "@/components/ui";
 import {
+  buildHistoricalSummaryTemplate,
   bulkImportHistoricalSummary,
   isOk,
   parseCsvLine,
@@ -242,16 +244,50 @@ function Step1Upload({
   onNext: () => void;
 }) {
   const [dragOver, setDragOver] = useState(false);
+
+  function downloadTemplate() {
+    const csv = buildHistoricalSummaryTemplate();
+    const blob = new Blob(["﻿" + csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `template-historis-mahakan-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <Card>
       <CardContent className="space-y-4 p-6">
-        <div>
-          <h2 className="text-base font-bold text-mahakan-green-900">
-            Step 1 — Upload CSV
-          </h2>
-          <p className="mt-1 text-sm text-neutral-600">
-            Pilih file CSV export dari Majoo/Kasir Pintar (atau buat manual via
-            Excel/Sheets, save as CSV). 1 baris = 1 hari penjualan.
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-mahakan-green-900">
+              Step 1 — Upload CSV
+            </h2>
+            <p className="mt-1 text-sm text-neutral-600">
+              Pilih file CSV export dari Majoo/Kasir Pintar (atau buat manual
+              via Excel/Sheets, save as CSV). 1 baris = 1 hari penjualan.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={downloadTemplate}
+            title="Download template kosong dengan kolom pre-mapped"
+          >
+            <Download className="size-4" aria-hidden /> Template CSV
+          </Button>
+        </div>
+
+        <div className="rounded-md border border-mahakan-green-300/40 bg-mahakan-green-50/30 p-3 text-xs text-neutral-700">
+          <p>
+            <strong>Tip:</strong> Klik &ldquo;Template CSV&rdquo; di kanan atas
+            untuk download file kosong dengan kolom yang sudah pre-mapped.
+            Buka di Excel/Google Sheets, isi data per hari, save as CSV, lalu
+            upload di sini. Mapping otomatis ke-detect tanpa perlu edit ulang.
           </p>
         </div>
 

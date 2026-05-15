@@ -403,6 +403,74 @@ export function parseHistoricalCsv(
   return { rows, warnings, errors };
 }
 
+/* -------------------------------------------------------------------------- */
+/* Template builder — generate CSV template untuk owner download              */
+/* -------------------------------------------------------------------------- */
+
+/** Sesi AE-62a — Header Mahakan-friendly + 3 baris contoh untuk Daily Summary.
+ *  Format konsisten dengan suggestColumnMapping (auto-detect saat re-upload). */
+export const HISTORICAL_SUMMARY_TEMPLATE_HEADERS = [
+  "Tanggal",
+  "Total Penjualan",
+  "Refund",
+  "Void",
+  "Diskon",
+  "Total Bersih",
+  "Jumlah Transaksi",
+  "HPP",
+  "Tunai",
+  "QRIS",
+  "EDC",
+  "Aggregator",
+] as const;
+
+export const HISTORICAL_EXPENSE_TEMPLATE_HEADERS = [
+  "Tanggal",
+  "Kategori",
+  "Jumlah",
+  "Keterangan",
+] as const;
+
+/** Template CSV pre-filled dengan header sesuai mapping internal + 3 baris
+ *  contoh data realistis. Owner buka di Excel, hapus baris contoh, isi data
+ *  asli, save as CSV. Header pre-mapped — auto-detect saat re-upload jalan
+ *  100% tanpa intervensi.
+ *
+ *  PENTING: tidak include line comments (#) supaya parse() tidak gagal kalau
+ *  owner lupa hapus. Cuma data yang valid. */
+export function buildHistoricalSummaryTemplate(): string {
+  const today = new Date();
+  const exampleDates = [0, 1, 2].map((daysBack) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - daysBack);
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    return `${dd}/${mm}/${d.getFullYear()}`;
+  });
+  // Header row + 3 contoh (Indonesian id-ID number: titik thousand)
+  const lines = [
+    HISTORICAL_SUMMARY_TEMPLATE_HEADERS.join(","),
+    `${exampleDates[0]},1.250.000,0,0,50.000,1.200.000,45,420.000,500.000,400.000,200.000,100.000`,
+    `${exampleDates[1]},1.800.000,30.000,0,0,1.770.000,60,620.000,800.000,600.000,300.000,70.000`,
+    `${exampleDates[2]},950.000,0,15.000,25.000,910.000,32,320.000,400.000,300.000,150.000,60.000`,
+  ];
+  return lines.join("\n");
+}
+
+export function buildHistoricalExpenseTemplate(): string {
+  const today = new Date();
+  const dd = String(today.getDate()).padStart(2, "0");
+  const mm = String(today.getMonth() + 1).padStart(2, "0");
+  const exampleDate = `${dd}/${mm}/${today.getFullYear()}`;
+  const lines = [
+    HISTORICAL_EXPENSE_TEMPLATE_HEADERS.join(","),
+    `${exampleDate},Listrik,750.000,Tagihan PLN bulan ini`,
+    `${exampleDate},Sewa Tempat,5.000.000,Sewa bulan Mei`,
+    `${exampleDate},Gaji Karyawan,15.000.000,Total payroll`,
+  ];
+  return lines.join("\n");
+}
+
 /** Detect gap antara dates terurut. Return list { from, to, days }. */
 export function detectGaps(
   dates: string[],

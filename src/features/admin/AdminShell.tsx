@@ -17,6 +17,7 @@ import { DashboardHome } from "@/features/admin/sections/DashboardHome";
 import { EmployeesSection } from "@/features/admin/sections/EmployeesSection";
 import { InventorySection } from "@/features/admin/sections/InventorySection";
 import { MenuSection } from "@/features/admin/sections/MenuSection";
+import { BalanceAccountSection } from "@/features/admin/sections/BalanceAccountSection";
 import { ReconciliationSection } from "@/features/admin/sections/ReconciliationSection";
 import { ReportsSection } from "@/features/admin/sections/ReportsSection";
 import { SettingsSection } from "@/features/admin/sections/SettingsSection";
@@ -78,6 +79,8 @@ export function AdminShell() {
           <AccountingSection viewerRole={session.user.role} />
         ) : section === "promos" ? (
           <PromoSection />
+        ) : section === "balance_account" ? (
+          <BalanceAccountSection />
         ) : section === "reconciliation" ? (
           <ReconciliationSection viewerRole={session.user.role} />
         ) : section === "reports" ? (

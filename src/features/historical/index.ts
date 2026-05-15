@@ -29,7 +29,11 @@ export {
 } from "./actions";
 
 export {
+  buildHistoricalExpenseTemplate,
+  buildHistoricalSummaryTemplate,
   detectGaps,
+  HISTORICAL_EXPENSE_TEMPLATE_HEADERS,
+  HISTORICAL_SUMMARY_TEMPLATE_HEADERS,
   parseCsvLine,
   parseDateTolerant,
   parseHistoricalCsv,

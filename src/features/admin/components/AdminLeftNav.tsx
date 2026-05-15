@@ -21,6 +21,7 @@ import {
   Wallet,
   Receipt,
   History,
+  Wallet as WalletIcon,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -41,6 +42,7 @@ export type AdminSection =
   | "setoran_tunai"
   | "finance"
   | "accounting"
+  | "balance_account"
   | "reconciliation"
   | "promos"
   | "reports"
@@ -114,6 +116,7 @@ const NAV_GROUPS: NavGroup[] = [
     heading: "Finance",
     items: [
       { key: "finance", label: "Keuangan", Icon: Banknote },
+      { key: "balance_account", label: "Saldo Akun", Icon: WalletIcon },
       { key: "accounting", label: "Akuntansi", Icon: BookOpen },
       { key: "reports", label: "Laporan", Icon: BarChart3 },
       { key: "reconciliation", label: "Rekonsiliasi", Icon: History },

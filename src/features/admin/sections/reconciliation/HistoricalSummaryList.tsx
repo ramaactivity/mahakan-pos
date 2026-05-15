@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   CardContent,
+  DateRangePicker,
   EmptyCard,
   Input,
   Modal,
@@ -94,29 +95,15 @@ export function HistoricalSummaryList({
     <div className="space-y-4 p-6">
       {/* Range filter */}
       <Card>
-        <CardContent className="flex flex-wrap items-end gap-3 p-4">
-          <div>
-            <label className="text-xs font-medium text-neutral-700">
-              Dari
-            </label>
-            <input
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              className="mt-1 block rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-neutral-700">
-              Sampai
-            </label>
-            <input
-              type="date"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              className="mt-1 block rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm"
-            />
-          </div>
+        <CardContent className="p-4">
+          <DateRangePicker
+            label="Range Tanggal"
+            value={{ from, to }}
+            onChange={(v) => {
+              if (v.from) setFrom(v.from);
+              if (v.to) setTo(v.to);
+            }}
+          />
         </CardContent>
       </Card>
 
