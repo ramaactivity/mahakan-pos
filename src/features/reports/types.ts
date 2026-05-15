@@ -341,3 +341,104 @@ export interface PurchaseRollupReport {
     total: number;
   }>;
 }
+
+// ============================================================================
+// Sesi AE-59 — Refund / Void / Compliment Report
+// ============================================================================
+
+export type RefundVoidComplimentKind =
+  | "refund_full"
+  | "refund_partial"
+  | "void"
+  | "compliment";
+
+export interface RefundVoidComplimentEvent {
+  /** refund_events.id ATAU transactions.id (untuk void/compliment). */
+  eventId: string;
+  kind: RefundVoidComplimentKind;
+  transactionId: string;
+  transactionNumber: string;
+  /** ISO timestamp. */
+  occurredAt: string;
+  cashierName: string | null;
+  customerName: string | null;
+  approverName: string | null;
+  reason: string | null;
+  /** Refund: refund_events.totalRefunded. Void: transaction.total. Compliment: discountAmount. */
+  amountImpact: number;
+  /** Sum item.cogs untuk compliment + partial refund. 0 untuk void (stock restored). */
+  cogsImpact: number;
+  itemCount: number;
+}
+
+export type RvcAnomalyType =
+  | "frequent_refund_kasir"
+  | "repeated_item_void"
+  | "compliment_burst"
+  | "integrity_mismatch";
+
+export type RvcAnomalySeverity = "info" | "warning" | "danger";
+
+export interface RvcAnomaly {
+  type: RvcAnomalyType;
+  severity: RvcAnomalySeverity;
+  message: string;
+}
+
+export interface RvcTotals {
+  refundFullCount: number;
+  refundFullAmount: number;
+  refundPartialCount: number;
+  refundPartialAmount: number;
+  voidCount: number;
+  voidAmount: number;
+  complimentCount: number;
+  complimentAmount: number;
+  complimentCogsImpact: number;
+  grandEventCount: number;
+  grandAmount: number;
+}
+
+export interface RefundVoidComplimentReport {
+  period: { from: string; to: string };
+  events: RefundVoidComplimentEvent[];
+  totals: RvcTotals;
+  anomalies: RvcAnomaly[];
+  /** True kalau hasil dipotong (>1000 events). */
+  truncated: boolean;
+}
+
+export interface RvcDetailItem {
+  itemName: string;
+  qty: number;
+  unitPrice: number;
+  amountImpact: number;
+  cogsAmount: number;
+}
+
+export interface RvcDetailAuditEntry {
+  eventType: string;
+  actor: string;
+  occurredAt: string;
+  summary: string;
+}
+
+export interface RvcInventoryImpact {
+  restored: boolean;
+  warning: string | null;
+}
+
+export interface RefundVoidComplimentDetail {
+  event: RefundVoidComplimentEvent;
+  items: RvcDetailItem[];
+  originalTransaction: {
+    transactionNumber: string;
+    total: number;
+    refundedAmount: number;
+    status: string;
+    closedAt: string;
+    paymentMethod: string;
+  };
+  auditTrail: RvcDetailAuditEntry[];
+  inventoryImpact: RvcInventoryImpact;
+}

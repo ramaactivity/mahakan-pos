@@ -9,6 +9,7 @@ import { MenuEngineeringView } from "./reports/MenuEngineeringView";
 import { PerBillView } from "./reports/PerBillView";
 import { PnlView } from "./reports/PnlView";
 import { PurchaseRollupView } from "./reports/PurchaseRollupView";
+import { RefundVoidComplimentView } from "./reports/RefundVoidComplimentView";
 import { SalesRangeView } from "./reports/SalesRangeView";
 import { TargetsView } from "./reports/TargetsView";
 import { TopCustomersView } from "./reports/TopCustomersView";
@@ -20,6 +21,7 @@ type ReportTab =
   | "range"
   | "closing_shift"
   | "per_bill"
+  | "refund_void"
   | "items"
   | "matrix"
   | "members"
@@ -50,6 +52,7 @@ const REPORT_GROUPS: ReportGroup[] = [
       { key: "range", label: "Mingguan/Bulanan" },
       { key: "closing_shift", label: "Closing Shift" },
       { key: "per_bill", label: "Per-Bill" },
+      { key: "refund_void", label: "Refund/Void/Komplimen" },
     ],
   },
   {
@@ -139,6 +142,8 @@ export function ReportsSection({ viewerRole }: ReportsSectionProps) {
           <ClosingShiftView />
         ) : tab === "per_bill" ? (
           <PerBillView />
+        ) : tab === "refund_void" ? (
+          <RefundVoidComplimentView />
         ) : tab === "items" ? (
           <ItemPerformanceView />
         ) : tab === "matrix" ? (

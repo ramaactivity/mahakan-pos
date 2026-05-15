@@ -13,6 +13,8 @@ import {
   fetchItemPerformance,
   fetchMenuEngineeringMatrix,
   fetchPnlReport,
+  fetchRefundVoidComplimentReport,
+  fetchRvcEventDetail,
   fetchSalesRangeReport,
 } from "./queries";
 import {
@@ -31,6 +33,9 @@ import {
   type MenuEngineeringResult,
   type PnlReport,
   type PurchaseRollupReport,
+  type RefundVoidComplimentDetail,
+  type RefundVoidComplimentKind,
+  type RefundVoidComplimentReport,
   type SalesRangeReport,
 } from "./types";
 import type { PaymentMethod } from "@/features/transactions";
@@ -255,5 +260,74 @@ export async function getPurchaseRollupReport(
   }
   return ok(
     await fetchPurchaseRollupReport(session.user.outletId, from, to),
+  );
+}
+
+/* Sesi AE-59 — Refund / Void / Compliment Report.
+ * Permission: report.sales.view (operational, semua role). */
+const RVC_KINDS: ReadonlyArray<RefundVoidComplimentKind> = [
+  "refund_full",
+  "refund_partial",
+  "void",
+  "compliment",
+];
+
+export async function getRefundVoidComplimentReport(
+  from: string,
+  to: string,
+  kindFilter?: RefundVoidComplimentKind[],
+): Promise<ApiResult<RefundVoidComplimentReport>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "report.sales.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat laporan penjualan");
+  }
+  if (!ISO_DATE.test(from) || !ISO_DATE.test(to)) {
+    return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
+  }
+  if (from > to) {
+    return fail("VALIDATION_ERROR", "Tanggal mulai > tanggal selesai");
+  }
+  const fromMs = new Date(`${from}T00:00:00+07:00`).getTime();
+  const toMs = new Date(`${to}T00:00:00+07:00`).getTime();
+  if (toMs - fromMs > 92 * 24 * 60 * 60 * 1000) {
+    return fail("VALIDATION_ERROR", "Range maksimal 92 hari");
+  }
+  // Validate kind enum jika kindFilter di-pass
+  if (kindFilter) {
+    for (const k of kindFilter) {
+      if (!RVC_KINDS.includes(k)) {
+        return fail("VALIDATION_ERROR", `Kind tidak valid: ${k}`);
+      }
+    }
+    if (kindFilter.length === 0) {
+      return fail("VALIDATION_ERROR", "Pilih min 1 jenis event");
+    }
+  }
+  return ok(
+    await fetchRefundVoidComplimentReport(
+      session.user.outletId,
+      from,
+      to,
+      kindFilter,
+    ),
+  );
+}
+
+export async function getRvcEventDetail(
+  eventId: string,
+  kind: RefundVoidComplimentKind,
+): Promise<ApiResult<RefundVoidComplimentDetail | null>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "report.sales.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat detail event");
+  }
+  if (!RVC_KINDS.includes(kind)) {
+    return fail("VALIDATION_ERROR", `Kind tidak valid: ${kind}`);
+  }
+  if (!eventId || typeof eventId !== "string") {
+    return fail("VALIDATION_ERROR", "Event ID wajib");
+  }
+  return ok(
+    await fetchRvcEventDetail(session.user.outletId, eventId, kind),
   );
 }

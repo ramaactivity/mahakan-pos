@@ -16,6 +16,17 @@ export type {
   MenuQuadrant,
   PaymentMethodBreakdown,
   PnlReport,
+  RefundVoidComplimentDetail,
+  RefundVoidComplimentEvent,
+  RefundVoidComplimentKind,
+  RefundVoidComplimentReport,
+  RvcAnomaly,
+  RvcAnomalyType,
+  RvcAnomalySeverity,
+  RvcDetailAuditEntry,
+  RvcDetailItem,
+  RvcInventoryImpact,
+  RvcTotals,
   SalesRangeReport,
   TopItem,
   HppReport,
@@ -35,12 +46,21 @@ export {
 } from "./bill-targets-pure";
 
 export {
+  computeRvcTotals,
+  detectRvcAnomalies,
+  inventoryWarningMicrocopy,
+  appendIntegrityMismatchAnomaly,
+} from "./refund-void-compliment-pure";
+
+export {
   getBillPerformanceReport,
   getClosingShiftReport,
   getDailySalesReport,
   getItemPerformance,
   getMenuEngineeringMatrix,
   getPnlReport,
+  getRefundVoidComplimentReport,
+  getRvcEventDetail,
   getSalesRangeReport,
   getHppReport,
   getPurchaseRollupReport,

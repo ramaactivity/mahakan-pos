@@ -1,12 +1,28 @@
 import "server-only";
-import { and, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  like,
+  lt,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 import { db } from "@/db";
 import {
+  auditLogs,
   customers,
   expenseCategories,
   expenses,
   incomes,
   menuItems,
+  refundEventItems,
+  refundEvents,
   shifts,
   transactionItems,
   transactions,
@@ -28,6 +44,12 @@ import type {
   MenuEngineeringResult,
   PaymentMethodBreakdown,
   PnlReport,
+  RefundVoidComplimentDetail,
+  RefundVoidComplimentEvent,
+  RefundVoidComplimentKind,
+  RefundVoidComplimentReport,
+  RvcDetailAuditEntry,
+  RvcDetailItem,
   SalesRangeReport,
   TopItem,
 } from "./types";
@@ -36,6 +58,12 @@ import {
   aggregateClosingShifts,
   computeBillStats,
 } from "./bill-targets-pure";
+import {
+  appendIntegrityMismatchAnomaly,
+  computeRvcTotals,
+  detectRvcAnomalies,
+  inventoryWarningMicrocopy,
+} from "./refund-void-compliment-pure";
 import type { PaymentMethod } from "@/features/transactions";
 
 export async function fetchDailySalesReport(
@@ -771,5 +799,564 @@ export async function fetchBillPerformance(
     buckets,
     rows,
     truncated,
+  };
+}
+
+// ============================================================================
+// Sesi AE-59 — Refund / Void / Compliment Report
+// ============================================================================
+
+const RVC_HARD_LIMIT = 1000;
+
+/**
+ * Unified query yang merge 3 sumber:
+ *   - refund_events (full + partial)
+ *   - transactions WHERE status='voided'
+ *   - transactions WHERE discountReason LIKE 'Compliment:%'
+ *
+ * Aggregate totals + detect anomalies + integrity check (sum refund_events
+ * per trx vs transactions.refundedAmount).
+ */
+export async function fetchRefundVoidComplimentReport(
+  outletId: string,
+  fromIso: string,
+  toIso: string,
+  kindFilter?: RefundVoidComplimentKind[],
+): Promise<RefundVoidComplimentReport> {
+  const fromUtc = startOfWibDateUtc(fromIso);
+  const toUtc = endOfWibDateUtc(toIso);
+
+  const includeRefund =
+    !kindFilter ||
+    kindFilter.includes("refund_full") ||
+    kindFilter.includes("refund_partial");
+  const includeVoid = !kindFilter || kindFilter.includes("void");
+  const includeCompliment = !kindFilter || kindFilter.includes("compliment");
+
+  /* Cashier (createdBy) + approver alias untuk join 2× users */
+  const cashier = alias(users, "cashier_user");
+  const approver = alias(users, "approver_user");
+
+  /* ---- Refund events ---- */
+  const refundEventsList: RefundVoidComplimentEvent[] = [];
+  if (includeRefund) {
+    const refundRows = await db
+      .select({
+        id: refundEvents.id,
+        transactionId: refundEvents.transactionId,
+        kind: refundEvents.kind,
+        totalRefunded: refundEvents.totalRefunded,
+        reason: refundEvents.reason,
+        createdAt: refundEvents.createdAt,
+        cashierName: cashier.name,
+        approverName: approver.name,
+        transactionNumber: transactions.transactionNumber,
+        customerName: transactions.customerName,
+      })
+      .from(refundEvents)
+      .innerJoin(transactions, eq(transactions.id, refundEvents.transactionId))
+      .leftJoin(cashier, eq(cashier.id, refundEvents.createdByUserId))
+      .leftJoin(approver, eq(approver.id, refundEvents.approverUserId))
+      .where(
+        and(
+          eq(refundEvents.outletId, outletId),
+          gte(refundEvents.createdAt, fromUtc),
+          lt(refundEvents.createdAt, toUtc),
+        ),
+      )
+      .orderBy(desc(refundEvents.createdAt));
+
+    // Count item lines + sum cogs per event (single batched query)
+    if (refundRows.length > 0) {
+      const eventIds = refundRows.map((r) => r.id);
+      const itemAgg = await db
+        .select({
+          refundEventId: refundEventItems.refundEventId,
+          itemCount: sql<number>`count(*)::int`,
+          cogsSum: sql<number>`coalesce(sum(${transactionItems.cogs}), 0)::bigint`,
+        })
+        .from(refundEventItems)
+        .leftJoin(
+          transactionItems,
+          eq(transactionItems.id, refundEventItems.transactionItemId),
+        )
+        .where(inArray(refundEventItems.refundEventId, eventIds))
+        .groupBy(refundEventItems.refundEventId);
+
+      const aggMap = new Map<string, { itemCount: number; cogsSum: number }>();
+      for (const r of itemAgg) {
+        aggMap.set(r.refundEventId, {
+          itemCount: Number(r.itemCount),
+          cogsSum: Number(r.cogsSum),
+        });
+      }
+
+      for (const r of refundRows) {
+        const agg = aggMap.get(r.id) ?? { itemCount: 0, cogsSum: 0 };
+        // Pro-rata COGS untuk partial refund: cogsSum sudah per refunded line
+        // (refund_event_items × transaction_items.cogs)
+        const totalRefunded = Number(r.totalRefunded);
+        const cogsImpact = r.kind === "partial" ? agg.cogsSum : 0;
+        refundEventsList.push({
+          eventId: r.id,
+          kind: r.kind === "full" ? "refund_full" : "refund_partial",
+          transactionId: r.transactionId,
+          transactionNumber: r.transactionNumber,
+          occurredAt: r.createdAt.toISOString(),
+          cashierName: r.cashierName,
+          customerName: r.customerName,
+          approverName: r.approverName,
+          reason: r.reason,
+          amountImpact: totalRefunded,
+          cogsImpact,
+          itemCount: agg.itemCount,
+        });
+      }
+    }
+  }
+
+  /* ---- Void transactions ---- */
+  const voidEventsList: RefundVoidComplimentEvent[] = [];
+  if (includeVoid) {
+    const voidRows = await db
+      .select({
+        id: transactions.id,
+        transactionNumber: transactions.transactionNumber,
+        total: transactions.total,
+        voidedAt: transactions.voidedAt,
+        voidReason: transactions.voidReason,
+        customerName: transactions.customerName,
+        cashierName: cashier.name,
+        approverName: approver.name,
+      })
+      .from(transactions)
+      .leftJoin(cashier, eq(cashier.id, transactions.voidedBy))
+      .leftJoin(approver, eq(approver.id, transactions.voidedApprover))
+      .where(
+        and(
+          eq(transactions.outletId, outletId),
+          eq(transactions.status, "voided"),
+          gte(transactions.voidedAt, fromUtc),
+          lt(transactions.voidedAt, toUtc),
+        ),
+      )
+      .orderBy(desc(transactions.voidedAt));
+
+    if (voidRows.length > 0) {
+      const trxIds = voidRows.map((r) => r.id);
+      const voidItemAgg = await db
+        .select({
+          transactionId: transactionItems.transactionId,
+          itemCount: sql<number>`count(*)::int`,
+        })
+        .from(transactionItems)
+        .where(inArray(transactionItems.transactionId, trxIds))
+        .groupBy(transactionItems.transactionId);
+      const cntMap = new Map<string, number>();
+      for (const r of voidItemAgg) cntMap.set(r.transactionId, Number(r.itemCount));
+
+      for (const r of voidRows) {
+        voidEventsList.push({
+          eventId: r.id,
+          kind: "void",
+          transactionId: r.id,
+          transactionNumber: r.transactionNumber,
+          occurredAt: (r.voidedAt ?? new Date()).toISOString(),
+          cashierName: r.cashierName,
+          customerName: r.customerName,
+          approverName: r.approverName,
+          reason: r.voidReason,
+          amountImpact: Number(r.total),
+          cogsImpact: 0, // stock already restored via void_restore movement
+          itemCount: cntMap.get(r.id) ?? 0,
+        });
+      }
+    }
+  }
+
+  /* ---- Compliment transactions (discountReason LIKE 'Compliment:%') ---- */
+  const complimentEventsList: RefundVoidComplimentEvent[] = [];
+  if (includeCompliment) {
+    const complimentRows = await db
+      .select({
+        id: transactions.id,
+        transactionNumber: transactions.transactionNumber,
+        subtotal: transactions.subtotal,
+        discountAmount: transactions.discountAmount,
+        discountReason: transactions.discountReason,
+        createdAt: transactions.createdAt,
+        customerName: transactions.customerName,
+        cashierName: cashier.name,
+        approverName: approver.name,
+      })
+      .from(transactions)
+      .leftJoin(cashier, eq(cashier.id, transactions.cashierId))
+      .leftJoin(approver, eq(approver.id, transactions.discountApprover))
+      .where(
+        and(
+          eq(transactions.outletId, outletId),
+          inArray(transactions.status, ["paid", "partially_refunded"]),
+          like(transactions.discountReason, "Compliment:%"),
+          gte(transactions.createdAt, fromUtc),
+          lt(transactions.createdAt, toUtc),
+        ),
+      )
+      .orderBy(desc(transactions.createdAt));
+
+    if (complimentRows.length > 0) {
+      const trxIds = complimentRows.map((r) => r.id);
+      const complimentItemAgg = await db
+        .select({
+          transactionId: transactionItems.transactionId,
+          itemCount: sql<number>`count(*)::int`,
+          cogsSum: sql<number>`coalesce(sum(${transactionItems.cogs}), 0)::bigint`,
+        })
+        .from(transactionItems)
+        .where(inArray(transactionItems.transactionId, trxIds))
+        .groupBy(transactionItems.transactionId);
+      const aggMap = new Map<string, { itemCount: number; cogsSum: number }>();
+      for (const r of complimentItemAgg) {
+        aggMap.set(r.transactionId, {
+          itemCount: Number(r.itemCount),
+          cogsSum: Number(r.cogsSum),
+        });
+      }
+
+      for (const r of complimentRows) {
+        const agg = aggMap.get(r.id) ?? { itemCount: 0, cogsSum: 0 };
+        complimentEventsList.push({
+          eventId: r.id,
+          kind: "compliment",
+          transactionId: r.id,
+          transactionNumber: r.transactionNumber,
+          occurredAt: r.createdAt.toISOString(),
+          cashierName: r.cashierName,
+          customerName: r.customerName,
+          approverName: r.approverName,
+          reason: r.discountReason,
+          amountImpact: Number(r.discountAmount),
+          cogsImpact: agg.cogsSum,
+          itemCount: agg.itemCount,
+        });
+      }
+    }
+  }
+
+  /* ---- Merge + sort desc + truncate ---- */
+  const allEvents = [
+    ...refundEventsList,
+    ...voidEventsList,
+    ...complimentEventsList,
+  ];
+  allEvents.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+  const truncated = allEvents.length > RVC_HARD_LIMIT;
+  const events = truncated ? allEvents.slice(0, RVC_HARD_LIMIT) : allEvents;
+
+  const totals = computeRvcTotals(events);
+  let anomalies = detectRvcAnomalies(events);
+
+  /* Integrity check: sum refund_events per trx == transactions.refundedAmount */
+  if (includeRefund && refundEventsList.length > 0) {
+    const trxIds = Array.from(
+      new Set(refundEventsList.map((r) => r.transactionId)),
+    );
+    const sumPerTrx = await db
+      .select({
+        transactionId: refundEvents.transactionId,
+        sumRefunded: sql<number>`coalesce(sum(${refundEvents.totalRefunded}), 0)::bigint`,
+      })
+      .from(refundEvents)
+      .where(inArray(refundEvents.transactionId, trxIds))
+      .groupBy(refundEvents.transactionId);
+    const trxRefundedRows = await db
+      .select({
+        id: transactions.id,
+        transactionNumber: transactions.transactionNumber,
+        refundedAmount: transactions.refundedAmount,
+      })
+      .from(transactions)
+      .where(inArray(transactions.id, trxIds));
+    const refundedMap = new Map<string, number>();
+    for (const r of sumPerTrx) refundedMap.set(r.transactionId, Number(r.sumRefunded));
+    const mismatched: string[] = [];
+    for (const t of trxRefundedRows) {
+      const sumEvents = refundedMap.get(t.id) ?? 0;
+      if (Number(t.refundedAmount) !== sumEvents) {
+        mismatched.push(t.transactionNumber);
+      }
+    }
+    anomalies = appendIntegrityMismatchAnomaly(anomalies, mismatched);
+  }
+
+  return {
+    period: { from: fromIso, to: toIso },
+    events,
+    totals,
+    anomalies,
+    truncated,
+  };
+}
+
+export async function fetchRvcEventDetail(
+  outletId: string,
+  eventId: string,
+  kind: RefundVoidComplimentKind,
+): Promise<RefundVoidComplimentDetail | null> {
+  const cashier = alias(users, "cashier_user");
+  const approver = alias(users, "approver_user");
+
+  let event: RefundVoidComplimentEvent | null = null;
+  let items: RvcDetailItem[] = [];
+  let originalTrxId: string | null = null;
+
+  if (kind === "refund_full" || kind === "refund_partial") {
+    const [r] = await db
+      .select({
+        id: refundEvents.id,
+        transactionId: refundEvents.transactionId,
+        kind: refundEvents.kind,
+        totalRefunded: refundEvents.totalRefunded,
+        reason: refundEvents.reason,
+        createdAt: refundEvents.createdAt,
+        cashierName: cashier.name,
+        approverName: approver.name,
+        transactionNumber: transactions.transactionNumber,
+        customerName: transactions.customerName,
+      })
+      .from(refundEvents)
+      .innerJoin(transactions, eq(transactions.id, refundEvents.transactionId))
+      .leftJoin(cashier, eq(cashier.id, refundEvents.createdByUserId))
+      .leftJoin(approver, eq(approver.id, refundEvents.approverUserId))
+      .where(
+        and(
+          eq(refundEvents.outletId, outletId),
+          eq(refundEvents.id, eventId),
+        ),
+      )
+      .limit(1);
+    if (!r) return null;
+
+    const itemRows = await db
+      .select({
+        itemName: transactionItems.itemName,
+        unitPrice: transactionItems.unitPrice,
+        cogs: transactionItems.cogs,
+        quantityRefunded: refundEventItems.quantityRefunded,
+        amountRefunded: refundEventItems.amountRefunded,
+      })
+      .from(refundEventItems)
+      .innerJoin(
+        transactionItems,
+        eq(transactionItems.id, refundEventItems.transactionItemId),
+      )
+      .where(eq(refundEventItems.refundEventId, eventId));
+
+    items = itemRows.map((it) => ({
+      itemName: it.itemName,
+      qty: Number(it.quantityRefunded),
+      unitPrice: Number(it.unitPrice),
+      amountImpact: Number(it.amountRefunded),
+      cogsAmount: it.cogs == null ? 0 : Number(it.cogs),
+    }));
+
+    event = {
+      eventId: r.id,
+      kind: r.kind === "full" ? "refund_full" : "refund_partial",
+      transactionId: r.transactionId,
+      transactionNumber: r.transactionNumber,
+      occurredAt: r.createdAt.toISOString(),
+      cashierName: r.cashierName,
+      customerName: r.customerName,
+      approverName: r.approverName,
+      reason: r.reason,
+      amountImpact: Number(r.totalRefunded),
+      cogsImpact: items.reduce((s, i) => s + i.cogsAmount, 0),
+      itemCount: items.length,
+    };
+    originalTrxId = r.transactionId;
+  } else {
+    // Void atau Compliment — eventId = transactionId
+    const [r] = await db
+      .select({
+        id: transactions.id,
+        transactionNumber: transactions.transactionNumber,
+        total: transactions.total,
+        subtotal: transactions.subtotal,
+        discountAmount: transactions.discountAmount,
+        discountReason: transactions.discountReason,
+        status: transactions.status,
+        voidedAt: transactions.voidedAt,
+        voidedBy: transactions.voidedBy,
+        voidedApprover: transactions.voidedApprover,
+        voidReason: transactions.voidReason,
+        discountApprover: transactions.discountApprover,
+        cashierId: transactions.cashierId,
+        createdAt: transactions.createdAt,
+        customerName: transactions.customerName,
+      })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.outletId, outletId),
+          eq(transactions.id, eventId),
+        ),
+      )
+      .limit(1);
+    if (!r) return null;
+
+    // Fetch cashier + approver names dengan ID yang tepat (void vs compliment beda field)
+    const cashierUserId = kind === "void" ? r.voidedBy : r.cashierId;
+    const approverUserId =
+      kind === "void" ? r.voidedApprover : r.discountApprover;
+    const userIds = [cashierUserId, approverUserId].filter(
+      (x): x is string => Boolean(x),
+    );
+    let cashierName: string | null = null;
+    let approverName: string | null = null;
+    if (userIds.length > 0) {
+      const userRows = await db
+        .select({ id: users.id, name: users.name })
+        .from(users)
+        .where(inArray(users.id, userIds));
+      for (const u of userRows) {
+        if (u.id === cashierUserId) cashierName = u.name;
+        if (u.id === approverUserId) approverName = u.name;
+      }
+    }
+
+    const itemRows = await db
+      .select({
+        itemName: transactionItems.itemName,
+        quantity: transactionItems.quantity,
+        unitPrice: transactionItems.unitPrice,
+        subtotal: transactionItems.subtotal,
+        cogs: transactionItems.cogs,
+      })
+      .from(transactionItems)
+      .where(eq(transactionItems.transactionId, r.id));
+
+    items = itemRows.map((it) => ({
+      itemName: it.itemName,
+      qty: Number(it.quantity),
+      unitPrice: Number(it.unitPrice),
+      amountImpact:
+        kind === "void"
+          ? Number(it.subtotal)
+          : // Compliment: items free (price = subtotal but customer pays 0)
+            Number(it.subtotal),
+      cogsAmount: it.cogs == null ? 0 : Number(it.cogs),
+    }));
+
+    if (kind === "void") {
+      event = {
+        eventId: r.id,
+        kind: "void",
+        transactionId: r.id,
+        transactionNumber: r.transactionNumber,
+        occurredAt: (r.voidedAt ?? r.createdAt).toISOString(),
+        cashierName,
+        customerName: r.customerName,
+        approverName,
+        reason: r.voidReason,
+        amountImpact: Number(r.total),
+        cogsImpact: 0,
+        itemCount: items.length,
+      };
+    } else {
+      // compliment
+      event = {
+        eventId: r.id,
+        kind: "compliment",
+        transactionId: r.id,
+        transactionNumber: r.transactionNumber,
+        occurredAt: r.createdAt.toISOString(),
+        cashierName,
+        customerName: r.customerName,
+        approverName,
+        reason: r.discountReason,
+        amountImpact: Number(r.discountAmount),
+        cogsImpact: items.reduce((s, i) => s + i.cogsAmount, 0),
+        itemCount: items.length,
+      };
+    }
+    originalTrxId = r.id;
+  }
+
+  if (!event || !originalTrxId) return null;
+
+  /* Fetch original transaction summary (untuk cross-reference) */
+  const [origTrx] = await db
+    .select({
+      transactionNumber: transactions.transactionNumber,
+      total: transactions.total,
+      refundedAmount: transactions.refundedAmount,
+      status: transactions.status,
+      createdAt: transactions.createdAt,
+      paymentMethod: transactions.paymentMethod,
+    })
+    .from(transactions)
+    .where(eq(transactions.id, originalTrxId))
+    .limit(1);
+
+  /* Audit trail (max 10 chronological entries) */
+  const auditRows = await db
+    .select({
+      eventType: auditLogs.eventType,
+      createdAt: auditLogs.createdAt,
+      payload: auditLogs.payload,
+      userName: users.name,
+    })
+    .from(auditLogs)
+    .leftJoin(users, eq(users.id, auditLogs.userId))
+    .where(
+      or(
+        eq(auditLogs.entityId, originalTrxId),
+        eq(auditLogs.entityId, event.eventId),
+      ),
+    )
+    .orderBy(auditLogs.createdAt)
+    .limit(10);
+
+  const auditTrail: RvcDetailAuditEntry[] = auditRows.map((r) => {
+    const payload = r.payload as Record<string, unknown> | null;
+    const summary =
+      payload && typeof payload === "object" && "summary" in payload
+        ? String(payload.summary)
+        : r.eventType;
+    return {
+      eventType: r.eventType,
+      actor: r.userName ?? "System",
+      occurredAt: r.createdAt.toISOString(),
+      summary,
+    };
+  });
+
+  const restored = event.kind === "void" || event.kind === "refund_full";
+
+  return {
+    event,
+    items,
+    originalTransaction: origTrx
+      ? {
+          transactionNumber: origTrx.transactionNumber,
+          total: Number(origTrx.total),
+          refundedAmount: Number(origTrx.refundedAmount),
+          status: origTrx.status,
+          closedAt: origTrx.createdAt.toISOString(),
+          paymentMethod: origTrx.paymentMethod,
+        }
+      : {
+          transactionNumber: event.transactionNumber,
+          total: 0,
+          refundedAmount: 0,
+          status: "unknown",
+          closedAt: event.occurredAt,
+          paymentMethod: "—",
+        },
+    auditTrail,
+    inventoryImpact: {
+      restored,
+      warning: inventoryWarningMicrocopy(event.kind),
+    },
   };
 }
