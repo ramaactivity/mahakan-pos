@@ -86,6 +86,44 @@ export function todayWibRangeUtc(): { from: string; to: string } {
 }
 
 /**
+ * Sesi AE-58 — Range tanggal kalender bulan WIB sebagai YYYY-MM-DD ISO
+ * dates (untuk dipakai di fetchHppReport yang accept dateFrom/dateTo string).
+ *
+ * Input: "YYYY-MM" (e.g., "2026-05")
+ * Output: { fromIso: "YYYY-MM-01", toIso: "YYYY-MM-LAST" } sesuai jumlah hari
+ *   bulan tersebut (28/29 Februari, 30/31 lainnya).
+ *
+ * Throw kalau format input invalid (defensive — caller harus pastikan).
+ */
+export function monthWibRangeUtc(yyyymm: string): {
+  fromIso: string;
+  toIso: string;
+} {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(yyyymm)) {
+    throw new Error(`monthWibRangeUtc: invalid format "${yyyymm}", expected YYYY-MM`);
+  }
+  const [yearStr, monthStr] = yyyymm.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  // new Date(Y, M, 0) → last day of month M (1-indexed in this idiom because
+  // M=5 means "month after April" → day 0 = last day of April; jadi pakai
+  // month tanpa -1 untuk dapat last day of target month).
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return {
+    fromIso: `${yyyymm}-01`,
+    toIso: `${yyyymm}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+/**
+ * Sesi AE-58 — Bulan kalender WIB hari ini ("YYYY-MM"). Default untuk
+ * month picker di Inventory monthly view.
+ */
+export function currentJakartaMonth(): string {
+  return toJakartaDateOnly(new Date()).slice(0, 7);
+}
+
+/**
  * Day-of-week key as used in OperationalHours JSONB ("mon"…"sun"), based on
  * WIB calendar day of the input date.
  */

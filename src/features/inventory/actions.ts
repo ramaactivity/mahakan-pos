@@ -14,8 +14,11 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { diffShallow, logAudit } from "@/lib/audit/logger";
+import { monthWibRangeUtc } from "@/lib/date";
 import { logAndSanitize } from "@/lib/server-error";
 import { computeNewStock, formatMovementDelta } from "@/lib/stock-decimal";
+import { fetchHppReport } from "@/features/reports/inventory-reports";
+import type { HppReportRow } from "@/features/reports";
 import {
   cascadeCostUpdate,
   detectCycleForRecipeUpsert,
@@ -150,6 +153,65 @@ export async function listMovements(
     return fail("FORBIDDEN", "Tidak punya hak lihat pergerakan stok");
   }
   return ok(await fetchMovements(session.user.outletId, opts));
+}
+
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/* Sesi AE-58 — Inventory Monthly Flow per ingredient (Stok Awal / Pembelian
+ * / Stok Akhir / HPP). Delegate ke fetchHppReport yang sudah handle opname +
+ * purchases + fallback partial flag. Caller (UI) yang group by section. */
+export async function getIngredientMonthlyFlow(
+  yyyymm: string,
+): Promise<ApiResult<HppReportRow[]>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.ingredient.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat pergerakan stok");
+  }
+  if (!MONTH_RE.test(yyyymm)) {
+    return fail("VALIDATION_ERROR", "Format bulan harus YYYY-MM");
+  }
+  try {
+    const { fromIso, toIso } = monthWibRangeUtc(yyyymm);
+    const report = await fetchHppReport(
+      session.user.outletId,
+      fromIso,
+      toIso,
+    );
+    return ok(report.rows);
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "inventory.monthly_flow", "Gagal memuat pergerakan"),
+    );
+  }
+}
+
+/* Sesi AE-58 — Movements list per ingredient untuk bulan tertentu (drill-down
+ * modal). Re-use fetchMovements yang sudah accept ingredientId + dateFrom/
+ * dateTo. Default limit 200 cukup untuk bulan typical (avg <50/bahan). */
+export async function getIngredientMovementsInMonth(
+  ingredientId: string,
+  yyyymm: string,
+): Promise<ApiResult<Paginated<MovementWithIngredient>>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "inventory.movement.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat pergerakan stok");
+  }
+  if (!MONTH_RE.test(yyyymm)) {
+    return fail("VALIDATION_ERROR", "Format bulan harus YYYY-MM");
+  }
+  const { fromIso, toIso } = monthWibRangeUtc(yyyymm);
+  // Convert WIB dates ke UTC Date objects (inclusive end)
+  const dateFrom = new Date(`${fromIso}T00:00:00+07:00`);
+  const dateTo = new Date(`${toIso}T23:59:59.999+07:00`);
+  return ok(
+    await fetchMovements(session.user.outletId, {
+      ingredientId,
+      dateFrom,
+      dateTo,
+      limit: 200,
+    }),
+  );
 }
 
 // ---------- Mutations: Ingredient CRUD ----------

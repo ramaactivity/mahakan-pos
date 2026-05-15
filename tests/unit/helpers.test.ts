@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { formatPercent, truncate } from "@/lib/format";
 import {
+  currentJakartaMonth,
   formatIndonesianDate,
   formatIndonesianDateTime,
   formatIndonesianTime,
   formatTransactionDatePart,
+  monthWibRangeUtc,
   toJakartaDate,
   toJakartaDateOnly,
 } from "@/lib/date";
@@ -86,6 +88,44 @@ describe("date.ts (WIB UTC+7)", () => {
 
   it("accepts ISO string input", () => {
     expect(formatIndonesianDate("2026-04-25T07:00:00Z")).toBe("25/04/2026");
+  });
+
+  describe("monthWibRangeUtc (sesi AE-58)", () => {
+    it("returns 1st and last day of regular month (May = 31 days)", () => {
+      const r = monthWibRangeUtc("2026-05");
+      expect(r.fromIso).toBe("2026-05-01");
+      expect(r.toIso).toBe("2026-05-31");
+    });
+
+    it("returns Feb 28 for non-leap year", () => {
+      const r = monthWibRangeUtc("2026-02");
+      expect(r.fromIso).toBe("2026-02-01");
+      expect(r.toIso).toBe("2026-02-28");
+    });
+
+    it("returns Feb 29 for leap year", () => {
+      const r = monthWibRangeUtc("2024-02");
+      expect(r.fromIso).toBe("2024-02-01");
+      expect(r.toIso).toBe("2024-02-29");
+    });
+
+    it("returns Apr 30 (30-day month)", () => {
+      const r = monthWibRangeUtc("2026-04");
+      expect(r.toIso).toBe("2026-04-30");
+    });
+
+    it("throws on invalid format", () => {
+      expect(() => monthWibRangeUtc("2026-5")).toThrow();
+      expect(() => monthWibRangeUtc("2026-13")).toThrow();
+      expect(() => monthWibRangeUtc("not-a-month")).toThrow();
+    });
+  });
+
+  describe("currentJakartaMonth (sesi AE-58)", () => {
+    it("returns YYYY-MM format string", () => {
+      const result = currentJakartaMonth();
+      expect(result).toMatch(/^\d{4}-(0[1-9]|1[0-2])$/);
+    });
   });
 });
 

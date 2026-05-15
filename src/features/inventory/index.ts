@@ -58,6 +58,8 @@ export {
   listPreparations,
   getIngredient,
   getPreparationRecipe,
+  getIngredientMonthlyFlow,
+  getIngredientMovementsInMonth,
   listLowStockIngredients,
   listMovements,
   createIngredient,
@@ -74,3 +76,11 @@ export {
   updateRecipe,
   deleteRecipe,
 } from "./actions";
+
+export {
+  classifyFlowStatus,
+  groupRowsBySection,
+  computeFlowTotals,
+  type FlowStatus,
+  type SectionGroup,
+} from "./monthly-flow-pure";

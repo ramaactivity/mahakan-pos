@@ -6,12 +6,17 @@ import { useDebouncedValue } from "@/lib/use-debounced-value";
 import {
   AlertTriangle,
   ArchiveX,
+  CalendarDays,
+  Download,
+  Eye,
+  LayoutGrid,
   Pencil,
   Plus,
   PackagePlus,
   Sliders,
   Tags,
   Trash2,
+  TrendingUp,
   X,
 } from "lucide-react";
 import {
@@ -29,7 +34,9 @@ import {
   useColumnSort,
 } from "@/components/ui";
 import {
+  computeFlowTotals,
   deleteIngredient,
+  getIngredientMonthlyFlow,
   isOk,
   listAtomicIngredients,
   listLowStockIngredients,
@@ -37,16 +44,21 @@ import {
   type IngredientSection,
   type SectionFilter,
 } from "@/features/inventory";
+import type { HppReportRow } from "@/features/reports";
 import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
+import { currentJakartaMonth } from "@/lib/date";
 import { formatRupiah } from "@/lib/format";
 import { formatStockQty } from "@/lib/stock-decimal";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "../reports/menu-engineering-csv";
 import { IngredientFormModal } from "./IngredientFormModal";
+import { IngredientMovementsModal } from "./IngredientMovementsModal";
 import { StockReceiveModal } from "./StockReceiveModal";
 import { StockAdjustModal } from "./StockAdjustModal";
 import { StockWasteModal } from "./StockWasteModal";
 import { SectionAssignModal } from "./SectionAssignModal";
+import { buildCogsCsv } from "./inventory-cogs-csv";
 
 const SECTION_FILTERS: Array<{ value: SectionFilter; label: string }> = [
   { value: "all", label: "Semua" },
@@ -106,6 +118,15 @@ export function IngredientsList() {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [lowOnly, setLowOnly] = useState(false);
 
+  /* Sesi AE-58 — view mode toggle: snapshot (default) vs pergerakan bulanan
+   * (Stok Awal + Pembelian + Stok Akhir + HPP per bahan). Source data dari
+   * fetchHppReport yang sudah ready, dipakai juga di tab Reports → HPP. */
+  const [viewMode, setViewMode] = useState<"snapshot" | "monthly">("snapshot");
+  const [monthYmd, setMonthYmd] = useState<string>(currentJakartaMonth());
+  const [movementsTarget, setMovementsTarget] = useState<Ingredient | null>(
+    null,
+  );
+
   const {
     data: ingredientsData,
     isLoading: ingredientsLoading,
@@ -135,6 +156,28 @@ export function IngredientsList() {
       return res.data;
     },
   });
+
+  /* Sesi AE-58 — fetch monthly flow hanya kalau viewMode aktif, hemat
+   * round-trip saat snapshot mode. Stale 30s biar refresh enak. */
+  const { data: monthlyFlow, isLoading: monthlyLoading } = useQuery({
+    queryKey: ["admin", "inventory", "monthly-flow", monthYmd],
+    queryFn: async () => {
+      const res = await getIngredientMonthlyFlow(monthYmd);
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+    enabled: viewMode === "monthly",
+    staleTime: 30 * 1000,
+  });
+  const monthlyByIng = useMemo(() => {
+    const m = new Map<string, HppReportRow>();
+    if (monthlyFlow) for (const r of monthlyFlow) m.set(r.ingredientId, r);
+    return m;
+  }, [monthlyFlow]);
+  const monthlyTotals = useMemo(
+    () => (monthlyFlow ? computeFlowTotals(monthlyFlow) : null),
+    [monthlyFlow],
+  );
 
   // useMemo to keep stable reference across renders — TanStack Query
   // returns a new array reference each time the query refetches, even if
@@ -261,12 +304,96 @@ export function IngredientsList() {
             update via Terima / Adjust / Waste, otomatis terkurang dari sales.
           </p>
         </div>
-        {canCreate ? (
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus className="size-4" aria-hidden /> Tambah Bahan
-          </Button>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Sesi AE-58 — view mode toggle Snapshot ↔ Pergerakan Bulan */}
+          <div
+            role="tablist"
+            aria-label="Tampilan tabel"
+            className="inline-flex rounded-md border border-neutral-200 bg-white p-0.5 text-xs"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === "snapshot"}
+              onClick={() => setViewMode("snapshot")}
+              className={cn(
+                "rounded px-2.5 py-1 font-medium transition-colors",
+                viewMode === "snapshot"
+                  ? "bg-mahakan-green-700 text-white"
+                  : "text-neutral-600 hover:bg-neutral-100",
+              )}
+            >
+              <LayoutGrid className="mr-1 inline size-3" />
+              Snapshot
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === "monthly"}
+              onClick={() => setViewMode("monthly")}
+              className={cn(
+                "rounded px-2.5 py-1 font-medium transition-colors",
+                viewMode === "monthly"
+                  ? "bg-mahakan-green-700 text-white"
+                  : "text-neutral-600 hover:bg-neutral-100",
+              )}
+            >
+              <TrendingUp className="mr-1 inline size-3" />
+              Pergerakan Bulan
+            </button>
+          </div>
+          {viewMode === "monthly" ? (
+            <>
+              <div className="flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
+                <CalendarDays className="size-3 text-neutral-500" />
+                <input
+                  type="month"
+                  value={monthYmd}
+                  onChange={(e) =>
+                    setMonthYmd(e.target.value || currentJakartaMonth())
+                  }
+                  className="bg-transparent outline-none"
+                />
+              </div>
+              {monthlyFlow && monthlyFlow.length > 0 ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const csv = buildCogsCsv(monthlyFlow, monthYmd);
+                    downloadCsv(`cogs-${monthYmd}.csv`, csv);
+                    toast.success(`Export COGS ${monthYmd}`);
+                  }}
+                >
+                  <Download className="size-3.5" /> CSV
+                </Button>
+              ) : null}
+            </>
+          ) : null}
+          {canCreate ? (
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" aria-hidden /> Tambah Bahan
+            </Button>
+          ) : null}
+        </div>
       </header>
+
+      {/* Sesi AE-58 — partial baseline banner (monthly mode) */}
+      {viewMode === "monthly" && monthlyTotals && monthlyTotals.partialCount > 0 ? (
+        <div className="flex items-start gap-2 rounded-md border border-warning-500/40 bg-warning-100/30 p-3 text-sm text-warning-500">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <div className="flex-1">
+            <p className="font-semibold">
+              {monthlyTotals.partialCount} dari {monthlyTotals.rowCount} bahan
+              belum punya opname awal bulan
+            </p>
+            <p className="text-xs">
+              Pergerakan jadi perkiraan — Stok Akhir pakai stok saat ini
+              (bukan opname). Buat opname akhir bulan ini agar angka HPP akurat.
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       {/* Sesi AE-52 — dashboard cards 4-metric overview supaya owner
        * langsung scan kondisi stok tanpa scroll. */}
@@ -494,6 +621,19 @@ export function IngredientsList() {
                 </p>
               )}
             </div>
+          ) : viewMode === "monthly" ? (
+            <MonthlyFlowTable
+              visible={visible}
+              monthlyByIng={monthlyByIng}
+              monthlyLoading={monthlyLoading}
+              monthlyTotals={monthlyTotals}
+              onDrillDown={(ing) => setMovementsTarget(ing)}
+              canReceive={canReceive}
+              canAdjust={canAdjust}
+              canWaste={canWaste}
+              canDelete={canDelete}
+              setTarget={setTarget}
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -764,6 +904,16 @@ export function IngredientsList() {
         }}
       />
 
+      {/* Sesi AE-58 — drill-down modal pergerakan stok per bahan per bulan */}
+      <IngredientMovementsModal
+        ingredient={movementsTarget}
+        monthYmd={monthYmd}
+        flowRow={
+          movementsTarget ? (monthlyByIng.get(movementsTarget.id) ?? null) : null
+        }
+        onClose={() => setMovementsTarget(null)}
+      />
+
       {canBulkAssign && selectedIds.size > 0 ? (
         <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full bg-mahakan-green-900 px-4 py-2 text-sm text-white shadow-lg">
           <span className="font-medium">
@@ -875,4 +1025,271 @@ function InventoryStat({
     );
   }
   return content;
+}
+
+/* ============================================================
+ * Sesi AE-58 — Monthly Flow Table
+ *
+ * Kolom: Bahan | Stok Awal (qty/Rp) | Pembelian (qty/Rp) | Stok Akhir (qty/Rp)
+ *      | Pemakaian (HPP qty) | Nilai HPP (Rp) | Status | Aksi
+ *
+ * Source: monthlyByIng (HppReportRow per ingredientId). Bahan tanpa data
+ * di map fallback ke placeholder zero row.
+ * ============================================================ */
+function MonthlyFlowTable({
+  visible,
+  monthlyByIng,
+  monthlyLoading,
+  monthlyTotals,
+  onDrillDown,
+  canReceive,
+  canAdjust,
+  canWaste,
+  canDelete,
+  setTarget,
+}: {
+  visible: Ingredient[];
+  monthlyByIng: Map<string, HppReportRow>;
+  monthlyLoading: boolean;
+  monthlyTotals: ReturnType<typeof computeFlowTotals> | null;
+  onDrillDown: (ing: Ingredient) => void;
+  canReceive: boolean;
+  canAdjust: boolean;
+  canWaste: boolean;
+  canDelete: boolean;
+  setTarget: (t: ActionTarget) => void;
+}) {
+  if (monthlyLoading) {
+    return (
+      <div className="space-y-2 p-4" role="status" aria-label="Memuat pergerakan">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Skeleton key={i} className="h-12 w-full" />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead className="border-b border-neutral-200 bg-neutral-50 text-[10px] uppercase tracking-wider text-neutral-500">
+          <tr>
+            <th className="sticky left-0 z-10 bg-neutral-50 px-3 py-2 text-left font-medium">
+              Bahan
+            </th>
+            <th className="px-3 py-2 text-right font-medium">Stok Awal</th>
+            <th className="px-3 py-2 text-right font-medium">Pembelian</th>
+            <th className="px-3 py-2 text-right font-medium">Stok Akhir</th>
+            <th className="px-3 py-2 text-right font-medium">Pemakaian</th>
+            <th className="px-3 py-2 text-right font-medium">Nilai HPP</th>
+            <th className="px-3 py-2 text-center font-medium">Status</th>
+            <th className="px-3 py-2 text-right font-medium">Aksi</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-neutral-100">
+          {visible.map((ing) => {
+            const row = monthlyByIng.get(ing.id);
+            const status: "accurate" | "partial" | "no_baseline" = !row
+              ? "no_baseline"
+              : !row.partial
+                ? "accurate"
+                : row.stockAwalQty === 0 && row.pembelianQty === 0
+                  ? "no_baseline"
+                  : "partial";
+            const statusBadge = {
+              accurate: {
+                cls: "bg-mahakan-green-50 text-mahakan-green-900",
+                label: "Akurat",
+              },
+              partial: {
+                cls: "bg-warning-50 text-warning-500",
+                label: "Partial",
+              },
+              no_baseline: {
+                cls: "bg-danger-100 text-danger-500",
+                label: "No baseline",
+              },
+            }[status];
+            const sectionInfo = ing.section ? SECTION_BADGE[ing.section] : null;
+            return (
+              <tr key={ing.id} className="hover:bg-neutral-50">
+                <td className="sticky left-0 z-10 bg-white px-3 py-2 hover:bg-neutral-50">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium text-neutral-900">
+                      {ing.name}
+                    </span>
+                    {sectionInfo ? (
+                      <Badge variant={sectionInfo.variant}>
+                        {sectionInfo.label}
+                      </Badge>
+                    ) : null}
+                  </div>
+                </td>
+                <FlowQtyCell
+                  qty={row?.stockAwalQty ?? 0}
+                  cost={row?.stockAwalCost ?? 0}
+                  unit={ing.unit}
+                />
+                <FlowQtyCell
+                  qty={row?.pembelianQty ?? 0}
+                  cost={row?.pembelianCost ?? 0}
+                  unit={ing.unit}
+                  emphasize={(row?.pembelianQty ?? 0) > 0}
+                />
+                <FlowQtyCell
+                  qty={row?.stockAkhirQty ?? 0}
+                  cost={row?.stockAkhirCost ?? 0}
+                  unit={ing.unit}
+                />
+                <FlowQtyCell
+                  qty={row?.hppQty ?? 0}
+                  cost={row?.hppCost ?? 0}
+                  unit={ing.unit}
+                  emphasize={(row?.hppQty ?? 0) > 0}
+                />
+                <td className="px-3 py-2 text-right font-mono font-semibold text-neutral-900">
+                  {formatRupiah(row?.hppCost ?? 0)}
+                </td>
+                <td className="px-3 py-2 text-center">
+                  <span
+                    className={cn(
+                      "inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                      statusBadge.cls,
+                    )}
+                  >
+                    {statusBadge.label}
+                  </span>
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex items-center justify-end gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      title="Lihat pergerakan"
+                      aria-label="Detail pergerakan"
+                      onClick={() => onDrillDown(ing)}
+                    >
+                      <Eye className="size-3.5" />
+                    </Button>
+                    {canReceive && ing.isActive ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Terima stok"
+                        onClick={() =>
+                          setTarget({ kind: "receive", ingredient: ing })
+                        }
+                      >
+                        <PackagePlus className="size-3.5" />
+                      </Button>
+                    ) : null}
+                    {canAdjust && ing.isActive ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Adjust stok"
+                        onClick={() =>
+                          setTarget({ kind: "adjust", ingredient: ing })
+                        }
+                      >
+                        <Sliders className="size-3.5" />
+                      </Button>
+                    ) : null}
+                    {canWaste && ing.isActive ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Waste"
+                        onClick={() =>
+                          setTarget({ kind: "waste", ingredient: ing })
+                        }
+                      >
+                        <ArchiveX className="size-3.5" />
+                      </Button>
+                    ) : null}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      title="Edit"
+                      onClick={() =>
+                        setTarget({ kind: "edit", ingredient: ing })
+                      }
+                    >
+                      <Pencil className="size-3.5" />
+                    </Button>
+                    {canDelete && ing.isActive ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Hapus"
+                        onClick={() =>
+                          setTarget({ kind: "delete", ingredient: ing })
+                        }
+                        className="text-danger-500 hover:bg-danger-100"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    ) : null}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        {monthlyTotals && monthlyTotals.rowCount > 0 ? (
+          <tfoot className="border-t border-neutral-200 bg-neutral-50 text-[11px] font-semibold text-neutral-700">
+            <tr>
+              <td className="sticky left-0 z-10 bg-neutral-50 px-3 py-2">
+                TOTAL ({monthlyTotals.rowCount} bahan)
+              </td>
+              <td className="px-3 py-2 text-right font-mono">
+                {formatRupiah(monthlyTotals.stockAwalCost)}
+              </td>
+              <td className="px-3 py-2 text-right font-mono">
+                {formatRupiah(monthlyTotals.pembelianCost)}
+              </td>
+              <td className="px-3 py-2 text-right font-mono">
+                {formatRupiah(monthlyTotals.stockAkhirCost)}
+              </td>
+              <td className="px-3 py-2 text-right text-neutral-500">—</td>
+              <td className="px-3 py-2 text-right font-mono text-neutral-900">
+                {formatRupiah(monthlyTotals.hppCost)}
+              </td>
+              <td colSpan={2}></td>
+            </tr>
+          </tfoot>
+        ) : null}
+      </table>
+    </div>
+  );
+}
+
+function FlowQtyCell({
+  qty,
+  cost,
+  unit,
+  emphasize,
+}: {
+  qty: number;
+  cost: number;
+  unit: string;
+  emphasize?: boolean;
+}) {
+  return (
+    <td className="px-3 py-2 text-right">
+      <div
+        className={cn(
+          "font-mono",
+          qty === 0
+            ? "text-neutral-400"
+            : emphasize
+              ? "text-mahakan-green-700 font-semibold"
+              : "text-neutral-900",
+        )}
+      >
+        {qty.toLocaleString("id-ID", { maximumFractionDigits: 2 })}{" "}
+        <span className="text-[10px] text-neutral-500">{unit}</span>
+      </div>
+      <div className="text-[10px] text-neutral-500">{formatRupiah(cost)}</div>
+    </td>
+  );
 }
