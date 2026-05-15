@@ -101,6 +101,13 @@ const DAY_STATUS_STYLE: Record<
     cellClass: "bg-danger-100 text-danger-500 border-danger-500/30",
     legend: "Alpa",
   },
+  // Sesi AE-61 — jadwal masa depan, belum dianggap alpa.
+  upcoming: {
+    label: "·",
+    cellClass:
+      "bg-mahakan-green-50/40 text-mahakan-green-700 border-dashed border-mahakan-green-300",
+    legend: "Belum Tiba",
+  },
   kosong: {
     label: "—",
     cellClass: "bg-white text-neutral-400 border-neutral-200",

@@ -44,6 +44,7 @@ import {
   isOk as isOutletOk,
   updateScheduleTemplates,
 } from "@/features/outlets";
+import { toJakartaDateOnly } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
 const DAYS_OF_WEEK = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
@@ -94,35 +95,52 @@ type RangeMode = "week" | "month";
 
 /** Sesi AE-23 — status → cell style. Konsisten dengan HR Calendar
  *  (HrReportsSection). Owner request: tabel Jadwal-style dengan cells
- *  berisi historis absen (Hadir/Telat/Off/Alpa). */
+ *  berisi historis absen (Hadir/Telat/Off/Alpa).
+ *
+ *  Sesi AE-61 — tambah status `upcoming` (jadwal masa depan, belum bisa
+ *  dianggap alpa). Cell visual: outlined dashed indigo supaya jelas
+ *  "menunggu" tapi tidak alarming seperti merah alpa.
+ */
 const ATTENDANCE_STYLE: Record<
   AttendanceDayStatus,
-  { label: string; cellClass: string; legend: string }
+  { label: string; cellClass: string; legend: string; description: string }
 > = {
   hadir: {
     label: "H",
-    cellClass: "border-success-500/40 bg-success-100/60 text-success-500",
+    cellClass: "border-success-500/40 bg-success-100/60 text-success-700",
     legend: "Hadir",
+    description: "Karyawan sudah clock-in tepat waktu",
   },
   telat: {
     label: "T",
-    cellClass: "border-warning-500/40 bg-warning-100/60 text-warning-500",
+    cellClass: "border-warning-500/40 bg-warning-100/60 text-warning-700",
     legend: "Telat",
+    description: "Clock-in lewat jam shift mulai",
   },
   off: {
     label: "Off",
     cellClass: "border-neutral-200 bg-neutral-100 text-neutral-600",
     legend: "Libur",
+    description: "Hari libur (di-set OFF di jadwal)",
   },
   alpa: {
     label: "A",
-    cellClass: "border-danger-500/40 bg-danger-100/60 text-danger-500",
+    cellClass: "border-danger-500/40 bg-danger-100/60 text-danger-700",
     legend: "Alpa",
+    description: "Ada jadwal kerja tapi tidak ada clock-in",
+  },
+  upcoming: {
+    label: "·",
+    cellClass:
+      "border-dashed border-mahakan-green-300 bg-mahakan-green-50/40 text-mahakan-green-700",
+    legend: "Belum Tiba",
+    description: "Jadwal kerja, tanggalnya masih di masa depan",
   },
   kosong: {
     label: "—",
     cellClass: "border-neutral-200 bg-white text-neutral-400",
-    legend: "Tanpa Schedule",
+    legend: "Tanpa Jadwal",
+    description: "Tidak ada jadwal yang ter-assign",
   },
 };
 
@@ -242,6 +260,54 @@ export function SchedulesSection() {
     }
     return m;
   }, [attendance]);
+
+  // Sesi AE-61 — today WIB untuk highlight kolom + boundary upcoming.
+  const todayIso = useMemo(() => toJakartaDateOnly(new Date()), []);
+
+  // Sesi AE-61 — stats summary untuk attendance view (4 metric cards
+  // di atas tabel). Compute sekali per attendance load.
+  const attendanceStats = useMemo(() => {
+    const empty = {
+      hadir: 0,
+      telat: 0,
+      alpa: 0,
+      off: 0,
+      upcoming: 0,
+      totalScheduledPast: 0,
+      totalLateMinutes: 0,
+      totalWorkMinutes: 0,
+      totalOvertimeMinutes: 0,
+    };
+    if (!attendance) return empty;
+    const s = { ...empty };
+    for (const row of attendance.rows) {
+      for (const cell of Object.values(row.days)) {
+        if (cell.status === "hadir") s.hadir++;
+        else if (cell.status === "telat") s.telat++;
+        else if (cell.status === "alpa") s.alpa++;
+        else if (cell.status === "off") s.off++;
+        else if (cell.status === "upcoming") s.upcoming++;
+        if (
+          cell.status === "hadir" ||
+          cell.status === "telat" ||
+          cell.status === "alpa"
+        ) {
+          s.totalScheduledPast++;
+        }
+        s.totalLateMinutes += cell.lateMinutes ?? 0;
+        s.totalWorkMinutes += cell.workMinutes ?? 0;
+        s.totalOvertimeMinutes += cell.overtimeMinutes ?? 0;
+      }
+    }
+    return s;
+  }, [attendance]);
+  const attendanceRate = attendanceStats.totalScheduledPast > 0
+    ? Math.round(
+        ((attendanceStats.hadir + attendanceStats.telat) /
+          attendanceStats.totalScheduledPast) *
+          100,
+      )
+    : null;
 
   function refresh() {
     /* Sesi AE-51 — bug fix: dulu cuma invalidate "schedules" → Edit Jadwal
@@ -410,13 +476,16 @@ export function SchedulesSection() {
           </button>
         </div>
         {viewMode === "attendance" ? (
-          <div className="ml-auto flex flex-wrap gap-2 text-xs">
-            {(["hadir", "telat", "off", "alpa", "kosong"] as const).map((s) => {
+          <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+            {(
+              ["hadir", "telat", "alpa", "upcoming", "off", "kosong"] as const
+            ).map((s) => {
               const meta = ATTENDANCE_STYLE[s];
               return (
                 <span
                   key={s}
-                  className="inline-flex items-center gap-1 text-neutral-700"
+                  className="inline-flex items-center gap-1.5 text-neutral-700"
+                  title={meta.description}
                 >
                   <span
                     className={cn(
@@ -426,13 +495,70 @@ export function SchedulesSection() {
                   >
                     {meta.label}
                   </span>
-                  {meta.legend}
+                  <span className="font-medium">{meta.legend}</span>
                 </span>
               );
             })}
           </div>
         ) : null}
       </div>
+
+      {/* Sesi AE-61 — stats summary cards. Tampil di Historis Absen view
+        * supaya HR langsung lihat metrik penting tanpa hitung manual cell. */}
+      {viewMode === "attendance" && !loading && attendance ? (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            label="Tingkat Kehadiran"
+            value={
+              attendanceRate !== null ? `${attendanceRate}%` : "—"
+            }
+            tone={
+              attendanceRate === null
+                ? "neutral"
+                : attendanceRate >= 90
+                  ? "success"
+                  : attendanceRate >= 75
+                    ? "warning"
+                    : "danger"
+            }
+            hint={
+              attendanceStats.totalScheduledPast > 0
+                ? `${attendanceStats.hadir + attendanceStats.telat} hadir dari ${attendanceStats.totalScheduledPast} jadwal kerja (sampai hari ini)`
+                : "Belum ada jadwal kerja yang lewat di range ini"
+            }
+          />
+          <StatCard
+            label="Telat"
+            value={String(attendanceStats.telat)}
+            tone={attendanceStats.telat > 0 ? "warning" : "neutral"}
+            hint={
+              attendanceStats.totalLateMinutes > 0
+                ? `Total ${formatDuration(attendanceStats.totalLateMinutes)} keterlambatan`
+                : "Belum ada keterlambatan"
+            }
+          />
+          <StatCard
+            label="Alpa"
+            value={String(attendanceStats.alpa)}
+            tone={attendanceStats.alpa > 0 ? "danger" : "neutral"}
+            hint={
+              attendanceStats.alpa > 0
+                ? "Jadwal kerja tanpa clock-in di tanggal yang sudah lewat"
+                : "Tidak ada alpa di range ini"
+            }
+          />
+          <StatCard
+            label="Akan Datang"
+            value={String(attendanceStats.upcoming)}
+            tone="info"
+            hint={
+              attendanceStats.upcoming > 0
+                ? "Jadwal kerja di tanggal masa depan (belum bisa dinilai)"
+                : "Tidak ada jadwal di masa depan dalam range ini"
+            }
+          />
+        </div>
+      ) : null}
 
       <Card>
         <CardContent className="px-0">
@@ -479,17 +605,35 @@ export function SchedulesSection() {
                         <th className="sticky left-0 z-10 bg-neutral-50 px-4 py-2">
                           Karyawan
                         </th>
-                        {wkDates.map((d, i) => (
-                          <th key={i} className="px-3 py-2 text-center">
-                            <div>{DAYS_OF_WEEK[i]}</div>
-                            <div className="font-mono text-[10px] text-neutral-400">
-                              {d.toLocaleDateString("id-ID", {
-                                day: "numeric",
-                                month: "short",
-                              })}
-                            </div>
-                          </th>
-                        ))}
+                        {wkDates.map((d, i) => {
+                          const dIso = isoDate(d);
+                          const isToday = dIso === todayIso;
+                          return (
+                            <th
+                              key={i}
+                              className={cn(
+                                "px-3 py-2 text-center",
+                                isToday &&
+                                  "bg-mahakan-green-100/60 text-mahakan-green-900",
+                              )}
+                            >
+                              <div className="flex items-center justify-center gap-1">
+                                {DAYS_OF_WEEK[i]}
+                                {isToday ? (
+                                  <span className="inline-flex rounded-full bg-mahakan-green-700 px-1.5 py-0 text-[8px] font-bold uppercase tracking-wide text-white">
+                                    Hari Ini
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="font-mono text-[10px] text-neutral-400">
+                                {d.toLocaleDateString("id-ID", {
+                                  day: "numeric",
+                                  month: "short",
+                                })}
+                              </div>
+                            </th>
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody>
@@ -510,6 +654,7 @@ export function SchedulesSection() {
                           </td>
                           {wkDates.map((d) => {
                             const dateIso = isoDate(d);
+                            const isToday = dateIso === todayIso;
                             const existing =
                               scheduleMap.get(`${emp.id}::${dateIso}`) ?? null;
                             const cell =
@@ -518,7 +663,10 @@ export function SchedulesSection() {
                             return (
                               <td
                                 key={dateIso}
-                                className="px-2 py-2 text-center align-middle"
+                                className={cn(
+                                  "px-2 py-2 text-center align-middle",
+                                  isToday && "bg-mahakan-green-50/30",
+                                )}
                               >
                                 {viewMode === "schedule" ? (
                                   <ScheduleCell
@@ -534,8 +682,14 @@ export function SchedulesSection() {
                                 ) : (
                                   <AttendanceCell
                                     cell={cell}
+                                    isToday={isToday}
                                     onClick={() => {
                                       if (!cell) return;
+                                      if (
+                                        cell.status === "upcoming" ||
+                                        cell.status === "kosong"
+                                      )
+                                        return;
                                       setAttendanceDetail({
                                         employeeName: emp.fullName,
                                         date: dateIso,
@@ -605,13 +759,20 @@ export function SchedulesSection() {
 function AttendanceCell({
   cell,
   onClick,
+  isToday,
 }: {
   cell: AttendanceCalendarCell | null;
   onClick: () => void;
+  isToday?: boolean;
 }) {
   if (!cell) {
     return (
-      <span className="inline-flex size-9 items-center justify-center rounded-md border border-neutral-200 bg-white text-xs text-neutral-400">
+      <span
+        className={cn(
+          "inline-flex size-9 items-center justify-center rounded-md border border-neutral-200 bg-white text-xs text-neutral-400",
+          isToday && "ring-2 ring-mahakan-green-500/40 ring-offset-1",
+        )}
+      >
         —
       </span>
     );
@@ -623,21 +784,26 @@ function AttendanceCell({
     cell.lateMinutes > 0
       ? formatDuration(cell.lateMinutes)
       : null;
+  // Sesi AE-61 — upcoming/kosong non-clickable (tidak ada detail to show).
+  const clickable = cell.status !== "upcoming" && cell.status !== "kosong";
+  const Component = clickable ? "button" : "div";
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <Component
+      {...(clickable ? { type: "button" as const, onClick } : {})}
       className={cn(
-        "inline-flex w-full flex-col items-center justify-center gap-0.5 rounded-md border px-1.5 py-1.5 text-xs font-bold transition-colors hover:brightness-95",
+        "inline-flex w-full flex-col items-center justify-center gap-0.5 rounded-md border px-1.5 py-1.5 text-xs font-bold transition-colors",
         meta.cellClass,
+        clickable && "cursor-pointer hover:brightness-95",
+        !clickable && "cursor-default",
+        isToday && "ring-2 ring-mahakan-green-500/60 ring-offset-1",
       )}
-      title={meta.legend}
+      title={`${meta.legend} — ${meta.description}`}
     >
       <span className="text-sm">{meta.label}</span>
       {lateBadge ? (
         <span className="text-[9px] font-mono opacity-80">+{lateBadge}</span>
       ) : null}
-    </button>
+    </Component>
   );
 }
 
@@ -1665,5 +1831,45 @@ function ScheduleEditDialog({
         ) : null}
       </div>
     </Modal>
+  );
+}
+
+/* Sesi AE-61 — Stat card untuk Historis Absen summary. 4 metric:
+ * Tingkat Kehadiran, Telat, Alpa, Upcoming. Color-coded by tone. */
+function StatCard({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  tone: "success" | "warning" | "danger" | "info" | "neutral";
+}) {
+  const toneClass = {
+    success: "border-success-500/30 bg-success-50/40",
+    warning: "border-warning-500/30 bg-warning-50/40",
+    danger: "border-danger-500/30 bg-danger-50/40",
+    info: "border-mahakan-green-300 bg-mahakan-green-50/40",
+    neutral: "border-neutral-200 bg-white",
+  }[tone];
+  const valueToneClass = {
+    success: "text-success-700",
+    warning: "text-warning-700",
+    danger: "text-danger-700",
+    info: "text-mahakan-green-900",
+    neutral: "text-neutral-900",
+  }[tone];
+  return (
+    <div className={cn("rounded-lg border p-4", toneClass)}>
+      <div className="text-xs font-medium uppercase tracking-wider text-neutral-600">
+        {label}
+      </div>
+      <div className={cn("mt-1 text-2xl font-bold", valueToneClass)}>
+        {value}
+      </div>
+      <div className="mt-1 text-xs leading-snug text-neutral-600">{hint}</div>
+    </div>
   );
 }

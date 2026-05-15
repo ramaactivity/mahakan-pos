@@ -58,6 +58,10 @@ export type AttendanceDayStatus =
   | "off"
   /** Schedule kerja, tidak ada record (alpa). */
   | "alpa"
+  /** Sesi AE-61 — schedule kerja tapi tanggalnya masa depan (belum bisa
+   *  dianggap alpa karena harinya belum tiba). Compared against server
+   *  WIB "today". */
+  | "upcoming"
   /** Tidak ada schedule + tidak ada record (no expectation). */
   | "kosong";
 

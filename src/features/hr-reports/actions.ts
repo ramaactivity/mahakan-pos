@@ -11,6 +11,7 @@ import {
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
+import { toJakartaDateOnly } from "@/lib/date";
 import {
   fail,
   ok,
@@ -98,21 +99,28 @@ export async function getAttendanceSummary(input: {
     .groupBy(attendanceRecords.employeeId);
 
   // Scheduled non-day-off vs attended, to compute missed days.
-  const scheduledCounts = await db
-    .select({
-      employeeId: employeeSchedules.employeeId,
-      scheduledDays: sql<number>`COUNT(*)::int`,
-    })
-    .from(employeeSchedules)
-    .where(
-      and(
-        eq(employeeSchedules.outletId, session.user.outletId),
-        eq(employeeSchedules.dayOff, false),
-        gte(employeeSchedules.scheduleDate, input.from),
-        lte(employeeSchedules.scheduleDate, input.to),
-      ),
-    )
-    .groupBy(employeeSchedules.employeeId);
+  // Sesi AE-61 — cap upper bound dengan today WIB supaya future schedule
+  // tidak ke-count sebagai missed (bug HR: future days dianggap alpa).
+  const todayWib = toJakartaDateOnly(new Date());
+  const effectiveTo = input.to < todayWib ? input.to : todayWib;
+  const scheduledCounts =
+    effectiveTo < input.from
+      ? []
+      : await db
+          .select({
+            employeeId: employeeSchedules.employeeId,
+            scheduledDays: sql<number>`COUNT(*)::int`,
+          })
+          .from(employeeSchedules)
+          .where(
+            and(
+              eq(employeeSchedules.outletId, session.user.outletId),
+              eq(employeeSchedules.dayOff, false),
+              gte(employeeSchedules.scheduleDate, input.from),
+              lte(employeeSchedules.scheduleDate, effectiveTo),
+            ),
+          )
+          .groupBy(employeeSchedules.employeeId);
 
   const aggMap = new Map(aggregates.map((a) => [a.employeeId, a]));
   const schedMap = new Map(
@@ -152,7 +160,11 @@ export async function getAttendanceSummary(input: {
  *   - "hadir" / "telat": ada attendanceRecord di tanggal itu (telat kalau
  *     isLate=yes atau lateMinutes>0)
  *   - "off": ada employeeSchedule.dayOff=true
- *   - "alpa": ada schedule kerja (dayOff=false) tapi tidak ada record
+ *   - "alpa": ada schedule kerja (dayOff=false) tapi tidak ada record DAN
+ *     tanggalnya <= today WIB
+ *   - "upcoming": ada schedule kerja tapi tanggalnya masa depan (> today WIB)
+ *     — Sesi AE-61 bug fix: HR complain "hari ini tanggal 15 tapi sabtu 16
+ *     dianggap alpa di historis". Future schedule belum boleh dianggap alpa.
  *   - "kosong": tidak ada schedule + tidak ada record (rest day off-radar)
  *
  * Range capped 62 hari (≈ 2 bulan) supaya UI tidak overload.
@@ -257,6 +269,10 @@ export async function getAttendanceCalendar(input: {
     scheduleMap.set(`${s.employeeId}|${s.scheduleDate}`, s);
   }
 
+  // Sesi AE-61 — server WIB "today" untuk distinguish alpa vs upcoming.
+  // Tanggal di masa depan tidak boleh dianggap alpa (HR bug report).
+  const todayWib = toJakartaDateOnly(new Date());
+
   const rows: AttendanceCalendarRow[] = employeeRows.map((e) => {
     const days: Record<string, AttendanceCalendarCell> = {};
     for (const date of dates) {
@@ -284,7 +300,10 @@ export async function getAttendanceCalendar(input: {
       } else if (sched && sched.dayOff) {
         status = "off";
       } else if (sched && !sched.dayOff) {
-        status = "alpa";
+        // Sesi AE-61 — kalau tanggal masa depan, status = upcoming.
+        // Boundary: tanggal > today WIB = upcoming. Hari ini tetap bisa
+        // alpa kalau staff belum clock-in (defensive: HR yang notice).
+        status = date > todayWib ? "upcoming" : "alpa";
       } else {
         status = "kosong";
       }
