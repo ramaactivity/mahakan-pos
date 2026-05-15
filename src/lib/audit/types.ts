@@ -125,6 +125,11 @@ export const AUDIT_EVENT_TYPES = [
   "payroll.finalize",
   "payroll.paid",
   "payroll.expense.create",
+  /* Sesi AE-60 — Apply THR ke semua line di period. */
+  "payroll.thr_applied",
+  /* Sesi AE-60 — Kasbon (employee advance) lifecycle. */
+  "advance.create",
+  "advance.forgive",
   // Sesi Q — Finance (Keuangan): cash deposit + aggregator settlement.
   "cash_deposit.create",
   "cash_deposit.update",
@@ -208,6 +213,7 @@ export type AuditEntityType =
   | "attendance"
   | "schedule"
   | "payroll_period"
+  | "employee_advance"
   | "promo"
   | "employee_career_history"
   | "stock_opname_session"

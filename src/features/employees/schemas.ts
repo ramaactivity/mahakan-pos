@@ -29,7 +29,26 @@ const optionalMoney = z
   .nullish()
   .transform((n) => (typeof n === "number" ? n : null));
 
-export const createEmployeeSchema = z.object({
+/* Sesi AE-60 — paymentType + dailyRate. Refine enforce dailyRate > 0
+ * kalau paymentType='daily'. Pakai base object supaya bisa extend untuk
+ * updateEmployeeSchema (ZodEffects tidak punya .extend). */
+const paymentTypeSchema = z
+  .enum(["daily", "monthly"])
+  .nullish()
+  .transform((s) => s ?? null);
+
+const dailyRateRefine = (v: { paymentType: "daily" | "monthly" | null; dailyRate: number | null }) => {
+  if (v.paymentType === "daily") {
+    return v.dailyRate != null && v.dailyRate > 0;
+  }
+  return true;
+};
+const dailyRateRefineMsg = {
+  message: "Karyawan tipe Harian wajib punya tarif harian (Rp/hari) > 0",
+  path: ["dailyRate" as const],
+};
+
+const createEmployeeBase = z.object({
   fullName: z.string().trim().min(1).max(120),
   nickname: optionalText(60),
   nik: optionalText(32),
@@ -45,22 +64,31 @@ export const createEmployeeSchema = z.object({
     .enum(["full_time", "part_time", "contract", "freelance"])
     .nullish()
     .transform((s) => s ?? null),
+  paymentType: paymentTypeSchema,
   salaryAmount: optionalMoney,
+  dailyRate: optionalMoney,
   userId: optionalUuid,
   notes: optionalText(1000),
 });
 
-export const updateEmployeeSchema = createEmployeeSchema.extend({
-  id: z.uuid(),
-  status: z
-    .enum(["active", "on_leave", "resigned", "terminated"])
-    .optional(),
-  resignedAt: z
-    .string()
-    .nullish()
-    .transform((s) => (s && s.length > 0 ? s : null)),
-  resignReason: optionalText(500),
-});
+export const createEmployeeSchema = createEmployeeBase.refine(
+  dailyRateRefine,
+  dailyRateRefineMsg,
+);
+
+export const updateEmployeeSchema = createEmployeeBase
+  .extend({
+    id: z.uuid(),
+    status: z
+      .enum(["active", "on_leave", "resigned", "terminated"])
+      .optional(),
+    resignedAt: z
+      .string()
+      .nullish()
+      .transform((s) => (s && s.length > 0 ? s : null)),
+    resignReason: optionalText(500),
+  })
+  .refine(dailyRateRefine, dailyRateRefineMsg);
 
 export const createEmployeeDocumentSchema = z.object({
   employeeId: z.uuid(),

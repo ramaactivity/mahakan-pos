@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   DollarSign,
+  Gift,
   Lock,
   Pencil,
   Plus,
@@ -27,6 +28,7 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui";
 import {
+  applyThr,
   computePayrollLines,
   createPayrollPeriod,
   deletePayrollPeriod,
@@ -159,15 +161,57 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
     [periods, selectedPeriodId],
   );
 
-  async function handleCompute() {
+  async function handleCompute(force = false) {
     if (!selectedPeriod) return;
-    if (!confirm("Recompute payroll? Line yang sudah ada akan ditimpa.")) return;
-    const res = await computePayrollLines(selectedPeriod.id);
+    const res = await computePayrollLines(selectedPeriod.id, { force });
     if (!isOk(res)) {
       toast.error(res.error.message);
       return;
     }
-    toast.success(`${res.data.lineCount} line di-compute`);
+    /* Sesi AE-60 — kalau backend balikin needsConfirm, tampilkan warning
+     * sebelum overwrite manual edits (bonus/THR/kasbon). */
+    if ("needsConfirm" in res.data) {
+      const proceed = confirm(
+        `${res.data.manualEditCount} dari ${res.data.totalLines} line punya manual edit (bonus/THR/kasbon/other deductions). Recompute akan TIMPA semua. Lanjut?`,
+      );
+      if (!proceed) return;
+      void handleCompute(true);
+      return;
+    }
+    const warnings =
+      res.data.warnings.length > 0
+        ? ` · ${res.data.warnings.length} warning`
+        : "";
+    const advLink =
+      res.data.totalAdvancesLinked > 0
+        ? ` · Kasbon ter-link Rp ${res.data.totalAdvancesLinked.toLocaleString("id-ID")}`
+        : "";
+    toast.success(`${res.data.lineCount} line di-compute${warnings}${advLink}`);
+    if (res.data.warnings.length > 0) {
+      // Surface first warning prominently
+      toast.error(
+        `⚠ ${res.data.warnings[0].employeeName}: ${res.data.warnings[0].message}`,
+      );
+    }
+    refresh();
+  }
+
+  /* Sesi AE-60 — Apply THR semua line di period sekaligus.
+   * Multiplier dari outlet settings (default 1.0 = 1× baseSalary). */
+  async function handleApplyThr() {
+    if (!selectedPeriod) return;
+    const proceed = confirm(
+      `Hitung THR untuk semua line di "${selectedPeriod.label}"? Field THR akan di-overwrite dengan baseSalary × multiplier (default 1.0×).`,
+    );
+    if (!proceed) return;
+    const res = await applyThr({ periodId: selectedPeriod.id });
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(
+      `THR di-apply ke ${res.data.updatedCount} line · Total Rp ${res.data.totalThr.toLocaleString("id-ID")}`,
+    );
     refresh();
   }
 
@@ -398,10 +442,19 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={handleCompute}
+                        onClick={() => handleCompute(false)}
                         disabled={selectedPeriod.status !== "draft"}
                       >
                         <RefreshCw className="size-3.5" aria-hidden /> Recompute
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleApplyThr}
+                        disabled={selectedPeriod.status !== "draft"}
+                        title="Hitung THR semua line × multiplier (default 1× baseSalary)"
+                      >
+                        <Gift className="size-3.5" aria-hidden /> Hitung THR
                       </Button>
                       <Button
                         size="sm"
@@ -642,6 +695,9 @@ function EditLineDialog({
   const [overtimePay, setOvertimePay] = useState("");
   const [lateDeduction, setLateDeduction] = useState("");
   const [bonus, setBonus] = useState("");
+  /* Sesi AE-60 */
+  const [thr, setThr] = useState("");
+  const [advanceDeduction, setAdvanceDeduction] = useState("");
   const [otherDeductions, setOtherDeductions] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -654,6 +710,8 @@ function EditLineDialog({
     setOvertimePay(String(line.overtimePay));
     setLateDeduction(String(line.lateDeduction));
     setBonus(String(line.bonus));
+    setThr(String(line.thr ?? 0));
+    setAdvanceDeduction(String(line.advanceDeduction ?? 0));
     setOtherDeductions(String(line.otherDeductions));
     setNotes(line.notes ?? "");
     setError(null);
@@ -682,6 +740,8 @@ function EditLineDialog({
       overtimePay: tryParse(overtimePay),
       lateDeduction: tryParse(lateDeduction),
       bonus: tryParse(bonus),
+      thr: tryParse(thr),
+      advanceDeduction: tryParse(advanceDeduction),
       otherDeductions: tryParse(otherDeductions),
       notes: notes.trim() || null,
     });
@@ -697,10 +757,16 @@ function EditLineDialog({
   if (!line) return null;
 
   const previewGross =
-    tryParse(baseSalary) + tryParse(overtimePay) + tryParse(bonus);
+    tryParse(baseSalary) +
+    tryParse(overtimePay) +
+    tryParse(bonus) +
+    tryParse(thr);
   const previewNet = Math.max(
     0,
-    previewGross - tryParse(lateDeduction) - tryParse(otherDeductions),
+    previewGross -
+      tryParse(lateDeduction) -
+      tryParse(advanceDeduction) -
+      tryParse(otherDeductions),
   );
 
   return (
@@ -750,12 +816,30 @@ function EditLineDialog({
             disabled={submitting}
           />
           <Input
+            label="THR (Tunjangan Hari Raya)"
+            type="text"
+            inputMode="numeric"
+            value={thr}
+            onChange={(e) => setThr(e.target.value.replace(/[^\d]/g, ""))}
+            disabled={submitting}
+          />
+          <Input
             label="Late Deduction"
             type="text"
             inputMode="numeric"
             value={lateDeduction}
             onChange={(e) =>
               setLateDeduction(e.target.value.replace(/[^\d]/g, ""))
+            }
+            disabled={submitting}
+          />
+          <Input
+            label="Kasbon (Advance)"
+            type="text"
+            inputMode="numeric"
+            value={advanceDeduction}
+            onChange={(e) =>
+              setAdvanceDeduction(e.target.value.replace(/[^\d]/g, ""))
             }
             disabled={submitting}
           />
@@ -807,18 +891,35 @@ function payrollLineColumns(): ResponsiveColumn<PayrollLineWithEmployee>[] {
       key: "employee",
       label: "Karyawan",
       primary: true,
-      render: (l) => (
-        <div>
-          <div className="font-medium text-neutral-900">
-            {l.employeeFullName}
-          </div>
-          {l.employeePosition ? (
-            <div className="text-[10px] text-neutral-500">
-              {l.employeePosition}
+      render: (l) => {
+        const ptLabel =
+          l.employeePaymentType === "daily"
+            ? "Harian"
+            : l.employeePaymentType === "monthly"
+              ? "Bulanan"
+              : "Legacy";
+        const ptVariant =
+          l.employeePaymentType === "daily"
+            ? "info"
+            : l.employeePaymentType === "monthly"
+              ? "success"
+              : "neutral";
+        return (
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="font-medium text-neutral-900">
+                {l.employeeFullName}
+              </span>
+              <Badge variant={ptVariant}>{ptLabel}</Badge>
             </div>
-          ) : null}
-        </div>
-      ),
+            {l.employeePosition ? (
+              <div className="text-[10px] text-neutral-500">
+                {l.employeePosition}
+              </div>
+            ) : null}
+          </div>
+        );
+      },
     },
     {
       key: "workDays",
@@ -848,29 +949,91 @@ function payrollLineColumns(): ResponsiveColumn<PayrollLineWithEmployee>[] {
       label: "Base",
       align: "right",
       mono: true,
-      render: (l) => formatRupiah(l.baseSalary),
+      render: (l) => {
+        const formula =
+          l.employeePaymentType === "daily" && l.employeeDailyRate
+            ? `Rp ${l.employeeDailyRate.toLocaleString("id-ID")} × ${l.workDays}`
+            : l.employeePaymentType === "monthly"
+              ? "Bulanan flat"
+              : "Legacy fallback";
+        return (
+          <div title={formula}>
+            <div>{formatRupiah(l.baseSalary)}</div>
+            <div className="text-[9px] text-neutral-400">{formula}</div>
+          </div>
+        );
+      },
     },
     {
-      key: "plus",
-      label: "+ OT/Bonus",
+      key: "ot",
+      label: "OT",
+      align: "right",
+      mono: true,
+      desktopOnly: true,
+      render: (l) => formatRupiah(l.overtimePay),
+    },
+    {
+      key: "bonus",
+      label: "Bonus",
+      align: "right",
+      mono: true,
+      desktopOnly: true,
+      render: (l) => formatRupiah(l.bonus),
+    },
+    {
+      key: "thr",
+      label: "THR",
       align: "right",
       mono: true,
       render: (l) => (
-        <span className="text-success-500">
-          {formatRupiah(l.overtimePay + l.bonus)}
+        <span className={l.thr > 0 ? "text-info-500 font-semibold" : ""}>
+          {formatRupiah(l.thr)}
         </span>
       ),
     },
     {
-      key: "minus",
-      label: "- Deduct",
+      key: "lateDed",
+      label: "- Telat",
       align: "right",
       mono: true,
-      render: (l) => (
-        <span className="text-danger-500">
-          {formatRupiah(l.lateDeduction + l.otherDeductions)}
-        </span>
-      ),
+      desktopOnly: true,
+      render: (l) =>
+        l.lateDeduction > 0 ? (
+          <span className="text-danger-500">
+            -{formatRupiah(l.lateDeduction)}
+          </span>
+        ) : (
+          "—"
+        ),
+    },
+    {
+      key: "advanceDed",
+      label: "- Kasbon",
+      align: "right",
+      mono: true,
+      render: (l) =>
+        l.advanceDeduction > 0 ? (
+          <span className="text-warning-500">
+            -{formatRupiah(l.advanceDeduction)}
+          </span>
+        ) : (
+          "—"
+        ),
+    },
+    {
+      key: "otherDed",
+      label: "- Other",
+      align: "right",
+      mono: true,
+      desktopOnly: true,
+      render: (l) =>
+        l.otherDeductions > 0 ? (
+          <span className="text-danger-500">
+            -{formatRupiah(l.otherDeductions)}
+          </span>
+        ) : (
+          "—"
+        ),
     },
     {
       key: "net",

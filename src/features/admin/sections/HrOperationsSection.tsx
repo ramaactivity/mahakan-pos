@@ -4,16 +4,23 @@ import { useEffect, useState } from "react";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { AttendanceSection } from "./AttendanceSection";
+import { EmployeeAdvancesSection } from "./EmployeeAdvancesSection";
 import { HrReportsSection } from "./HrReportsSection";
 import { PayrollSection } from "./PayrollSection";
 import { SchedulesSection } from "./SchedulesSection";
 
-type HrOperationsTab = "attendance" | "schedules" | "payroll" | "reports";
+type HrOperationsTab =
+  | "attendance"
+  | "schedules"
+  | "payroll"
+  | "kasbon"
+  | "reports";
 
 const TABS: Array<{ key: HrOperationsTab; label: string }> = [
   { key: "attendance", label: "Absensi" },
   { key: "schedules", label: "Jadwal" },
   { key: "payroll", label: "Payroll" },
+  { key: "kasbon", label: "Kasbon" },
   { key: "reports", label: "Laporan" },
 ];
 
@@ -23,6 +30,7 @@ const VALID_TABS: ReadonlySet<string> = new Set([
   "attendance",
   "schedules",
   "payroll",
+  "kasbon",
   "reports",
 ]);
 
@@ -98,6 +106,8 @@ export function HrOperationsSection({ viewerRole }: HrOperationsSectionProps) {
         <SchedulesSection />
       ) : tab === "payroll" ? (
         <PayrollSection viewerRole={viewerRole} />
+      ) : tab === "kasbon" ? (
+        <EmployeeAdvancesSection />
       ) : (
         <HrReportsSection />
       )}

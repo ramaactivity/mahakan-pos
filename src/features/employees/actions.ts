@@ -182,7 +182,9 @@ export async function createEmployee(
         department: v.department,
         hireDate: v.hireDate,
         employmentType: v.employmentType,
+        paymentType: v.paymentType,
         salaryAmount: v.salaryAmount,
+        dailyRate: v.dailyRate,
         userId: v.userId,
         notes: v.notes,
         createdBy: session.user.id,
@@ -199,7 +201,9 @@ export async function createEmployee(
       position: row.position,
       department: row.department,
       employmentType: row.employmentType,
+      paymentType: row.paymentType,
       salaryAmount: row.salaryAmount,
+      dailyRate: row.dailyRate,
       note: "Bergabung",
       source: "auto",
       createdBy: session.user.id,
@@ -271,12 +275,14 @@ export async function updateEmployee(
   }
 
   // Detect career-relevant changes BEFORE the update so we can log the
-  // pre-change snapshot if needed.
+  // pre-change snapshot if needed. Sesi AE-60 — include paymentType + dailyRate.
   const careerChanged =
     v.position !== current.position ||
     v.department !== current.department ||
     v.employmentType !== current.employmentType ||
-    v.salaryAmount !== current.salaryAmount;
+    v.salaryAmount !== current.salaryAmount ||
+    v.paymentType !== current.paymentType ||
+    v.dailyRate !== current.dailyRate;
 
   try {
     const [row] = await db
@@ -294,7 +300,9 @@ export async function updateEmployee(
         department: v.department,
         hireDate: v.hireDate,
         employmentType: v.employmentType,
+        paymentType: v.paymentType,
         salaryAmount: v.salaryAmount,
+        dailyRate: v.dailyRate,
         userId: v.userId,
         notes: v.notes,
         status: v.status ?? current.status,
@@ -315,7 +323,9 @@ export async function updateEmployee(
         position: row.position,
         department: row.department,
         employmentType: row.employmentType,
+        paymentType: row.paymentType,
         salaryAmount: row.salaryAmount,
+        dailyRate: row.dailyRate,
         note: buildCareerChangeNote(current, row),
         source: "auto",
         createdBy: session.user.id,

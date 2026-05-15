@@ -157,13 +157,22 @@ export const payrollLines = pgTable(
       .notNull()
       .default(0),
     bonus: bigint("bonus", { mode: "number" }).notNull().default(0),
-    /** Generic deductions (BPJS, kasbon, etc.). */
+    /** Sesi AE-60 — Tunjangan Hari Raya. Manual input atau auto via
+     *  computeThr(periodId) helper. Default 0. */
+    thr: bigint("thr", { mode: "number" }).notNull().default(0),
+    /** Generic deductions (BPJS, dll). Kasbon dipisah ke advanceDeduction. */
     otherDeductions: bigint("other_deductions", { mode: "number" })
       .notNull()
       .default(0),
+    /** Sesi AE-60 — Pengurangan dari kasbon (employee_advances) yang
+     *  ter-link ke periode ini. Auto-fill saat compute (= SUM advances
+     *  status='deducted' WHERE deductedFromPeriodId = period). */
+    advanceDeduction: bigint("advance_deduction", { mode: "number" })
+      .notNull()
+      .default(0),
 
-    /** Computed: base + overtime + bonus - late - other. Server keeps
-     * in sync on every save. */
+    /** Sesi AE-60 — Computed: base + overtime + bonus + thr - late -
+     *  advance - other. Server keeps in sync on every save. */
     grossPay: bigint("gross_pay", { mode: "number" }).notNull().default(0),
     netPay: bigint("net_pay", { mode: "number" }).notNull().default(0),
 
@@ -188,6 +197,8 @@ export const payrollLines = pgTable(
         AND ${t.overtimePay} >= 0
         AND ${t.lateDeduction} >= 0
         AND ${t.bonus} >= 0
+        AND ${t.thr} >= 0
+        AND ${t.advanceDeduction} >= 0
         AND ${t.otherDeductions} >= 0`,
     ),
   ],

@@ -1,9 +1,10 @@
 "use server";
 
-import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   attendanceRecords,
+  employeeAdvances,
   employees,
   expenseCategories,
   expenses,
@@ -16,9 +17,18 @@ import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { toJakartaDateOnly } from "@/lib/date";
 import {
+  applyThrSchema,
+  computePayrollLinesSchema,
   createPayrollPeriodSchema,
   updatePayrollLineSchema,
 } from "./schemas";
+import {
+  computeBaseSalary,
+  computeThrSuggestion,
+  countLinesWithManualEdits,
+  recomputeGrossNetV2,
+  type PaymentType,
+} from "./payroll-compute-pure";
 import {
   fail,
   ok,
@@ -37,17 +47,10 @@ async function requireSession() {
   return session;
 }
 
-function recomputeGrossNet(line: {
-  baseSalary: number;
-  overtimePay: number;
-  lateDeduction: number;
-  bonus: number;
-  otherDeductions: number;
-}): { grossPay: number; netPay: number } {
-  const grossPay = line.baseSalary + line.overtimePay + line.bonus;
-  const netPay = Math.max(0, grossPay - line.lateDeduction - line.otherDeductions);
-  return { grossPay, netPay };
-}
+/* Sesi AE-60 — recomputeGrossNet legacy helper di-replace dengan
+ * recomputeGrossNetV2 dari pure helper. Tidak ada caller yang masih
+ * pakai legacy signature setelah refactor; existing call sites pakai V2
+ * langsung. */
 
 // ---------- Reads ----------
 
@@ -104,6 +107,9 @@ export async function listPayrollLines(
       employeeFullName: employees.fullName,
       employeeNickname: employees.nickname,
       employeePosition: employees.position,
+      employeePaymentType: employees.paymentType,
+      employeeDailyRate: employees.dailyRate,
+      employeeSalaryAmount: employees.salaryAmount,
     })
     .from(payrollLines)
     .innerJoin(employees, eq(payrollLines.employeeId, employees.id))
@@ -115,6 +121,14 @@ export async function listPayrollLines(
       employeeFullName: r.employeeFullName,
       employeeNickname: r.employeeNickname,
       employeePosition: r.employeePosition,
+      employeePaymentType: r.employeePaymentType as
+        | "daily"
+        | "monthly"
+        | null,
+      employeeDailyRate:
+        r.employeeDailyRate == null ? null : Number(r.employeeDailyRate),
+      employeeSalaryAmount:
+        r.employeeSalaryAmount == null ? null : Number(r.employeeSalaryAmount),
     })),
   );
 }
@@ -178,13 +192,49 @@ export async function createPayrollPeriod(
  * salaries. Wipes existing draft lines first; refuses to recompute
  * finalized periods.
  */
+/**
+ * Sesi AE-60 — Compute payroll lines dari attendance + employee_advances.
+ *
+ * Behavior changes vs legacy:
+ *  - Case-split paymentType: daily = dailyRate × workDays; monthly = salaryAmount flat.
+ *  - Auto-link employee_advances status='pending' ke periode ini.
+ *  - Recompute warning protection: kalau ada manual edits (bonus/thr/
+ *    advance/otherDeductions > 0), require explicit `force=true`.
+ *
+ * Return shape:
+ *  - `force=false` + ada manual edits: { needsConfirm: true, manualEditCount }
+ *  - else: { lineCount, warnings }
+ */
+export interface ComputePayrollLinesResult {
+  lineCount: number;
+  /** Karyawan dengan masalah konfigurasi (mis. daily tanpa dailyRate). */
+  warnings: Array<{ employeeName: string; message: string }>;
+  /** Total kasbon yang ter-auto-link ke periode ini (Rp). */
+  totalAdvancesLinked: number;
+}
+
+export interface ComputePayrollLinesPreview {
+  needsConfirm: true;
+  manualEditCount: number;
+  totalLines: number;
+}
+
 export async function computePayrollLines(
   periodId: string,
-): Promise<ApiResult<{ lineCount: number }>> {
+  options: { force?: boolean } = {},
+): Promise<ApiResult<ComputePayrollLinesResult | ComputePayrollLinesPreview>> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "payroll.manage")) {
     return fail("FORBIDDEN", "Tidak punya hak compute payroll");
   }
+  const parsed = computePayrollLinesSchema.safeParse({
+    periodId,
+    force: options.force ?? false,
+  });
+  if (!parsed.success) {
+    return fail("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "");
+  }
+  const force = parsed.data.force;
 
   const [period] = await db
     .select()
@@ -200,6 +250,25 @@ export async function computePayrollLines(
       "PERIOD_NOT_DRAFT",
       "Period sudah finalize/paid — tidak bisa recompute",
     );
+  }
+
+  // Sesi AE-60 — manual edit detection sebelum DELETE
+  const existingLines = await db
+    .select({
+      bonus: payrollLines.bonus,
+      thr: payrollLines.thr,
+      advanceDeduction: payrollLines.advanceDeduction,
+      otherDeductions: payrollLines.otherDeductions,
+    })
+    .from(payrollLines)
+    .where(eq(payrollLines.periodId, periodId));
+  const manualEditCount = countLinesWithManualEdits(existingLines);
+  if (!force && manualEditCount > 0) {
+    return ok({
+      needsConfirm: true,
+      manualEditCount,
+      totalLines: existingLines.length,
+    });
   }
 
   // Aggregate attendance per employee within the period bounds.
@@ -221,8 +290,7 @@ export async function computePayrollLines(
     )
     .groupBy(attendanceRecords.employeeId);
 
-  // Outlet-level payroll formula rates (Sesi E). When set, Owner gets
-  // auto-fill on late_deduction + overtime_pay; otherwise stays 0.
+  // Outlet-level payroll formula rates (Sesi E + AE-60).
   const [outletRow] = await db
     .select({ settings: outlets.settings })
     .from(outlets)
@@ -232,12 +300,14 @@ export async function computePayrollLines(
   const overtimePerMinute =
     outletRow?.settings?.payroll?.overtimePerMinute ?? 0;
 
-  // All active employees (so we generate lines even for those with no
-  // attendance in the period — Owner can adjust manually).
+  // All active employees (generate lines even untuk yang tidak attendance).
   const allEmployees = await db
     .select({
       id: employees.id,
+      fullName: employees.fullName,
       salaryAmount: employees.salaryAmount,
+      paymentType: employees.paymentType,
+      dailyRate: employees.dailyRate,
     })
     .from(employees)
     .where(
@@ -247,9 +317,39 @@ export async function computePayrollLines(
       ),
     );
 
-  const aggMap = new Map(aggregates.map((a) => [a.employeeId, a]));
+  // Sesi AE-60 — fetch pending advances per employee (auto-link)
+  const pendingAdvances = await db
+    .select({
+      id: employeeAdvances.id,
+      employeeId: employeeAdvances.employeeId,
+      amount: employeeAdvances.amount,
+    })
+    .from(employeeAdvances)
+    .where(
+      and(
+        eq(employeeAdvances.outletId, session.user.outletId),
+        eq(employeeAdvances.status, "pending"),
+        inArray(
+          employeeAdvances.employeeId,
+          allEmployees.map((e) => e.id),
+        ),
+      ),
+    );
+  const advanceSumByEmployee = new Map<string, number>();
+  const advanceIdsByEmployee = new Map<string, string[]>();
+  for (const adv of pendingAdvances) {
+    const cur = advanceSumByEmployee.get(adv.employeeId) ?? 0;
+    advanceSumByEmployee.set(adv.employeeId, cur + Number(adv.amount));
+    const list = advanceIdsByEmployee.get(adv.employeeId) ?? [];
+    list.push(adv.id);
+    advanceIdsByEmployee.set(adv.employeeId, list);
+  }
 
-  // Wipe + reinsert atomically.
+  const aggMap = new Map(aggregates.map((a) => [a.employeeId, a]));
+  const warnings: Array<{ employeeName: string; message: string }> = [];
+
+  // Wipe + reinsert atomically + mark advances deducted.
+  let totalAdvancesLinked = 0;
   await db.transaction(async (tx) => {
     await tx.delete(payrollLines).where(eq(payrollLines.periodId, periodId));
 
@@ -257,40 +357,70 @@ export async function computePayrollLines(
 
     const inserts = allEmployees.map((emp) => {
       const agg = aggMap.get(emp.id);
-      const baseSalary = emp.salaryAmount ?? 0;
+      const workDays = agg?.workDays ?? 0;
+      const totalWorkMinutes = agg?.totalWorkMinutes ?? 0;
       const totalLateMinutes = agg?.totalLateMinutes ?? 0;
       const totalOvertimeMinutes = agg?.totalOvertimeMinutes ?? 0;
-      // Sesi E: auto-fill late_deduction + overtime_pay from outlet
-      // settings.payroll rates × minute totals. When rate is 0/unset,
-      // result is 0 — Owner can still override per line.
+
+      // Sesi AE-60 — case-split paymentType
+      const baseRes = computeBaseSalary({
+        paymentType: emp.paymentType as PaymentType | null,
+        salaryAmount: emp.salaryAmount ?? 0,
+        dailyRate: emp.dailyRate,
+        workDays,
+      });
+      if (baseRes.warning) {
+        warnings.push({ employeeName: emp.fullName, message: baseRes.warning });
+      }
+
       const overtimePay = totalOvertimeMinutes * overtimePerMinute;
       const lateDeduction = totalLateMinutes * latePerMinute;
-      const bonus = 0;
-      const otherDeductions = 0;
-      const { grossPay, netPay } = recomputeGrossNet({
-        baseSalary,
+      const advanceDeduction = advanceSumByEmployee.get(emp.id) ?? 0;
+      totalAdvancesLinked += advanceDeduction;
+
+      const { grossPay, netPay } = recomputeGrossNetV2({
+        baseSalary: baseRes.baseSalary,
         overtimePay,
+        bonus: 0,
+        thr: 0,
         lateDeduction,
-        bonus,
-        otherDeductions,
+        advanceDeduction,
+        otherDeductions: 0,
       });
       return {
         periodId,
         employeeId: emp.id,
-        baseSalary,
-        workDays: agg?.workDays ?? 0,
-        totalWorkMinutes: agg?.totalWorkMinutes ?? 0,
+        baseSalary: baseRes.baseSalary,
+        workDays,
+        totalWorkMinutes,
         totalLateMinutes,
         totalOvertimeMinutes,
         overtimePay,
         lateDeduction,
-        bonus,
-        otherDeductions,
+        bonus: 0,
+        thr: 0,
+        advanceDeduction,
+        otherDeductions: 0,
         grossPay,
         netPay,
       };
     });
     await tx.insert(payrollLines).values(inserts);
+
+    // Mark linked advances as deducted (atomic dengan compute)
+    const allAdvanceIds = Array.from(advanceIdsByEmployee.values()).flat();
+    if (allAdvanceIds.length > 0) {
+      await tx
+        .update(employeeAdvances)
+        .set({
+          status: "deducted",
+          deductedFromPeriodId: periodId,
+          resolvedAt: new Date(),
+          resolvedBy: session.user.id,
+          updatedAt: new Date(),
+        })
+        .where(inArray(employeeAdvances.id, allAdvanceIds));
+    }
   });
 
   logAudit({
@@ -299,11 +429,15 @@ export async function computePayrollLines(
     entityType: "payroll_period",
     entityId: periodId,
     payload: {
-      summary: `Recompute payroll ${period.label}: ${allEmployees.length} lines`,
+      summary: `Recompute payroll ${period.label}: ${allEmployees.length} lines${force ? " (force overwrite manual edits)" : ""}`,
       context: {
         lineCount: allEmployees.length,
         periodStart: period.periodStart,
         periodEnd: period.periodEnd,
+        force,
+        manualEditCountWiped: force ? manualEditCount : 0,
+        totalAdvancesLinked,
+        warningCount: warnings.length,
       },
     },
     metadata: {
@@ -312,7 +446,101 @@ export async function computePayrollLines(
     },
   }).catch((e) => console.error("[audit payroll.compute]", e));
 
-  return ok({ lineCount: allEmployees.length });
+  return ok({
+    lineCount: allEmployees.length,
+    warnings,
+    totalAdvancesLinked,
+  });
+}
+
+/* Sesi AE-60 — Apply THR ke semua line di period. Set thr = baseSalary
+ * × multiplier. Default multiplier dari outlet settings (1.0 fallback).
+ * Period harus draft. */
+export async function applyThr(
+  input: { periodId: string; multiplier?: number },
+): Promise<ApiResult<{ updatedCount: number; totalThr: number }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "payroll.manage")) {
+    return fail("FORBIDDEN", "Tidak punya hak apply THR");
+  }
+  const parsed = applyThrSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "");
+  }
+  const { periodId, multiplier: explicitMultiplier } = parsed.data;
+
+  const [period] = await db
+    .select()
+    .from(payrollPeriods)
+    .where(eq(payrollPeriods.id, periodId))
+    .limit(1);
+  if (!period) return fail("NOT_FOUND", "Period tidak ditemukan");
+  if (period.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Period dari outlet lain");
+  }
+  if (period.status !== "draft") {
+    return fail("PERIOD_NOT_DRAFT", "Period sudah finalize/paid");
+  }
+
+  const [outletRow] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  const settingMultiplier =
+    outletRow?.settings?.payroll?.thrMonthlyBaseMultiplier;
+  const multiplier =
+    explicitMultiplier ??
+    (typeof settingMultiplier === "number" && settingMultiplier > 0
+      ? settingMultiplier
+      : 1.0);
+
+  const lines = await db
+    .select()
+    .from(payrollLines)
+    .where(eq(payrollLines.periodId, periodId));
+
+  let totalThr = 0;
+  await db.transaction(async (tx) => {
+    for (const line of lines) {
+      const newThr = computeThrSuggestion(Number(line.baseSalary), multiplier);
+      const { grossPay, netPay } = recomputeGrossNetV2({
+        baseSalary: Number(line.baseSalary),
+        overtimePay: Number(line.overtimePay),
+        bonus: Number(line.bonus),
+        thr: newThr,
+        lateDeduction: Number(line.lateDeduction),
+        advanceDeduction: Number(line.advanceDeduction),
+        otherDeductions: Number(line.otherDeductions),
+      });
+      totalThr += newThr;
+      await tx
+        .update(payrollLines)
+        .set({ thr: newThr, grossPay, netPay, updatedAt: new Date() })
+        .where(eq(payrollLines.id, line.id));
+    }
+  });
+
+  logAudit({
+    eventType: "payroll.thr_applied",
+    userId: session.user.id,
+    entityType: "payroll_period",
+    entityId: periodId,
+    payload: {
+      summary: `Apply THR period ${period.label}: ${lines.length} lines × ${multiplier}× = ${totalThr}`,
+      context: {
+        multiplier,
+        lineCount: lines.length,
+        totalThr,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  }).catch((e) => console.error("[audit payroll.thr_applied]", e));
+
+  return ok({ updatedCount: lines.length, totalThr });
 }
 
 export async function updatePayrollLine(
@@ -360,13 +588,17 @@ export async function updatePayrollLine(
   }
 
   const next = {
-    baseSalary: v.baseSalary ?? current.baseSalary,
-    overtimePay: v.overtimePay ?? current.overtimePay,
-    lateDeduction: v.lateDeduction ?? current.lateDeduction,
-    bonus: v.bonus ?? current.bonus,
-    otherDeductions: v.otherDeductions ?? current.otherDeductions,
+    baseSalary: v.baseSalary ?? Number(current.baseSalary),
+    overtimePay: v.overtimePay ?? Number(current.overtimePay),
+    lateDeduction: v.lateDeduction ?? Number(current.lateDeduction),
+    bonus: v.bonus ?? Number(current.bonus),
+    /* Sesi AE-60 */
+    thr: v.thr ?? Number(current.thr ?? 0),
+    advanceDeduction:
+      v.advanceDeduction ?? Number(current.advanceDeduction ?? 0),
+    otherDeductions: v.otherDeductions ?? Number(current.otherDeductions),
   };
-  const { grossPay, netPay } = recomputeGrossNet(next);
+  const { grossPay, netPay } = recomputeGrossNetV2(next);
 
   const [row] = await db
     .update(payrollLines)
@@ -498,12 +730,15 @@ export async function markPayrollPaid(
 
     // Sum payroll components for the period — Phase 5.2 (sesi AC-2)
     // breakdown for accounting auto-journal multi-line emission.
+    // Sesi AE-60 — extend dengan THR + advanceDeduction.
     const [sumRow] = await tx
       .select({
         baseSalary: sql<string>`COALESCE(SUM(${payrollLines.baseSalary}), 0)`,
         overtimePay: sql<string>`COALESCE(SUM(${payrollLines.overtimePay}), 0)`,
         bonus: sql<string>`COALESCE(SUM(${payrollLines.bonus}), 0)`,
+        thr: sql<string>`COALESCE(SUM(${payrollLines.thr}), 0)`,
         lateDeduction: sql<string>`COALESCE(SUM(${payrollLines.lateDeduction}), 0)`,
+        advanceDeduction: sql<string>`COALESCE(SUM(${payrollLines.advanceDeduction}), 0)`,
         otherDeductions: sql<string>`COALESCE(SUM(${payrollLines.otherDeductions}), 0)`,
         netPay: sql<string>`COALESCE(SUM(${payrollLines.netPay}), 0)`,
       })
@@ -512,8 +747,14 @@ export async function markPayrollPaid(
     const totalBaseSalary = Number(sumRow?.baseSalary ?? 0);
     const totalOvertimePay = Number(sumRow?.overtimePay ?? 0);
     const totalBonus = Number(sumRow?.bonus ?? 0);
+    const totalThr = Number(sumRow?.thr ?? 0);
+    /* Sesi AE-60 — Bonus + THR di-bundle ke totalBonus untuk journal mapping
+     * compatibility (existing posJournalForPayrollPaid handle bonus → 6102).
+     * Future: extend mapping untuk THR ke account terpisah. */
+    const totalBonusAndThr = totalBonus + totalThr;
     const totalDeductions =
       Number(sumRow?.lateDeduction ?? 0) +
+      Number(sumRow?.advanceDeduction ?? 0) +
       Number(sumRow?.otherDeductions ?? 0);
     const totalNet = Number(sumRow?.netPay ?? 0);
 
@@ -559,6 +800,8 @@ export async function markPayrollPaid(
       totalBaseSalary,
       totalOvertimePay,
       totalBonus,
+      totalBonusAndThr,
+      totalThr,
       totalDeductions,
     };
   });
@@ -619,7 +862,7 @@ export async function markPayrollPaid(
           periodLabel: result.row.label,
           totalBaseSalary: result.totalBaseSalary,
           totalOvertimePay: result.totalOvertimePay,
-          totalBonus: result.totalBonus,
+          totalBonus: result.totalBonusAndThr,
           totalDeductions: result.totalDeductions,
           totalNetPay: result.totalNet,
           paymentMethod: paymentMethod === "cash" ? "cash" : "transfer",

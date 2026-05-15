@@ -27,3 +27,4 @@ export * from "./fixed_assets";
 export * from "./bank-accounts";
 export * from "./market_list";
 export * from "./reconciliation_notes";
+export * from "./employee_advances";

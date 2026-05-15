@@ -34,6 +34,11 @@ export interface PayrollLineWithEmployee extends PayrollLine {
   employeeFullName: string;
   employeeNickname: string | null;
   employeePosition: string | null;
+  /** Sesi AE-60 — surface employee paymentType + dailyRate untuk display
+   * formula breakdown ("Rp 100k × 22 hari" untuk daily). */
+  employeePaymentType: "daily" | "monthly" | null;
+  employeeDailyRate: number | null;
+  employeeSalaryAmount: number | null;
 }
 
 export interface PayrollPeriodWithStats extends PayrollPeriod {
@@ -54,6 +59,10 @@ export interface UpdatePayrollLineInput {
   overtimePay?: number;
   lateDeduction?: number;
   bonus?: number;
+  /** Sesi AE-60 */
+  thr?: number;
+  /** Sesi AE-60 */
+  advanceDeduction?: number;
   otherDeductions?: number;
   notes?: string | null;
 }

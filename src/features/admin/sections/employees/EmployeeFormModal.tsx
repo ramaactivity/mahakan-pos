@@ -117,7 +117,10 @@ export function EmployeeFormModal({
   const [department, setDepartment] = useState("");
   const [hireDate, setHireDate] = useState("");
   const [employmentType, setEmploymentType] = useState<EmploymentType | "">("");
+  /* Sesi AE-60 — dual salary mechanism */
+  const [paymentType, setPaymentType] = useState<"daily" | "monthly" | "">("");
   const [salaryInput, setSalaryInput] = useState("");
+  const [dailyRateInput, setDailyRateInput] = useState("");
   const [userId, setUserId] = useState("");
   const [notes, setNotes] = useState("");
   const [status, setStatus] = useState<EmployeeStatus>("active");
@@ -160,8 +163,17 @@ export function EmployeeFormModal({
     setDepartment(initial?.department ?? "");
     setHireDate(initial?.hireDate ?? "");
     setEmploymentType(initial?.employmentType ?? "");
+    setPaymentType(
+      (initial as { paymentType?: "daily" | "monthly" | null } | null)?.paymentType ??
+        "",
+    );
     setSalaryInput(
       initial?.salaryAmount != null ? String(initial.salaryAmount) : "",
+    );
+    setDailyRateInput(
+      (initial as { dailyRate?: number | null } | null)?.dailyRate != null
+        ? String((initial as { dailyRate?: number | null }).dailyRate)
+        : "",
     );
     setUserId(initial?.userId ?? "");
     setNotes(initial?.notes ?? "");
@@ -314,6 +326,24 @@ export function EmployeeFormModal({
     }
     setSubmitting(true);
 
+    /* Sesi AE-60 — parse dailyRate */
+    let parsedDailyRate: number | null = null;
+    if (dailyRateInput.trim().length > 0) {
+      try {
+        const n = parseRupiah(dailyRateInput);
+        parsedDailyRate = n >= 0 ? n : null;
+      } catch {
+        parsedDailyRate = null;
+      }
+    }
+
+    /* Sesi AE-60 — validate paymentType=daily wajib dailyRate > 0 */
+    if (paymentType === "daily" && (parsedDailyRate == null || parsedDailyRate <= 0)) {
+      setError("Karyawan tipe Harian wajib punya tarif harian (Rp/hari) > 0");
+      setSubmitting(false);
+      return;
+    }
+
     const payload = {
       fullName: fullName.trim(),
       nickname: nickname.trim() || null,
@@ -327,7 +357,9 @@ export function EmployeeFormModal({
       department: department.trim() || null,
       hireDate: hireDate || null,
       employmentType: employmentType === "" ? null : employmentType,
+      paymentType: paymentType === "" ? null : paymentType,
       salaryAmount: parsedSalary,
+      dailyRate: parsedDailyRate,
       userId: userId === "" ? null : userId,
       notes: notes.trim() || null,
     };
@@ -512,27 +544,67 @@ export function EmployeeFormModal({
                 label: t.label,
               }))}
             />
-            <Input
-              label="Gaji Pokok / Bulan"
-              type="text"
-              inputMode="numeric"
-              value={salaryInput}
-              onChange={(e) =>
-                setSalaryInput(e.target.value.replace(/[^\d]/g, ""))
+            {/* Sesi AE-60 — Mekanisme Gaji (paymentType + conditional rate) */}
+            <Select
+              label="Mekanisme Gaji"
+              value={paymentType === "" ? undefined : paymentType}
+              onValueChange={(v) =>
+                setPaymentType(v === "" ? "" : (v as "daily" | "monthly"))
               }
-              hint={
-                parsedSalary !== null && parsedSalary > 0
-                  ? `Preview: ${formatRupiah(parsedSalary)}${
-                      initial &&
-                      initial.salaryAmount !== null &&
-                      initial.salaryAmount !== parsedSalary
-                        ? ` · sebelumnya ${formatRupiah(initial.salaryAmount)}`
-                        : ""
-                    }`
-                  : "Kosongkan kalau dibayar harian/freelance"
-              }
+              placeholder="— Pilih mekanisme —"
               disabled={submitting}
+              options={[
+                {
+                  value: "monthly",
+                  label: "Bulanan Tetap (gaji flat per bulan)",
+                },
+                {
+                  value: "daily",
+                  label: "Harian (gaji = tarif × hari masuk)",
+                },
+              ]}
             />
+            {paymentType === "daily" ? (
+              <Input
+                label="Tarif Harian (Rp/hari) *"
+                type="text"
+                inputMode="numeric"
+                value={dailyRateInput}
+                onChange={(e) =>
+                  setDailyRateInput(e.target.value.replace(/[^\d]/g, ""))
+                }
+                hint="Gaji = Tarif Harian × jumlah hari masuk dari attendance"
+                disabled={submitting}
+              />
+            ) : (
+              <Input
+                label={
+                  paymentType === "monthly"
+                    ? "Gaji Pokok / Bulan *"
+                    : "Gaji Pokok / Bulan"
+                }
+                type="text"
+                inputMode="numeric"
+                value={salaryInput}
+                onChange={(e) =>
+                  setSalaryInput(e.target.value.replace(/[^\d]/g, ""))
+                }
+                hint={
+                  paymentType === "monthly"
+                    ? "Gaji bulanan flat — tidak tergantung jumlah hari masuk"
+                    : parsedSalary !== null && parsedSalary > 0
+                      ? `Preview: ${formatRupiah(parsedSalary)}${
+                          initial &&
+                          initial.salaryAmount !== null &&
+                          initial.salaryAmount !== parsedSalary
+                            ? ` · sebelumnya ${formatRupiah(initial.salaryAmount)}`
+                            : ""
+                        }`
+                      : "Pilih mekanisme dulu"
+                }
+                disabled={submitting}
+              />
+            )}
           </div>
         </Section>
 

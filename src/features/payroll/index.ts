@@ -11,6 +11,7 @@ export type {
 export { isOk } from "./types";
 
 export {
+  applyThr,
   computePayrollLines,
   createPayrollPeriod,
   deletePayrollPeriod,
@@ -20,3 +21,16 @@ export {
   markPayrollPaid,
   updatePayrollLine,
 } from "./actions";
+
+export {
+  computeBaseSalary,
+  computeThrSuggestion,
+  countLinesWithManualEdits,
+  hasManualEdits,
+  recomputeGrossNetV2,
+  type PaymentType,
+  type BaseSalaryInput,
+  type BaseSalaryResult,
+  type PayrollLineComputeInput,
+  type PayrollLineComputeResult,
+} from "./payroll-compute-pure";

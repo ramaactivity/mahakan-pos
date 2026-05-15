@@ -97,6 +97,10 @@ export type OutletSettings = {
     /** Rp per minute paid for overtime. Example: Rp 300/m × 60m OT
      * = Rp 18,000 OT pay. */
     overtimePerMinute?: number;
+    /** Sesi AE-60 — multiplier untuk auto-suggest THR (Tunjangan Hari
+     * Raya). Default 1.0 = 1× baseSalary (UU Indonesia). Owner edit di
+     * settings kalau pakai konvensi lain. */
+    thrMonthlyBaseMultiplier?: number;
   };
   /** Sesi AE-55 — Revenue targets untuk indikator progress di Laporan.
    * Semua nilai dalam Rupiah, optional. Null/undefined = belum ada target. */

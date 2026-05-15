@@ -60,6 +60,14 @@ export const employees = pgTable(
      * tracking that's done elsewhere. */
     salaryAmount: bigint("salary_amount", { mode: "number" }),
 
+    /** Sesi AE-60 — dual salary mechanism. NULL = legacy/auto fallback ke
+     * "monthly" behavior (compatibility); explicit "daily" → gunakan
+     * dailyRate × workDays; explicit "monthly" → gunakan salaryAmount flat. */
+    paymentType: text("payment_type", { enum: ["daily", "monthly"] }),
+    /** Sesi AE-60 — tarif harian (Rp/hari). Wajib > 0 jika paymentType='daily'.
+     * NULL untuk monthly/legacy. */
+    dailyRate: bigint("daily_rate", { mode: "number" }),
+
     /** Optional link to a POS / Back Office login account. When set,
      * authn happens on the users row but HR ops use the employees row. */
     userId: uuid("user_id").references(() => users.id),
@@ -109,6 +117,10 @@ export const employees = pgTable(
       "ck_employees_salary_nonneg",
       sql`${t.salaryAmount} IS NULL OR ${t.salaryAmount} >= 0`,
     ),
+    check(
+      "ck_employees_daily_rate_nonneg",
+      sql`${t.dailyRate} IS NULL OR ${t.dailyRate} >= 0`,
+    ),
   ],
 );
 
@@ -139,6 +151,11 @@ export const employeeCareerHistory = pgTable(
       enum: ["full_time", "part_time", "contract", "freelance"],
     }),
     salaryAmount: bigint("salary_amount", { mode: "number" }),
+    /** Sesi AE-60 — snapshot tarif harian saat perubahan terdeteksi. NULL
+     * untuk monthly fixed atau legacy entries. */
+    dailyRate: bigint("daily_rate", { mode: "number" }),
+    /** Sesi AE-60 — snapshot mekanisme gaji saat perubahan. NULL = legacy. */
+    paymentType: text("payment_type", { enum: ["daily", "monthly"] }),
 
     /** Free-form note: "Promosi ke Head Bar", "Naik gaji performance review", etc. */
     note: text("note"),
@@ -163,6 +180,10 @@ export const employeeCareerHistory = pgTable(
     check(
       "ck_employee_career_history_salary_nonneg",
       sql`${t.salaryAmount} IS NULL OR ${t.salaryAmount} >= 0`,
+    ),
+    check(
+      "ck_employee_career_history_daily_rate_nonneg",
+      sql`${t.dailyRate} IS NULL OR ${t.dailyRate} >= 0`,
     ),
   ],
 );
