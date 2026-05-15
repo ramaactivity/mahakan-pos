@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BookOpen, Filter, Info, Plus, RotateCcw, X } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  CheckCircle2,
+  Filter,
+  Info,
+  Loader2,
+  Plus,
+  RotateCcw,
+  X,
+  Zap,
+} from "lucide-react";
 import {
   Badge,
   Button,
@@ -18,6 +28,11 @@ import type {
   JournalEntryStatus,
   JournalEntryWithLines,
 } from "@/features/accounting/types";
+import {
+  getOwnOutlet,
+  isOk as outletIsOk,
+  updateFeatures,
+} from "@/features/outlets";
 import { hasPermission, type Role } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/money";
 import { cn } from "@/lib/utils";
@@ -84,6 +99,35 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
   const canDraft = hasPermission(viewerRole, "accounting.journal.draft");
   const canPost = hasPermission(viewerRole, "accounting.journal.post");
   const canReverse = hasPermission(viewerRole, "accounting.journal.reverse");
+
+  // Sesi AE-62c — auto-journal flag awareness untuk empty state CTA
+  const queryClient = useQueryClient();
+  const outletQuery = useQuery({
+    queryKey: ["admin", "outlet", "own"],
+    queryFn: async () => {
+      const res = await getOwnOutlet();
+      if (!outletIsOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+  const autoJournalEnabled =
+    outletQuery.data?.settings?.features?.accounting_auto_journal === true;
+  const [activating, setActivating] = useState(false);
+
+  async function handleEnableAutoJournal() {
+    setActivating(true);
+    try {
+      const res = await updateFeatures({ accounting_auto_journal: true });
+      if (!outletIsOk(res)) {
+        toast.error(res.error.message);
+        return;
+      }
+      toast.success("Auto-Journal aktif. Coba buat 1 transaksi POS untuk test.");
+      void queryClient.invalidateQueries({ queryKey: ["admin", "outlet"] });
+    } finally {
+      setActivating(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -217,20 +261,95 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
           ))}
         </div>
       ) : rows.length === 0 ? (
-        <div className="rounded-md border border-dashed border-neutral-200 bg-neutral-50 p-10 text-center">
-          <BookOpen className="mx-auto size-10 text-neutral-300" aria-hidden />
-          <h3 className="mt-3 text-sm font-medium text-neutral-700">
-            Belum ada entri jurnal
-          </h3>
-          <p className="mt-1 text-xs text-neutral-500">
-            Auto-jurnal aktif kalau Owner toggle flag di Settings → Auto-Journal
-            Akuntansi. Atau Owner buat manual via tombol di atas.
-          </p>
-          <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-neutral-500">
-            <Info className="size-3" /> Cutover &ldquo;Jurnal Pembukaan&rdquo;
-            saldo per 31 Mei 2026 di-post via tombol di tab Periode.
-          </p>
-        </div>
+        autoJournalEnabled ? (
+          // Flag ON tapi 0 entri — informational
+          <div className="rounded-md border border-dashed border-mahakan-green-300 bg-mahakan-green-50/30 p-10 text-center">
+            <CheckCircle2
+              className="mx-auto size-10 text-mahakan-green-700"
+              aria-hidden
+            />
+            <h3 className="mt-3 text-sm font-medium text-mahakan-green-900">
+              Auto-Journal AKTIF — belum ada entri
+            </h3>
+            <p className="mt-1 text-xs text-neutral-600">
+              Sistem siap. Buat 1 transaksi POS / pembelian / setoran tunai →
+              jurnal otomatis ter-post di sini. Atau buat manual via tombol di
+              atas.
+            </p>
+            <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-neutral-500">
+              <Info className="size-3" /> Cutover &ldquo;Jurnal
+              Pembukaan&rdquo; saldo per 31 Mei 2026 di-post via tombol di tab
+              Periode.
+            </p>
+          </div>
+        ) : (
+          // Flag OFF — actionable empty state
+          <div className="rounded-lg border-2 border-warning-500/50 bg-warning-50/30 p-8">
+            <div className="mx-auto max-w-2xl">
+              <div className="flex items-start gap-3">
+                <div className="flex size-12 shrink-0 items-center justify-center rounded-full bg-warning-100">
+                  <Zap className="size-6 text-warning-700" aria-hidden />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-base font-bold text-warning-900">
+                    Auto-Journal NONAKTIF
+                  </h3>
+                  <p className="mt-1 text-sm text-neutral-700">
+                    Saat ini transaksi POS / pembelian / payroll / setoran TIDAK
+                    auto-post ke jurnal. Itu sebabnya tab ini kosong walau
+                    transaksi sudah jalan di POS.
+                  </p>
+                  <p className="mt-2 text-xs text-neutral-600">
+                    Klik tombol di kanan untuk aktifkan. Aman dicoba — jurnal
+                    yang gagal akan di-track via audit log{" "}
+                    <code className="rounded bg-neutral-100 px-1">
+                      journal.posting_failed
+                    </code>{" "}
+                    (tidak fail transaksi POS-nya).
+                  </p>
+                </div>
+                <Button
+                  onClick={handleEnableAutoJournal}
+                  disabled={activating}
+                  className="shrink-0"
+                >
+                  {activating ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                  ) : (
+                    <Zap className="size-4" aria-hidden />
+                  )}{" "}
+                  Aktifkan
+                </Button>
+              </div>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-md border border-neutral-200 bg-white p-3 text-xs text-neutral-600">
+                  <div className="font-semibold text-neutral-900">
+                    Yang akan auto-jurnal:
+                  </div>
+                  <ul className="mt-1 space-y-0.5 list-disc pl-4">
+                    <li>POS sale + refund + compliment</li>
+                    <li>Pembelian (create / pay / cancel)</li>
+                    <li>Payroll (mark paid)</li>
+                    <li>Expense + income</li>
+                    <li>Setoran tunai + aggregator settlement</li>
+                    <li>Shift variance + opname adjustment</li>
+                  </ul>
+                </div>
+                <div className="rounded-md border border-neutral-200 bg-white p-3 text-xs text-neutral-600">
+                  <div className="font-semibold text-neutral-900">
+                    Setelah aktif:
+                  </div>
+                  <ul className="mt-1 space-y-0.5 list-disc pl-4">
+                    <li>Saldo Akun otomatis terupdate per transaksi</li>
+                    <li>P&L + Trial Balance live</li>
+                    <li>Period akuntansi auto-create kalau belum ada</li>
+                    <li>Bisa toggle balik OFF kapan saja di Settings</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
       ) : (
         <RowList
           rows={rows}

@@ -1,17 +1,21 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownCircle,
   ArrowUpCircle,
+  CheckCircle2,
   ChevronRight,
   History,
   Info,
+  Loader2,
   Search,
   Wallet,
+  Zap,
 } from "lucide-react";
 import {
+  Button,
   Card,
   CardContent,
   DatePicker,
@@ -19,6 +23,7 @@ import {
   Input,
   Modal,
   Skeleton,
+  toast,
 } from "@/components/ui";
 import {
   fetchAccounts,
@@ -30,6 +35,11 @@ import type {
   TrialBalanceRow,
 } from "@/features/accounting/reports";
 import type { AccountType } from "@/features/accounting/types";
+import {
+  getOwnOutlet,
+  isOk as outletIsOk,
+  updateFeatures,
+} from "@/features/outlets";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -94,6 +104,8 @@ export function BalanceAccountSection() {
    * kosong tertulis "Tidak ada akun di filter ini" walau Bagan Akun
    * banyak isinya. Sekarang fetch SEMUA akun aktif + merge dengan TB,
    * akun tanpa movement tampil dengan saldo Rp 0. */
+  const queryClient = useQueryClient();
+
   const accountsQuery = useQuery({
     queryKey: ["accounting", "accounts-active-balance"],
     queryFn: async () => {
@@ -111,6 +123,37 @@ export function BalanceAccountSection() {
       return res.data;
     },
   });
+
+  /* Sesi AE-62c — read auto-journal flag dari outlet settings supaya
+   * banner kasih tau owner kenapa Saldo masih Rp 0 + tombol toggle quick. */
+  const outletQuery = useQuery({
+    queryKey: ["admin", "outlet", "own"],
+    queryFn: async () => {
+      const res = await getOwnOutlet();
+      if (!outletIsOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+  const autoJournalEnabled =
+    outletQuery.data?.settings?.features?.accounting_auto_journal === true;
+  const [activating, setActivating] = useState(false);
+
+  async function handleEnableAutoJournal() {
+    setActivating(true);
+    try {
+      const res = await updateFeatures({ accounting_auto_journal: true });
+      if (!outletIsOk(res)) {
+        toast.error(res.error.message);
+        return;
+      }
+      toast.success(
+        "Auto-Journal aktif. Transaksi POS / payroll / setoran berikutnya akan auto-post ke jurnal.",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["admin", "outlet"] });
+    } finally {
+      setActivating(false);
+    }
+  }
 
   const accounts = accountsQuery.data;
   const tb = balanceQuery.data;
@@ -231,34 +274,84 @@ export function BalanceAccountSection() {
         })}
       </div>
 
-      {/* Info banner kalau belum ada movement (POS baru trial / pre-cutover) */}
-      {!isLoading && totalAccounts > 0 && movementCount === 0 ? (
-        <div className="flex items-start gap-2 rounded-md border border-mahakan-green-300/40 bg-mahakan-green-50/40 p-3 text-sm text-neutral-700">
-          <Info
-            className="mt-0.5 size-4 shrink-0 text-mahakan-green-700"
-            aria-hidden
-          />
-          <div>
-            <strong className="text-mahakan-green-900">
-              {totalAccounts} akun di Bagan Akun, semua saldo masih Rp 0.
-            </strong>{" "}
-            Mahakan baru trial &lt;1 minggu — jurnal otomatis baru aktif setelah
-            cutover akuntansi (default 1 Juni 2026). Setelah cutover, transaksi
-            POS / payroll / setoran / pembelian akan auto-post ke jurnal
-            sehingga saldo per akun terisi otomatis.
+      {/* Sesi AE-62c — banner state-aware berdasar auto-journal flag.
+        * Owner perlu tau: kenapa saldo Rp 0? Karena flag OFF (paling sering),
+        * atau karena belum ada transaksi (kalau flag sudah ON). */}
+      {!isLoading && !outletQuery.isLoading && totalAccounts > 0 ? (
+        movementCount === 0 && !autoJournalEnabled ? (
+          // FLAG OFF — actionable: kasih CTA Aktifkan
+          <div className="rounded-lg border-2 border-warning-500/50 bg-warning-50/40 p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-warning-100">
+                <Zap className="size-5 text-warning-700" aria-hidden />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-bold text-warning-900">
+                  Auto-Journal NONAKTIF — saldo akun tidak akan auto-update
+                </h3>
+                <p className="mt-1 text-sm text-neutral-700">
+                  <strong>{totalAccounts} akun</strong> sudah ada di Bagan Akun,
+                  tapi semua saldo masih Rp 0 karena <em>auto-journal flag</em> belum
+                  diaktifkan. Saat ini transaksi POS / payroll / setoran / pembelian
+                  TIDAK auto-post ke jurnal akuntansi.
+                </p>
+                <p className="mt-2 text-xs text-neutral-600">
+                  <strong>Solusi:</strong> Klik tombol di kanan untuk aktifkan
+                  sekarang. Transaksi berikutnya akan otomatis fire jurnal →
+                  saldo akun terupdate realtime. Aman dicoba — error di-track
+                  via audit log <code className="rounded bg-neutral-100 px-1">journal.posting_failed</code>.
+                </p>
+              </div>
+              <Button
+                onClick={handleEnableAutoJournal}
+                disabled={activating}
+                className="shrink-0"
+              >
+                {activating ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <Zap className="size-4" aria-hidden />
+                )}{" "}
+                Aktifkan Auto-Journal
+              </Button>
+            </div>
           </div>
-        </div>
-      ) : null}
-      {!isLoading && movementCount > 0 && movementCount < totalAccounts ? (
-        <div className="flex items-start gap-2 rounded-md border border-neutral-200 bg-neutral-50/60 p-2.5 text-xs text-neutral-600">
-          <Info className="mt-0.5 size-3.5 shrink-0 text-neutral-500" aria-hidden />
-          <div>
-            <strong className="text-neutral-800">{movementCount}</strong> dari{" "}
-            <strong className="text-neutral-800">{totalAccounts}</strong> akun
-            sudah punya pergerakan jurnal. Akun lain tampil dengan saldo Rp 0
-            (belum ada transaksi yang menyentuh akun tersebut).
+        ) : movementCount === 0 && autoJournalEnabled ? (
+          // FLAG ON tapi belum ada movement — informational
+          <div className="flex items-start gap-2 rounded-md border border-mahakan-green-300/40 bg-mahakan-green-50/40 p-3 text-sm text-neutral-700">
+            <CheckCircle2
+              className="mt-0.5 size-4 shrink-0 text-mahakan-green-700"
+              aria-hidden
+            />
+            <div>
+              <strong className="text-mahakan-green-900">
+                Auto-Journal AKTIF.
+              </strong>{" "}
+              Belum ada transaksi yang fire jurnal. Coba buat 1 transaksi POS
+              (atau pembelian / setoran tunai) → saldo akun akan terupdate
+              otomatis.
+            </div>
           </div>
-        </div>
+        ) : movementCount > 0 && movementCount < totalAccounts ? (
+          <div className="flex items-start gap-2 rounded-md border border-neutral-200 bg-neutral-50/60 p-2.5 text-xs text-neutral-600">
+            <Info
+              className="mt-0.5 size-3.5 shrink-0 text-neutral-500"
+              aria-hidden
+            />
+            <div>
+              <strong className="text-neutral-800">{movementCount}</strong> dari{" "}
+              <strong className="text-neutral-800">{totalAccounts}</strong> akun
+              sudah punya pergerakan. Akun lain tampil Rp 0 (belum ada transaksi
+              menyentuh akun tersebut).
+              {autoJournalEnabled ? null : (
+                <span className="ml-1 text-warning-700">
+                  · Auto-Journal masih NONAKTIF — transaksi baru tidak akan
+                  fire jurnal.
+                </span>
+              )}
+            </div>
+          </div>
+        ) : null
       ) : null}
 
       {/* Filter + table */}
