@@ -7,6 +7,7 @@ import {
   ArrowUpCircle,
   ChevronRight,
   History,
+  Info,
   Search,
   Wallet,
 } from "lucide-react";
@@ -87,6 +88,21 @@ export function BalanceAccountSection() {
     name: string;
   } | null>(null);
 
+  /* Fix AE-62b — sebelumnya pakai fetchTrialBalance saja, tapi
+   * buildTrialBalance filter out akun yang debit=0 dan credit=0 → Mahakan
+   * baru trial <1 minggu, banyak akun belum punya jurnal post → table
+   * kosong tertulis "Tidak ada akun di filter ini" walau Bagan Akun
+   * banyak isinya. Sekarang fetch SEMUA akun aktif + merge dengan TB,
+   * akun tanpa movement tampil dengan saldo Rp 0. */
+  const accountsQuery = useQuery({
+    queryKey: ["accounting", "accounts-active-balance"],
+    queryFn: async () => {
+      const res = await fetchAccounts({ isActive: true });
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+  });
+
   const balanceQuery = useQuery({
     queryKey: ["accounting", "balance-account", asOf],
     queryFn: async () => {
@@ -96,11 +112,43 @@ export function BalanceAccountSection() {
     },
   });
 
-  /* TrialBalance returns rows where empty accounts are filtered out. Untuk
-   * dashboard saldo akun, kita butuh ALL accounts dengan saldo (even Rp 0
-   * untuk akun yang ada dengan saldo 0). Tapi minimal coba dulu — owner
-   * lebih sering tertarik akun yang punya pergerakan. */
+  const accounts = accountsQuery.data;
   const tb = balanceQuery.data;
+
+  /** Merged row: setiap akun aktif + saldo dari TB (default 0 kalau no movement). */
+  type MergedRow = {
+    id: string;
+    code: string;
+    name: string;
+    type: AccountType;
+    debit: number;
+    credit: number;
+    hasMovement: boolean;
+  };
+
+  const mergedRows = useMemo<MergedRow[]>(() => {
+    if (!accounts) return [];
+    const tbMap = new Map<string, { debit: number; credit: number }>();
+    if (tb) {
+      for (const r of tb.rows as TrialBalanceRow[]) {
+        tbMap.set(r.code, { debit: r.debit, credit: r.credit });
+      }
+    }
+    return accounts
+      .map((a) => {
+        const tbRow = tbMap.get(a.code);
+        return {
+          id: a.id,
+          code: a.code,
+          name: a.name,
+          type: a.type as AccountType,
+          debit: tbRow?.debit ?? 0,
+          credit: tbRow?.credit ?? 0,
+          hasMovement: !!tbRow,
+        };
+      })
+      .sort((a, b) => a.code.localeCompare(b.code));
+  }, [accounts, tb]);
 
   const totals = useMemo(() => {
     const t: Record<AccountType, number> = {
@@ -111,23 +159,25 @@ export function BalanceAccountSection() {
       expense: 0,
       cogs: 0,
     };
-    if (!tb) return t;
-    for (const r of tb.rows as TrialBalanceRow[]) {
+    for (const r of mergedRows) {
       t[r.type] += signedNormal(r.type, r.debit, r.credit);
     }
     return t;
-  }, [tb]);
+  }, [mergedRows]);
 
-  const filteredRows = useMemo<TrialBalanceRow[]>(() => {
-    if (!tb) return [];
+  const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (tb.rows as TrialBalanceRow[]).filter((r) => {
+    return mergedRows.filter((r) => {
       if (typeFilter !== "all" && r.type !== typeFilter) return false;
       if (q && !r.code.includes(q) && !r.name.toLowerCase().includes(q))
         return false;
       return true;
     });
-  }, [tb, typeFilter, search]);
+  }, [mergedRows, typeFilter, search]);
+
+  const movementCount = mergedRows.filter((r) => r.hasMovement).length;
+  const totalAccounts = mergedRows.length;
+  const isLoading = accountsQuery.isLoading || balanceQuery.isLoading;
 
   return (
     <div className="space-y-4 p-6">
@@ -181,6 +231,36 @@ export function BalanceAccountSection() {
         })}
       </div>
 
+      {/* Info banner kalau belum ada movement (POS baru trial / pre-cutover) */}
+      {!isLoading && totalAccounts > 0 && movementCount === 0 ? (
+        <div className="flex items-start gap-2 rounded-md border border-mahakan-green-300/40 bg-mahakan-green-50/40 p-3 text-sm text-neutral-700">
+          <Info
+            className="mt-0.5 size-4 shrink-0 text-mahakan-green-700"
+            aria-hidden
+          />
+          <div>
+            <strong className="text-mahakan-green-900">
+              {totalAccounts} akun di Bagan Akun, semua saldo masih Rp 0.
+            </strong>{" "}
+            Mahakan baru trial &lt;1 minggu — jurnal otomatis baru aktif setelah
+            cutover akuntansi (default 1 Juni 2026). Setelah cutover, transaksi
+            POS / payroll / setoran / pembelian akan auto-post ke jurnal
+            sehingga saldo per akun terisi otomatis.
+          </div>
+        </div>
+      ) : null}
+      {!isLoading && movementCount > 0 && movementCount < totalAccounts ? (
+        <div className="flex items-start gap-2 rounded-md border border-neutral-200 bg-neutral-50/60 p-2.5 text-xs text-neutral-600">
+          <Info className="mt-0.5 size-3.5 shrink-0 text-neutral-500" aria-hidden />
+          <div>
+            <strong className="text-neutral-800">{movementCount}</strong> dari{" "}
+            <strong className="text-neutral-800">{totalAccounts}</strong> akun
+            sudah punya pergerakan jurnal. Akun lain tampil dengan saldo Rp 0
+            (belum ada transaksi yang menyentuh akun tersebut).
+          </div>
+        </div>
+      ) : null}
+
       {/* Filter + table */}
       <Card>
         <CardContent className="space-y-3 p-4">
@@ -216,7 +296,7 @@ export function BalanceAccountSection() {
             </div>
           </div>
 
-          {balanceQuery.isLoading ? (
+          {isLoading ? (
             <div className="space-y-2">
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton key={i} className="h-10 w-full" />
@@ -227,8 +307,8 @@ export function BalanceAccountSection() {
               title="Tidak ada akun di filter ini"
               description={
                 typeFilter !== "all" || search
-                  ? "Coba ubah filter atau search."
-                  : "Belum ada jurnal yang ter-post untuk ditampilkan."
+                  ? "Coba ubah filter atau hapus search."
+                  : "Belum ada akun aktif. Tambah akun di tab Akuntansi → Bagan Akun."
               }
             />
           ) : (
@@ -251,17 +331,18 @@ export function BalanceAccountSection() {
                     const normal = signedNormal(r.type, r.debit, r.credit);
                     return (
                       <tr
-                        key={r.code}
+                        key={r.id}
                         onClick={() =>
-                          // Look up accountId from balance row — TrialBalanceRow
-                          // doesn't have it, so we drill via code lookup.
                           setDrilldownAccount({
-                            accountId: r.code, // placeholder, will resolve in modal
+                            accountId: r.id,
                             code: r.code,
                             name: r.name,
                           })
                         }
-                        className="cursor-pointer border-t border-neutral-100 hover:bg-mahakan-green-50/30"
+                        className={cn(
+                          "cursor-pointer border-t border-neutral-100 hover:bg-mahakan-green-50/30",
+                          !r.hasMovement && "opacity-60",
+                        )}
                       >
                         <td className="px-3 py-2 font-mono text-xs">
                           {r.code}
@@ -321,6 +402,7 @@ export function BalanceAccountSection() {
       </Card>
 
       <AccountLedgerModal
+        accountId={drilldownAccount?.accountId ?? null}
         accountCode={drilldownAccount?.code ?? null}
         accountName={drilldownAccount?.name ?? null}
         asOf={asOf}
@@ -396,31 +478,18 @@ function FilterPill({
 }
 
 function AccountLedgerModal({
+  accountId,
   accountCode,
   accountName,
   asOf,
   onClose,
 }: {
+  accountId: string | null;
   accountCode: string | null;
   accountName: string | null;
   asOf: string;
   onClose: () => void;
 }) {
-  // From trial balance row we only have `code`. Need `accountId` to fetch
-  // ledger. Resolve via fetchAccounts list once and lookup by code.
-  const accountsQuery = useQuery({
-    queryKey: ["accounting", "accounts-active"],
-    queryFn: async () => {
-      const res = await fetchAccounts({ isActive: true });
-      if (!res.ok) throw new Error(res.error.message);
-      return res.data;
-    },
-  });
-
-  const accountId = accountsQuery.data?.find(
-    (a: { code: string; id: string }) => a.code === accountCode,
-  )?.id;
-
   const fromDefault = (() => {
     const d = new Date(asOf);
     d.setMonth(d.getMonth() - 1);
@@ -440,7 +509,7 @@ function AccountLedgerModal({
     enabled: !!accountId,
   });
 
-  if (!accountCode) return null;
+  if (!accountCode || !accountId) return null;
 
   return (
     <Modal
@@ -464,7 +533,7 @@ function AccountLedgerModal({
           />
         </div>
 
-        {ledgerQuery.isLoading || accountsQuery.isLoading ? (
+        {ledgerQuery.isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-8 w-full" />
             <Skeleton className="h-8 w-full" />
