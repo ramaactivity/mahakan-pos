@@ -19,6 +19,8 @@ import {
   customers,
   expenseCategories,
   expenses,
+  historicalDailySummary,
+  historicalExpense,
   incomes,
   menuItems,
   refundEventItems,
@@ -355,19 +357,62 @@ export async function fetchPnlReport(
     .sort((a, b) => b.amount - a.amount);
   const expensesTotal = byCategory.reduce((s, e) => s + e.amount, 0);
 
-  const totalIncome = posRevenue + manualIncome;
-  const grossMargin = totalIncome - cogs;
-  const netProfit = grossMargin - expensesTotal;
+  /* Sesi AE-62 — merge historical_daily_summary + historical_expense ke
+   * P&L report. Range overlap: same `from`/`to` ISO. Historical entry
+   * represent business days dari Majoo/Kasir Pintar sebelum trial. */
+  const [histRevRow] = await db
+    .select({
+      net: sql<number>`coalesce(sum(${historicalDailySummary.netRevenue}), 0)::bigint`,
+      cogs: sql<number>`coalesce(sum(${historicalDailySummary.cogs}), 0)::bigint`,
+    })
+    .from(historicalDailySummary)
+    .where(
+      and(
+        eq(historicalDailySummary.outletId, outletId),
+        gte(historicalDailySummary.businessDate, from),
+        lte(historicalDailySummary.businessDate, to),
+      ),
+    );
+  const historicalIncome = Number(histRevRow?.net ?? 0);
+  const historicalCogs = Number(histRevRow?.cogs ?? 0);
+
+  const [histExpRow] = await db
+    .select({
+      total: sql<number>`coalesce(sum(${historicalExpense.amount}), 0)::bigint`,
+    })
+    .from(historicalExpense)
+    .where(
+      and(
+        eq(historicalExpense.outletId, outletId),
+        gte(historicalExpense.businessDate, from),
+        lte(historicalExpense.businessDate, to),
+      ),
+    );
+  const historicalExpenseTotal = Number(histExpRow?.total ?? 0);
+
+  const totalIncome = posRevenue + manualIncome + historicalIncome;
+  const grossMargin = totalIncome - cogs - historicalCogs;
+  const netProfit = grossMargin - expensesTotal - historicalExpenseTotal;
 
   return {
     period: { from, to },
-    income: { posRevenue, manualIncome, total: totalIncome },
+    income: {
+      posRevenue,
+      manualIncome,
+      historicalIncome,
+      total: totalIncome,
+    },
     cogs,
+    historicalCogs,
     grossMargin,
-    expenses: { byCategory, total: expensesTotal },
+    expenses: {
+      byCategory,
+      historicalTotal: historicalExpenseTotal,
+      total: expensesTotal + historicalExpenseTotal,
+    },
     netProfit,
     disclaimer:
-      "Ini bukan laporan akuntansi resmi. Hanya summary arus kas sederhana. COGS = HPP yang ter-snapshot saat transaksi paid.",
+      "Ini bukan laporan akuntansi resmi. Hanya summary arus kas sederhana. COGS = HPP yang ter-snapshot saat transaksi paid. Data 'Histori' = import dari POS sebelumnya (Majoo/Kasir Pintar).",
   };
 }
 
@@ -451,14 +496,65 @@ export async function fetchSalesRangeReport(
     cur.transactionCount += 1;
     dayBuckets.set(key, cur);
   }
+  /* Sesi AE-62 — fetch historical_daily_summary di range untuk merge ke
+   * byDay. Live data wins kalau tanggal overlap (live row pasti ada karena
+   * dayBuckets tidak null di range). Historical fill gap atau days kosong. */
+  const historicalDays = await db
+    .select({
+      date: historicalDailySummary.businessDate,
+      net: historicalDailySummary.netRevenue,
+      trx: historicalDailySummary.transactionCount,
+      sourceLabel: historicalDailySummary.sourceLabel,
+    })
+    .from(historicalDailySummary)
+    .where(
+      and(
+        eq(historicalDailySummary.outletId, outletId),
+        gte(historicalDailySummary.businessDate, from),
+        lte(historicalDailySummary.businessDate, to),
+      ),
+    );
+  const historicalMap = new Map<
+    string,
+    { revenue: number; transactionCount: number; sourceLabel: string | null }
+  >();
+  for (const h of historicalDays) {
+    historicalMap.set(h.date, {
+      revenue: Number(h.net),
+      transactionCount: h.trx,
+      sourceLabel: h.sourceLabel,
+    });
+  }
+
   // Fill gaps so charts have continuous time series
   const byDay: SalesRangeReport["byDay"] = [];
   const cursor = new Date(`${from}T00:00:00+07:00`);
   const end = new Date(`${to}T00:00:00+07:00`);
   while (cursor <= end) {
     const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
-    const v = dayBuckets.get(key) ?? { revenue: 0, transactionCount: 0 };
-    byDay.push({ date: key, revenue: v.revenue, transactionCount: v.transactionCount });
+    const live = dayBuckets.get(key);
+    const hist = historicalMap.get(key);
+    if (live && live.revenue > 0) {
+      byDay.push({
+        date: key,
+        revenue: live.revenue,
+        transactionCount: live.transactionCount,
+      });
+    } else if (hist) {
+      byDay.push({
+        date: key,
+        revenue: hist.revenue,
+        transactionCount: hist.transactionCount,
+        isHistorical: true,
+        sourceLabel: hist.sourceLabel,
+      });
+    } else {
+      byDay.push({
+        date: key,
+        revenue: live?.revenue ?? 0,
+        transactionCount: live?.transactionCount ?? 0,
+      });
+    }
     cursor.setDate(cursor.getDate() + 1);
   }
 

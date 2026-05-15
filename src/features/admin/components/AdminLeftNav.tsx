@@ -20,6 +20,7 @@ import {
   Users,
   Wallet,
   Receipt,
+  History,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,7 @@ export type AdminSection =
   | "setoran_tunai"
   | "finance"
   | "accounting"
+  | "reconciliation"
   | "promos"
   | "reports"
   | "audit"
@@ -114,6 +116,7 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "finance", label: "Keuangan", Icon: Banknote },
       { key: "accounting", label: "Akuntansi", Icon: BookOpen },
       { key: "reports", label: "Laporan", Icon: BarChart3 },
+      { key: "reconciliation", label: "Rekonsiliasi", Icon: History },
     ],
   },
   {

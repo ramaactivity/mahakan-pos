@@ -143,6 +143,13 @@ export const permissions = {
   "settings.approval.update": ["owner"],
   "settings.targets.update": ["owner"],
 
+  /* Sesi AE-62 — Historical reconciliation (Majoo/Kasir Pintar CSV import).
+   * Owner-only mutate (sensitive: bisa shift laporan akuntansi),
+   * manager bisa view untuk verifikasi. */
+  "historical.view": ["owner", "manager"],
+  "historical.import": ["owner"],
+  "historical.update": ["owner"],
+
   // Inventory — Supervisor view + receive + waste (operational), TIDAK
   // CRUD master ingredient/recipe (master data) atau adjust (sensitive).
   "inventory.ingredient.view": ["owner", "manager", "supervisor"],

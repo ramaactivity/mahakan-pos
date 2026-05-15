@@ -187,6 +187,12 @@ export const AUDIT_EVENT_TYPES = [
   "bank_account.delete",
   // Sesi AE-32 — nuclear reset operational data (mockup → trial).
   "system.reset_mockup_data",
+  /* Sesi AE-62 — Historical reconciliation (CSV import dari Majoo/Kasir Pintar).
+   * Aggregated daily summary 3-6 bulan untuk laporan akuntansi + investor. */
+  "historical.import_summary",
+  "historical.import_expense",
+  "historical.update",
+  "historical.delete",
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -230,7 +236,9 @@ export type AuditEntityType =
   | "accounting_period"
   | "journal_entry"
   | "fixed_asset"
-  | "bank_account";
+  | "bank_account"
+  | "historical_daily_summary"
+  | "historical_expense";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

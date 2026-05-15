@@ -93,6 +93,11 @@ export interface SalesRangeReport {
     date: string;
     revenue: number;
     transactionCount: number;
+    /** Sesi AE-62 — true kalau row ini berasal dari historical_daily_summary
+     *  (data import dari Majoo/Kasir Pintar), bukan transactions live. UI
+     *  badge kuning "Histori" + sourceLabel kalau ada. */
+    isHistorical?: boolean;
+    sourceLabel?: string | null;
   }>;
   comparison: {
     period: { from: string; to: string };
@@ -156,17 +161,23 @@ export interface PnlReport {
   income: {
     posRevenue: number;
     manualIncome: number;
+    /** Sesi AE-62 — net revenue dari historical_daily_summary di range. */
+    historicalIncome: number;
     total: number;
   };
-  /** Sum of transactions.cogs for paid transactions in range. */
+  /** Sum of transactions.cogs for paid transactions in range. Live POS only. */
   cogs: number;
-  /** total income − cogs (per accounting). */
+  /** Sesi AE-62 — historical_daily_summary.cogs aggregate di range. */
+  historicalCogs: number;
+  /** total income − (cogs + historicalCogs). */
   grossMargin: number;
   expenses: {
     byCategory: Array<{ name: string; amount: number }>;
+    /** Sesi AE-62 — total historical_expense.amount aggregate di range. */
+    historicalTotal: number;
     total: number;
   };
-  /** total income − cogs − expenses (renamed: previously this field was income − expenses). */
+  /** total income − all cogs − all expenses. */
   netProfit: number;
   disclaimer: string;
 }

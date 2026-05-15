@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Download, Lock } from "lucide-react";
 import {
   Badge,
@@ -142,6 +142,19 @@ export function PnlView({ viewerRole }: PnlViewProps) {
                     label="Manual Income (non-POS)"
                     value={formatRupiah(report.income.manualIncome)}
                   />
+                  {report.income.historicalIncome > 0 ? (
+                    <Row
+                      label={
+                        <span className="inline-flex items-center gap-1.5">
+                          Histori (Majoo / POS lama)
+                          <span className="rounded-full bg-warning-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-warning-700">
+                            Histori
+                          </span>
+                        </span>
+                      }
+                      value={formatRupiah(report.income.historicalIncome)}
+                    />
+                  ) : null}
                   <div className="border-t border-dashed border-neutral-200 pt-1.5">
                     <Row
                       label="Total Pendapatan"
@@ -161,11 +174,24 @@ export function PnlView({ viewerRole }: PnlViewProps) {
                   <Row
                     label={
                       report.cogs > 0
-                        ? "Total HPP (snapshot saat transaksi)"
+                        ? "HPP Live (snapshot saat transaksi)"
                         : "Belum ada COGS data — set up resep dulu"
                     }
                     value={formatRupiah(report.cogs)}
                   />
+                  {report.historicalCogs > 0 ? (
+                    <Row
+                      label={
+                        <span className="inline-flex items-center gap-1.5">
+                          HPP Histori (Majoo / POS lama)
+                          <span className="rounded-full bg-warning-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-warning-700">
+                            Histori
+                          </span>
+                        </span>
+                      }
+                      value={formatRupiah(report.historicalCogs)}
+                    />
+                  ) : null}
                 </div>
               </div>
 
@@ -211,6 +237,19 @@ export function PnlView({ viewerRole }: PnlViewProps) {
                       />
                     ))
                   )}
+                  {report.expenses.historicalTotal > 0 ? (
+                    <Row
+                      label={
+                        <span className="inline-flex items-center gap-1.5">
+                          Histori (Majoo / POS lama)
+                          <span className="rounded-full bg-warning-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-warning-700">
+                            Histori
+                          </span>
+                        </span>
+                      }
+                      value={formatRupiah(report.expenses.historicalTotal)}
+                    />
+                  ) : null}
                   <div className="border-t border-dashed border-neutral-200 pt-1.5">
                     <Row
                       label="Total Pengeluaran"
@@ -262,7 +301,7 @@ function Row({
   value,
   bold,
 }: {
-  label: string;
+  label: ReactNode;
   value: string;
   bold?: boolean;
 }) {
