@@ -153,7 +153,24 @@ export function buildIncomeStatement(
 
   for (const b of balances) {
     if (b.debitTotal === 0 && b.creditTotal === 0) continue;
-    const net = Math.abs(b.creditTotal - b.debitTotal);
+    // Sesi AE-62g — preserve sign sesuai normal-balance per account type.
+    // Sebelumnya pakai Math.abs() → reversed-balance accounts (e.g. revenue
+    // dengan debit balance) tampil positif → audit trail rusak, P&L sign
+    // ambiguous. Sekarang signed seperti Trial Balance.
+    //
+    // Normal balance:
+    //   revenue: credit (credit > debit = positive)
+    //   cogs:    debit (debit > credit = positive)
+    //   expense: debit (debit > credit = positive)
+    // Contra-revenue (returns, discounts): debit normal → flip kembali.
+    const creditNet = b.creditTotal - b.debitTotal; // credit-positive
+    const debitNet = b.debitTotal - b.creditTotal;  // debit-positive
+    const net =
+      b.type === "revenue"
+        ? b.isContra
+          ? debitNet  // contra-revenue normal di sisi debit
+          : creditNet
+        : debitNet;   // cogs + expense normal debit
     if (net === 0) continue;
 
     if (b.type === "revenue") {

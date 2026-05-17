@@ -26,6 +26,7 @@ import {
   refundEventItems,
   refundEvents,
   shifts,
+  splitPayments,
   transactionItems,
   transactions,
   users,
@@ -107,36 +108,89 @@ export async function fetchDailySalesReport(
   const averageTicket =
     paid.length > 0 ? Math.round(revenue / paid.length) : 0;
 
-  const byPaymentMethod: PaymentMethodBreakdown[] = (
-    [
-      "cash",
-      "qris",
-      "card_bca",
-      "card_bni",
-      "card_mandiri",
-      "card_bri",
-      "card_other",
-    ] as const
+  // Sesi AE-62g — Split payments harus di-include di breakdown. Sebelumnya
+  // bug: trx dengan paymentMethod="split" cuma di-filter oleh primary method
+  // (yang adalah literal "split") → tidak match cash/qris/dst → cash &
+  // QRIS total under-stated di laporan. Fix: query split_payments untuk
+  // trx split, distribute amount per leg's method.
+  const paidIds = paid.map((p) => p.id);
+  const methodAggregate = new Map<
+    string,
+    { method: PaymentMethod; count: number; amount: number }
+  >();
+  // Non-split paid trxs — count langsung ke their payment method (NET sebagai
+  // bahan reconciliation, mencerminkan rupiah masuk ke channel itu).
+  for (const t of paid) {
+    if (t.paymentMethod === "split") continue;
+    const cur = methodAggregate.get(t.paymentMethod) ?? {
+      method: t.paymentMethod as PaymentMethod,
+      count: 0,
+      amount: 0,
+    };
+    cur.count += 1;
+    cur.amount += netTotal(t);
+    methodAggregate.set(t.paymentMethod, cur);
+  }
+  // Split paid trxs — fan-out tiap leg ke methodnya. Untuk partially_refunded,
+  // pro-rate transaction.refundedAmount across legs proportional ke gross.
+  if (paidIds.length > 0) {
+    const splitRows = await db
+      .select({
+        transactionId: splitPayments.transactionId,
+        paymentMethod: splitPayments.paymentMethod,
+        amount: splitPayments.amount,
+      })
+      .from(splitPayments)
+      .where(inArray(splitPayments.transactionId, paidIds));
+    // Group legs per transaction untuk pro-rate refund
+    const legsByTrx = new Map<
+      string,
+      Array<{ method: string; amount: number }>
+    >();
+    for (const r of splitRows) {
+      const arr = legsByTrx.get(r.transactionId) ?? [];
+      arr.push({ method: r.paymentMethod, amount: r.amount });
+      legsByTrx.set(r.transactionId, arr);
+    }
+    for (const t of paid) {
+      const legs = legsByTrx.get(t.id);
+      if (!legs || legs.length === 0) continue;
+      const gross = legs.reduce((s, l) => s + l.amount, 0);
+      const refundShare = (legAmt: number) =>
+        gross > 0 ? Math.round((t.refundedAmount * legAmt) / gross) : 0;
+      // Count trx once per unique leg-method (tidak duplicate trx count).
+      const seenMethods = new Set<string>();
+      for (const leg of legs) {
+        const cur = methodAggregate.get(leg.method) ?? {
+          method: leg.method as PaymentMethod,
+          count: 0,
+          amount: 0,
+        };
+        if (!seenMethods.has(leg.method)) {
+          cur.count += 1;
+          seenMethods.add(leg.method);
+        }
+        cur.amount += leg.amount - refundShare(leg.amount);
+        methodAggregate.set(leg.method, cur);
+      }
+    }
+  }
+  const byPaymentMethod: PaymentMethodBreakdown[] = Array.from(
+    methodAggregate.values(),
   )
-    .map((method) => {
-      const rows = paid.filter((t) => t.paymentMethod === method);
-      return {
-        method: method as PaymentMethod,
-        count: rows.length,
-        amount: rows.reduce((s, t) => s + netTotal(t), 0),
-      };
-    })
-    // Hide methods dengan zero transaction agar dashboard tidak penuh row 0
-    .filter((row) => row.count > 0);
+    .filter((row) => row.count > 0)
+    .sort((a, b) => b.amount - a.amount);
 
-  // Hourly bucket (WIB)
+  // Hourly bucket (WIB) — sesi AE-62g pakai netTotal supaya konsisten
+  // dengan revenue metric (sebelumnya pakai t.total → over-state hourly
+  // revenue untuk jam yang ada partial refund).
   const hourlyMap = new Map<number, HourlyBucket>();
   for (const t of paid) {
     const wib = new Date(t.createdAt.getTime() + 7 * 60 * 60 * 1000);
     const hour = wib.getUTCHours();
     const cur = hourlyMap.get(hour) ?? { hour, count: 0, revenue: 0 };
     cur.count += 1;
-    cur.revenue += t.total;
+    cur.revenue += netTotal(t);
     hourlyMap.set(hour, cur);
   }
   const hourlyDistribution = Array.from(hourlyMap.values()).sort(
@@ -144,7 +198,6 @@ export async function fetchDailySalesReport(
   );
 
   // Category + item aggregates from transaction_items joined to paid trxs
-  const paidIds = paid.map((p) => p.id);
   let byCategory: CategoryBreakdown[] = [];
   let topItems: TopItem[] = [];
   if (paidIds.length > 0) {
@@ -196,7 +249,10 @@ export async function fetchDailySalesReport(
       transactionCount: paid.length,
       averageTicket,
       voidedCount: voided.length,
-      voidedAmount: voided.reduce((s, t) => s + t.total, 0),
+      // Sesi AE-62g — netTotal supaya void post-partial-refund tidak
+      // over-state (kalau trx 100k sudah refund 30k lalu di-void, voided
+      // amount = 70k, bukan 100k).
+      voidedAmount: voided.reduce((s, t) => s + netTotal(t), 0),
       refundedCount: refunded.length,
       refundedAmount: refunded.reduce((s, t) => s + t.total, 0),
     },
@@ -642,7 +698,10 @@ export async function fetchSalesRangeReport(
       transactionCount: paid.length,
       averageTicket,
       voidedCount: voided.length,
-      voidedAmount: voided.reduce((s, t) => s + t.total, 0),
+      // Sesi AE-62g — netTotal supaya void post-partial-refund tidak
+      // over-state (kalau trx 100k sudah refund 30k lalu di-void, voided
+      // amount = 70k, bukan 100k).
+      voidedAmount: voided.reduce((s, t) => s + netTotal(t), 0),
       refundedCount: refunded.length,
       refundedAmount: refunded.reduce((s, t) => s + t.total, 0),
     },

@@ -536,11 +536,14 @@ export async function submitOpname(
           // Sesi AE-62e — mirror decimal juga supaya finalize compute
           // diff = 0 (no movement) untuk uncounted-auto-fill case, even
           // kalau real expected (decimal) negative dari oversold.
+          // Sesi AE-62g — kalau expectedQtyDecimal NULL (legacy row),
+          // fallback ke expectedQty::numeric supaya diff hitung pakai
+          // bigint value (tidak loss decimal information yang ada).
           await tx
             .update(stockOpnameLines)
             .set({
               actualQty: sql`${stockOpnameLines.expectedQty}`,
-              actualQtyDecimal: sql`${stockOpnameLines.expectedQtyDecimal}`,
+              actualQtyDecimal: sql`COALESCE(${stockOpnameLines.expectedQtyDecimal}, ${stockOpnameLines.expectedQty}::numeric)`,
               countedAt: new Date(),
               countedBy: session.user.id,
               note: sql`COALESCE(${stockOpnameLines.note}, 'Auto-fill saat submit (sesuai expected)')`,
@@ -736,16 +739,27 @@ export async function finalizeOpname(
           }
 
           // Sesi AE-12 — decimal mirror.
+          // Sesi AE-62g — block kalau projection sebenarnya negative.
+          // computeNewStock clamp 0, jadi check `newStock.bigint < 0` (dead
+          // code dulu) ga pernah fire. Resolve pre-clamp projected dulu.
+          const oldDecimalCur = (() => {
+            if (live.currentStockDecimal !== null) {
+              const p = parseFloat(live.currentStockDecimal);
+              return Number.isFinite(p) ? p : live.currentStock;
+            }
+            return live.currentStock;
+          })();
+          const projectedDecimal = oldDecimalCur + diff;
+          if (projectedDecimal < 0) {
+            throw new Error(
+              `NEGATIVE_STOCK:${line.ingredientNameSnapshot}`,
+            );
+          }
           const newStock = computeNewStock({
             currentBigint: live.currentStock,
             currentDecimal: live.currentStockDecimal,
             delta: diff,
           });
-          if (newStock.bigint < 0) {
-            throw new Error(
-              `NEGATIVE_STOCK:${line.ingredientNameSnapshot}`,
-            );
-          }
           const movementDelta = formatMovementDelta(diff);
 
           await tx

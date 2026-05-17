@@ -16,7 +16,11 @@ import { hasPermission } from "@/lib/auth";
 import { diffShallow, logAudit } from "@/lib/audit/logger";
 import { monthWibRangeUtc } from "@/lib/date";
 import { logAndSanitize } from "@/lib/server-error";
-import { computeNewStock, formatMovementDelta } from "@/lib/stock-decimal";
+import {
+  computeNewStock,
+  formatMovementDelta,
+  resolveStockDecimal,
+} from "@/lib/stock-decimal";
 import { fetchHppReport } from "@/features/reports/inventory-reports";
 import type { HppReportRow } from "@/features/reports";
 import {
@@ -769,7 +773,16 @@ export async function recordWaste(
       if (!ingRow || ingRow.outletId !== session.user.outletId) {
         throw new Error("INGREDIENT_NOT_FOUND");
       }
-      if (ingRow.currentStock < v.qty) {
+      // Sesi AE-62g — pakai decimal-aware resolve. Bigint bisa salah
+      // representation kalau stock decimal mirror sudah negative (oversold
+      // sebelum opname). Tanpa fix ini: ingRow.currentStock=0 (clamped),
+      // currentStockDecimal="-5.0000" → check 0 < qty passes → waste applied
+      // → stock makin minus. resolveStockDecimal prefer decimal.
+      const liveStock = resolveStockDecimal(
+        ingRow.currentStock,
+        ingRow.currentStockDecimal,
+      );
+      if (liveStock < v.qty) {
         throw new Error("INSUFFICIENT_STOCK");
       }
 

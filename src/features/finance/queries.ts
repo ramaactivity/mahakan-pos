@@ -1168,15 +1168,42 @@ export async function getSettlementReconciliation(
   // ---- Kasir-Lapor (derived) untuk Cash channel ----
   // Strategi: kalau ada shifts.cashSalesReported explicit → pakai itu.
   // Kalau tidak (cashReportedExplicit = 0), derive: actualCashSum - openingCashSum
-  // - paidQris (qrisSettlement) - paidCard (edcSettlement). Itu cash net flow
-  // ke drawer dari shift = penjualan cash - refund cash. Approximate.
+  // - paidQris (qrisSettlement) - paidCard (edcSettlement) + refundedCash.
+  // Itu net cash flow ke drawer dari shift = sales cash - refund cash.
+  //
+  // Sesi AE-62g — tambah refundedCash dari transactions di window. Sebelumnya
+  // formula miss refund subtraction → derived over-state cash → false-positive
+  // "cash leak" alert vs setoran bank.
   const cashReportedExplicit = Number(shiftAgg[0]?.cashReportedExplicit ?? 0);
   const actualCashSum = Number(shiftAgg[0]?.actualCashSum ?? 0);
   const openingCashSum = Number(shiftAgg[0]?.openingCashSum ?? 0);
   const edcReported = Number(shiftAgg[0]?.edc ?? 0);
   const qrisReportedRaw = Number(shiftAgg[0]?.qris ?? 0);
+  // Cash refunded di window — both full & partial. Untuk full refund cash,
+  // physical cash sudah keluar drawer; untuk partial, refundedAmount keluar.
+  const cashRefundAgg = await db
+    .select({
+      refundedCash: sql<string>`COALESCE(SUM(
+        CASE WHEN ${transactions.status} = 'partially_refunded'
+             THEN ${transactions.refundedAmount}
+             WHEN ${transactions.status} = 'refunded'
+             THEN ${transactions.total}
+             ELSE 0 END
+      ), 0)`,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.outletId, outletId),
+        eq(transactions.paymentMethod, "cash"),
+        inArray(transactions.status, ["partially_refunded", "refunded"]),
+        gte(transactions.createdAt, from),
+        lte(transactions.createdAt, to),
+      ),
+    );
+  const refundedCashSum = Number(cashRefundAgg[0]?.refundedCash ?? 0);
   const cashReportedDerived =
-    actualCashSum - openingCashSum - qrisReportedRaw - edcReported;
+    actualCashSum - openingCashSum - qrisReportedRaw - edcReported + refundedCashSum;
   const cashReported =
     cashReportedExplicit > 0 ? cashReportedExplicit : Math.max(0, cashReportedDerived);
 
@@ -1220,8 +1247,12 @@ export async function getSettlementReconciliation(
     .where(
       and(
         eq(aggregatorSettlements.outletId, outletId),
-        gte(aggregatorSettlements.periodFrom, fromIso),
-        lte(aggregatorSettlements.periodTo, toIso),
+        // Sesi AE-62g — interval overlap check (A.from <= B.to AND A.to >= B.from)
+        // instead of strict contains. Sebelumnya: settlement multi-day yang
+        // melampaui window terlewat — misal settlement period 10-25 di-query
+        // untuk 15-20 → exclude → variance reconciliation salah blame kasir.
+        lte(aggregatorSettlements.periodFrom, toIso),
+        gte(aggregatorSettlements.periodTo, fromIso),
       ),
     )
     .groupBy(aggregatorSettlements.channel);

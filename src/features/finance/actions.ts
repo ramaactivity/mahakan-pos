@@ -330,6 +330,50 @@ export async function updateCashDeposit(
     return fail("VALIDATION", "Tanggal akhir harus >= tanggal awal");
   }
 
+  // Sesi AE-62g — anti-fraud bypass closed di update:
+  // (1) Periode overlap guard — kalau coversFromDate/coversToDate berubah,
+  //     re-cek vs verified deposits (sebelumnya cuma di-cek di createCashDeposit
+  //     → owner bisa edit pending deposit untuk overlap verified period →
+  //     double-count cash).
+  // (2) Photo unmask guard — pending deposit yang sudah ada foto tidak boleh
+  //     di-clear photoUrl (kalau tidak, owner bisa hapus foto sebelum verify
+  //     untuk bypass anti-fraud requirement). User boleh REPLACE foto baru.
+  const periodChanged =
+    next.coversFromDate !== current.coversFromDate ||
+    next.coversToDate !== current.coversToDate;
+  if (periodChanged) {
+    const overlapping = await db
+      .select({
+        id: cashDeposits.id,
+        coversFromDate: cashDeposits.coversFromDate,
+        coversToDate: cashDeposits.coversToDate,
+      })
+      .from(cashDeposits)
+      .where(
+        and(
+          eq(cashDeposits.outletId, session.user.outletId),
+          eq(cashDeposits.status, "verified"),
+          lte(cashDeposits.coversFromDate, next.coversToDate),
+          gte(cashDeposits.coversToDate, next.coversFromDate),
+        ),
+      )
+      .orderBy(desc(cashDeposits.coversToDate))
+      .limit(1);
+    if (overlapping.length > 0) {
+      const conflict = overlapping[0];
+      return fail(
+        "PERIOD_OVERLAP",
+        `Periode kas overlap dengan setoran verified ${conflict.coversFromDate}..${conflict.coversToDate}. Mulai dari ${addOneDayIsoLocal(conflict.coversToDate)}.`,
+      );
+    }
+  }
+  if (current.photoUrl !== null && next.photoUrl === null) {
+    return fail(
+      "PHOTO_REQUIRED",
+      "Foto bukti tidak boleh dihapus tanpa replace dengan foto baru.",
+    );
+  }
+
   const [row] = await db
     .update(cashDeposits)
     .set({ ...next, updatedAt: new Date() })

@@ -1310,6 +1310,21 @@ export async function refundTransactionPartial(
     },
   });
 
+  // Sesi AE-62g — partial refund harus fire journal hook juga (sebelumnya
+  // cuma full refund yang fire → GL drift = under-record refund expense).
+  // sourceId = refund_event.id supaya idempotent per partial refund event.
+  fireJournalHook(
+    () =>
+      postJournalForPosRefund({
+        outletId: session.user.outletId,
+        transactionId: result.transaction.id,
+        refundEventId: result.eventId,
+        refundedAmount: computation.totalRefunded,
+        actorId: session.user.id,
+      }),
+    "pos_refund_partial",
+  );
+
   return ok({ transaction: result.transaction, eventId: result.eventId });
 }
 

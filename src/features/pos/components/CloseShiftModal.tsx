@@ -214,16 +214,32 @@ export function CloseShiftModal({
           customerName: t.customerName ?? null,
         }));
       setOpenBills(open);
-      const paid = items.filter((t) => t.status === "paid");
+      // Sesi AE-62g — include partially_refunded di paid bucket supaya UI
+      // preview match server formula (server pakai status in paid/partially_refunded).
+      // Sebelumnya: kalau ada partial refund, UI tampil "Pas" tapi server
+      // calculate variance ≠ 0 → kasir bingung, journal hook fire palsu.
+      const paid = items.filter(
+        (t) => t.status === "paid" || t.status === "partially_refunded",
+      );
       const voided = items.filter((t) => t.status === "voided");
       const refunded = items.filter((t) => t.status === "refunded");
 
       const paidCash = paid
         .filter((t) => t.paymentMethod === "cash")
         .reduce((s, t) => s + t.total, 0);
-      const refundedCash = refunded
-        .filter((t) => t.paymentMethod === "cash")
-        .reduce((s, t) => s + t.total, 0);
+      // Sesi AE-62g — refundedCash includes BOTH full refunds (entire total)
+      // dan partial refunds (refundedAmount column). Sebelumnya cuma full
+      // refund yang dihitung → UI under-state refund → expectedCash over-state.
+      const partiallyRefundedCash = items
+        .filter(
+          (t) =>
+            t.paymentMethod === "cash" && t.status === "partially_refunded",
+        )
+        .reduce((s, t) => s + t.refundedAmount, 0);
+      const refundedCash =
+        refunded
+          .filter((t) => t.paymentMethod === "cash")
+          .reduce((s, t) => s + t.total, 0) + partiallyRefundedCash;
 
       const cashSummary = isOk(cashRes) ? cashRes.data : null;
 
