@@ -42,6 +42,7 @@ export type JournalSourceType =
   | "income_create"
   | "income_void"
   | "cash_deposit_verified"
+  | "cash_deposit_unverified"
   | "aggregator_settlement"
   | "shift_variance"
   | "opname_adjustment"

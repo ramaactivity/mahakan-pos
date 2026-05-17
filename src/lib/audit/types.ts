@@ -135,6 +135,7 @@ export const AUDIT_EVENT_TYPES = [
   "cash_deposit.update",
   "cash_deposit.verify",
   "cash_deposit.reject",
+  "cash_deposit.unverify",
   "aggregator_settlement.create",
   "aggregator_settlement.update",
   /* Sesi AE-56 — workflow status set untuk Rekonsiliasi audit (open →

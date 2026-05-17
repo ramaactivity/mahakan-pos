@@ -82,6 +82,11 @@ export interface ShiftSummary {
    * dan cash_deposit pending sukses dibuat. UI bisa surface "menunggu
    * verifikasi" toast. */
   depositId?: string | null;
+  /** Sesi AE-62h — kalau auto-deposit gagal (e.g. period overlap dengan
+   * verified deposit), surface error code+message supaya kasir tahu setoran
+   * BELUM tercatat. Sebelumnya silent fail → owner cek Setoran Tunai
+   * tidak ada pending → cash tracking broken. */
+  depositError?: { code: string; message: string } | null;
 }
 
 export interface CloseShiftResult {

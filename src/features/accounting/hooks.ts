@@ -18,6 +18,7 @@ import {
 } from "./split-validation";
 import {
   mapAggregatorSettlement,
+  mapCashDepositUnverified,
   mapCashDepositVerified,
   mapExpenseCreate,
   mapIncomeCreate,
@@ -385,6 +386,48 @@ export async function postJournalForCashDepositVerified(args: {
     entryDate: args.entryDate,
     description: `Setoran tunai ke ${args.bankDestination}`,
     sourceType: "cash_deposit_verified",
+    sourceId: args.cashDepositId,
+    lines,
+    actorId: args.actorId,
+  });
+}
+
+/**
+ * Sesi AE-62h — reverse journal untuk unverify deposit. Posts inverse
+ * entry (Dr Kas / Cr Bank) dengan sourceId yang sama (cashDepositId) +
+ * sourceType "cash_deposit_unverified" untuk distinct lookup.
+ */
+export async function postJournalForCashDepositUnverified(args: {
+  outletId: string;
+  cashDepositId: string;
+  amount: number;
+  bankAccountCode: string | null;
+  bankDestination: string;
+  entryDate: string;
+  referenceNo?: string | null;
+  reason: string;
+  actorId: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+
+  const code = args.bankAccountCode ?? resolveBankCodeFromDestination(args.bankDestination);
+
+  const lines = mapCashDepositUnverified({
+    cashDepositId: args.cashDepositId,
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    amount: args.amount,
+    bankAccountCode: code,
+    bankDestinationLabel: args.bankDestination,
+    referenceNo: args.referenceNo,
+    reason: args.reason,
+  });
+
+  await recordJournal({
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    description: `REVERT setoran ke ${args.bankDestination}: ${args.reason}`,
+    sourceType: "cash_deposit_unverified",
     sourceId: args.cashDepositId,
     lines,
     actorId: args.actorId,

@@ -368,8 +368,9 @@ export async function closeShift(
 
   // Phase 2.4 (sesi AB) — auto-create pending cash_deposit kalau kasir
   // input setoran ke owner. Owner verify nanti di Admin → Setoran Tunai.
-  // Best-effort: kalau gagal, log warning tapi shift close tetap success.
+  // Sesi AE-62h — kalau gagal, surface error ke kasir supaya tidak silent.
   let autoDepositId: string | null = null;
+  let autoDepositError: { code: string; message: string } | null = null;
   if (v.depositAmount && v.depositAmount > 0) {
     try {
       const { createCashDeposit } = await import("@/features/finance/actions");
@@ -393,9 +394,15 @@ export async function closeShift(
         autoDepositId = depRes.data.id;
       } else {
         console.warn("[closeShift auto-deposit failed]", depRes.error);
+        autoDepositError = {
+          code: depRes.error.code,
+          message: depRes.error.message,
+        };
       }
     } catch (e) {
+      const msg = e instanceof Error ? e.message : "Internal error";
       console.warn("[closeShift auto-deposit threw]", e);
+      autoDepositError = { code: "INTERNAL", message: msg };
     }
   }
 
@@ -412,6 +419,7 @@ export async function closeShift(
       pettyExpenseCash,
       pettyIncomeCash,
       depositId: autoDepositId,
+      depositError: autoDepositError,
     },
   });
 }

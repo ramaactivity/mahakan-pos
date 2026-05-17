@@ -62,6 +62,12 @@ export interface AnomalyDetectorOptions {
   /** Cash leak threshold: |variancePosVsReported| atau |varianceReportedVsBank|
    *  > N → flag. Default 50_000. */
   cashLeakThreshold?: number;
+  /** Sesi AE-62h — negative cash detection tolerance (default 0).
+   * Sebelumnya hardcoded 1000 → 1k bypass per setoran. Sekarang configurable
+   * via outlet.settings.finance.reconciliationTolerance (default 0 = strict).
+   * Disetel > 0 hanya untuk outlet dengan history rounding noise yang
+   * di-acknowledge owner. */
+  negativeCashTolerance?: number;
 }
 
 const DEFAULTS: Required<AnomalyDetectorOptions> = {
@@ -69,6 +75,7 @@ const DEFAULTS: Required<AnomalyDetectorOptions> = {
   largeVarianceAbsThreshold: 50_000,
   settlementMissingDays: 1,
   cashLeakThreshold: 50_000,
+  negativeCashTolerance: 0,
 };
 
 const CHANNEL_LABEL_ID: Record<AggregatorChannel, string> = {
@@ -103,7 +110,9 @@ export function detectReconciliationAnomalies(
     const channelLabel = CHANNEL_LABEL_ID[row.channel];
 
     // Negative cash (data inconsistency)
-    if (row.channel === "cash" && row.bankSettled > row.reportedFromShifts + 1000 && row.reportedFromShifts > 0) {
+    // Sesi AE-62h — pakai opts.negativeCashTolerance (default 0 = strict)
+    // instead of hardcoded 1000 (1k bypass per setoran).
+    if (row.channel === "cash" && row.bankSettled > row.reportedFromShifts + opts.negativeCashTolerance && row.reportedFromShifts > 0) {
       anomalies.push({
         type: "negative_cash",
         severity: "danger",

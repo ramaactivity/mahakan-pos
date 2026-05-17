@@ -90,8 +90,12 @@ export type UpdateCashDepositInput = {
   coversToDate?: string;
 };
 
-export type VerifyCashDepositInput = { id: string };
+export type VerifyCashDepositInput = {
+  id: string;
+  acknowledgeNegativeCash?: boolean;
+};
 export type RejectCashDepositInput = { id: string; reason: string };
+export type UnverifyCashDepositInput = { id: string; reason: string };
 
 export type CreateAggregatorSettlementInput = {
   channel: AggregatorChannel;

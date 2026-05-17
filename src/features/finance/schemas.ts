@@ -56,9 +56,21 @@ export const updateCashDepositSchema = z.object({
 
 export const verifyCashDepositSchema = z.object({
   id: z.string().uuid(),
+  /** Sesi AE-62h — kalau verify akan bikin cashOnHand jadi negatif
+   * (deposit > cash siap setor), owner harus eksplisit acknowledge
+   * dengan acknowledgeNegativeCash=true. Tanpa flag → reject. */
+  acknowledgeNegativeCash: z.boolean().optional().default(false),
 });
 
 export const rejectCashDepositSchema = z.object({
+  id: z.string().uuid(),
+  reason: z.string().trim().min(3, "Alasan wajib diisi").max(500),
+});
+
+/** Sesi AE-62h — revert deposit yang sudah verified kembali ke pending.
+ * Use case: owner discover deposit fraudulent/duplicate/wrong amount
+ * setelah verify. Reverse journal entry juga di-trigger. */
+export const unverifyCashDepositSchema = z.object({
   id: z.string().uuid(),
   reason: z.string().trim().min(3, "Alasan wajib diisi").max(500),
 });

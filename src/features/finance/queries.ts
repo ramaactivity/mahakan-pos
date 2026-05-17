@@ -777,12 +777,83 @@ export async function getCashDepositDashboard(
     }
   }
 
-  // Anchor sisaAwal: cash on hand at (fromIso - 1). Approximation: 0 for
-  // simplicity — historical reconstruction would require walking deposits
-  // back. Most outlets cycle weekly, 30 days = enough window. Today's
-  // sisaAkhir (last entry) matches getCashOnHand-derived value.
-  const last30DaysFlow: CashDailyRollup[] = [];
+  // Anchor sisaAwal: cash on hand at (fromIso - 1).
+  // Sesi AE-62h — query historical net cash sebelum window untuk anchor
+  // sisaAwal yang akurat. Sebelumnya hardcoded 0 → kalau outlet baru
+  // deposit kemarin (sebelum 30 hari ago), historical accumulated cash
+  // hilang dari rollup → sisaAkhir under-state untuk hari awal window.
+  //
+  // Formula: sisaAwal = (all cash sales before fromIso)
+  //                   - (all cash expenses before fromIso)
+  //                   - (all verified deposits before fromIso)
+  // Cheap one-shot query (sum aggregate, no row-by-row walk).
   let sisaAwal = 0;
+  {
+    const beforeFromIso = subtractDaysIso(fromIso, 1);
+    const beforeFromUtc = new Date(`${beforeFromIso}T23:59:59.999+07:00`);
+    const [salesBefore] = await db
+      .select({
+        total: sql<string>`COALESCE(SUM(${transactions.total}), 0)`,
+      })
+      .from(transactions)
+      .innerJoin(shifts, eq(shifts.id, transactions.shiftId))
+      .where(
+        and(
+          eq(transactions.outletId, outletId),
+          eq(transactions.paymentMethod, "cash"),
+          eq(transactions.status, "paid"),
+          eq(shifts.status, "closed"),
+          lte(shifts.closedAt, beforeFromUtc),
+        ),
+      );
+    const [refundsBefore] = await db
+      .select({
+        total: sql<string>`COALESCE(SUM(${transactions.total}), 0)`,
+      })
+      .from(transactions)
+      .innerJoin(shifts, eq(shifts.id, transactions.shiftId))
+      .where(
+        and(
+          eq(transactions.outletId, outletId),
+          eq(transactions.paymentMethod, "cash"),
+          eq(transactions.status, "refunded"),
+          eq(shifts.status, "closed"),
+          lte(shifts.closedAt, beforeFromUtc),
+        ),
+      );
+    const [expensesBefore] = await db
+      .select({
+        total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)`,
+      })
+      .from(expenses)
+      .where(
+        and(
+          eq(expenses.outletId, outletId),
+          eq(expenses.paymentMethod, "cash"),
+          isNull(expenses.deletedAt),
+          lte(expenses.expenseDate, beforeFromIso),
+        ),
+      );
+    const [depositsBefore] = await db
+      .select({
+        total: sql<string>`COALESCE(SUM(${cashDeposits.amount}), 0)`,
+      })
+      .from(cashDeposits)
+      .where(
+        and(
+          eq(cashDeposits.outletId, outletId),
+          eq(cashDeposits.status, "verified"),
+          lte(cashDeposits.depositDate, beforeFromIso),
+        ),
+      );
+    sisaAwal =
+      Number(salesBefore?.total ?? 0) -
+      Number(refundsBefore?.total ?? 0) -
+      Number(expensesBefore?.total ?? 0) -
+      Number(depositsBefore?.total ?? 0);
+  }
+
+  const last30DaysFlow: CashDailyRollup[] = [];
   for (let i = 29; i >= 0; i--) {
     const dateIso = subtractDaysIso(todayIso, i);
     const cashSales = dateCashSales.get(dateIso) ?? 0;
@@ -1748,6 +1819,29 @@ export async function getOutletThreshold(outletId: string): Promise<number> {
     finance?: { cashOnHandThreshold?: number };
   };
   return settings?.finance?.cashOnHandThreshold ?? 5_000_000;
+}
+
+/**
+ * Sesi AE-62h — variance threshold per-outlet. Default 10k (cocok untuk
+ * outlet kecil), bisa di-override via outlet.settings.shift.varianceThreshold
+ * untuk outlet high-volume (50k-100k variance normal di rush hour).
+ *
+ * Sebelumnya: hardcoded 10_000 di ShiftsSection + CloseShiftModal +
+ * VerifyDepositModal → alert fatigue di high-volume outlet, atau under-detect
+ * di outlet kecil.
+ */
+export async function getShiftVarianceThreshold(
+  outletId: string,
+): Promise<number> {
+  const [r] = await db
+    .select({ settings: sql<Record<string, unknown>>`settings` })
+    .from(sql`outlets`)
+    .where(sql`id = ${outletId}`)
+    .limit(1);
+  const settings = (r?.settings ?? {}) as {
+    shift?: { varianceThreshold?: number };
+  };
+  return settings?.shift?.varianceThreshold ?? 10_000;
 }
 
 // Re-exports so consumers can `import { ... } from "@/features/finance"`.

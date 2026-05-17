@@ -15,6 +15,7 @@ import {
   createAggregatorSettlementSchema,
   createCashDepositSchema,
   rejectCashDepositSchema,
+  unverifyCashDepositSchema,
   updateAggregatorSettlementSchema,
   updateCashDepositSchema,
   verifyCashDepositSchema,
@@ -433,6 +434,21 @@ export async function verifyCashDeposit(
     );
   }
 
+  // Sesi AE-62h — block verify yang bikin cashOnHand jadi negatif kecuali
+  // owner eksplisit acknowledge. Negatif cashOnHand sinyal data inconsistency
+  // (refund/expense gak ke-record, atau setoran amount salah). Sebelumnya
+  // warning-only di dashboard → owner gampang skip → cash tracking rusak.
+  if (!parsed.data.acknowledgeNegativeCash) {
+    const snapshot = await getCashOnHand(session.user.outletId);
+    const projected = snapshot.cashOnHand - current.amount;
+    if (projected < 0) {
+      return fail(
+        "NEGATIVE_CASH_NOT_ACKNOWLEDGED",
+        `Setoran Rp ${current.amount.toLocaleString("id-ID")} bikin kas tersedia jadi minus ${Math.abs(projected).toLocaleString("id-ID")}. Biasanya berarti ada refund/expense belum ter-record. Re-submit dengan acknowledge=true untuk override (audit log akan flag).`,
+      );
+    }
+  }
+
   const [row] = await db
     .update(cashDeposits)
     .set({
@@ -545,6 +561,117 @@ export async function rejectCashDeposit(
       actorRole: session.user.role,
     },
   }).catch((e) => console.error("[audit cash_deposit.reject]", e));
+
+  return ok(row);
+}
+
+/**
+ * Sesi AE-62h — Revert deposit yang sudah verified kembali ke pending.
+ *
+ * Use case: owner discover deposit fraudulent/duplicate/wrong amount setelah
+ * verify. Sebelumnya tidak ada cara correct verified deposit kecuali manual
+ * DB edit → audit trail rusak.
+ *
+ * Behavior:
+ *   - Status verified → pending_verification
+ *   - Clear verifiedBy / verifiedAt
+ *   - Audit log dengan reason (mandatory)
+ *   - Fire reverse journal entry hook (existing pattern: deposit verified
+ *     posts DR Bank / CR Kas; revert posts DR Kas / CR Bank)
+ *
+ * Permission: cash_deposit.verify (same hak dengan verify — owner only).
+ */
+export async function unverifyCashDeposit(
+  input: { id: string; reason: string },
+): Promise<ApiResult<CashDeposit>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "cash_deposit.verify")) {
+    return fail("FORBIDDEN", "Tidak punya hak revert setoran");
+  }
+  const parsed = unverifyCashDepositSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail("VALIDATION", parsed.error.issues[0]?.message ?? "Invalid");
+  }
+  const [current] = await db
+    .select()
+    .from(cashDeposits)
+    .where(eq(cashDeposits.id, parsed.data.id))
+    .limit(1);
+  if (!current) return fail("NOT_FOUND", "Setoran tidak ditemukan");
+  if (current.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Setoran dari outlet lain");
+  }
+  if (current.status !== "verified") {
+    return fail(
+      "INVALID_STATE",
+      "Hanya setoran verified yang bisa di-revert ke pending",
+    );
+  }
+
+  const [row] = await db
+    .update(cashDeposits)
+    .set({
+      status: "pending_verification",
+      verifiedBy: null,
+      verifiedAt: null,
+      // Pakai notes (existing column) untuk track revert reason — append.
+      notes: current.notes
+        ? `${current.notes}\n[REVERTED ${new Date().toISOString().slice(0, 10)}]: ${parsed.data.reason}`
+        : `[REVERTED ${new Date().toISOString().slice(0, 10)}]: ${parsed.data.reason}`,
+      updatedAt: new Date(),
+    })
+    .where(eq(cashDeposits.id, parsed.data.id))
+    .returning();
+
+  logAudit({
+    eventType: "cash_deposit.unverify",
+    userId: session.user.id,
+    entityType: "cash_deposit",
+    entityId: row.id,
+    payload: {
+      summary: `Setoran ${row.bankDestination} Rp ${row.amount.toLocaleString("id-ID")} di-revert ke pending: ${parsed.data.reason}`,
+      before: { status: "verified" },
+      after: { status: "pending_verification" },
+      context: { reason: parsed.data.reason },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  }).catch((e) => console.error("[audit cash_deposit.unverify]", e));
+
+  // Fire reverse journal entry. Hook handle: bank account reversal +
+  // journal source linked to original cashDeposit id (mark reversed).
+  // Best-effort; revert sukses walau journal hook fail (caught in fireJournalHook).
+  {
+    const { fireJournalHook, postJournalForCashDepositUnverified } = await import(
+      "@/features/accounting/hooks"
+    );
+    let bankAccountCode: string | null = null;
+    if (row.bankAccountId) {
+      const [bankAcc] = await db
+        .select({ code: chartOfAccounts.code })
+        .from(chartOfAccounts)
+        .where(eq(chartOfAccounts.id, row.bankAccountId))
+        .limit(1);
+      bankAccountCode = bankAcc?.code ?? null;
+    }
+    fireJournalHook(
+      () =>
+        postJournalForCashDepositUnverified({
+          outletId: session.user.outletId,
+          cashDepositId: row.id,
+          amount: Number(row.amount),
+          bankAccountCode,
+          bankDestination: row.bankDestination,
+          entryDate: new Date().toISOString().slice(0, 10),
+          referenceNo: row.referenceNo,
+          reason: parsed.data.reason,
+          actorId: session.user.id,
+        }),
+      "cash_deposit_unverified",
+    );
+  }
 
   return ok(row);
 }

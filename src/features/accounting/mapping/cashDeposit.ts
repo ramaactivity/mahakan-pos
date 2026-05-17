@@ -65,3 +65,33 @@ export function mapCashDepositVerified(
     },
   ];
 }
+
+/**
+ * Sesi AE-62h — mapCashDepositUnverified: reverse mapping untuk
+ * unverify action. Mirror dari mapCashDepositVerified dengan debit/credit
+ * di-swap. Reason di-append ke description supaya audit trail jelas.
+ *
+ * Mapping:
+ *   Dr 1101 Kas Tunai                        deposit.amount  (uang balik ke laci)
+ *      Cr <bank account>                     deposit.amount  (cancel bank deposit)
+ */
+export function mapCashDepositUnverified(
+  input: CashDepositVerifiedInput & { reason: string },
+): JournalLineInput[] {
+  if (input.amount <= 0) {
+    throw new Error("MAP_CASH_DEPOSIT_UNVERIFY_NONPOSITIVE");
+  }
+  const desc = `REVERT setoran ke ${input.bankDestinationLabel}: ${input.reason}`;
+  return [
+    {
+      accountCode: "1101",
+      debit: input.amount,
+      description: `${desc} (kas drawer di-restore)`,
+    },
+    {
+      accountCode: input.bankAccountCode,
+      credit: input.amount,
+      description: desc,
+    },
+  ];
+}

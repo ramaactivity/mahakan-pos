@@ -2189,7 +2189,8 @@ export async function addSplitPayment(
     }
   }
 
-  // Compute current breakdown to validate amount + per-item qty.
+  // Pre-flight breakdown — informational only, supaya error message friendly
+  // sebelum DB hit. Authoritative re-validation di-do INSIDE transaction.
   const breakdown = await fetchSplitBreakdown(v.transactionId, current.total);
   if (v.amount > breakdown.remainingAmount) {
     return fail(
@@ -2232,8 +2233,82 @@ export async function addSplitPayment(
       ? Math.max(0, v.cashReceived - v.amount)
       : null;
 
+  let newTotalPaid = 0;
   try {
     await db.transaction(async (tx) => {
+      // Sesi AE-62h — race condition guard. Sebelumnya breakdown
+      // di-fetch sebelum transaction → 2 kasir paralel bisa lulus
+      // validasi `v.amount > remaining` lalu duanya commit → bill
+      // overpaid. Fix: SELECT FOR UPDATE pada transaksi parent row,
+      // lalu re-fetch fresh paid-sum + per-item-paid INSIDE tx.
+      const [lockedTrx] = await tx
+        .select({
+          id: transactions.id,
+          status: transactions.status,
+          total: transactions.total,
+        })
+        .from(transactions)
+        .where(eq(transactions.id, v.transactionId))
+        .for("update")
+        .limit(1);
+      if (!lockedTrx) throw new Error("NOT_FOUND");
+      if (lockedTrx.status !== "open") throw new Error("TRX_NOT_OPEN");
+
+      const freshPaidAgg = await tx
+        .select({
+          total: sql<string>`COALESCE(SUM(${splitPayments.amount}), 0)`,
+        })
+        .from(splitPayments)
+        .where(eq(splitPayments.transactionId, v.transactionId));
+      const freshPaid = Number(freshPaidAgg[0]?.total ?? 0);
+      const freshRemaining = Math.max(0, lockedTrx.total - freshPaid);
+      if (v.amount > freshRemaining) {
+        throw new Error(`AMOUNT_EXCEEDS_REMAINING:${freshRemaining}`);
+      }
+
+      // Per-item fresh check (per_menu split) — re-fetch paid quantities
+      // inside tx so concurrent per_menu splits don't double-pay an item.
+      if (v.splitKind === "per_menu" && v.items && v.items.length > 0) {
+        const reqItemIds = v.items.map((it) => it.transactionItemId);
+        const freshItemRows = await tx
+          .select({
+            transactionItemId: splitPaymentItems.transactionItemId,
+            quantity: splitPaymentItems.quantity,
+          })
+          .from(splitPaymentItems)
+          .innerJoin(
+            splitPayments,
+            eq(splitPaymentItems.splitPaymentId, splitPayments.id),
+          )
+          .where(
+            and(
+              eq(splitPayments.transactionId, v.transactionId),
+              inArray(splitPaymentItems.transactionItemId, reqItemIds),
+            ),
+          );
+        const freshPaidQtyByItem = new Map<string, number>();
+        for (const r of freshItemRows) {
+          freshPaidQtyByItem.set(
+            r.transactionItemId,
+            (freshPaidQtyByItem.get(r.transactionItemId) ?? 0) + r.quantity,
+          );
+        }
+        const itemTotalQty = new Map(
+          current.items.map((it) => [it.id, it.quantity]),
+        );
+        for (const reqItem of v.items) {
+          const totalQty = itemTotalQty.get(reqItem.transactionItemId) ?? 0;
+          const alreadyPaid =
+            freshPaidQtyByItem.get(reqItem.transactionItemId) ?? 0;
+          const unpaid = totalQty - alreadyPaid;
+          if (reqItem.quantity > unpaid) {
+            throw new Error(
+              `ITEM_QTY_EXCEEDS:${reqItem.transactionItemId}:${unpaid}`,
+            );
+          }
+        }
+      }
+
       const [splitRow] = await tx
         .insert(splitPayments)
         .values({
@@ -2259,8 +2334,8 @@ export async function addSplitPayment(
         );
       }
 
-      const newTotalPaid = breakdown.totalPaid + v.amount;
-      if (newTotalPaid >= current.total) {
+      newTotalPaid = freshPaid + v.amount;
+      if (newTotalPaid >= lockedTrx.total) {
         // Final split — close the bill.
         await tx
           .update(transactions)
@@ -2275,6 +2350,33 @@ export async function addSplitPayment(
       }
     });
   } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg === "NOT_FOUND") {
+      return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+    }
+    if (msg === "TRX_NOT_OPEN") {
+      return fail(
+        "TRX_NOT_OPEN",
+        "Bill sudah ditutup oleh kasir lain. Refresh untuk lihat status baru.",
+      );
+    }
+    if (msg.startsWith("AMOUNT_EXCEEDS_REMAINING:")) {
+      const remain = msg.slice("AMOUNT_EXCEEDS_REMAINING:".length);
+      return fail(
+        "AMOUNT_EXCEEDS_REMAINING",
+        `Bill sudah ada split lain — sisa hanya Rp${Number(remain).toLocaleString("id-ID")}. Refresh & cek breakdown.`,
+        "amount",
+      );
+    }
+    if (msg.startsWith("ITEM_QTY_EXCEEDS:")) {
+      const parts = msg.split(":");
+      const unpaid = parts[2] ?? "?";
+      return fail(
+        "ITEM_QTY_EXCEEDS",
+        `Item sudah ada split lain — sisa unpaid ${unpaid}. Refresh & cek breakdown.`,
+        "items",
+      );
+    }
     return fail("DB_ERROR", logAndSanitize(e, "transactions", "Operasi database gagal"));
   }
 
@@ -2303,7 +2405,6 @@ export async function addSplitPayment(
   }).catch((e) => console.error("[audit split]", e));
 
   // Loyalty earn — only when this split closes the bill.
-  const newTotalPaid = breakdown.totalPaid + v.amount;
   if (newTotalPaid >= current.total && current.customerId !== null) {
     earnPointsForTransaction(v.transactionId).catch((e) =>
       console.error("[loyalty earn split]", e),

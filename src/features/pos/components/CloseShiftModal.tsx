@@ -421,6 +421,13 @@ export function CloseShiftModal({
       toast.info(
         `Setoran ${formatRupiah(parsedDeposit ?? 0)} pending verifikasi owner`,
       );
+    } else if (res.data.summary.depositError) {
+      // Sesi AE-62h — auto-deposit gagal (e.g. period overlap), surface ke
+      // kasir supaya tahu setoran BELUM tercatat dan harus input manual via
+      // Setoran Tunai di backoffice. Sebelumnya silent fail.
+      toast.warning(
+        `Setoran BELUM tercatat: ${res.data.summary.depositError.message}. Owner perlu input manual di Setoran Tunai.`,
+      );
     }
 
     const [lowStockRes, outletRes] = await Promise.all([

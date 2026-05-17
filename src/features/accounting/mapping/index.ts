@@ -9,6 +9,7 @@ export { mapPayrollPaid } from "./payrollPaid";
 export type { PayrollPaidInput } from "./payrollPaid";
 export {
   mapCashDepositVerified,
+  mapCashDepositUnverified,
   resolveBankCodeFromDestination,
 } from "./cashDeposit";
 export type { CashDepositVerifiedInput } from "./cashDeposit";
