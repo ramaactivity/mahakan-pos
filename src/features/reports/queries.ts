@@ -72,6 +72,7 @@ import type { PaymentMethod } from "@/features/transactions";
 export async function fetchDailySalesReport(
   outletId: string,
   date: string,
+  paymentFilter: PaymentMethod | "all" = "all",
 ): Promise<DailySalesReport> {
   const dayStart = startOfWibDateUtc(date);
   const dayEnd = endOfWibDateUtc(date);
@@ -242,12 +243,32 @@ export async function fetchDailySalesReport(
       .slice(0, 10);
   }
 
+  // Sesi AE-62m — paymentFilter scoping. Kalau filter specific method
+  // (mis. "qris"), scope `revenue` + `transactionCount` + `averageTicket`
+  // ke method tersebut SAJA (split-aware via methodAggregate yang sudah
+  // pro-rate leg amounts). `byPaymentMethod` array di-restrict ke method
+  // tersebut. `byCategory`, `topItems`, `hourlyDistribution` tetap full
+  // (filtering ini hard untuk split, dan owner main usage adalah breakdown
+  // per method bukan deep drill — keep simple).
+  let finalRevenue = revenue;
+  let finalTrxCount = paid.length;
+  let finalAvgTicket = averageTicket;
+  let finalByPaymentMethod = byPaymentMethod;
+  if (paymentFilter !== "all") {
+    const match = byPaymentMethod.find((m) => m.method === paymentFilter);
+    finalRevenue = match?.amount ?? 0;
+    finalTrxCount = match?.count ?? 0;
+    finalAvgTicket =
+      finalTrxCount > 0 ? Math.round(finalRevenue / finalTrxCount) : 0;
+    finalByPaymentMethod = match ? [match] : [];
+  }
+
   return {
     date,
     metrics: {
-      revenue,
-      transactionCount: paid.length,
-      averageTicket,
+      revenue: finalRevenue,
+      transactionCount: finalTrxCount,
+      averageTicket: finalAvgTicket,
       voidedCount: voided.length,
       // Sesi AE-62g — netTotal supaya void post-partial-refund tidak
       // over-state (kalau trx 100k sudah refund 30k lalu di-void, voided
@@ -256,7 +277,7 @@ export async function fetchDailySalesReport(
       refundedCount: refunded.length,
       refundedAmount: refunded.reduce((s, t) => s + t.total, 0),
     },
-    byPaymentMethod,
+    byPaymentMethod: finalByPaymentMethod,
     byCategory,
     topItems,
     hourlyDistribution,
@@ -484,6 +505,7 @@ export async function fetchSalesRangeReport(
   outletId: string,
   from: string,
   to: string,
+  paymentFilter: PaymentMethod | "all" = "all",
 ): Promise<SalesRangeReport> {
   const fromUtc = startOfWibDateUtc(from);
   const toUtc = endOfWibDateUtc(to);
@@ -691,12 +713,28 @@ export async function fetchSalesRangeReport(
   const pct = (cur: number, prev: number) =>
     prev === 0 ? null : Math.round(((cur - prev) / prev) * 1000) / 10;
 
+  // Sesi AE-62m — paymentFilter scoping (same logic dengan fetchDailySalesReport).
+  // Restrict revenue + transactionCount ke method tersebut. Comparison
+  // priorPeriod TIDAK ikut filter (UI showing comparison vs total prior).
+  let finalRevenue = revenue;
+  let finalTrxCount = paid.length;
+  let finalAvgTicket = averageTicket;
+  let finalByPaymentMethod = byPaymentMethod;
+  if (paymentFilter !== "all") {
+    const match = byPaymentMethod.find((m) => m.method === paymentFilter);
+    finalRevenue = match?.amount ?? 0;
+    finalTrxCount = match?.count ?? 0;
+    finalAvgTicket =
+      finalTrxCount > 0 ? Math.round(finalRevenue / finalTrxCount) : 0;
+    finalByPaymentMethod = match ? [match] : [];
+  }
+
   return {
     period: { from, to },
     metrics: {
-      revenue,
-      transactionCount: paid.length,
-      averageTicket,
+      revenue: finalRevenue,
+      transactionCount: finalTrxCount,
+      averageTicket: finalAvgTicket,
       voidedCount: voided.length,
       // Sesi AE-62g — netTotal supaya void post-partial-refund tidak
       // over-state (kalau trx 100k sudah refund 30k lalu di-void, voided
@@ -705,7 +743,7 @@ export async function fetchSalesRangeReport(
       refundedCount: refunded.length,
       refundedAmount: refunded.reduce((s, t) => s + t.total, 0),
     },
-    byPaymentMethod,
+    byPaymentMethod: finalByPaymentMethod,
     byCategory,
     topItems,
     byDay,
@@ -713,8 +751,8 @@ export async function fetchSalesRangeReport(
       period: { from: priorFromIso, to: priorToIso },
       revenue: priorRevenue,
       transactionCount: priorCount,
-      revenueChangePct: pct(revenue, priorRevenue),
-      transactionCountChangePct: pct(paid.length, priorCount),
+      revenueChangePct: pct(finalRevenue, priorRevenue),
+      transactionCountChangePct: pct(finalTrxCount, priorCount),
     },
   };
 }

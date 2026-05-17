@@ -19,6 +19,7 @@ import {
   CardHeader,
   CardTitle,
   DatePicker,
+  Select,
   Skeleton,
 } from "@/components/ui";
 import {
@@ -26,6 +27,7 @@ import {
   isOk,
   type DailySalesReport,
 } from "@/features/reports";
+import type { PaymentMethod } from "@/features/transactions";
 import {
   getOwnOutlet,
   isOk as isOutletOk,
@@ -35,9 +37,25 @@ import { exportDailySalesPdf } from "@/lib/pdf-export";
 import { formatRupiah } from "@/lib/format";
 import { paymentMethodLabel } from "@/lib/payment-method";
 
+// Sesi AE-62m — payment method filter (owner request: lihat omset per method).
+type PaymentFilter = PaymentMethod | "all";
+
+const PAYMENT_OPTIONS: Array<{ value: PaymentFilter; label: string }> = [
+  { value: "all", label: "Semua metode" },
+  { value: "cash", label: "Cash" },
+  { value: "qris", label: "QRIS" },
+  { value: "card_bca", label: "Kartu BCA" },
+  { value: "card_bni", label: "Kartu BNI" },
+  { value: "card_mandiri", label: "Kartu Mandiri" },
+  { value: "card_bri", label: "Kartu BRI" },
+  { value: "card_other", label: "Kartu Lainnya" },
+  { value: "split", label: "Split Payment" },
+];
+
 export function DailySalesView() {
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
+  const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>("all");
   const [report, setReport] = useState<DailySalesReport | null>(null);
   const [outlet, setOutlet] = useState<Outlet | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,7 +65,7 @@ export function DailySalesView() {
     async function load() {
       setLoading(true);
       const [reportRes, outletRes] = await Promise.all([
-        getDailySalesReport(date),
+        getDailySalesReport(date, paymentFilter),
         getOwnOutlet(),
       ]);
       if (cancelled) return;
@@ -59,7 +77,7 @@ export function DailySalesView() {
     return () => {
       cancelled = true;
     };
-  }, [date]);
+  }, [date, paymentFilter]);
 
   function onExport() {
     if (!report || !outlet) return;
@@ -77,7 +95,7 @@ export function DailySalesView() {
             Pilih tanggal — default hari ini.
           </p>
         </div>
-        <div className="flex items-end gap-2">
+        <div className="flex flex-wrap items-end gap-2">
           <div className="w-52">
             <DatePicker
               label="Tanggal"
@@ -85,6 +103,14 @@ export function DailySalesView() {
               onChange={(v) => setDate(v ?? today)}
               maxDate={today}
               clearable={false}
+            />
+          </div>
+          <div className="w-44">
+            <Select
+              label="Metode Bayar"
+              value={paymentFilter}
+              onValueChange={(v) => setPaymentFilter(v as PaymentFilter)}
+              options={PAYMENT_OPTIONS}
             />
           </div>
           <Button
@@ -97,6 +123,17 @@ export function DailySalesView() {
           </Button>
         </div>
       </header>
+
+      {/* Sesi AE-62m — banner kalau filter aktif supaya owner ngerti
+          metrics di-restrict ke method tersebut (revenue, count, avg). */}
+      {paymentFilter !== "all" ? (
+        <div className="rounded-md border border-mahakan-green-200 bg-mahakan-green-50 px-3 py-2 text-xs text-mahakan-green-900">
+          <strong>Filter aktif:</strong>{" "}
+          {PAYMENT_OPTIONS.find((o) => o.value === paymentFilter)?.label} —
+          metrics (revenue, transaksi, avg) di-restrict ke method ini.
+          Hourly + kategori + top items tetap full data.
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="space-y-4" role="status" aria-label="Memuat laporan">

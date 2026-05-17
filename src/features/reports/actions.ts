@@ -42,6 +42,21 @@ import type { PaymentMethod } from "@/features/transactions";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/* Sesi AE-55 + AE-62m — Payment method filter values yang valid untuk
+ * report filtering. Dipakai di getBillPerformanceReport (existing),
+ * getDailySalesReport + getSalesRangeReport (sesi AE-62m). */
+const PAYMENT_METHODS: ReadonlyArray<PaymentMethod | "all"> = [
+  "all",
+  "cash",
+  "qris",
+  "card_bca",
+  "card_bni",
+  "card_mandiri",
+  "card_bri",
+  "card_other",
+  "split",
+];
+
 async function requireSession() {
   const session = await auth();
   if (!session) throw new Error("UNAUTHORIZED");
@@ -50,6 +65,7 @@ async function requireSession() {
 
 export async function getDailySalesReport(
   date: string = todayWibIso(),
+  paymentFilter: PaymentMethod | "all" = "all",
 ): Promise<ApiResult<DailySalesReport>> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "report.sales.view")) {
@@ -58,7 +74,14 @@ export async function getDailySalesReport(
   if (!ISO_DATE.test(date)) {
     return fail("VALIDATION_ERROR", "Tanggal harus YYYY-MM-DD");
   }
-  return ok(await fetchDailySalesReport(session.user.outletId, date));
+  // Sesi AE-62m — payment filter (owner want omset breakdown per method).
+  // Reuse same valid set from getBillPerformanceReport.
+  if (!PAYMENT_METHODS.includes(paymentFilter)) {
+    return fail("VALIDATION_ERROR", "Payment filter tidak valid");
+  }
+  return ok(
+    await fetchDailySalesReport(session.user.outletId, date, paymentFilter),
+  );
 }
 
 export async function getItemPerformance(
@@ -104,6 +127,7 @@ export async function getMenuEngineeringMatrix(
 export async function getSalesRangeReport(
   from: string,
   to: string,
+  paymentFilter: PaymentMethod | "all" = "all",
 ): Promise<ApiResult<SalesRangeReport>> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "report.sales.view")) {
@@ -121,7 +145,13 @@ export async function getSalesRangeReport(
   if (toMs - fromMs > 366 * 24 * 60 * 60 * 1000) {
     return fail("VALIDATION_ERROR", "Range maksimal 1 tahun");
   }
-  return ok(await fetchSalesRangeReport(session.user.outletId, from, to));
+  // Sesi AE-62m — payment filter (consistent with daily report).
+  if (!PAYMENT_METHODS.includes(paymentFilter)) {
+    return fail("VALIDATION_ERROR", "Payment filter tidak valid");
+  }
+  return ok(
+    await fetchSalesRangeReport(session.user.outletId, from, to, paymentFilter),
+  );
 }
 
 export async function getPnlReport(
@@ -198,18 +228,8 @@ export async function getClosingShiftReport(
 }
 
 /* Sesi AE-55 — Per-Bill Report.
- * Permission: report.sales.view. */
-const PAYMENT_METHODS: ReadonlyArray<PaymentMethod | "all"> = [
-  "all",
-  "cash",
-  "qris",
-  "card_bca",
-  "card_bni",
-  "card_mandiri",
-  "card_bri",
-  "card_other",
-  "split",
-];
+ * Permission: report.sales.view. PAYMENT_METHODS sekarang di-declare top
+ * file (sesi AE-62m) supaya reusable di daily + range report juga. */
 
 export async function getBillPerformanceReport(
   from: string,

@@ -19,6 +19,7 @@ import {
   CardHeader,
   CardTitle,
   DateRangePicker,
+  Select,
   Skeleton,
 } from "@/components/ui";
 import {
@@ -26,6 +27,7 @@ import {
   isOk,
   type SalesRangeReport,
 } from "@/features/reports";
+import type { PaymentMethod } from "@/features/transactions";
 import {
   getOwnOutlet,
   isOk as isOutletOk,
@@ -43,9 +45,25 @@ function isoToday(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Sesi AE-62m — payment method filter (consistent dengan DailySalesView).
+type PaymentFilter = PaymentMethod | "all";
+
+const PAYMENT_OPTIONS: Array<{ value: PaymentFilter; label: string }> = [
+  { value: "all", label: "Semua metode" },
+  { value: "cash", label: "Cash" },
+  { value: "qris", label: "QRIS" },
+  { value: "card_bca", label: "Kartu BCA" },
+  { value: "card_bni", label: "Kartu BNI" },
+  { value: "card_mandiri", label: "Kartu Mandiri" },
+  { value: "card_bri", label: "Kartu BRI" },
+  { value: "card_other", label: "Kartu Lainnya" },
+  { value: "split", label: "Split Payment" },
+];
+
 export function SalesRangeView() {
   const [from, setFrom] = useState<string>(isoDaysAgo(6));
   const [to, setTo] = useState<string>(isoToday());
+  const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>("all");
   const [report, setReport] = useState<SalesRangeReport | null>(null);
   const [outlet, setOutlet] = useState<Outlet | null>(null);
   const [loading, setLoading] = useState(true);
@@ -55,7 +73,7 @@ export function SalesRangeView() {
     async function load() {
       setLoading(true);
       const [reportRes, outletRes] = await Promise.all([
-        getSalesRangeReport(from, to),
+        getSalesRangeReport(from, to, paymentFilter),
         getOwnOutlet(),
       ]);
       if (cancelled) return;
@@ -67,7 +85,7 @@ export function SalesRangeView() {
     return () => {
       cancelled = true;
     };
-  }, [from, to]);
+  }, [from, to, paymentFilter]);
 
   function onExport() {
     if (!report || !outlet) return;
@@ -96,6 +114,14 @@ export function SalesRangeView() {
               }}
             />
           </div>
+          <div className="w-44">
+            <Select
+              label="Metode Bayar"
+              value={paymentFilter}
+              onValueChange={(v) => setPaymentFilter(v as PaymentFilter)}
+              options={PAYMENT_OPTIONS}
+            />
+          </div>
           <Button
             variant="outline"
             onClick={onExport}
@@ -106,6 +132,16 @@ export function SalesRangeView() {
           </Button>
         </div>
       </header>
+
+      {/* Sesi AE-62m — banner kalau filter aktif. */}
+      {paymentFilter !== "all" ? (
+        <div className="rounded-md border border-mahakan-green-200 bg-mahakan-green-50 px-3 py-2 text-xs text-mahakan-green-900">
+          <strong>Filter aktif:</strong>{" "}
+          {PAYMENT_OPTIONS.find((o) => o.value === paymentFilter)?.label} —
+          metrics (revenue, transaksi, avg) di-restrict ke method ini.
+          Trend, kategori, top items tetap full data.
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="space-y-4">
