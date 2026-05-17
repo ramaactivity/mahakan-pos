@@ -287,3 +287,9 @@ export interface EditOpenBillInput {
   /** Sesi K — same semantics as CreateTransactionInput.promoId. */
   promoId?: string | null;
 }
+
+/** Sesi AE-62k — cancel open bill (customer batal / no-show). */
+export interface CancelOpenBillInput {
+  transactionId: string;
+  reason: string;
+}

@@ -66,7 +66,7 @@ export function CashOnHandTile() {
       )}
     >
       <div className="flex items-center gap-2 text-xs font-medium text-neutral-700">
-        <Wallet className="size-3.5" aria-hidden /> Cash on Hand
+        <Wallet className="size-3.5" aria-hidden /> Kas Siap Setor
         {over ? (
           <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-800">
             <AlertTriangle className="size-3" /> Over threshold
@@ -76,6 +76,9 @@ export function CashOnHandTile() {
       <div className="mt-1 text-2xl font-bold text-neutral-900">
         {formatRupiah(snap.cashOnHand)}
       </div>
+      <p className="mt-0.5 text-[10px] text-neutral-500">
+        Penjualan tunai − pengeluaran − setoran (closed shifts)
+      </p>
       <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-neutral-600">
         <dt>Pending setoran</dt>
         <dd className="text-right font-medium">
@@ -86,10 +89,23 @@ export function CashOnHandTile() {
         <dd className="text-right">
           {formatRupiah(snap.verifiedDepositsAmount)}
         </dd>
-        <dt>Drawer aktif</dt>
+        <dt>Drawer shift aktif</dt>
         <dd className="text-right">
           {formatRupiah(snap.openShiftDrawerCash)}
         </dd>
+        {/* Sesi AE-62f — petty cash float info, kasir laci yang tidak di-setor.
+           Display only kalau ada (>= 1 closed shift exist). */}
+        {snap.pettyCashFloat > 0 ? (
+          <>
+            <dt>Petty cash di laci</dt>
+            <dd
+              className="text-right text-neutral-500"
+              title="Float kasir di laci — carryover antar shift, tidak masuk hitung setoran"
+            >
+              {formatRupiah(snap.pettyCashFloat)}
+            </dd>
+          </>
+        ) : null}
         <dt>Threshold</dt>
         <dd className="text-right">{formatRupiah(snap.thresholdIdr)}</dd>
       </dl>

@@ -88,6 +88,14 @@ export const voidTransactionSchema = z.object({
     .optional(),
 });
 
+/** Sesi AE-62k — cancel open bill (customer batal, no-show, dst).
+ * Status flip ke 'voided' + restore stock + restore points + decrement promo,
+ * skip approver (customer cancellation is normal, bukan correction). */
+export const cancelOpenBillSchema = z.object({
+  transactionId: z.uuid(),
+  reason: z.string().trim().min(3, "Alasan minimal 3 karakter").max(200),
+});
+
 export const refundTransactionSchema = z.object({
   transactionId: z.uuid(),
   reason: z.string().trim().min(3).max(200),

@@ -153,6 +153,7 @@ import {
 } from "./queries";
 import {
   addSplitPaymentSchema,
+  cancelOpenBillSchema,
   createTransactionSchema,
   editOpenBillSchema,
   refundTransactionPartialSchema,
@@ -183,6 +184,7 @@ import {
   isOk,
   type ApiResult,
   type AddSplitPaymentInput,
+  type CancelOpenBillInput,
   type CloseOpenBillInput,
   type CreateTransactionInput,
   type EditOpenBillInput,
@@ -1669,26 +1671,18 @@ export async function editOpenBill(
   const shiftCheck = await assertShiftOpen(current.shiftId);
   if (!shiftCheck.ok) return fail(shiftCheck.code, shiftCheck.message);
 
-  // Approver token consumption — Staff initiating discount on edit needs PIN.
-  let discountApproverId: string | null = null;
+  // Sesi AE-62k — defer approver token consumption sampai sebelum tx.
+  // Sebelumnya: token di-consume sebelum validasi & lock check → kalau
+  // edit gagal di tx (mis. stock error, race), approver token sudah burnt
+  // tapi edit tidak applied → staff harus minta approver token baru +
+  // audit log shows token consumed without effect.
+  //
+  // Permission check tetap di sini (cheap), token consumption deferred.
   if (v.discountAmount > 0 && session.user.role === "staff") {
     if (!v.discountApproverToken) {
       return fail(
         "APPROVER_REQUIRED",
         "Staff butuh approver untuk apply discount",
-      );
-    }
-    try {
-      const consumed = await consumeApproverToken(
-        v.discountApproverToken,
-        "pos.discount.apply",
-        null,
-      );
-      discountApproverId = consumed.approverId;
-    } catch (e) {
-      return fail(
-        "APPROVER_TOKEN_INVALID",
-        e instanceof Error ? e.message : "Token gagal",
       );
     }
   }
@@ -1763,8 +1757,40 @@ export async function editOpenBill(
     }
   }
 
+  let discountApproverId: string | null = null;
   try {
     const result = await db.transaction(async (tx) => {
+      // Sesi AE-62k — SELECT FOR UPDATE pada transaction parent dulu untuk
+      // prevent concurrent edit. Sebelumnya: 2 kasir edit same bill paralel,
+      // both delete same items, both insert different items → first edit's
+      // items hilang silently. Sekarang serialize.
+      const [locked] = await tx
+        .select({ id: transactions.id, status: transactions.status })
+        .from(transactions)
+        .where(eq(transactions.id, v.transactionId))
+        .for("update")
+        .limit(1);
+      if (!locked) throw new Error("NOT_FOUND");
+      if (locked.status !== "open") throw new Error("TRX_NOT_OPEN");
+
+      // Sesi AE-62k — consume approver token INSIDE tx supaya kalau tx
+      // rollback (any failure), token tidak ke-consume orphan. Postgres
+      // tx-scoped consumeApproverToken: token marked used hanya saat commit.
+      if (v.discountAmount > 0 && session.user.role === "staff") {
+        try {
+          const consumed = await consumeApproverToken(
+            v.discountApproverToken!,
+            "pos.discount.apply",
+            null,
+          );
+          discountApproverId = consumed.approverId;
+        } catch (e) {
+          throw new Error(
+            `APPROVER_TOKEN_INVALID:${e instanceof Error ? e.message : "Token gagal"}`,
+          );
+        }
+      }
+
       // Step 1: restore stock for the existing items (mirrors void semantics
       // but uses kind=edit_restore so movement history is filterable).
       await restoreStockForTransaction(
@@ -1975,7 +2001,23 @@ export async function editOpenBill(
       ? ok(refreshed)
       : fail("DB_ERROR", "Gagal fetch transaksi setelah edit");
   } catch (e) {
-    return fail("DB_ERROR", e instanceof Error ? e.message : "Database error");
+    const msg = e instanceof Error ? e.message : "Database error";
+    if (msg === "NOT_FOUND") {
+      return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+    }
+    if (msg === "TRX_NOT_OPEN") {
+      return fail(
+        "BUSINESS_RULE_VIOLATION",
+        "Bill sudah ditutup atau diedit oleh kasir lain. Refresh untuk lihat status terbaru.",
+      );
+    }
+    if (msg.startsWith("APPROVER_TOKEN_INVALID:")) {
+      return fail(
+        "APPROVER_TOKEN_INVALID",
+        msg.slice("APPROVER_TOKEN_INVALID:".length),
+      );
+    }
+    return fail("DB_ERROR", logAndSanitize(e, "transactions", "Operasi database gagal"));
   }
 }
 
@@ -2341,6 +2383,157 @@ export async function closeOpenBill(
   return refreshed
     ? ok(refreshed)
     : fail("DB_ERROR", "Gagal fetch transaksi setelah close");
+}
+
+/**
+ * Sesi AE-62k — cancelOpenBill.
+ *
+ * Open bill flow: saveAsOpenBill deducts stock immediately (per existing
+ * behavior), tapi tidak ada cara cancel bill kalau customer batal / no-show
+ * → stock permanent gone, accumulated open bills → phantom stock loss.
+ *
+ * Cancel flips status='voided' + restore stock + restore points + decrement
+ * promo. NO journal hook fire karena bill belum paid (no GL impact saat
+ * open — sale journal only fires saat close, voiding open bill = neutral).
+ *
+ * Permission: pos.transaction.void (same as void paid trx). Reason wajib
+ * untuk audit trail.
+ */
+export async function cancelOpenBill(
+  input: CancelOpenBillInput,
+): Promise<ApiResult<Transaction>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "pos.transaction.void")) {
+    return fail("FORBIDDEN", "Tidak punya hak cancel open bill");
+  }
+  const parsed = cancelOpenBillSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  let updated: Transaction;
+  let restoredIngredientIds: string[] = [];
+  try {
+    const result = await db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select({
+          id: transactions.id,
+          status: transactions.status,
+          outletId: transactions.outletId,
+        })
+        .from(transactions)
+        .where(eq(transactions.id, v.transactionId))
+        .for("update")
+        .limit(1);
+      if (!locked) throw new Error("NOT_FOUND");
+      if (locked.outletId !== session.user.outletId) {
+        throw new Error("FORBIDDEN");
+      }
+      if (locked.status !== "open") {
+        throw new Error(`BAD_STATE:${locked.status}`);
+      }
+
+      const [updatedRow] = await tx
+        .update(transactions)
+        .set({
+          status: "voided",
+          voidedAt: new Date(),
+          voidedBy: session.user.id,
+          voidReason: `Cancel open bill: ${v.reason}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(transactions.id, v.transactionId))
+        .returning();
+
+      // Restore stock (sale_deduct → void_restore).
+      const restored = await restoreStockForTransaction(
+        tx,
+        session.user.outletId,
+        session.user.id,
+        v.transactionId,
+        "void_restore",
+      );
+
+      // Restore loyalty points (kalau ada redeem) + claw back earned.
+      // For open bill, earn TIDAK fired di saveAsOpenBill (skipEarn=true),
+      // tapi redeem mungkin terjadi → restore those.
+      const { restorePointsOnTransactionRefund } = await import(
+        "@/features/customers/actions"
+      );
+      await restorePointsOnTransactionRefund(tx, v.transactionId, {
+        refundKind: "void",
+        actorId: session.user.id,
+      });
+
+      // Decrement promo currentUses kalau bill pakai promo.
+      const promoUsageRows = await tx
+        .select({ id: promoUsages.id, promoId: promoUsages.promoId })
+        .from(promoUsages)
+        .where(eq(promoUsages.transactionId, v.transactionId));
+      for (const u of promoUsageRows) {
+        await tx
+          .update(promos)
+          .set({
+            currentUses: sql`GREATEST(0, ${promos.currentUses} - 1)`,
+            updatedAt: new Date(),
+          })
+          .where(eq(promos.id, u.promoId));
+      }
+
+      return { updated: updatedRow, restoredIds: restored };
+    });
+    updated = result.updated;
+    restoredIngredientIds = result.restoredIds;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "DB error";
+    if (msg === "NOT_FOUND") {
+      return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+    }
+    if (msg === "FORBIDDEN") {
+      return fail("FORBIDDEN", "Transaksi dari outlet lain");
+    }
+    if (msg.startsWith("BAD_STATE:")) {
+      const status = msg.slice("BAD_STATE:".length);
+      return fail(
+        "BUSINESS_RULE_VIOLATION",
+        `Hanya open bill yang bisa di-cancel (status saat ini: ${status}).`,
+      );
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "transactions", "Operasi database gagal"),
+    );
+  }
+
+  if (restoredIngredientIds.length > 0) {
+    reevaluateSoldOutForIngredients(restoredIngredientIds).catch((err) =>
+      console.error("[sold-out re-eval cancel open bill]", err),
+    );
+  }
+
+  await logAudit({
+    eventType: "transaction.open_bill.cancel",
+    userId: session.user.id,
+    entityType: "transaction",
+    entityId: updated.id,
+    payload: {
+      summary: `Cancel open bill ${updated.transactionNumber}: ${v.reason}`,
+      context: {
+        transactionNumber: updated.transactionNumber,
+        reason: v.reason,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  });
+
+  return ok(updated);
 }
 
 // ---------- Split Payment (C-5 #13) ----------

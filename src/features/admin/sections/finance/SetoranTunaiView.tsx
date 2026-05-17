@@ -2,9 +2,12 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
-import { Badge, Button, Skeleton } from "@/components/ui";
-import { fetchCashDeposits } from "@/features/finance/actions";
+import { Plus, Undo2 } from "lucide-react";
+import { Badge, Button, Input, Modal, Skeleton, toast } from "@/components/ui";
+import {
+  fetchCashDeposits,
+  unverifyCashDeposit,
+} from "@/features/finance/actions";
 import type {
   CashDeposit,
   CashDepositStatus,
@@ -45,6 +48,10 @@ export function SetoranTunaiView({ viewerRole }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<DepositRow | null>(null);
   const [verifying, setVerifying] = useState<DepositRow | null>(null);
+  // Sesi AE-62k — unverify verified deposit (revert ke pending dengan reason).
+  const [unverifying, setUnverifying] = useState<DepositRow | null>(null);
+  const [unverifyReason, setUnverifyReason] = useState("");
+  const [unverifySubmitting, setUnverifySubmitting] = useState(false);
   const queryClient = useQueryClient();
 
   const canCreate = hasPermission(viewerRole, "cash_deposit.create");
@@ -193,6 +200,22 @@ export function SetoranTunaiView({ viewerRole }: Props) {
                             Verifikasi
                           </Button>
                         ) : null}
+                        {/* Sesi AE-62k — Revert verified deposit ke pending
+                            kalau ternyata fraudulent/duplicate/wrong amount.
+                            Audit log + reverse journal entry. Owner-only. */}
+                        {r.status === "verified" && canVerify ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setUnverifying(r);
+                              setUnverifyReason("");
+                            }}
+                            title="Revert ke pending (kalau salah verify)"
+                          >
+                            <Undo2 className="size-3.5" aria-hidden /> Revert
+                          </Button>
+                        ) : null}
                         {r.photoUrl ? (
                           <a
                             href={r.photoUrl}
@@ -235,6 +258,85 @@ export function SetoranTunaiView({ viewerRole }: Props) {
           invalidateAll();
         }}
       />
+
+      {/* Sesi AE-62k — Unverify (revert) modal. Required reason. */}
+      <Modal
+        open={unverifying !== null}
+        onClose={() => {
+          if (unverifySubmitting) return;
+          setUnverifying(null);
+          setUnverifyReason("");
+        }}
+        title="Revert setoran verified ke pending?"
+        description={
+          unverifying
+            ? `Setoran ${formatRupiah(unverifying.amount)} → ${unverifying.bankDestination} (${formatIndonesianDate(unverifying.depositDate)})`
+            : ""
+        }
+        size="md"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setUnverifying(null);
+                setUnverifyReason("");
+              }}
+              disabled={unverifySubmitting}
+            >
+              Batal
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                if (!unverifying) return;
+                if (unverifyReason.trim().length < 3) {
+                  toast.error("Alasan minimal 3 karakter");
+                  return;
+                }
+                setUnverifySubmitting(true);
+                const res = await unverifyCashDeposit({
+                  id: unverifying.id,
+                  reason: unverifyReason.trim(),
+                });
+                setUnverifySubmitting(false);
+                if (!res.ok) {
+                  toast.error(res.error.message);
+                  return;
+                }
+                toast.success(
+                  `Setoran ${formatRupiah(unverifying.amount)} di-revert ke pending`,
+                );
+                setUnverifying(null);
+                setUnverifyReason("");
+                invalidateAll();
+              }}
+              loading={unverifySubmitting}
+            >
+              Ya, Revert
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div className="rounded-md border border-warning-300 bg-warning-100 p-3 text-xs text-warning-700">
+            <p className="font-semibold">Perhatian:</p>
+            <ul className="ml-4 list-disc space-y-0.5">
+              <li>Status setoran balik ke pending verification</li>
+              <li>Reverse journal entry akan di-post otomatis (Dr Kas / Cr Bank)</li>
+              <li>Alasan revert akan di-record di audit log + notes setoran</li>
+              <li>Tidak bisa di-undo — kalau salah revert, harus verify ulang</li>
+            </ul>
+          </div>
+          <Input
+            label="Alasan revert"
+            placeholder="mis. setoran duplikat, salah jumlah, fraud detected"
+            value={unverifyReason}
+            onChange={(e) => setUnverifyReason(e.target.value)}
+            required
+          />
+        </div>
+      </Modal>
     </div>
   );
 }

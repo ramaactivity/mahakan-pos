@@ -109,7 +109,7 @@ export function VerifyDepositModal({
 
   if (!deposit) return null;
 
-  async function onSubmit() {
+  async function onSubmit(opts: { acknowledgeNegativeCash?: boolean } = {}) {
     if (!deposit) return;
     setError(null);
     if (mode === "reject" && reason.trim().length < 3) {
@@ -120,7 +120,10 @@ export function VerifyDepositModal({
     try {
       const res =
         mode === "verify"
-          ? await verifyCashDeposit({ id: deposit.id })
+          ? await verifyCashDeposit({
+              id: deposit.id,
+              acknowledgeNegativeCash: opts.acknowledgeNegativeCash,
+            })
           : await rejectCashDeposit({
               id: deposit.id,
               reason: reason.trim(),
@@ -134,7 +137,23 @@ export function VerifyDepositModal({
         onChanged();
         onClose();
       } else {
-        setError(res.error.message);
+        // Sesi AE-62k — kalau backend reject karena bikin cashOnHand minus
+        // (NEGATIVE_CASH_NOT_ACKNOWLEDGED), tampil confirm dialog dengan
+        // explicit acknowledgement supaya owner sadar consequences.
+        if (res.error.code === "NEGATIVE_CASH_NOT_ACKNOWLEDGED") {
+          const confirmed = window.confirm(
+            `${res.error.message}\n\nLanjut verify dengan flag override? Audit log akan mencatat acknowledgement Anda.`,
+          );
+          if (confirmed) {
+            // Retry with ack flag.
+            setSubmitting(false);
+            void onSubmit({ acknowledgeNegativeCash: true });
+            return;
+          }
+          setError("Verifikasi dibatalkan — cek refund/expense yang belum ter-record dulu.");
+        } else {
+          setError(res.error.message);
+        }
       }
     } finally {
       setSubmitting(false);
@@ -167,7 +186,7 @@ export function VerifyDepositModal({
             Batal
           </Button>
           <Button
-            onClick={onSubmit}
+            onClick={() => onSubmit()}
             loading={submitting}
             disabled={
               submitting ||
