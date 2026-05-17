@@ -1,11 +1,12 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   chartOfAccounts,
   expenseCategories,
   expenses,
+  journalEntries,
   transactionItems,
   transactions,
   splitPayments,
@@ -309,6 +310,106 @@ export async function postJournalForPosRefund(args: {
   });
 }
 
+/**
+ * Sesi AE-62j — postJournalForPosVoid: reverse journal untuk void
+ * transaction. Sebelumnya voidTransaction NEVER post reverse journal →
+ * GL drift forever (sale posted Dr Kas/Cr Revenue, void cuma flip
+ * transactions.status → Kas account overstated permanently).
+ *
+ * Reuse mapPosRefund dengan refundedAmount = transaction.total dan
+ * reverseCogs = true (void = full reversal termasuk COGS + inventory).
+ * sourceType="pos_void" + sourceId=transactionId untuk distinct dari
+ * partial refund yang pakai refund_event.id.
+ */
+export async function postJournalForPosVoid(args: {
+  outletId: string;
+  transactionId: string;
+  /** Items untuk reverse COGS (sama format dengan refund). */
+  items?: AggregatedItem[];
+  actorId: string;
+  entryDate?: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+
+  const [trx] = await db
+    .select()
+    .from(transactions)
+    .where(eq(transactions.id, args.transactionId))
+    .limit(1);
+  if (!trx) return;
+
+  let splitsInput;
+  if (trx.paymentMethod === "split") {
+    const splits = await db
+      .select()
+      .from(splitPayments)
+      .where(eq(splitPayments.transactionId, args.transactionId));
+    const splitTotal = splits.reduce((s, sp) => s + Number(sp.amount), 0);
+    if (splitTotal > 0) {
+      const VALID_REFUND_METHODS = [
+        "cash",
+        "qris",
+        "card_bca",
+        "card_bni",
+        "card_mandiri",
+        "card_bri",
+        "card_other",
+      ] as const;
+      type RefundMethod = (typeof VALID_REFUND_METHODS)[number];
+      const invalidRefundRows = findInvalidSplitMethods(
+        splits,
+        VALID_REFUND_METHODS,
+      );
+      if (invalidRefundRows.length > 0) {
+        throw new Error(
+          formatInvalidSplitMethodsError(
+            invalidRefundRows,
+            `pos_void ${args.transactionId.slice(0, 8)}`,
+          ),
+        );
+      }
+      splitsInput = splits.map((s) => ({
+        paymentMethod: s.paymentMethod as RefundMethod,
+        amount: Number(s.amount),
+      }));
+    }
+  }
+
+  const lines = mapPosRefund({
+    transactionId: trx.id,
+    transactionNumber: trx.transactionNumber,
+    outletId: trx.outletId,
+    entryDate: args.entryDate ?? jakartaDateOf(new Date()),
+    originalPaymentMethod: trx.paymentMethod as
+      | "cash"
+      | "qris"
+      | "card_bca"
+      | "card_bni"
+      | "card_mandiri"
+      | "card_bri"
+      | "card_other"
+      | "split",
+    refundedAmount: trx.total,
+    splits: splitsInput,
+    items: args.items,
+    reverseCogs: true,
+  });
+
+  await recordJournal({
+    outletId: trx.outletId,
+    entryDate: args.entryDate ?? jakartaDateOf(new Date()),
+    description: `Void TRX ${trx.transactionNumber}`,
+    sourceType: "pos_void",
+    sourceId: args.transactionId,
+    lines,
+    actorId: args.actorId,
+    metadata: {
+      transactionId: trx.id,
+      voidedAmount: trx.total,
+    },
+  });
+}
+
 // ============================================================
 // Payroll Paid
 // ============================================================
@@ -423,7 +524,7 @@ export async function postJournalForCashDepositUnverified(args: {
     reason: args.reason,
   });
 
-  await recordJournal({
+  const result = await recordJournal({
     outletId: args.outletId,
     entryDate: args.entryDate,
     description: `REVERT setoran ke ${args.bankDestination}: ${args.reason}`,
@@ -432,6 +533,27 @@ export async function postJournalForCashDepositUnverified(args: {
     lines,
     actorId: args.actorId,
   });
+
+  // Sesi AE-62j — mark original verified entry sebagai 'reversed' supaya:
+  // (1) idempotency check di re-verify nanti skip ke "create new entry"
+  //     (kalau status='posted' tetap, re-verify silent return cached entry
+  //      yang sudah tidak valid)
+  // (2) audit trail link unverify ↔ original via reversedByEntryId
+  await db
+    .update(journalEntries)
+    .set({
+      status: "reversed",
+      reversedByEntryId: result.entryId,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(journalEntries.outletId, args.outletId),
+        eq(journalEntries.sourceType, "cash_deposit_verified"),
+        eq(journalEntries.sourceId, args.cashDepositId),
+        sql`${journalEntries.status} = 'posted'`,
+      ),
+    );
 }
 
 // ============================================================

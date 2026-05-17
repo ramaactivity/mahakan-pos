@@ -204,6 +204,19 @@ export async function applyStockDeductions(
     ...flow.wasteByIngredient.keys(),
   ]);
 
+  // Sesi AE-62j — SELECT FOR UPDATE pada ingredients SEBELUM compute
+  // updates supaya concurrent sales tidak race-read same stock state.
+  // Sebelumnya: 2 sales paralel both read stock=100, both subtract 60 →
+  // stock = 40 instead of 80 (or -20 oversell). Lock berlaku sampai tx
+  // commit, jadi concurrent sale wait for this tx selesai.
+  if (allIds.size > 0) {
+    await tx
+      .select({ id: ingredients.id })
+      .from(ingredients)
+      .where(inArray(ingredients.id, Array.from(allIds)))
+      .for("update");
+  }
+
   // Galih ask #8: collect updates + insert rows up-front, then fire
   // ingredient updates in parallel + a single bulk insert for movements
   // — much fewer round-trip stalls inside the sale tx.

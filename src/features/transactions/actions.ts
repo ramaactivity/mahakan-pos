@@ -905,6 +905,40 @@ export async function voidTransaction(
     },
   });
 
+  // Sesi AE-62j — fire reverse journal hook untuk void. Sebelumnya void
+  // commit transaction status update + restore stock/points/promo, tapi
+  // TIDAK fire journal hook → GL drift permanent (sale-time journal Dr Kas
+  // Cr Revenue tetap, void cuma flip flag). Sekarang post pos_void reverse
+  // dengan items (untuk reverse COGS).
+  {
+    const { postJournalForPosVoid } = await import(
+      "@/features/accounting/hooks"
+    );
+    const itemRows = await db
+      .select({
+        itemCategoryName: transactionItemsSchema.itemCategoryName,
+        subtotal: transactionItemsSchema.subtotal,
+        cogs: transactionItemsSchema.cogs,
+      })
+      .from(transactionItemsSchema)
+      .where(eq(transactionItemsSchema.transactionId, v.transactionId));
+    const aggItems = itemRows.map((it) => ({
+      itemCategoryName: it.itemCategoryName,
+      amount: Number(it.subtotal),
+      cogs: Number(it.cogs ?? 0),
+    }));
+    fireJournalHook(
+      () =>
+        postJournalForPosVoid({
+          outletId: session.user.outletId,
+          transactionId: v.transactionId,
+          items: aggItems,
+          actorId: session.user.id,
+        }),
+      "pos_void",
+    );
+  }
+
   return ok(updated);
 }
 
@@ -1124,17 +1158,37 @@ export async function refundTransaction(
   // (full refund happens once per transaction max). Partial refunds use a
   // separate sourceType + refund_event_id (see refundTransactionPartial).
   // sesi AD-11: hoisted to static import.
-  fireJournalHook(
-    () =>
-      postJournalForPosRefund({
-        outletId: session.user.outletId,
-        transactionId: result.id,
-        refundEventId: result.id, // full-refund: 1:1 ke transaction
-        refundedAmount: result.total,
-        actorId: session.user.id,
-      }),
-    "pos_refund_full",
-  );
+  // Sesi AE-62j — pass items supaya COGS + Persediaan ter-reverse di GL.
+  // Sebelumnya items=undefined → mapPosRefund skip COGS reversal →
+  // Persediaan GL permanently overstated by refund amount.
+  {
+    const itemRows = await db
+      .select({
+        itemCategoryName: transactionItemsSchema.itemCategoryName,
+        subtotal: transactionItemsSchema.subtotal,
+        cogs: transactionItemsSchema.cogs,
+      })
+      .from(transactionItemsSchema)
+      .where(eq(transactionItemsSchema.transactionId, result.id));
+    const aggItems = itemRows.map((it) => ({
+      itemCategoryName: it.itemCategoryName,
+      amount: Number(it.subtotal),
+      cogs: Number(it.cogs ?? 0),
+    }));
+    fireJournalHook(
+      () =>
+        postJournalForPosRefund({
+          outletId: session.user.outletId,
+          transactionId: result.id,
+          refundEventId: result.id, // full-refund: 1:1 ke transaction
+          refundedAmount: result.total,
+          items: aggItems,
+          reverseCogs: true,
+          actorId: session.user.id,
+        }),
+      "pos_refund_full",
+    );
+  }
 
   return ok({ transaction: result });
 }
@@ -1384,17 +1438,59 @@ export async function refundTransactionPartial(
   // Sesi AE-62g — partial refund harus fire journal hook juga (sebelumnya
   // cuma full refund yang fire → GL drift = under-record refund expense).
   // sourceId = refund_event.id supaya idempotent per partial refund event.
-  fireJournalHook(
-    () =>
-      postJournalForPosRefund({
-        outletId: session.user.outletId,
-        transactionId: result.transaction.id,
-        refundEventId: result.eventId,
-        refundedAmount: computation.totalRefunded,
-        actorId: session.user.id,
-      }),
-    "pos_refund_partial",
-  );
+  // Sesi AE-62j — pass per-item COGS pro-rated by amountRefunded supaya
+  // Persediaan GL ter-reverse proporsional ke refund value.
+  {
+    const itemRows = await db
+      .select({
+        id: transactionItemsSchema.id,
+        itemCategoryName: transactionItemsSchema.itemCategoryName,
+        subtotal: transactionItemsSchema.subtotal,
+        cogs: transactionItemsSchema.cogs,
+        quantity: transactionItemsSchema.quantity,
+      })
+      .from(transactionItemsSchema)
+      .where(eq(transactionItemsSchema.transactionId, result.transaction.id));
+    // Build map id → per-item COGS-per-unit.
+    const costByItemId = new Map<string, { cat: string; cogsPerUnit: number; pricePerUnit: number; qty: number }>();
+    for (const it of itemRows) {
+      costByItemId.set(it.id, {
+        cat: it.itemCategoryName,
+        cogsPerUnit: it.quantity > 0 ? Number(it.cogs ?? 0) / it.quantity : 0,
+        pricePerUnit: it.quantity > 0 ? Number(it.subtotal) / it.quantity : 0,
+        qty: it.quantity,
+      });
+    }
+    // computation.perItem berisi quantityRefunded + amountRefunded per item.
+    // Aggregate by category untuk feed mapPosRefund.
+    const aggMap = new Map<string, { amount: number; cogs: number }>();
+    for (const p of computation.perItem) {
+      const meta = costByItemId.get(p.transactionItemId);
+      if (!meta) continue;
+      const cur = aggMap.get(meta.cat) ?? { amount: 0, cogs: 0 };
+      cur.amount += p.amountRefunded;
+      cur.cogs += Math.round(meta.cogsPerUnit * p.quantityRefunded);
+      aggMap.set(meta.cat, cur);
+    }
+    const aggItems = Array.from(aggMap.entries()).map(([cat, v]) => ({
+      itemCategoryName: cat,
+      amount: v.amount,
+      cogs: v.cogs,
+    }));
+    fireJournalHook(
+      () =>
+        postJournalForPosRefund({
+          outletId: session.user.outletId,
+          transactionId: result.transaction.id,
+          refundEventId: result.eventId,
+          refundedAmount: computation.totalRefunded,
+          items: aggItems,
+          reverseCogs: true,
+          actorId: session.user.id,
+        }),
+      "pos_refund_partial",
+    );
+  }
 
   return ok({ transaction: result.transaction, eventId: result.eventId });
 }
@@ -2081,59 +2177,123 @@ export async function closeOpenBill(
       ? input.cashReceived - remaining
       : null;
 
-  // Sesi AE-36 — kalau ada prior splits, route via split_payments untuk
-  // konsistensi accounting. Final payment_method = "split" supaya audit
-  // trail menunjukkan ini mixed payment.
-  if (hasPriorSplits) {
-    // Get shift for split row.
-    const activeShift = await db
-      .select({ id: sql<string>`id` })
-      .from(sql`shifts`)
-      .where(
-        sql`user_id = ${session.user.id} AND status = 'open' AND outlet_id = ${session.user.outletId}`,
-      )
-      .limit(1);
-    if (activeShift.length === 0) {
+  // Sesi AE-62j — wrap close in tx + SELECT FOR UPDATE pada transaction
+  // row untuk prevent TOCTOU race condition. Sebelumnya: 2 kasir (double-tap
+  // / network retry) bisa lulus status='open' check + close bill twice →
+  // duplicate residual split atau status flip race. Sekarang: lock parent,
+  // re-validate status + breakdown fresh, then mutate.
+  try {
+    await db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select({
+          id: transactions.id,
+          status: transactions.status,
+          total: transactions.total,
+        })
+        .from(transactions)
+        .where(eq(transactions.id, input.transactionId))
+        .for("update")
+        .limit(1);
+      if (!locked) throw new Error("NOT_FOUND");
+      if (locked.status !== "open") throw new Error("TRX_NOT_OPEN");
+
+      // Re-fetch fresh paid-sum INSIDE the lock untuk re-validate remaining.
+      const freshPaidAgg = await tx
+        .select({
+          total: sql<string>`COALESCE(SUM(${splitPayments.amount}), 0)`,
+        })
+        .from(splitPayments)
+        .where(eq(splitPayments.transactionId, input.transactionId));
+      const freshPaid = Number(freshPaidAgg[0]?.total ?? 0);
+      const freshRemaining = Math.max(0, locked.total - freshPaid);
+      const freshHasPriorSplits = freshPaid > 0;
+
+      if (input.paymentMethod === "cash") {
+        if (
+          input.cashReceived === null ||
+          input.cashReceived < freshRemaining
+        ) {
+          throw new Error(`INSUFFICIENT_CASH:${freshRemaining}`);
+        }
+      }
+      const freshCashChange =
+        input.paymentMethod === "cash" && input.cashReceived !== null
+          ? input.cashReceived - freshRemaining
+          : null;
+
+      if (freshHasPriorSplits) {
+        // Get shift for split row.
+        const activeShift = await tx
+          .select({ id: sql<string>`id` })
+          .from(sql`shifts`)
+          .where(
+            sql`user_id = ${session.user.id} AND status = 'open' AND outlet_id = ${session.user.outletId}`,
+          )
+          .limit(1);
+        if (activeShift.length === 0) {
+          throw new Error("NO_ACTIVE_SHIFT");
+        }
+        const shiftId = activeShift[0]!.id;
+        // Insert final residual split.
+        await tx.insert(splitPayments).values({
+          transactionId: input.transactionId,
+          outletId: session.user.outletId,
+          shiftId,
+          cashierId: session.user.id,
+          amount: freshRemaining,
+          paymentMethod: input.paymentMethod,
+          cashReceived:
+            input.paymentMethod === "cash" ? input.cashReceived : null,
+          cashChange: freshCashChange,
+          splitKind: "nominal",
+        });
+        await tx
+          .update(transactions)
+          .set({
+            status: "paid",
+            paymentMethod: "split",
+            cashReceived: null,
+            cashChange: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(transactions.id, input.transactionId));
+      } else {
+        await tx
+          .update(transactions)
+          .set({
+            status: "paid",
+            paymentMethod: input.paymentMethod,
+            cashReceived:
+              input.paymentMethod === "cash" ? input.cashReceived : null,
+            cashChange:
+              input.paymentMethod === "cash" ? freshCashChange : null,
+            updatedAt: new Date(),
+          })
+          .where(eq(transactions.id, input.transactionId));
+      }
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "DB error";
+    if (msg === "NOT_FOUND") {
+      return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+    }
+    if (msg === "TRX_NOT_OPEN") {
+      return fail(
+        "BUSINESS_RULE_VIOLATION",
+        "Bill sudah ditutup oleh kasir lain. Refresh untuk lihat status terbaru.",
+      );
+    }
+    if (msg.startsWith("INSUFFICIENT_CASH:")) {
+      const remain = msg.slice("INSUFFICIENT_CASH:".length);
+      return fail(
+        "INSUFFICIENT_CASH",
+        `Tunai kurang. Sisa fresh setelah split lain: Rp${Number(remain).toLocaleString("id-ID")}.`,
+      );
+    }
+    if (msg === "NO_ACTIVE_SHIFT") {
       return fail("NO_ACTIVE_SHIFT", "Buka shift dulu sebelum close bill");
     }
-    const shiftId = activeShift[0]!.id;
-    await db.transaction(async (tx) => {
-      // Insert final residual split.
-      await tx.insert(splitPayments).values({
-        transactionId: input.transactionId,
-        outletId: session.user.outletId,
-        shiftId,
-        cashierId: session.user.id,
-        amount: remaining,
-        paymentMethod: input.paymentMethod,
-        cashReceived: input.paymentMethod === "cash" ? input.cashReceived : null,
-        cashChange,
-        splitKind: "nominal",
-      });
-      await tx
-        .update(transactions)
-        .set({
-          status: "paid",
-          paymentMethod: "split",
-          cashReceived: null,
-          cashChange: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(transactions.id, input.transactionId));
-    });
-  } else {
-    // No prior splits — original simple close path.
-    await db
-      .update(transactions)
-      .set({
-        status: "paid",
-        paymentMethod: input.paymentMethod,
-        cashReceived: input.paymentMethod === "cash" ? input.cashReceived : null,
-        cashChange:
-          input.paymentMethod === "cash" ? cashChange : null,
-        updatedAt: new Date(),
-      })
-      .where(eq(transactions.id, input.transactionId));
+    return fail("DB_ERROR", logAndSanitize(e, "transactions", "Operasi database gagal"));
   }
 
   await logAudit({

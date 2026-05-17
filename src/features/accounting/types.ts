@@ -32,6 +32,7 @@ export type JournalSourceType =
   | "opening_balance"
   | "pos_sale"
   | "pos_refund"
+  | "pos_void"
   | "pos_compliment"
   | "purchase_create"
   | "purchase_pay"
