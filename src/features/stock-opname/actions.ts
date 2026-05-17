@@ -220,8 +220,12 @@ export async function startOpname(
         ingredientsToSnapshot.map((ing) => ({
           sessionId: s.id,
           ingredientId: ing.id,
-          expectedQty: ing.currentStock,
-          // Sesi AE-15 — decimal mirror snapshot dari ingredient state.
+          // Sesi AE-62e — clamp bigint ke 0 untuk pass ck_opname_lines_expected_nonneg.
+          // Stok bisa negatif kalau ada oversold (sale_deduct tanpa cukup stok)
+          // — common di prod. Real value tetap disimpan di decimal mirror
+          // (no check constraint) → finalize compute diff pakai decimal,
+          // so adjust movement masih bring stock ke physical reality.
+          expectedQty: Math.max(0, ing.currentStock),
           expectedQtyDecimal:
             ing.currentStockDecimal ?? Number(ing.currentStock).toFixed(4),
           unitCostAtSnapshot: ing.costPerUnit,
@@ -509,7 +513,9 @@ export async function submitOpname(
           .select({
             id: stockOpnameLines.id,
             expectedQty: stockOpnameLines.expectedQty,
+            expectedQtyDecimal: stockOpnameLines.expectedQtyDecimal,
             actualQty: stockOpnameLines.actualQty,
+            actualQtyDecimal: stockOpnameLines.actualQtyDecimal,
             unitCostAtSnapshot: stockOpnameLines.unitCostAtSnapshot,
           })
           .from(stockOpnameLines)
@@ -527,10 +533,14 @@ export async function submitOpname(
           }
           // Auto-fill uncounted lines with expected qty (zero diff). They're
           // recorded as counted by submitter so audit trail is preserved.
+          // Sesi AE-62e — mirror decimal juga supaya finalize compute
+          // diff = 0 (no movement) untuk uncounted-auto-fill case, even
+          // kalau real expected (decimal) negative dari oversold.
           await tx
             .update(stockOpnameLines)
             .set({
               actualQty: sql`${stockOpnameLines.expectedQty}`,
+              actualQtyDecimal: sql`${stockOpnameLines.expectedQtyDecimal}`,
               countedAt: new Date(),
               countedBy: session.user.id,
               note: sql`COALESCE(${stockOpnameLines.note}, 'Auto-fill saat submit (sesuai expected)')`,
@@ -546,7 +556,9 @@ export async function submitOpname(
         const finalLines = await tx
           .select({
             expectedQty: stockOpnameLines.expectedQty,
+            expectedQtyDecimal: stockOpnameLines.expectedQtyDecimal,
             actualQty: stockOpnameLines.actualQty,
+            actualQtyDecimal: stockOpnameLines.actualQtyDecimal,
             unitCostAtSnapshot: stockOpnameLines.unitCostAtSnapshot,
           })
           .from(stockOpnameLines)
@@ -835,11 +847,20 @@ export async function finalizeOpname(
   // Sesi U — Accounting auto-journal hook (opname adjustment).
   // Aggregate per-line diff_value × unit_cost grouped by ingredient.section
   // post-commit query. Skip kalau no movements (totalDiffCost=0).
+  // Sesi AE-62e — pakai decimal mirror (COALESCE fallback ke bigint) supaya
+  // negative-stock ingredients tetap dapat correct diff. Bigint expected_qty
+  // di-clamp 0 di snapshot, real value di decimal — diff math harus
+  // pakai decimal supaya cocok dengan finalize.
   if (result.movementsCreated > 0) {
     const ingSections = await db
       .select({
         section: ingredients.section,
-        diffValue: sql<number>`SUM(${stockOpnameLines.unitCostAtSnapshot} * (${stockOpnameLines.actualQty} - ${stockOpnameLines.expectedQty}))`,
+        diffValue: sql<number>`SUM(
+          ${stockOpnameLines.unitCostAtSnapshot}::numeric * (
+            COALESCE(${stockOpnameLines.actualQtyDecimal}, ${stockOpnameLines.actualQty}::numeric)
+            - COALESCE(${stockOpnameLines.expectedQtyDecimal}, ${stockOpnameLines.expectedQty}::numeric)
+          )
+        )`,
       })
       .from(stockOpnameLines)
       .innerJoin(

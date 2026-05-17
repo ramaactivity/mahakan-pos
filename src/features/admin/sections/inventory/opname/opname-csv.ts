@@ -35,11 +35,23 @@ export function downloadOpnameResult(
   periodLabel: string,
   lines: OpnameLineWithIngredient[],
 ): void {
+  // Sesi AE-62e — prefer decimal mirror (real value, mungkin negative
+  // dari oversold). Bigint di-clamp 0 untuk pass check constraint.
+  const eff = (l: OpnameLineWithIngredient) => ({
+    expected:
+      l.expectedQtyDecimal !== null
+        ? parseFloat(l.expectedQtyDecimal)
+        : l.expectedQty,
+    actual:
+      l.actualQtyDecimal !== null
+        ? parseFloat(l.actualQtyDecimal)
+        : l.actualQty,
+  });
   const sorted = [...lines].sort((a, b) => {
-    const aDiff =
-      a.actualQty !== null ? Math.abs(a.actualQty - a.expectedQty) : -1;
-    const bDiff =
-      b.actualQty !== null ? Math.abs(b.actualQty - b.expectedQty) : -1;
+    const ea = eff(a);
+    const eb = eff(b);
+    const aDiff = ea.actual !== null ? Math.abs(ea.actual - ea.expected) : -1;
+    const bDiff = eb.actual !== null ? Math.abs(eb.actual - eb.expected) : -1;
     if (aDiff !== bDiff) return bDiff - aDiff;
     return a.ingredientNameSnapshot.localeCompare(
       b.ingredientNameSnapshot,
@@ -47,14 +59,14 @@ export function downloadOpnameResult(
     );
   });
   const rows = sorted.map((l, idx) => {
-    const actual = l.actualQty;
-    const diff = actual !== null ? actual - l.expectedQty : null;
+    const { expected, actual } = eff(l);
+    const diff = actual !== null ? actual - expected : null;
     const costImpact = diff !== null ? diff * l.unitCostAtSnapshot : null;
     return {
       No: idx + 1,
       Bahan: l.ingredientNameSnapshot,
       Unit: l.unitSnapshot,
-      "Qty Expected": l.expectedQty,
+      "Qty Expected": expected,
       "Qty Aktual": actual ?? "",
       Selisih: diff ?? "",
       "Cost / Unit": l.unitCostAtSnapshot,

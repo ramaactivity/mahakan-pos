@@ -55,12 +55,30 @@ export function OpnameReviewView({
   const [reopenOpen, setReopenOpen] = useState(false);
   const [reopenSubmitting, setReopenSubmitting] = useState(false);
 
+  // Sesi AE-62e — helpers prefer decimal mirror over bigint. Negative-stock
+  // case (oversold sebelum opname) men-clamp bigint expected ke 0 untuk
+  // pass check constraint, real value disimpan di decimal. Tanpa decimal
+  // preference, review preview shows "0 diff" walau finalize bakal create
+  // +X adjust movement.
+  const effectiveExpected = (l: (typeof detail.lines)[number]): number =>
+    l.expectedQtyDecimal !== null
+      ? parseFloat(l.expectedQtyDecimal)
+      : l.expectedQty;
+  const effectiveActual = (
+    l: (typeof detail.lines)[number],
+  ): number | null => {
+    if (l.actualQtyDecimal !== null) return parseFloat(l.actualQtyDecimal);
+    return l.actualQty;
+  };
+
   const stats = useMemo(
     () =>
       computeDiffStats(
         detail.lines.map((l) => ({
           expectedQty: l.expectedQty,
+          expectedQtyDecimal: l.expectedQtyDecimal,
           actualQty: l.actualQty,
+          actualQtyDecimal: l.actualQtyDecimal,
           unitCostAtSnapshot: l.unitCostAtSnapshot,
         })),
       ),
@@ -69,14 +87,12 @@ export function OpnameReviewView({
 
   const sortedLines = useMemo(() => {
     return [...detail.lines].sort((a, b) => {
+      const aActual = effectiveActual(a);
+      const bActual = effectiveActual(b);
       const aDiff =
-        a.actualQty !== null
-          ? Math.abs(a.actualQty - a.expectedQty)
-          : -1;
+        aActual !== null ? Math.abs(aActual - effectiveExpected(a)) : -1;
       const bDiff =
-        b.actualQty !== null
-          ? Math.abs(b.actualQty - b.expectedQty)
-          : -1;
+        bActual !== null ? Math.abs(bActual - effectiveExpected(b)) : -1;
       if (aDiff !== bDiff) return bDiff - aDiff;
       return a.ingredientNameSnapshot.localeCompare(
         b.ingredientNameSnapshot,
@@ -88,8 +104,9 @@ export function OpnameReviewView({
   const visibleLines = showAll
     ? sortedLines
     : sortedLines.filter((l) => {
-        if (l.actualQty === null) return true;
-        return l.actualQty - l.expectedQty !== 0;
+        const actual = effectiveActual(l);
+        if (actual === null) return true;
+        return actual - effectiveExpected(l) !== 0;
       });
 
   async function onFinalize() {
@@ -262,9 +279,9 @@ export function OpnameReviewView({
               </thead>
               <tbody className="divide-y divide-neutral-100">
                 {visibleLines.map((l) => {
-                  const actual = l.actualQty;
-                  const diff =
-                    actual !== null ? actual - l.expectedQty : null;
+                  const actual = effectiveActual(l);
+                  const expected = effectiveExpected(l);
+                  const diff = actual !== null ? actual - expected : null;
                   const cost =
                     diff !== null ? diff * l.unitCostAtSnapshot : null;
                   return (
@@ -278,7 +295,7 @@ export function OpnameReviewView({
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right font-mono">
-                        {l.expectedQty.toLocaleString("id-ID")}
+                        {expected.toLocaleString("id-ID")}
                       </td>
                       <td className="px-4 py-3 text-right font-mono">
                         {actual !== null ? (

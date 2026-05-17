@@ -67,6 +67,58 @@ describe("computeDiffStats", () => {
     expect(s.shortageLines).toBe(1);
   });
 
+  // Sesi AE-62e — negative-stock case (oversold sebelum opname). Bigint
+  // expected di-clamp ke 0 untuk pass ck_opname_lines_expected_nonneg,
+  // real value disimpan di decimal. computeDiffStats harus prefer decimal
+  // supaya preview diff cocok dengan apa yang finalize akan kerjakan.
+  describe("negative-stock (decimal mirror)", () => {
+    it("prefers expectedQtyDecimal over clamped bigint expectedQty", () => {
+      const s = computeDiffStats([
+        {
+          // Bigint clamped ke 0, real value -198 (oversold)
+          expectedQty: 0,
+          expectedQtyDecimal: "-198.0000",
+          actualQty: 0,
+          actualQtyDecimal: "0.0000",
+          unitCostAtSnapshot: 30,
+        },
+      ]);
+      // Real diff: 0 - (-198) = +198 (adjust to bring stock back to 0)
+      expect(s.totalDiffQty).toBe(198);
+      expect(s.totalAbsDiffQty).toBe(198);
+      expect(s.totalDiffCost).toBe(198 * 30);
+      expect(s.surplusLines).toBe(1);
+    });
+
+    it("prefers actualQtyDecimal over bigint actualQty", () => {
+      const s = computeDiffStats([
+        {
+          expectedQty: 100,
+          expectedQtyDecimal: "100.0000",
+          actualQty: 102, // rounded
+          actualQtyDecimal: "102.5000", // decimal precision
+          unitCostAtSnapshot: 50,
+        },
+      ]);
+      expect(s.totalDiffQty).toBe(2.5);
+      expect(s.totalAbsDiffCost).toBe(125);
+    });
+
+    it("falls back to bigint when decimal is null (legacy lines)", () => {
+      const s = computeDiffStats([
+        {
+          expectedQty: 50,
+          expectedQtyDecimal: null,
+          actualQty: 60,
+          actualQtyDecimal: null,
+          unitCostAtSnapshot: 10,
+        },
+      ]);
+      expect(s.totalDiffQty).toBe(10);
+      expect(s.totalAbsDiffCost).toBe(100);
+    });
+  });
+
   it("handles a mix of counted and uncounted lines", () => {
     const s = computeDiffStats([
       { expectedQty: 100, actualQty: 100, unitCostAtSnapshot: 50 },

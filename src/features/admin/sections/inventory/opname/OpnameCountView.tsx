@@ -209,9 +209,18 @@ export function OpnameCountView({
   const stats = useMemo(() => {
     const lines = detail.lines.map((l) => {
       const s = stateMap.get(l.ingredientId);
+      const savedOverride = s ? s.saved : null;
       return {
         expectedQty: l.expectedQty,
+        expectedQtyDecimal: l.expectedQtyDecimal,
         actualQty: s ? s.saved : l.actualQty,
+        // Sesi AE-62e — saat staff baru ngetik (sebelum server save),
+        // overlay saved value ke decimal supaya preview diff accurate
+        // walau bigint expected sudah di-clamp ke 0 (negative-stock case).
+        actualQtyDecimal:
+          savedOverride !== null
+            ? savedOverride.toFixed(4)
+            : l.actualQtyDecimal,
         unitCostAtSnapshot: l.unitCostAtSnapshot,
       };
     });
@@ -621,7 +630,15 @@ export function OpnameCountView({
                     ingredientId={line.ingredientId}
                     name={line.ingredientNameSnapshot}
                     unit={effectiveUnit}
-                    expectedQty={line.expectedQty}
+                    expectedQty={
+                      // Sesi AE-62e — prefer decimal (real value, mungkin
+                      // negative dari oversold). Bigint di-clamp 0 untuk
+                      // pass check constraint, jadi display dari bigint
+                      // misleading kalau real stok minus.
+                      line.expectedQtyDecimal !== null
+                        ? parseFloat(line.expectedQtyDecimal)
+                        : line.expectedQty
+                    }
                     openingQty={f?.openingQty ?? 0}
                     purchasesQty={f?.purchasesQty ?? 0}
                     unitCost={line.unitCostAtSnapshot}
