@@ -851,6 +851,30 @@ export async function voidTransaction(
       "void_restore",
     );
 
+    // Sesi AE-62i — restore loyalty points for void.
+    const { restorePointsOnTransactionRefund } = await import(
+      "@/features/customers/actions"
+    );
+    await restorePointsOnTransactionRefund(tx, v.transactionId, {
+      refundKind: "void",
+      actorId: session.user.id,
+    });
+
+    // Sesi AE-62i — decrement promo.currentUses untuk void.
+    const promoUsageRows = await tx
+      .select({ id: promoUsages.id, promoId: promoUsages.promoId })
+      .from(promoUsages)
+      .where(eq(promoUsages.transactionId, v.transactionId));
+    for (const u of promoUsageRows) {
+      await tx
+        .update(promos)
+        .set({
+          currentUses: sql`GREATEST(0, ${promos.currentUses} - 1)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(promos.id, u.promoId));
+    }
+
     return { updated: updatedRow, restoredIngredientIds: restored };
   });
 
@@ -1037,6 +1061,33 @@ export async function refundTransaction(
         v.transactionId,
         "refund_restore",
       );
+
+      // Sesi AE-62i — restore loyalty points (claw-back earned + re-credit
+      // redeemed). Sebelumnya silent skip → loyalty ratchet bug.
+      const { restorePointsOnTransactionRefund } = await import(
+        "@/features/customers/actions"
+      );
+      await restorePointsOnTransactionRefund(tx, v.transactionId, {
+        refundKind: "full",
+        actorId: session.user.id,
+      });
+
+      // Sesi AE-62i — decrement promo.currentUses kalau trx pakai promo.
+      // Sebelumnya: refunded trx tetap counted di maxTotalUses → promo
+      // "100 use" actually unusable kalau 100 trx (30 refunded) sudah hit.
+      const promoUsageRows = await tx
+        .select({ id: promoUsages.id, promoId: promoUsages.promoId })
+        .from(promoUsages)
+        .where(eq(promoUsages.transactionId, v.transactionId));
+      for (const u of promoUsageRows) {
+        await tx
+          .update(promos)
+          .set({
+            currentUses: sql`GREATEST(0, ${promos.currentUses} - 1)`,
+            updatedAt: new Date(),
+          })
+          .where(eq(promos.id, u.promoId));
+      }
 
       return { result: updated, restoredIngredientIds: restored };
     },
@@ -1281,6 +1332,26 @@ export async function refundTransactionPartial(
       refundedTransactionId: current.id,
       createdBy: session.user.id,
     });
+
+    // Sesi AE-62i — pro-rate claw-back earned points sesuai refund share.
+    // Kalau partial bertahap → tiap event clawback proportional. Kalau
+    // cumulative reach total (nextStatus='refunded') → full clawback +
+    // restore redeemed.
+    const { restorePointsOnTransactionRefund } = await import(
+      "@/features/customers/actions"
+    );
+    if (nextStatus === "refunded") {
+      await restorePointsOnTransactionRefund(tx, v.transactionId, {
+        refundKind: "full",
+        actorId: session.user.id,
+      });
+    } else {
+      await restorePointsOnTransactionRefund(tx, v.transactionId, {
+        refundKind: "partial",
+        refundAmount: computation.totalRefunded,
+        actorId: session.user.id,
+      });
+    }
 
     return { transaction: updated, eventId: evt.id };
   });

@@ -532,11 +532,24 @@ export async function POST(request: Request): Promise<NextResponse> {
     matched.id,
     openRow.shiftDate,
   );
-  if (schedule && !schedule.dayOff && schedule.endTime) {
+  if (schedule && !schedule.dayOff && schedule.endTime && schedule.startTime) {
+    // Sesi AE-62i — mirror overnight shift logic dari backoffice clockOut
+    // (src/features/attendance/actions.ts:270-286). Sebelumnya naive
+    // actualEnd - scheduledEnd → bartender close 02:00 dapat NEGATIVE OT
+    // (zeroed) → undercount late-night work.
     const scheduledEnd = timeStringToMinutes(schedule.endTime);
+    const scheduledStart = timeStringToMinutes(schedule.startTime);
+    const isOvernight = scheduledEnd < scheduledStart;
     const actualEnd = minutesIntoWibDay(now);
-    const diff = actualEnd - scheduledEnd;
-    overtimeMinutes = diff > 0 ? diff : 0;
+    let diff: number;
+    if (isOvernight) {
+      const adjustedActual =
+        actualEnd >= scheduledStart ? actualEnd : actualEnd + 1440;
+      diff = adjustedActual - (scheduledEnd + 1440);
+    } else {
+      diff = actualEnd - scheduledEnd;
+    }
+    overtimeMinutes = Math.max(0, diff);
   }
 
   const [updated] = await db

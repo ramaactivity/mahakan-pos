@@ -61,6 +61,25 @@ export async function POST(req: Request) {
   if (!approver) {
     return err("APPROVER_NOT_FOUND", "Approver tidak ditemukan", 404);
   }
+  // Sesi AE-62i — separation of duties: requester tidak boleh approve diri
+  // sendiri. Sebelumnya supervisor/manager bisa input PIN sendiri sebagai
+  // approver → bypass independent oversight on void/refund/discount.
+  if (approver.id === session.user.id) {
+    return err(
+      "SELF_APPROVE_DENIED",
+      "Tidak boleh approve diri sendiri — minta approver lain",
+      403,
+    );
+  }
+  // Sesi AE-62i — outlet boundary. Approver dari outlet lain tidak boleh
+  // approve transaksi outlet ini (audit trail jadi salah outlet attribution).
+  if (approver.outletId !== session.user.outletId) {
+    return err(
+      "APPROVER_OUTLET_MISMATCH",
+      "Approver dari outlet berbeda — tidak boleh approve cross-outlet",
+      403,
+    );
+  }
   if (approver.role !== "owner" && approver.role !== "manager") {
     return err(
       "APPROVER_INELIGIBLE",

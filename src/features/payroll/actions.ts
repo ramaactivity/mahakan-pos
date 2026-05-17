@@ -598,6 +598,25 @@ export async function updatePayrollLine(
       v.advanceDeduction ?? Number(current.advanceDeduction ?? 0),
     otherDeductions: v.otherDeductions ?? Number(current.otherDeductions),
   };
+
+  // Sesi AE-62i — block advance deduction yang exceed grossPay. Pre-AE-62i
+  // netPay = max(0, grossPay - deductions) cap di 0 tapi advance bisa exceed
+  // gross → employee terima Rp 0 + masih "owes" sisa kasbon → labor law
+  // violation + confused liability tracking. Owner harus split kasbon ke
+  // multiple periods kalau gak muat.
+  const grossPreview = next.baseSalary + next.overtimePay + next.bonus + next.thr;
+  const grossAfterMandatory = Math.max(
+    0,
+    grossPreview - next.lateDeduction - next.otherDeductions,
+  );
+  if (next.advanceDeduction > grossAfterMandatory) {
+    return fail(
+      "ADVANCE_EXCEEDS_GROSS",
+      `Potongan kasbon (Rp ${next.advanceDeduction.toLocaleString("id-ID")}) lebih besar dari gaji bersih sebelum kasbon (Rp ${grossAfterMandatory.toLocaleString("id-ID")}). Bagi kasbon ke periode berikut.`,
+      "advanceDeduction",
+    );
+  }
+
   const { grossPay, netPay } = recomputeGrossNetV2(next);
 
   const [row] = await db

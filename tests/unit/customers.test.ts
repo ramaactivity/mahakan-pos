@@ -36,8 +36,10 @@ describe("computePointsEarned", () => {
 describe("normalisePhone", () => {
   it("strips +, spaces, dashes, parens", () => {
     expect(normalisePhone("+62 812-3456-7890")).toBe("6281234567890");
-    expect(normalisePhone("(021) 555-1234")).toBe("0215551234");
-    expect(normalisePhone("0812.3456.7890")).toBe("081234567890");
+    // (021) 555-1234 starts with 0 → canonicalize to 62
+    expect(normalisePhone("(021) 555-1234")).toBe("62215551234");
+    // 081234567890 starts with 0 → canonicalize to 62
+    expect(normalisePhone("0812.3456.7890")).toBe("6281234567890");
   });
 
   it("returns null for input shorter than 6 digits", () => {
@@ -47,15 +49,20 @@ describe("normalisePhone", () => {
     expect(normalisePhone("12345")).toBeNull();
   });
 
-  it("preserves leading 0 vs 62 distinction (stored as typed)", () => {
-    // Both are valid Indonesian phone forms — we don't auto-convert one
-    // to the other. Owner can normalise via Admin UI later if needed.
-    expect(normalisePhone("081234567890")).toBe("081234567890");
+  // Sesi AE-62i — leading 0 canonicalize ke 62 supaya same person tidak
+  // di-split jadi 2 record loyalty.
+  it("canonicalize leading 0 to 62 (Indonesia country code)", () => {
+    expect(normalisePhone("081234567890")).toBe("6281234567890");
     expect(normalisePhone("6281234567890")).toBe("6281234567890");
+    // Both forms produce the same canonical output → same customer record
+    expect(normalisePhone("081234567890")).toBe(
+      normalisePhone("6281234567890"),
+    );
   });
 
   it("handles unicode digits gracefully (non-ASCII stripped)", () => {
-    expect(normalisePhone("0812-456-789💀")).toBe("0812456789");
+    // After AE-62i canonicalize: 0812456789 → 62812456789
+    expect(normalisePhone("0812-456-789💀")).toBe("62812456789");
   });
 
   it("accepts exactly 6 digits as valid threshold", () => {

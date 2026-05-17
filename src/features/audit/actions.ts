@@ -1,6 +1,6 @@
 "use server";
 
-import { auth } from "@/lib/auth";
+import { auth, hasPermission } from "@/lib/auth";
 import {
   fetchAuditLogs,
   type AuditLogRow,
@@ -19,15 +19,26 @@ function fail(code: string, message: string): ApiResult<never> {
 }
 
 /**
- * Server action wrapper for the audit log viewer (Owner-only).
+ * Server action wrapper for the audit log viewer.
+ *
+ * Sesi AE-62i — pakai hasPermission instead of hardcoded role check supaya
+ * sync dengan RBAC matrix. Owner punya "audit.view.all" (semua entries),
+ * manager+supervisor punya "audit.view.staff_actions" (filtered subset).
+ * Sebelumnya hardcoded `role !== "owner"` → manager dengan audit.view
+ * permission tetap di-block walau matrix izinkan.
  */
 export async function listAuditLogs(
   opts: ListAuditLogsOptions = {},
 ): Promise<ApiResult<{ rows: AuditLogRow[]; total: number }>> {
   const session = await auth();
   if (!session) return fail("UNAUTHORIZED", "Belum login");
-  if (session.user.role !== "owner") {
-    return fail("FORBIDDEN", "Audit log hanya untuk Owner");
+  const canViewAll = hasPermission(session.user.role, "audit.view.all");
+  const canViewStaff = hasPermission(
+    session.user.role,
+    "audit.view.staff_actions",
+  );
+  if (!canViewAll && !canViewStaff) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat audit log");
   }
   return ok(await fetchAuditLogs(opts));
 }

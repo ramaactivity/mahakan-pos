@@ -97,15 +97,29 @@ export function clampRedemption(
 }
 
 /**
- * Normalise an Indonesian phone input into digits-only canonical form.
- * Strips +, spaces, dashes, parens, and dots. Leaves leading 0 or 62 alone
- * — both represent the same number but stored as-typed so the same person
- * isn't accidentally split into two records by formatting.
+ * Normalise an Indonesian phone input into canonical digits-only form.
  *
- * Returns null if the result is too short to be a real phone (<6 digits).
+ * Sesi AE-62i — convert leading 0 → 62 (Indonesia country code) supaya
+ * 08123456789 dan 628123456789 (same person) di-store sebagai canonical
+ * 628123456789. Sebelumnya: stored as-typed → same person split into 2
+ * loyalty records, points history fragmented.
+ *
+ * Edge cases:
+ *  - Strip +, spaces, dashes, parens, dots first
+ *  - Leading 0 → 62 (Indonesia)
+ *  - Leading 62 → keep as-is
+ *  - Other leading digit (rare, e.g. typo) → keep as-is, return null kalau <6 digit
+ *
+ * Returns null kalau hasil < 6 digit (tidak mungkin nomor valid).
  */
 export function normalisePhone(raw: string): string | null {
   const digitsOnly = raw.replace(/[^\d]/g, "");
   if (digitsOnly.length < 6) return null;
+  // Canonical: leading 0 (local Indonesia) → 62 (country code).
+  // "08123" → "628123". "628123" → "628123". "8123" → "8123" (rare,
+  // assume already without leading 0/62 prefix).
+  if (digitsOnly.startsWith("0")) {
+    return "62" + digitsOnly.slice(1);
+  }
   return digitsOnly;
 }

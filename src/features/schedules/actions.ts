@@ -2,7 +2,7 @@
 
 import { and, asc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { db } from "@/db";
-import { employeeSchedules, employees } from "@/db/schema";
+import { employeeSchedules, employees, payrollPeriods } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
@@ -174,6 +174,35 @@ export async function upsertSchedule(
   if (!emp) return fail("NOT_FOUND", "Karyawan tidak ditemukan");
   if (emp.outletId !== session.user.outletId) {
     return fail("FORBIDDEN", "Karyawan dari outlet lain");
+  }
+
+  // Sesi AE-62i — block edit jadwal yang fall di periode payroll yang sudah
+  // finalize/paid. Sebelumnya: owner bisa retroactively edit jadwal lama →
+  // attendance vs schedule audit trail rusak, payroll pakai numbers berbeda
+  // dari current state → reconciliation broken.
+  const lockedPeriods = await db
+    .select({
+      id: payrollPeriods.id,
+      status: payrollPeriods.status,
+      periodStart: payrollPeriods.periodStart,
+      periodEnd: payrollPeriods.periodEnd,
+    })
+    .from(payrollPeriods)
+    .where(
+      and(
+        eq(payrollPeriods.outletId, session.user.outletId),
+        inArray(payrollPeriods.status, ["finalized", "paid"]),
+        lte(payrollPeriods.periodStart, v.scheduleDate),
+        gte(payrollPeriods.periodEnd, v.scheduleDate),
+      ),
+    )
+    .limit(1);
+  if (lockedPeriods.length > 0) {
+    const p = lockedPeriods[0];
+    return fail(
+      "PAYROLL_PERIOD_LOCKED",
+      `Jadwal ${v.scheduleDate} masuk periode payroll ${p.periodStart}..${p.periodEnd} yang sudah ${p.status}. Tidak boleh diedit retroaktif.`,
+    );
   }
 
   const [existing] = await db

@@ -379,3 +379,102 @@ export async function earnPointsForTransaction(
 
   return { pointsEarned, alreadyEarned: false };
 }
+
+/**
+ * Sesi AE-62i — Restore loyalty points saat transaksi di-refund / void / edit.
+ *
+ * Behavior:
+ *   - Full refund (status='refunded'): decrement earned points (full claw-back),
+ *     restore redeemed points (full re-credit). transaction.loyaltyPointsEarned
+ *     set ke 0 supaya tidak double-revert kalau re-fired.
+ *   - Partial refund (status='partially_refunded'): pro-rate points earned vs
+ *     refundedAmount. Redeem points NOT restored (partial doesn't reclaim
+ *     redemption — redemption tied ke whole transaction).
+ *   - Void: same as full refund (both points fully reversed).
+ *
+ * Pre AE-62i: refund silent skip → customer keep points dari refunded sale +
+ * lose redeemed points → loyalty ratchet bug.
+ *
+ * Idempotent via transaction.loyaltyPointsEarned == 0 setelah revert.
+ *
+ * Caller passes DbTx supaya same atomic unit dengan refund/void action.
+ */
+export async function restorePointsOnTransactionRefund(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  transactionId: string,
+  args: {
+    refundKind: "full" | "partial" | "void";
+    /** Untuk partial refund: rupiah yang di-refund (total - refundedAmount). */
+    refundAmount?: number;
+    actorId: string;
+  },
+): Promise<{ pointsClawedBack: number; pointsRestored: number }> {
+  const { transactions } = await import("@/db/schema");
+  const { eq, sql: drizzleSql } = await import("drizzle-orm");
+  const { computePointsEarned } = await import("./types");
+
+  const [trx] = await tx
+    .select()
+    .from(transactions)
+    .where(eq(transactions.id, transactionId))
+    .limit(1);
+  if (!trx) return { pointsClawedBack: 0, pointsRestored: 0 };
+  if (!trx.customerId)
+    return { pointsClawedBack: 0, pointsRestored: 0 };
+
+  let pointsClawedBack = 0;
+  let pointsRestored = 0;
+  const earned = trx.loyaltyPointsEarned ?? 0;
+  const redeemed = trx.loyaltyPointsRedeemed ?? 0;
+
+  if (args.refundKind === "full" || args.refundKind === "void") {
+    // Full claw-back of earned + re-credit of redeemed.
+    pointsClawedBack = earned;
+    pointsRestored = redeemed;
+    if (pointsClawedBack > 0 || pointsRestored > 0) {
+      await tx
+        .update(customers)
+        .set({
+          totalPoints: drizzleSql`${customers.totalPoints} - ${pointsClawedBack} + ${pointsRestored}`,
+          updatedAt: new Date(),
+          updatedBy: args.actorId,
+        })
+        .where(eq(customers.id, trx.customerId));
+      await tx
+        .update(transactions)
+        .set({
+          loyaltyPointsEarned: 0,
+          loyaltyPointsRedeemed: 0,
+          updatedAt: new Date(),
+        })
+        .where(eq(transactions.id, transactionId));
+    }
+  } else if (args.refundKind === "partial" && earned > 0 && trx.total > 0) {
+    // Pro-rate: clawback proportional ke refundAmount / total.
+    const refundAmt = args.refundAmount ?? 0;
+    if (refundAmt > 0 && refundAmt < trx.total) {
+      const pointsForRefundedShare = computePointsEarned(refundAmt);
+      // Cap by what's still earned (handle multiple partial refunds).
+      pointsClawedBack = Math.min(earned, pointsForRefundedShare);
+      if (pointsClawedBack > 0) {
+        await tx
+          .update(customers)
+          .set({
+            totalPoints: drizzleSql`${customers.totalPoints} - ${pointsClawedBack}`,
+            updatedAt: new Date(),
+            updatedBy: args.actorId,
+          })
+          .where(eq(customers.id, trx.customerId));
+        await tx
+          .update(transactions)
+          .set({
+            loyaltyPointsEarned: earned - pointsClawedBack,
+            updatedAt: new Date(),
+          })
+          .where(eq(transactions.id, transactionId));
+      }
+    }
+  }
+
+  return { pointsClawedBack, pointsRestored };
+}
