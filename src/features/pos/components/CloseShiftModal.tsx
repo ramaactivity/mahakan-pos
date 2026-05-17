@@ -63,7 +63,15 @@ interface SummaryPreview {
   };
 }
 
-type ActiveField = "kas" | "edc" | "gofood" | "grabfood" | "shopeefood";
+// Sesi AE-62n — tambah "qris" sebagai primary verification channel.
+// Order: 3 channel utama (kas/qris/edc) di kiri tabs, aggregator di kanan.
+type ActiveField =
+  | "kas"
+  | "qris"
+  | "edc"
+  | "gofood"
+  | "grabfood"
+  | "shopeefood";
 
 interface FieldConfig {
   key: ActiveField;
@@ -74,6 +82,7 @@ interface FieldConfig {
 
 const FIELDS: FieldConfig[] = [
   { key: "kas", label: "Kas Aktual", short: "Kas", icon: Wallet },
+  { key: "qris", label: "QRIS (HP/App)", short: "QRIS", icon: CreditCard },
   { key: "edc", label: "EDC (BCA)", short: "EDC", icon: CreditCard },
   { key: "gofood", label: "GoFood", short: "GoFood", icon: Banknote },
   { key: "grabfood", label: "GrabFood", short: "Grab", icon: Banknote },
@@ -138,8 +147,10 @@ export function CloseShiftModal({
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  // 5 amount fields — raw digit strings (no separator).
+  // 6 amount fields — raw digit strings (no separator).
+  // Sesi AE-62n — tambah `qris` untuk kasir verify manual dari HP/app.
   const [actualCash, setActualCash] = useState("");
+  const [qris, setQris] = useState("");
   const [edc, setEdc] = useState("");
   const [gofood, setGofood] = useState("");
   const [grabfood, setGrabfood] = useState("");
@@ -179,6 +190,7 @@ export function CloseShiftModal({
     setLoading(true);
     setActualCash("");
     setNotes("");
+    setQris("");
     setEdc("");
     setGofood("");
     setGrabfood("");
@@ -320,6 +332,7 @@ export function CloseShiftModal({
   // Active field state plumbing
   const fieldValues: Record<ActiveField, string> = {
     kas: actualCash,
+    qris,
     edc,
     gofood,
     grabfood,
@@ -327,6 +340,7 @@ export function CloseShiftModal({
   };
   const fieldSetters: Record<ActiveField, (v: string) => void> = {
     kas: setActualCash,
+    qris: setQris,
     edc: setEdc,
     gofood: setGofood,
     grabfood: setGrabfood,
@@ -365,10 +379,36 @@ export function CloseShiftModal({
   const matchValue = (() => {
     if (!summary) return null;
     if (activeField === "kas") return summary.expectedCash;
+    if (activeField === "qris") return summary.paid.qris;
     if (activeField === "edc") return summary.paid.cardBca;
     return null; // GoFood/GrabFood/ShopeeFood — no POS-recorded match
   })();
   const matchLabel = activeField === "kas" ? "Pas" : "POS";
+
+  // Sesi AE-62n — per-channel parsed values + variance untuk balance
+  // verification panel. Cash variance includes refund + petty cash impact
+  // (via summary.expectedCash). QRIS + EDC variance = fisik - POS Actual.
+  const parsedQris = (() => {
+    try {
+      return qris.trim().length > 0 ? parseRupiah(qris) : 0;
+    } catch {
+      return 0;
+    }
+  })();
+  const parsedEdc = (() => {
+    try {
+      return edc.trim().length > 0 ? parseRupiah(edc) : 0;
+    } catch {
+      return 0;
+    }
+  })();
+  const qrisVariance = summary ? parsedQris - summary.paid.qris : 0;
+  const edcVariance = summary ? parsedEdc - summary.paid.cardBca : 0;
+  // Total |variance| across 3 channels — pakai untuk warning banner.
+  const totalVarianceAbs =
+    Math.abs(variance) +
+    Math.abs(qrisVariance) +
+    Math.abs(edcVariance);
 
   async function onSubmit() {
     if (submitting || !summary) return;
@@ -396,6 +436,9 @@ export function CloseShiftModal({
       actualCash: parsedCash,
       notes: notes.trim() || null,
       handoverMessage: handoverMessage.trim() || null,
+      // Sesi AE-62n — kirim qrisSettlement kasir input. Server fallback
+      // ke paidQris kalau null untuk backward compat.
+      qrisSettlement: tryParse(qris),
       edcSettlement: tryParse(edc),
       gofoodSettlement: tryParse(gofood),
       grabfoodSettlement: tryParse(grabfood),
@@ -586,6 +629,24 @@ export function CloseShiftModal({
                 shift={shift}
                 summary={summary}
               />
+              {/* Sesi AE-62n — 3-channel balance verification panel.
+                  Owner request: kasir input fisik per channel supaya keliatan
+                  selisih kalau ada salah pencet metode pembayaran. */}
+              <BalanceVerificationPanel
+                cashPos={summary.expectedCash}
+                cashCounted={parsedCash}
+                cashVariance={variance}
+                qrisPos={summary.paid.qris}
+                qrisCounted={parsedQris}
+                qrisVariance={qrisVariance}
+                qrisInputEmpty={qris.trim().length === 0}
+                edcPos={summary.paid.cardBca}
+                edcCounted={parsedEdc}
+                edcVariance={edcVariance}
+                edcInputEmpty={edc.trim().length === 0}
+                totalVarianceAbs={totalVarianceAbs}
+                onActivateField={setActiveField}
+              />
               <VarianceIndicator
                 parsedCash={parsedCash}
                 variance={variance}
@@ -771,6 +832,185 @@ function SummarySection({
           Pengeluaran Cash + Petty Pemasukan Cash
         </p>
       </div>
+    </section>
+  );
+}
+
+/* Sesi AE-62n — 3-channel balance verification panel.
+ *
+ * Owner request: kasir sering salah pencet metode pembayaran (QRIS jadi
+ * Cash, dst). Saat tutup shift, kasir wajib input fisik per channel
+ * untuk verifikasi balance. Sistem auto-compare dengan POS amount,
+ * highlight selisih per channel.
+ *
+ * Per-channel display: POS Actual (readonly) + Fisik Kasir (input
+ * trigger ke active field di numpad kanan) + Selisih (color-coded).
+ *
+ * Cash row pakai expectedCash (sudah include refund + petty cash).
+ * QRIS + EDC pakai paid amount directly (refund QRIS/EDC via app/mesin,
+ * tidak affect closing balance).
+ *
+ * Cara pakai: tap salah satu row → activeField = channel itu → numpad
+ * di kanan ready untuk input. Display selisih live update saat ketik.
+ */
+function BalanceVerificationPanel(props: {
+  cashPos: number;
+  cashCounted: number;
+  cashVariance: number;
+  qrisPos: number;
+  qrisCounted: number;
+  qrisVariance: number;
+  qrisInputEmpty: boolean;
+  edcPos: number;
+  edcCounted: number;
+  edcVariance: number;
+  edcInputEmpty: boolean;
+  totalVarianceAbs: number;
+  onActivateField: (field: ActiveField) => void;
+}) {
+  const rows: Array<{
+    key: ActiveField;
+    label: string;
+    sublabel: string;
+    pos: number;
+    counted: number;
+    variance: number;
+    inputEmpty: boolean;
+  }> = [
+    {
+      key: "kas",
+      label: "Kas Fisik",
+      sublabel: "Hitung uang di laci",
+      pos: props.cashPos,
+      counted: props.cashCounted,
+      variance: props.cashVariance,
+      inputEmpty: false, // cash always parsed (default 0)
+    },
+    {
+      key: "qris",
+      label: "QRIS",
+      sublabel: "Cek HP / app QRIS",
+      pos: props.qrisPos,
+      counted: props.qrisCounted,
+      variance: props.qrisVariance,
+      inputEmpty: props.qrisInputEmpty,
+    },
+    {
+      key: "edc",
+      label: "EDC (BCA)",
+      sublabel: "Cek mesin EDC",
+      pos: props.edcPos,
+      counted: props.edcCounted,
+      variance: props.edcVariance,
+      inputEmpty: props.edcInputEmpty,
+    },
+  ];
+
+  return (
+    <section className="rounded-xl border-2 border-mahakan-green-700/30 bg-white p-3 shadow-sm">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-mahakan-green-900">
+            Verifikasi Balance per Channel
+          </h3>
+          <p className="text-[11px] text-neutral-500">
+            Tap baris untuk input — bandingkan fisik dengan POS Actual.
+          </p>
+        </div>
+        {props.totalVarianceAbs > 0 ? (
+          <span
+            className="inline-flex items-center gap-1 rounded-full bg-warning-100 px-2 py-0.5 text-[11px] font-semibold text-warning-700"
+            title="Total selisih absolut Cash+QRIS+EDC"
+          >
+            <AlertTriangle className="size-3" /> Total selisih{" "}
+            {formatRupiah(props.totalVarianceAbs)}
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded-full bg-success-100 px-2 py-0.5 text-[11px] font-semibold text-success-500">
+            <CheckCircle2 className="size-3" /> Semua pas
+          </span>
+        )}
+      </div>
+      <div className="space-y-1.5">
+        {rows.map((r) => {
+          const variancePositive = r.variance > 0;
+          const variancePerfect = r.variance === 0 && !r.inputEmpty;
+          const varianceWarn = Math.abs(r.variance) > VARIANCE_THRESHOLD;
+          return (
+            <button
+              key={r.key}
+              type="button"
+              onClick={() => props.onActivateField(r.key)}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-neutral-50",
+                r.inputEmpty
+                  ? "border-warning-300 bg-warning-50"
+                  : variancePerfect
+                    ? "border-success-300 bg-success-50"
+                    : varianceWarn
+                      ? "border-danger-300 bg-danger-50"
+                      : "border-neutral-200 bg-white",
+              )}
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-neutral-900">
+                  {r.label}
+                </p>
+                <p className="text-[10px] text-neutral-500">{r.sublabel}</p>
+              </div>
+              <div className="text-right text-xs">
+                <p className="text-[10px] uppercase tracking-wider text-neutral-500">
+                  POS
+                </p>
+                <p className="font-mono font-medium text-neutral-900">
+                  {formatRupiah(r.pos)}
+                </p>
+              </div>
+              <div className="text-right text-xs">
+                <p className="text-[10px] uppercase tracking-wider text-neutral-500">
+                  Fisik
+                </p>
+                <p
+                  className={cn(
+                    "font-mono font-medium",
+                    r.inputEmpty ? "italic text-warning-700" : "text-neutral-900",
+                  )}
+                >
+                  {r.inputEmpty ? "kosong" : formatRupiah(r.counted)}
+                </p>
+              </div>
+              <div className="text-right text-xs">
+                <p className="text-[10px] uppercase tracking-wider text-neutral-500">
+                  Selisih
+                </p>
+                <p
+                  className={cn(
+                    "font-mono font-bold",
+                    r.inputEmpty
+                      ? "text-neutral-400"
+                      : variancePerfect
+                        ? "text-success-500"
+                        : varianceWarn
+                          ? "text-danger-500"
+                          : "text-warning-700",
+                  )}
+                >
+                  {r.inputEmpty
+                    ? "—"
+                    : `${variancePositive ? "+" : ""}${formatRupiah(r.variance)}`}
+                </p>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      {props.totalVarianceAbs > VARIANCE_THRESHOLD ? (
+        <p className="mt-2 rounded-md bg-warning-100/60 p-2 text-[11px] text-warning-700">
+          ⚠ Ada selisih lebih dari {formatRupiah(VARIANCE_THRESHOLD)} —
+          recheck atau jelaskan di Catatan. Owner bisa setujui as-is
+          (akan tercatat di audit log).
+        </p>
+      ) : null}
     </section>
   );
 }

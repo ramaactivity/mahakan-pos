@@ -46,7 +46,10 @@ export interface CloseShiftInput {
   /** Pesan untuk shift berikutnya (Galih ask #10). */
   handoverMessage?: string | null;
   /** Kasir-reported settlement amounts for reconciliation (Galih ask #11).
-   * All optional + non-negative; outlet boleh skip channel yang gak relevan. */
+   * All optional + non-negative; outlet boleh skip channel yang gak relevan.
+   * Sesi AE-62n — qrisSettlement: kasir input dari HP/app QRIS untuk
+   * balance verification (sebelumnya auto-fill server-side dari paidQris). */
+  qrisSettlement?: number | null;
   edcSettlement?: number | null;
   gofoodSettlement?: number | null;
   grabfoodSettlement?: number | null;

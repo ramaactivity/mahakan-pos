@@ -53,6 +53,11 @@ const closeShiftSchema = z.object({
     .nullish()
     .transform((s) => (s && s.length > 0 ? s : null)),
   edcSettlement: moneyOptional,
+  /* Sesi AE-62n — qrisSettlement: kasir input fisik dari HP/app QRIS
+   * sebagai double-check. Sebelumnya server auto-fill dari paidQris
+   * (AE-56). Sekarang owner mau kasir input manual untuk verify
+   * balance. Backward compat: kalau null → fallback ke paidQris. */
+  qrisSettlement: moneyOptional,
   gofoodSettlement: moneyOptional,
   grabfoodSettlement: moneyOptional,
   shopeefoodSettlement: moneyOptional,
@@ -320,10 +325,10 @@ export async function closeShift(
   const variance = v.actualCash - expectedCash;
 
   /* Sesi AE-56 — auto-fill qrisSettlement dari sum paidQris.
-   * Pre AE-56: shifts tidak punya qris field → rekonsiliasi tabel hardcoded
-   * Reported QRIS = 0 → false-positive selisih Rp 1.722.000. Sekarang
-   * stored di shift untuk konsistensi dengan EDC/GoFood/Grab/Shopee. */
-  const qrisSettlement = paidQris;
+   * Sesi AE-62n — kalau kasir input manual (UI baru: balance verification),
+   * prefer kasir input untuk audit trail. Backward compat: fallback ke
+   * paidQris kalau kasir tidak input (legacy client / API caller). */
+  const qrisSettlement = v.qrisSettlement ?? paidQris;
 
   const [updated] = await db
     .update(shifts)
