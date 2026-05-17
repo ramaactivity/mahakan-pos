@@ -213,11 +213,15 @@ export function CloseOpenBillModal({
         </Button>
       }
     >
-      <div className="grid h-full divide-y divide-neutral-200 lg:grid-cols-[2fr_3fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
+      {/* Sesi AE-62l — min-h-0 wajib di parent flex/grid container supaya
+         child overflow-y-auto bisa shrink. Tanpa ini, left panel (bill
+         items) grow beyond viewport → right panel (payment) hidden, kasir
+         scroll trap, "Sudah Lunas" tidak reachable. */}
+      <div className="grid h-full min-h-0 divide-y divide-neutral-200 lg:grid-cols-[2fr_3fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
         {/* ============================================================ */}
         {/* LEFT — Bill summary                                          */}
         {/* ============================================================ */}
-        <div className="flex flex-col gap-3 overflow-y-auto p-4 touch:p-3">
+        <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-4 touch:p-3">
           <section className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
               Bill Aktif

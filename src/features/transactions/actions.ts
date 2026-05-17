@@ -1536,12 +1536,18 @@ export async function updateItemPrepStatus(input: {
   }
 
   // Outlet boundary via JOIN check.
+  // Sesi AE-62l — race guard: 2 staff klik "Done" same item paralel both
+  // succeed (overwrite timestamps). Add WHERE prep_status != new status
+  // supaya kalau sudah di-update by kasir lain, UPDATE no-op (return empty).
+  // Client side optimistic UI tetap show updated state, server sync di
+  // next refresh tick.
   const [row] = await db
     .update(transactionItems)
     .set(updates)
     .where(
       and(
         eq(transactionItems.id, input.itemId),
+        sql`${transactionItems.prepStatus} != ${input.status}`,
         sql`EXISTS (
           SELECT 1 FROM ${transactions} t
           WHERE t.id = ${transactionItems.transactionId}
@@ -1550,7 +1556,20 @@ export async function updateItemPrepStatus(input: {
       ),
     )
     .returning({ id: transactionItems.id, prepStatus: transactionItems.prepStatus });
-  if (!row) return fail("NOT_FOUND", "Item tidak ditemukan");
+  if (!row) {
+    // Check apakah memang sudah ke-update by another staff (idempotent OK)
+    // atau item benar-benar gak ada.
+    const [existing] = await db
+      .select({ id: transactionItems.id, prepStatus: transactionItems.prepStatus })
+      .from(transactionItems)
+      .where(eq(transactionItems.id, input.itemId))
+      .limit(1);
+    if (existing) {
+      // Already at target state (or different state set by concurrent kasir).
+      return ok(existing);
+    }
+    return fail("NOT_FOUND", "Item tidak ditemukan");
+  }
   return ok(row);
 }
 

@@ -1,6 +1,7 @@
 export type {
   AddSplitPaymentInput,
   ApiResult,
+  CancelOpenBillInput,
   CloseOpenBillInput,
   CreateTransactionInput,
   CreateTransactionItemInput,
@@ -32,6 +33,7 @@ export { isOk } from "./types";
 
 export {
   addSplitPayment,
+  cancelOpenBill,
   closeOpenBill,
   createTransaction,
   editOpenBill,

@@ -125,10 +125,14 @@ export function OrderQueuePanel({
     async function load() {
       if (!hasLoadedOnce.current) setLoading(true);
       const { from, to } = todayWibRangeUtc();
+      // Sesi AE-62l — include partially_refunded supaya bill yang
+      // sebagian di-refund tetap muncul di KDS (kitchen perlu prepare
+      // item yang tidak di-refund). Per-item badge tampil di item-level
+      // kalau refundedQuantity > 0.
       const res = await listTransactions({
         from,
         to,
-        status: "paid",
+        status: ["paid", "partially_refunded"],
         limit: 100,
       });
       if (cancelled) return;
@@ -898,20 +902,47 @@ function ItemRow({
   // fetchTransactionById join. Let's defensively read modifiers if present.
   const modifiers = (item as TransactionItem & { modifiers?: Array<{ modifierSlug: string; selectedValue: string | null }> }).modifiers ?? [];
 
+  // Sesi AE-62l — kalau item sebagian/seluruhnya di-refund, kitchen perlu
+  // tahu supaya tidak prepare quantity yang sudah refunded.
+  const refundedQty = item.refundedQuantity ?? 0;
+  const effectiveQty = item.quantity - refundedQty;
+  const fullyRefunded = refundedQty >= item.quantity;
+  const partiallyRefunded = refundedQty > 0 && refundedQty < item.quantity;
+
   return (
-    <li className={cn("px-3 py-2", status === "done" && "bg-success-100/20")}>
+    <li
+      className={cn(
+        "px-3 py-2",
+        status === "done" && "bg-success-100/20",
+        fullyRefunded && "bg-danger-100/30 opacity-60",
+      )}
+    >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-1.5">
-            <span className="font-mono text-sm font-bold text-mahakan-green-900">
-              {item.quantity}×
+            <span
+              className={cn(
+                "font-mono text-sm font-bold",
+                fullyRefunded
+                  ? "text-danger-500 line-through"
+                  : "text-mahakan-green-900",
+              )}
+            >
+              {effectiveQty}×
+              {partiallyRefunded ? (
+                <span className="ml-0.5 text-[10px] text-danger-500">
+                  (dari {item.quantity}, {refundedQty} refund)
+                </span>
+              ) : null}
             </span>
             <span
               className={cn(
                 "text-sm font-semibold",
-                status === "done"
-                  ? "text-success-500 line-through opacity-70"
+                status === "done" || fullyRefunded
+                  ? "line-through opacity-70"
                   : "text-neutral-900",
+                fullyRefunded ? "text-danger-500" : "",
+                status === "done" && !fullyRefunded ? "text-success-500" : "",
               )}
             >
               {item.itemName}
@@ -920,6 +951,9 @@ function ItemRow({
               <Badge variant={variant === "Hot" ? "warning" : "info"}>
                 {variant}
               </Badge>
+            ) : null}
+            {fullyRefunded ? (
+              <Badge variant="danger">REFUNDED</Badge>
             ) : null}
           </div>
           {modifiers.length > 0 ? (

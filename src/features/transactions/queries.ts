@@ -21,7 +21,8 @@ import type {
 
 export interface ListTransactionsOptions {
   shiftId?: string;
-  status?: TransactionStatus;
+  /** Sesi AE-62l — bisa array supaya KDS bisa filter paid + partially_refunded. */
+  status?: TransactionStatus | TransactionStatus[];
   paymentMethod?: PaymentMethod;
   /** ISO datetime range, inclusive on both ends. */
   from?: string;
@@ -37,7 +38,13 @@ export async function fetchTransactions(
   const limit = opts.limit ?? 50;
   const conds = [];
   if (opts.shiftId) conds.push(eq(transactions.shiftId, opts.shiftId));
-  if (opts.status) conds.push(eq(transactions.status, opts.status));
+  if (opts.status) {
+    if (Array.isArray(opts.status)) {
+      conds.push(inArray(transactions.status, opts.status));
+    } else {
+      conds.push(eq(transactions.status, opts.status));
+    }
+  }
   if (opts.paymentMethod)
     conds.push(eq(transactions.paymentMethod, opts.paymentMethod));
   if (opts.from) conds.push(gte(transactions.createdAt, new Date(opts.from)));
