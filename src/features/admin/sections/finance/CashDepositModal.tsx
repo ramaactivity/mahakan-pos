@@ -262,25 +262,32 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
         {!editing && cashOnHand !== null ? (
           <div
             className={cn(
-              "flex items-center justify-between rounded-md border px-3 py-2 text-sm",
+              "rounded-md border px-3 py-2 text-sm",
               cashOnHand > 0
                 ? "border-mahakan-green-300 bg-mahakan-green-50 text-mahakan-green-900"
                 : "border-neutral-200 bg-neutral-50 text-neutral-700",
             )}
           >
-            <span>
-              <strong>Kas tersedia di outlet:</strong>{" "}
-              <span className="font-mono">{formatRupiah(cashOnHand)}</span>
-            </span>
-            {cashOnHand > 0 ? (
-              <button
-                type="button"
-                onClick={() => setAmount(String(Math.round(cashOnHand)))}
-                className="rounded-md bg-mahakan-green-700 px-2 py-1 text-xs font-medium text-white hover:bg-mahakan-green-800"
-              >
-                Setor Semua
-              </button>
-            ) : null}
+            <div className="flex items-center justify-between gap-2">
+              <span>
+                <strong>Kas siap setor:</strong>{" "}
+                <span className="font-mono">{formatRupiah(cashOnHand)}</span>
+              </span>
+              {cashOnHand > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setAmount(String(Math.round(cashOnHand)))}
+                  className="rounded-md bg-mahakan-green-700 px-2 py-1 text-xs font-medium text-white hover:bg-mahakan-green-800"
+                >
+                  Setor Semua
+                </button>
+              ) : null}
+            </div>
+            <p className="mt-1 text-[11px] text-neutral-600">
+              Angka ini = penjualan tunai − pengeluaran − setoran terverifikasi
+              (dari shift yang sudah ditutup). <strong>Petty cash di laci</strong> tidak
+              termasuk — itu sisa float harian yang tetap di kasir.
+            </p>
           </div>
         ) : null}
 

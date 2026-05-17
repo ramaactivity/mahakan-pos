@@ -1,7 +1,7 @@
 import "server-only";
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { shifts } from "@/db/schema";
+import { shifts, transactions } from "@/db/schema";
 import type { Paginated, Shift, ShiftStatus } from "./types";
 
 export async function fetchActiveShiftForUser(
@@ -40,8 +40,44 @@ export async function fetchShifts(
     .orderBy(desc(shifts.openedAt))
     .limit(limit + 1);
   const hasMore = rows.length > limit;
+  const items = hasMore ? rows.slice(0, limit) : rows;
+
+  // Sesi AE-62f — derive QRIS live untuk closed shifts dengan
+  // qris_settlement IS NULL (legacy pre-AE56). Tanpa fallback, kolom QRIS
+  // di Shift History tampil "—" untuk shift lama padahal real sales ada
+  // di transactions table. Sum qris paid transactions per shift dalam
+  // single batched query.
+  const needsQrisDerive = items
+    .filter((s) => s.status === "closed" && s.qrisSettlement === null)
+    .map((s) => s.id);
+  if (needsQrisDerive.length > 0) {
+    const derived = await db
+      .select({
+        shiftId: transactions.shiftId,
+        total: sql<string>`COALESCE(SUM(${transactions.total}), 0)`,
+      })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.paymentMethod, "qris"),
+          eq(transactions.status, "paid"),
+          inArray(transactions.shiftId, needsQrisDerive),
+        ),
+      )
+      .groupBy(transactions.shiftId);
+    const qrisByShift = new Map<string, number>();
+    for (const r of derived) {
+      if (r.shiftId) qrisByShift.set(r.shiftId, Number(r.total));
+    }
+    for (const s of items) {
+      if (s.status === "closed" && s.qrisSettlement === null) {
+        s.qrisSettlement = qrisByShift.get(s.id) ?? 0;
+      }
+    }
+  }
+
   return {
-    items: hasMore ? rows.slice(0, limit) : rows,
+    items,
     total: rows.length,
     hasMore,
   };

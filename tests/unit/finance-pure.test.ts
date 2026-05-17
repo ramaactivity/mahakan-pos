@@ -43,6 +43,7 @@ describe("computeCashOnHand", () => {
     expect(r).toEqual({
       closedShiftsContribution: 0,
       openShiftDrawerCash: 0,
+      pettyCashFloat: 0,
       cashOnHand: 0,
     });
   });
@@ -53,9 +54,11 @@ describe("computeCashOnHand", () => {
       cashExpenses: 100_000,
       verifiedDeposits: 0,
     });
-    // 500_000 + 2_000_000 - 100_000 - 0 = 2_400_000
-    expect(r.closedShiftsContribution).toBe(2_400_000);
-    expect(r.cashOnHand).toBe(2_400_000);
+    // Sesi AE-62f — openingCash NOT summed (petty cash float, not new injection).
+    // 2_000_000 - 100_000 - 0 = 1_900_000 deposit-able
+    expect(r.closedShiftsContribution).toBe(1_900_000);
+    expect(r.cashOnHand).toBe(1_900_000);
+    expect(r.pettyCashFloat).toBe(500_000);
     expect(r.openShiftDrawerCash).toBe(0);
   });
 
@@ -65,7 +68,8 @@ describe("computeCashOnHand", () => {
       cashExpenses: 100_000,
       verifiedDeposits: 1_500_000,
     });
-    expect(r.cashOnHand).toBe(900_000);
+    // 2_000_000 - 100_000 - 1_500_000 = 400_000
+    expect(r.cashOnHand).toBe(400_000);
   });
 
   it("open shift cash kept separate from cash on hand", () => {
@@ -77,9 +81,10 @@ describe("computeCashOnHand", () => {
       cashExpenses: 0,
       verifiedDeposits: 0,
     });
-    expect(r.closedShiftsContribution).toBe(1_500_000);
-    expect(r.openShiftDrawerCash).toBe(1_100_000);
-    expect(r.cashOnHand).toBe(1_500_000);
+    // Sesi AE-62f — closed contribution = sales only (1M).
+    expect(r.closedShiftsContribution).toBe(1_000_000);
+    expect(r.openShiftDrawerCash).toBe(1_100_000); // open includes opening (still in drawer)
+    expect(r.cashOnHand).toBe(1_000_000);
   });
 
   it("refunded cash deducts from closed contribution", () => {
@@ -88,10 +93,11 @@ describe("computeCashOnHand", () => {
       cashExpenses: 0,
       verifiedDeposits: 0,
     });
-    expect(r.closedShiftsContribution).toBe(1_300_000);
+    // Sesi AE-62f — 1_000_000 - 0 - 200_000 = 800_000
+    expect(r.closedShiftsContribution).toBe(800_000);
   });
 
-  it("multiple closed shifts aggregate correctly", () => {
+  it("multiple closed shifts aggregate correctly (petty cash NOT double-counted)", () => {
     const r = computeCashOnHand({
       shifts: [
         closed("s1", 500_000, 2_000_000),
@@ -101,8 +107,10 @@ describe("computeCashOnHand", () => {
       cashExpenses: 250_000,
       verifiedDeposits: 4_000_000,
     });
-    // (500k×3) + (2M+1.5M+1.8M) − 250k − 50k − 4M = 1500k + 5300k − 250k − 50k − 4000k = 2_500_000
-    expect(r.cashOnHand).toBe(2_500_000);
+    // Sesi AE-62f — sales (5.3M) − exp (250k) − refunds (50k) − dep (4M) = 1_000_000
+    // BEFORE FIX would have been 2.5M (incorrectly added 1.5M opening sum).
+    expect(r.cashOnHand).toBe(1_000_000);
+    expect(r.pettyCashFloat).toBe(500_000);
   });
 
   it("over-spent (negative) is allowed — caller flags it", () => {
@@ -111,7 +119,21 @@ describe("computeCashOnHand", () => {
       cashExpenses: 0,
       verifiedDeposits: 500_000,
     });
-    expect(r.cashOnHand).toBe(-400_000);
+    // Sesi AE-62f — 0 - 0 - 500_000 = -500_000 (over-deposited)
+    expect(r.cashOnHand).toBe(-500_000);
+  });
+
+  it("pettyCashFloat = max(openingCash) untuk closed shifts only", () => {
+    const r = computeCashOnHand({
+      shifts: [
+        closed("s1", 200_000, 100_000),
+        closed("s2", 300_000, 100_000),
+        open("s3", 500_000, 0), // open shift's opening ignored for float
+      ],
+      cashExpenses: 0,
+      verifiedDeposits: 0,
+    });
+    expect(r.pettyCashFloat).toBe(300_000);
   });
 });
 

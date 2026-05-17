@@ -290,12 +290,21 @@ function emptyTotals(): DailySettlementReport["totals"] {
  *
  * cashOnHand =
  *   Σ(closed shifts since lastVerifiedDeposit.coversToDate+1)
- *     openingCash + cashSales − cashExpenses(cash) − refundedCash
+ *     cashSales − cashExpenses(cash) − refundedCash
  *   − Σ(verified deposits in same window)
  *
  * Open shifts are excluded (cash still in active drawer, not handed over).
  * Pending deposits do NOT subtract from cash-on-hand (they're informational
  * until verified by Owner).
+ *
+ * Sesi AE-62f — openingCash NOT summed. opening_cash adalah PETTY CASH FLOAT
+ * (carryover dari shift sebelumnya, bukan injection baru). Summing openingCash
+ * across N shifts double-counts the float N×. Real-world: cashier opens shift
+ * with 200k yang sudah ada di laci (sisa shift sebelumnya), bukan deposit baru.
+ *
+ * Before sesi AE-62f, formula INCLUDED openingCash sum → kasir lihat 3.5jt di
+ * "Kas Tersedia" tapi Riwayat Harian (yang ga sum openingCash) cuma 2.3jt →
+ * setor 3jt sesuai card → Riwayat jadi -680k minus. Sekarang konsisten.
  */
 export async function getCashOnHand(
   outletId: string,
@@ -326,7 +335,8 @@ export async function getCashOnHand(
     : new Date("1970-01-01T00:00:00+07:00");
   const windowTo = new Date(`${today}T23:59:59.999+07:00`);
 
-  // 2. Sum across closed shifts in window.
+  // 2. Sum across closed shifts in window. Sesi AE-62f — openingCash NOT
+  // summed (petty cash float, carryover bukan injection). See doc comment.
   const closedShifts = await db
     .select({
       id: shifts.id,
@@ -343,7 +353,10 @@ export async function getCashOnHand(
     );
 
   const closedShiftIds = closedShifts.map((s) => s.id);
-  const totalOpeningCash = closedShifts.reduce((s, r) => s + r.openingCash, 0);
+  // Sesi AE-62f — petty cash float for display only (last shift's opening).
+  const pettyCashFloat = closedShifts.length > 0
+    ? Math.max(...closedShifts.map((s) => s.openingCash))
+    : 0;
 
   let cashSales = 0;
   let refundedCash = 0;
@@ -465,8 +478,10 @@ export async function getCashOnHand(
     }
   }
 
+  // Sesi AE-62f — opening_cash EXCLUDED (petty cash float carryover, bukan
+  // new cash injection). Match Riwayat Harian math = sales - exp - dep.
   const unsettledClosedShiftsCash =
-    totalOpeningCash + cashSales - cashExpensesTotal - refundedCash;
+    cashSales - cashExpensesTotal - refundedCash;
   const cashOnHand = unsettledClosedShiftsCash - verifiedDepositsAmount;
 
   // Threshold: from outlet settings or fallback default.
@@ -488,6 +503,7 @@ export async function getCashOnHand(
     pendingDepositsAmount,
     verifiedDepositsAmount,
     openShiftDrawerCash,
+    pettyCashFloat,
     cashOnHand,
     thresholdIdr,
     isOverThreshold: cashOnHand > thresholdIdr,

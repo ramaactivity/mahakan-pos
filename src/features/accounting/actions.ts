@@ -1218,9 +1218,15 @@ export async function fetchValidationReport(
   // Source side:
   // 1. Cash on hand — dynamic import dari finance/queries supaya barrel
   //    accounting tidak pull finance dependency.
+  // Sesi AE-62f — cashOnHand sekarang exclude petty cash float (kasir laci
+  // carryover). Ledger Kas Tunai 1101 include petty cash (dari opening
+  // journal entry owner contribution), jadi source side = pettyCashFloat
+  // + cashOnHand (depositable). Sebelumnya cashOnHand sudah include opening
+  // sum (double-counted) — ledger validation kebetulan match by coincidence.
   const { getCashOnHand } = await import("@/features/finance/queries");
   const cashSnapshot = await getCashOnHand(session.user.outletId);
-  const sourceCashOnHandStrict = cashSnapshot.cashOnHand;
+  const sourceCashOnHandStrict =
+    cashSnapshot.cashOnHand + cashSnapshot.pettyCashFloat;
 
   // 2. Persediaan value per section (kitchen / bar / supporting+cleaning)
   const ingSections = await db

@@ -179,7 +179,11 @@ export type CashOnHandSnapshot = {
   asOf: Date;
   /** Earliest day not yet covered by a verified deposit. */
   unsettledFromDate: string | null;
-  /** Sum of openingCash + cashSales − cashExpenses − refundedCash for closed shifts in [unsettledFromDate, today]. */
+  /**
+   * Sesi AE-62f — Σ(cashSales − cashExpenses − refundedCash) untuk closed
+   * shifts dalam [unsettledFromDate, today]. openingCash TIDAK include
+   * (petty cash float carryover, bukan injection).
+   */
   unsettledClosedShiftsCash: number;
   /** Sum of pending deposits in window (informational). */
   pendingDepositsAmount: number;
@@ -187,6 +191,13 @@ export type CashOnHandSnapshot = {
   verifiedDepositsAmount: number;
   /** Open shift drawer cash (excluded from balance). */
   openShiftDrawerCash: number;
+  /**
+   * Sesi AE-62f — petty cash float (laci kasir) yang carryover antar shift.
+   * Max(openingCash) dari closed shifts dalam window — informational only,
+   * NOT included di cashOnHand. UI surface "Rp 200rb di laci tetap kasir,
+   * bukan setoran-able".
+   */
+  pettyCashFloat: number;
   /** Final cash-on-hand = unsettledClosedShiftsCash − verifiedDepositsAmount. Pending deposits NOT subtracted. */
   cashOnHand: number;
   thresholdIdr: number;

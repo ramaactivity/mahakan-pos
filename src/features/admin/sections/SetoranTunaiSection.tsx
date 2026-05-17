@@ -280,12 +280,12 @@ function CashOnHandCards({
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <StatCard
         Icon={Wallet}
-        label="Kas Tersedia di Outlet"
+        label="Kas Siap Setor"
         value={formatRupiah(dashboard.cashOnHand)}
         sub={
           overThreshold
             ? `⚠ Lewat threshold ${formatRupiah(dashboard.thresholdIdr)}`
-            : "Sisa kas fisik (closed shifts)"
+            : "Penjualan tunai − pengeluaran − setoran (closed shifts)"
         }
         accent={overThreshold ? "warning" : "default"}
       />

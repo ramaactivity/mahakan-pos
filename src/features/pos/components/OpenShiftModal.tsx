@@ -78,6 +78,9 @@ export function OpenShiftModal({
   const [step, setStep] = useState<Step>("cash");
   // Raw digit string (no separator) — formatted for display via formatRupiah.
   const [openingCash, setOpeningCash] = useState("100000");
+  // Sesi AE-62f — track whether user manually edited the suggestion. If yes,
+  // don't overwrite when previousShift loads in.
+  const [userEditedOpening, setUserEditedOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [previousShift, setPreviousShift] = useState<Shift | null>(null);
@@ -88,6 +91,7 @@ export function OpenShiftModal({
     /* eslint-disable react-hooks/set-state-in-effect */
     setStep("cash");
     setOpeningCash("100000");
+    setUserEditedOpening(false);
     setError(null);
     setSubmitting(false);
     setPreviousShift(null);
@@ -98,7 +102,17 @@ export function OpenShiftModal({
     void (async () => {
       const res = await getLastClosedShiftAtOutlet();
       if (cancelled) return;
-      if (isOk(res)) setPreviousShift(res.data);
+      if (isOk(res)) {
+        const prev = res.data;
+        setPreviousShift(prev);
+        // Sesi AE-62f — auto-suggest opening cash dari previous shift's
+        // actualCash (petty cash float carryover). User confused karena
+        // dulu harus ketik manual setiap shift padahal float di laci sama.
+        // Only auto-fill kalau user belum manual-edit.
+        if (prev?.actualCash != null && prev.actualCash > 0) {
+          setOpeningCash(String(prev.actualCash));
+        }
+      }
       setPreviousLoading(false);
     })();
     return () => {
@@ -138,6 +152,7 @@ export function OpenShiftModal({
   // Numpad press helpers — kept here so they can rely on closure state w/o re-render.
   function appendDigit(d: string) {
     if (submitting) return;
+    setUserEditedOpening(true);
     setOpeningCash((s) => {
       // Prevent leading zeros — "0" + "1" should become "1" not "01".
       if (s === "0" && d !== "0") return d;
@@ -147,16 +162,28 @@ export function OpenShiftModal({
   }
   function backspace() {
     if (submitting) return;
+    setUserEditedOpening(true);
     setOpeningCash((s) => (s.length <= 1 ? "0" : s.slice(0, -1)));
   }
   function clearAmount() {
     if (submitting) return;
+    setUserEditedOpening(true);
     setOpeningCash("0");
   }
   function setQuickAmount(v: string) {
     if (submitting) return;
+    setUserEditedOpening(true);
     setOpeningCash(v);
   }
+  // Track suggested value (so badge only shows when displayed value matches suggestion).
+  const suggestedFromPrev =
+    previousShift?.actualCash != null && previousShift.actualCash > 0
+      ? previousShift.actualCash
+      : null;
+  const showCarryoverHint =
+    !userEditedOpening &&
+    suggestedFromPrev !== null &&
+    parsed === suggestedFromPrev;
 
   const today = useMemo(() => {
     return new Intl.DateTimeFormat("id-ID", {
@@ -329,6 +356,13 @@ export function OpenShiftModal({
               >
                 {formatRupiah(parsed)}
               </div>
+
+              {showCarryoverHint ? (
+                <p className="text-[11px] text-mahakan-green-800 touch:text-[10px]">
+                  <span className="font-semibold">Carryover</span> dari kas
+                  akhir shift sebelumnya. Edit kalau hitungan ulang berbeda.
+                </p>
+              ) : null}
 
               {/* Quick amounts */}
               <div className="grid grid-cols-5 gap-1.5 touch:gap-2">

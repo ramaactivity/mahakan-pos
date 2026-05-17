@@ -27,27 +27,35 @@ export type CashOnHandInputs = {
 export type CashOnHandResult = {
   closedShiftsContribution: number;
   openShiftDrawerCash: number;
+  /** Sesi AE-62f — Max(openingCash) dari closed shifts. Informational only,
+   * NOT included di cashOnHand. */
+  pettyCashFloat: number;
   cashOnHand: number;
 };
 
 /**
- * Closed shifts contribute to cash-on-hand: openingCash + cashSales − cashExpenses
+ * Closed shifts contribute to cash-on-hand: cashSales − cashExpenses
  * − refundedCash. Open-shift cash stays in drawer (excluded from cash-on-hand
  * but reported separately for awareness).
+ *
+ * Sesi AE-62f — openingCash NOT summed into closedShiftsContribution.
+ * openingCash adalah PETTY CASH FLOAT (carryover dari shift sebelumnya,
+ * bukan injection baru). Summing across N shifts double-counts the float N×.
+ * Float surface terpisah sebagai pettyCashFloat (informational).
  */
 export function computeCashOnHand(input: CashOnHandInputs): CashOnHandResult {
-  let closedOpening = 0;
   let closedCashSales = 0;
   let closedRefunds = 0;
   let openOpening = 0;
   let openCashSales = 0;
   let openRefunds = 0;
+  let pettyCashFloat = 0;
 
   for (const s of input.shifts) {
     if (s.status === "closed") {
-      closedOpening += s.openingCash;
       closedCashSales += s.cashSales;
       closedRefunds += s.refundedCash;
+      if (s.openingCash > pettyCashFloat) pettyCashFloat = s.openingCash;
     } else {
       openOpening += s.openingCash;
       openCashSales += s.cashSales;
@@ -56,11 +64,16 @@ export function computeCashOnHand(input: CashOnHandInputs): CashOnHandResult {
   }
 
   const closedShiftsContribution =
-    closedOpening + closedCashSales - input.cashExpenses - closedRefunds;
+    closedCashSales - input.cashExpenses - closedRefunds;
   const openShiftDrawerCash = openOpening + openCashSales - openRefunds;
   const cashOnHand = closedShiftsContribution - input.verifiedDeposits;
 
-  return { closedShiftsContribution, openShiftDrawerCash, cashOnHand };
+  return {
+    closedShiftsContribution,
+    openShiftDrawerCash,
+    pettyCashFloat,
+    cashOnHand,
+  };
 }
 
 // ---------------------------------------------------------------------------
