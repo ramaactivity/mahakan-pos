@@ -68,11 +68,16 @@ export async function recomputeAttendanceForSchedule(
     return 5;
   })();
 
+  /* Sesi AE-62ag — outletId di-scope wajib di filter. Tanpa ini, edge case
+   * employee yang pernah pindah outlet bisa overwrite attendance dari outlet
+   * lain (employeeId stable across outlets — historical records di outlet
+   * lama tetap ada). Constraint defensive walaupun schema biasanya 1 emp/outlet. */
   const records = await db
     .select()
     .from(attendanceRecords)
     .where(
       and(
+        eq(attendanceRecords.outletId, input.outletId),
         eq(attendanceRecords.employeeId, input.employeeId),
         eq(attendanceRecords.shiftDate, input.shiftDate),
       ),

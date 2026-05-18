@@ -1,6 +1,6 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import {
   employees,
@@ -213,10 +213,20 @@ export async function sendPayslipsForPeriod(opts: {
   actorOutletId: string;
   actorRole: string;
 }): Promise<SendPayslipSummary> {
+  /* Sesi AE-62ag — defense-in-depth outlet scoping. Caller (resendPayslipsForPeriod
+   * + markPaid) sudah re-check period.outletId match session, tapi helper
+   * boleh dipanggil dari context lain di masa depan. JOIN payrollPeriods
+   * untuk batas tegas: cuma lines di period yang outletId = actor outletId. */
   const lines = await db
     .select({ id: payrollLines.id })
     .from(payrollLines)
-    .where(eq(payrollLines.periodId, opts.periodId));
+    .innerJoin(payrollPeriods, eq(payrollLines.periodId, payrollPeriods.id))
+    .where(
+      and(
+        eq(payrollLines.periodId, opts.periodId),
+        eq(payrollPeriods.outletId, opts.actorOutletId),
+      ),
+    );
 
   const summary: SendPayslipSummary = {
     total: lines.length,

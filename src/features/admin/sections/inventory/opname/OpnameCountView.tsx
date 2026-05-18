@@ -158,6 +158,11 @@ export function OpnameCountView({
   );
   useEffect(() => {
     let cancelled = false;
+    /* Sesi AE-62ag — reset flow ke null saat session id berubah supaya
+     * UI tidak briefly show stale prior-session data sebelum fetch baru
+     * landing. Pre-fix: flow tetap di nilai lama → FlowMetric tampil number
+     * misleading di transition antara sessions. */
+    setFlow(null);
     void (async () => {
       const res = await getOpnameInventoryFlow(detail.id);
       if (cancelled) return;

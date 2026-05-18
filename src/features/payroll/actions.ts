@@ -1155,17 +1155,22 @@ export async function listPayslipEmailsForPeriod(
     .where(eq(payrollLines.periodId, periodId))
     .groupBy(payrollLines.id, employees.id);
 
-  // Second query: latest status per line (untuk kolom latestStatus + latestErrorCode)
+  /* Sesi AE-62ag — Raw SQL untuk DISTINCT ON (PG-specific). Period check
+   * di atas (L1131-1136) sudah validate outletId, jadi periodId di filter
+   * di bawah aman. Defense-in-depth: JOIN payroll_periods supaya outlet
+   * scope enforced at query level juga, tahan terhadap regression caller. */
   const latestStatusRows = await db.execute<{
     line_id: string;
     status: string;
     error_code: string | null;
   }>(sql`
-    SELECT DISTINCT ON (line_id)
-      line_id, status, error_code
-    FROM payroll_payslip_emails
-    WHERE period_id = ${periodId}
-    ORDER BY line_id, sent_at DESC
+    SELECT DISTINCT ON (pe.line_id)
+      pe.line_id AS line_id, pe.status AS status, pe.error_code AS error_code
+    FROM payroll_payslip_emails pe
+    INNER JOIN payroll_periods pp ON pp.id = pe.period_id
+    WHERE pe.period_id = ${periodId}
+      AND pp.outlet_id = ${session.user.outletId}
+    ORDER BY pe.line_id, pe.sent_at DESC
   `);
   const latestByLine = new Map<string, { status: string; errorCode: string | null }>();
   for (const r of latestStatusRows.rows) {
