@@ -65,3 +65,9 @@ export {
   getHppReport,
   getPurchaseRollupReport,
 } from "./actions";
+
+export {
+  getTargetProgress,
+  type TargetProgressData,
+  type TargetScale,
+} from "./target-progress";

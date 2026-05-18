@@ -29,7 +29,12 @@ import {
   CardTitle,
   Skeleton,
 } from "@/components/ui";
-import { getDailySalesReport, isOk } from "@/features/reports";
+import {
+  getDailySalesReport,
+  getTargetProgress,
+  isOk,
+} from "@/features/reports";
+import { TargetProgressCard } from "@/features/reports/components/TargetProgressCard";
 import { getTodayAttendanceStatus } from "@/features/attendance/actions";
 import { listPayrollPeriods } from "@/features/payroll/actions";
 import type { PayrollPeriodWithStats } from "@/features/payroll/types";
@@ -134,12 +139,23 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
     },
   });
 
+  const targetQuery = useQuery({
+    queryKey: ["admin", "dashboard", "target-progress"],
+    queryFn: async () => {
+      const res = await getTargetProgress();
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+    staleTime: 60 * 1000,
+  });
+
   const report = reportQuery.data ?? null;
   const attendance = attendanceQuery.data ?? null;
   const activePeriod = payrollQuery.data ?? null;
   const expiringDocs = docsQuery.data ?? [];
   const accountingMtd = accountingQuery.data ?? null;
   const balanceSheet = balanceSheetQuery.data ?? null;
+  const targetProgress = targetQuery.data ?? null;
 
   // Match old behavior: single global loading flag = ANY query still loading
   // first time. After cache hit on revisit, all return false instantly →
@@ -270,6 +286,15 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
           }
         />
       </div>
+
+      {/* Target Pendapatan — sesi AE-62ah. Hide kalau semua 3 scale target
+       *  belum di-set (cuma noise). Owner edit di Reports → Targets. */}
+      {targetProgress &&
+      (targetProgress.daily.target != null ||
+        targetProgress.weekly.target != null ||
+        targetProgress.monthly.target != null) ? (
+        <TargetProgressCard data={targetProgress} showRupiah />
+      ) : null}
 
       {/* Accounting MTD summary — visible kalau ada data ledger */}
       {accountingMtd &&

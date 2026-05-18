@@ -6,6 +6,7 @@ import {
   Coins,
   FileText,
   History,
+  Home,
   Landmark,
   LayoutGrid,
   LogOut,
@@ -19,6 +20,7 @@ import { hasPermission, type Permission, type Role } from "@/lib/auth/rbac";
 import { cn } from "@/lib/utils";
 
 export type PosTab =
+  | "dashboard"
   | "cashier"
   | "open_bills"
   | "queue"
@@ -55,6 +57,9 @@ interface TabConfig {
 // Sesi AE-8 — tambah "kas" tab gated by cash_deposit.view (owner+manager+
 // supervisor). Staff biasa tidak akan melihat tab ini.
 const TABS: TabConfig[] = [
+  /* Sesi AE-62ah — Dashboard untuk kasir lihat progress target +
+   * top menu hari ini. Tidak butuh permission khusus (kasir-facing). */
+  { key: "dashboard", label: "Dashboard", Icon: Home },
   { key: "cashier", label: "Kasir", Icon: LayoutGrid },
   { key: "open_bills", label: "Bill Aktif", Icon: FileText },
   { key: "queue", label: "Pesanan", Icon: ClipboardList },

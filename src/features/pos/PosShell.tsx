@@ -57,6 +57,7 @@ import { TransactionSuccessModal } from "@/features/pos/components/TransactionSu
 import { OpenPriceModal } from "@/features/pos/components/OpenPriceModal";
 import { OpenShiftModal } from "@/features/pos/components/OpenShiftModal";
 import { OrderQueuePanel } from "@/features/pos/components/OrderQueuePanel";
+import { PosDashboardView } from "@/features/pos/components/PosDashboardView";
 import { PosLeftNav, type PosTab } from "@/features/pos/components/PosLeftNav";
 import { PettyCashPanel } from "@/features/pos/components/PettyCashPanel";
 import { KasOwnerPanel } from "@/features/pos/components/KasOwnerPanel";
@@ -990,7 +991,9 @@ export function PosShell() {
       {/* MIDDLE COLUMN — content per tab. min-w-0 prevents flex child from
        * overflowing parent (causes horizontal swaying di tablet). */}
       <main className="flex-1 min-w-0 overflow-hidden">
-        {tab === "cashier" ? (
+        {tab === "dashboard" ? (
+          <PosDashboardView cashierName={session.user.name} />
+        ) : tab === "cashier" ? (
           <CashierMiddle
             menuLoading={menuLoading}
             filteredItems={filteredItems}
