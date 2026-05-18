@@ -940,6 +940,28 @@ export async function markPayrollPaid(
     );
   }
 
+  // Sesi AE-62ad — Auto-kirim slip gaji ke email karyawan (fire-and-forget).
+  // Tidak boleh block return; gagal kirim individual cuma di-log + bisa
+  // resend manual dari UI Slip Gaji.
+  void (async () => {
+    try {
+      const { sendPayslipsForPeriod } = await import("./payslip-send");
+      const summary = await sendPayslipsForPeriod({
+        periodId,
+        trigger: "auto",
+        sentByUserId: session.user.id,
+        actorOutletId: session.user.outletId,
+        actorRole: session.user.role,
+      });
+      console.log(
+        `[payroll.markPaid] payslip auto-send ${result.row.label}:`,
+        summary,
+      );
+    } catch (e) {
+      console.error("[payroll.markPaid] payslip auto-send threw:", e);
+    }
+  })();
+
   return ok(result.row);
 }
 
@@ -983,4 +1005,188 @@ export async function deletePayrollPeriod(
   }).catch((e) => console.error("[audit payroll.period.delete]", e));
 
   return ok({ id: periodId });
+}
+
+// ---------- Sesi AE-62ad: Slip Gaji email ----------
+
+/**
+ * Kirim ulang slip gaji untuk 1 line ke email karyawan. Period harus
+ * status='paid'. Tujuan: kasus karyawan ganti email, atau gagal kirim
+ * pertama (auth/timeout), atau Owner mau test ke 1 orang dulu.
+ */
+export async function resendPayslipForLine(
+  lineId: string,
+): Promise<ApiResult<{ status: string; message: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "payroll.manage")) {
+    return fail("FORBIDDEN", "Tidak punya hak kirim slip gaji");
+  }
+
+  const [line] = await db
+    .select({
+      id: payrollLines.id,
+      outletId: payrollPeriods.outletId,
+      periodStatus: payrollPeriods.status,
+    })
+    .from(payrollLines)
+    .innerJoin(payrollPeriods, eq(payrollLines.periodId, payrollPeriods.id))
+    .where(eq(payrollLines.id, lineId))
+    .limit(1);
+
+  if (!line) return fail("NOT_FOUND", "Line tidak ditemukan");
+  if (line.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Line dari outlet lain");
+  }
+  if (line.periodStatus !== "paid") {
+    return fail("PERIOD_NOT_PAID", "Period belum dibayar — tidak bisa kirim slip");
+  }
+
+  const { sendPayslipForLine } = await import("./payslip-send");
+  const r = await sendPayslipForLine({
+    lineId,
+    trigger: "manual",
+    sentByUserId: session.user.id,
+    actorOutletId: session.user.outletId,
+    actorRole: session.user.role,
+  });
+
+  return ok({ status: r.status, message: r.message });
+}
+
+/**
+ * Kirim ulang slip gaji untuk SEMUA line di sebuah period. Owner pakai
+ * setelah set ulang env GMAIL_* atau setelah update bulk employee.email.
+ */
+export async function resendPayslipsForPeriod(
+  periodId: string,
+): Promise<
+  ApiResult<{
+    total: number;
+    sent: number;
+    failed: number;
+    logged: number;
+    skippedNoEmail: number;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "payroll.manage")) {
+    return fail("FORBIDDEN", "Tidak punya hak kirim slip gaji");
+  }
+
+  const [period] = await db
+    .select()
+    .from(payrollPeriods)
+    .where(eq(payrollPeriods.id, periodId))
+    .limit(1);
+  if (!period) return fail("NOT_FOUND", "Period tidak ditemukan");
+  if (period.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Period dari outlet lain");
+  }
+  if (period.status !== "paid") {
+    return fail("PERIOD_NOT_PAID", "Period belum dibayar — tidak bisa kirim slip");
+  }
+
+  const { sendPayslipsForPeriod } = await import("./payslip-send");
+  const summary = await sendPayslipsForPeriod({
+    periodId,
+    trigger: "manual",
+    sentByUserId: session.user.id,
+    actorOutletId: session.user.outletId,
+    actorRole: session.user.role,
+  });
+  return ok(summary);
+}
+
+/**
+ * History log slip gaji per period — tampil di UI Slip Gaji.
+ * Per line: latest send attempt + total attempts + delivery status.
+ */
+export async function listPayslipEmailsForPeriod(
+  periodId: string,
+): Promise<
+  ApiResult<
+    Array<{
+      lineId: string;
+      employeeId: string;
+      employeeName: string;
+      employeeEmail: string | null;
+      netPay: number;
+      latestSentAt: Date | null;
+      latestStatus: "sent" | "failed" | "logged" | null;
+      latestErrorCode: string | null;
+      attempts: number;
+    }>
+  >
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "payroll.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat payroll");
+  }
+
+  const [period] = await db
+    .select()
+    .from(payrollPeriods)
+    .where(eq(payrollPeriods.id, periodId))
+    .limit(1);
+  if (!period) return fail("NOT_FOUND", "Period tidak ditemukan");
+  if (period.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Period dari outlet lain");
+  }
+
+  const { payrollPayslipEmails } = await import("@/db/schema");
+  const rows = await db
+    .select({
+      lineId: payrollLines.id,
+      employeeId: employees.id,
+      employeeName: employees.fullName,
+      employeeEmail: employees.email,
+      netPay: payrollLines.netPay,
+      attempts: sql<string>`COUNT(${payrollPayslipEmails.id})`,
+      latestSentAt: sql<Date | null>`MAX(${payrollPayslipEmails.sentAt})`,
+    })
+    .from(payrollLines)
+    .innerJoin(employees, eq(payrollLines.employeeId, employees.id))
+    .leftJoin(
+      payrollPayslipEmails,
+      eq(payrollPayslipEmails.lineId, payrollLines.id),
+    )
+    .where(eq(payrollLines.periodId, periodId))
+    .groupBy(payrollLines.id, employees.id);
+
+  // Second query: latest status per line (untuk kolom latestStatus + latestErrorCode)
+  const latestStatusRows = await db.execute<{
+    line_id: string;
+    status: string;
+    error_code: string | null;
+  }>(sql`
+    SELECT DISTINCT ON (line_id)
+      line_id, status, error_code
+    FROM payroll_payslip_emails
+    WHERE period_id = ${periodId}
+    ORDER BY line_id, sent_at DESC
+  `);
+  const latestByLine = new Map<string, { status: string; errorCode: string | null }>();
+  for (const r of latestStatusRows.rows) {
+    latestByLine.set(r.line_id, {
+      status: r.status,
+      errorCode: r.error_code,
+    });
+  }
+
+  return ok(
+    rows.map((r) => {
+      const latest = latestByLine.get(r.lineId);
+      return {
+        lineId: r.lineId,
+        employeeId: r.employeeId,
+        employeeName: r.employeeName,
+        employeeEmail: r.employeeEmail,
+        netPay: Number(r.netPay),
+        latestSentAt: r.latestSentAt,
+        latestStatus: (latest?.status as "sent" | "failed" | "logged" | null) ?? null,
+        latestErrorCode: latest?.errorCode ?? null,
+        attempts: Number(r.attempts ?? 0),
+      };
+    }),
+  );
 }

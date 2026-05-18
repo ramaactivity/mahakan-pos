@@ -203,3 +203,49 @@ export const payrollLines = pgTable(
     ),
   ],
 );
+
+/**
+ * Sesi AE-62ad — Log slip gaji yang dikirim ke email karyawan setelah
+ * Owner mark periode "paid". 1 row per (line × send attempt) — re-send
+ * juga di-log untuk audit (siapa minta, kapan, status delivery).
+ *
+ * Status: "sent" (provider menerima), "failed" (auth/network), "logged"
+ * (dev mode tanpa provider). Diam-diam di-bypass kalau employee.email
+ * NULL — Owner punya kontrol di UI untuk lihat siapa belum di-set.
+ */
+export const payrollPayslipEmails = pgTable(
+  "payroll_payslip_emails",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    periodId: uuid("period_id")
+      .notNull()
+      .references(() => payrollPeriods.id, { onDelete: "cascade" }),
+    lineId: uuid("line_id")
+      .notNull()
+      .references(() => payrollLines.id, { onDelete: "cascade" }),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employees.id),
+    toEmail: text("to_email").notNull(),
+    /** "auto" (triggered by markPaid) atau "manual" (resend dari UI). */
+    trigger: text("trigger", { enum: ["auto", "manual"] }).notNull(),
+    /** Provider message id (Gmail SMTP / Resend) atau NULL kalau logged/failed. */
+    messageId: text("message_id"),
+    status: text("status", {
+      enum: ["sent", "failed", "logged"],
+    }).notNull(),
+    /** Human-readable error untuk debugging. */
+    errorMessage: text("error_message"),
+    /** "AUTH_FAILED" | "CONNECTION_TIMEOUT" | "RATE_LIMITED" | "INVALID_RECIPIENT" | "UNKNOWN" */
+    errorCode: text("error_code"),
+    sentBy: uuid("sent_by").references(() => users.id),
+    sentAt: timestamp("sent_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("idx_payslip_emails_period").on(t.periodId, t.sentAt),
+    index("idx_payslip_emails_employee").on(t.employeeId, t.sentAt),
+    index("idx_payslip_emails_line").on(t.lineId),
+  ],
+);

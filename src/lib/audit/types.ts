@@ -139,6 +139,10 @@ export const AUDIT_EVENT_TYPES = [
   "payroll.expense.create",
   /* Sesi AE-60 — Apply THR ke semua line di period. */
   "payroll.thr_applied",
+  /* Sesi AE-62ad — Slip gaji email dikirim (auto saat markPaid atau manual resend). */
+  "payroll.payslip.send",
+  "payroll.payslip.resend",
+  "payroll.payslip.failed",
   /* Sesi AE-60 — Kasbon (employee advance) lifecycle. */
   "advance.create",
   "advance.forgive",
@@ -276,6 +280,8 @@ export type AuditEntityType =
   | "attendance"
   | "schedule"
   | "payroll_period"
+  | "payroll_line"
+  | "payroll_payslip_email"
   | "employee_advance"
   | "promo"
   | "employee_career_history"
