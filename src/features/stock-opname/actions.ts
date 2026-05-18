@@ -1229,6 +1229,9 @@ export async function addOpnameItemAdHoc(
         isActive: result.newIng.isActive,
         deletedAt: result.newIng.deletedAt,
         section: result.newIng.section,
+        /* Sesi AE-62y — new ad-hoc ingredient lewat opname tidak punya
+         * pack conversions; owner bisa add later via Edit Satuan modal. */
+        packConversions: null,
       },
     };
     return ok(lineWithIng);

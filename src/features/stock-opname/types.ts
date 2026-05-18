@@ -19,6 +19,10 @@ export interface OpnameLineWithIngredient extends OpnameLine {
     deletedAt: Date | null;
     /** Operational section (sesi O). Null = legacy/unclassified. */
     section: IngredientSection | null;
+    /** Sesi AE-62y — pack conversions (jsonb dari ingredients.pack_conversions).
+     * Diteruskan ke EditUnitModal + opname unit picker untuk auto-convert
+     * input "1 packs" → "20 pcs". */
+    packConversions: Array<{ unitLabel: string; qtyPerBase: number }> | null;
   };
 }
 

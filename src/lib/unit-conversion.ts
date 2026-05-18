@@ -86,26 +86,126 @@ export function convertQty(
 }
 
 /** List unit options yang compatible dengan master unit (sama dimensi).
- *  Dipakai di Stock Opname picker biar staff cuma lihat unit relevan. */
+ *  Dipakai di Stock Opname picker biar staff cuma lihat unit relevan.
+ *
+ *  Sesi AE-62y — accept optional `ingredientPacks` untuk include ingredient-
+ *  scoped pack alternatives (mis. "packs" untuk Lychee Kaleng master pcs).
+ *  Master + same-dimension entries dari UNIT_TABLE + pack alternatives
+ *  merged dengan dedup by label. */
 export function compatibleUnitsFor(
   masterUnit: string,
+  ingredientPacks?: IngredientPackConversion[] | null,
 ): Array<{ value: string; label: string }> {
   const master = resolveUnit(masterUnit);
-  if (!master) {
-    return [{ value: masterUnit, label: masterUnit }];
-  }
-  if (master.dimension === "discrete") {
-    return [{ value: master.label, label: master.label }];
-  }
-  const seen = new Set<string>();
   const items: Array<{ value: string; label: string }> = [];
-  for (const meta of Object.values(UNIT_TABLE)) {
-    if (meta.dimension !== master.dimension) continue;
-    if (seen.has(meta.label)) continue;
-    seen.add(meta.label);
-    items.push({ value: meta.label, label: meta.label });
+  const seen = new Set<string>();
+
+  if (!master) {
+    items.push({ value: masterUnit, label: masterUnit });
+    seen.add(masterUnit.toLowerCase());
+  } else if (master.dimension === "discrete") {
+    items.push({ value: master.label, label: master.label });
+    seen.add(master.label.toLowerCase());
+  } else {
+    for (const meta of Object.values(UNIT_TABLE)) {
+      if (meta.dimension !== master.dimension) continue;
+      const lc = meta.label.toLowerCase();
+      if (seen.has(lc)) continue;
+      seen.add(lc);
+      items.push({ value: meta.label, label: meta.label });
+    }
+  }
+
+  /* Sesi AE-62y — merge ingredient-scoped pack conversions. Filter out
+   * duplicate label (case-insensitive) supaya tidak conflict dengan
+   * master / same-dimension entries. */
+  if (ingredientPacks && ingredientPacks.length > 0) {
+    for (const p of ingredientPacks) {
+      const lc = p.unitLabel.trim().toLowerCase();
+      if (lc.length === 0 || seen.has(lc)) continue;
+      seen.add(lc);
+      items.push({ value: p.unitLabel, label: p.unitLabel });
+    }
   }
   return items;
+}
+
+/**
+ * Sesi AE-62y — pack conversion ingredient-scoped.
+ *
+ * Stored di `ingredients.pack_conversions` (jsonb array). Punya semantic
+ * "1 unitLabel = qtyPerBase × masterUnit". Mis. Lychee Kaleng master pcs:
+ *   { unitLabel: "packs", qtyPerBase: 20 } → 1 packs = 20 pcs.
+ *
+ * Berbeda dengan PackInfo (supplier-scoped, Market List). Pack conversion
+ * ini global per-ingredient, dipakai di Opname, Edit Inventory, dst.
+ */
+export interface IngredientPackConversion {
+  unitLabel: string;
+  qtyPerBase: number;
+}
+
+/**
+ * Sesi AE-62y — convert qty pakai ingredient pack conversions sebagai
+ * fallback. Logic:
+ *   1. fromUnit === masterUnit → no-op (qty as-is).
+ *   2. convertQty(qty, fromUnit, masterUnit) berhasil (same dimension) → pakai itu.
+ *   3. Cari ingredientPacks dengan unitLabel matching fromUnit (case-insensitive).
+ *      Kalau ada → qty × qtyPerBase = master qty.
+ *   4. Else → null (unknown conversion).
+ *
+ * Returns { ok: true; qtyMaster; mode } atau { ok: false; reason }.
+ */
+export type IngredientConvertMode =
+  | "noop"
+  | "same-dimension"
+  | "ingredient-pack";
+
+export interface IngredientConvertResult {
+  ok: boolean;
+  qtyMaster: number | null;
+  mode: IngredientConvertMode | null;
+  /** Audit/UI string: "1 packs = 20 pcs (Lychee Kaleng)". */
+  explain: string | null;
+}
+
+export function convertQtyWithIngredientPacks(
+  qty: number,
+  fromUnit: string,
+  masterUnit: string,
+  ingredientPacks?: IngredientPackConversion[] | null,
+): IngredientConvertResult {
+  if (!Number.isFinite(qty)) {
+    return { ok: false, qtyMaster: null, mode: null, explain: null };
+  }
+  if (fromUnit === masterUnit) {
+    return { ok: true, qtyMaster: qty, mode: "noop", explain: null };
+  }
+  // Try same-dimension via UNIT_TABLE first (Kg→gr, L→ml, dst).
+  const sameDim = convertQty(qty, fromUnit, masterUnit);
+  if (sameDim !== null) {
+    return {
+      ok: true,
+      qtyMaster: sameDim,
+      mode: "same-dimension",
+      explain: `${qty} ${fromUnit} = ${sameDim} ${masterUnit}`,
+    };
+  }
+  // Try ingredient pack conversions (case-insensitive label match).
+  const lc = fromUnit.trim().toLowerCase();
+  const pack = ingredientPacks?.find(
+    (p) => p.unitLabel.trim().toLowerCase() === lc,
+  );
+  if (pack && Number.isFinite(pack.qtyPerBase) && pack.qtyPerBase > 0) {
+    const qtyMaster = qty * pack.qtyPerBase;
+    return {
+      ok: true,
+      qtyMaster,
+      mode: "ingredient-pack",
+      explain: `${qty} ${pack.unitLabel} × ${pack.qtyPerBase} = ${qtyMaster} ${masterUnit}`,
+    };
+  }
+  return { ok: false, qtyMaster: null, mode: null, explain: null };
 }
 
 /**

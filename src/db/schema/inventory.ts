@@ -8,6 +8,7 @@ import {
   boolean,
   integer,
   numeric,
+  jsonb,
   index,
   uniqueIndex,
   unique,
@@ -62,6 +63,33 @@ export const ingredients = pgTable(
     preparationYield: bigint("preparation_yield", { mode: "number" }),
     /** Stamped whenever cost_per_unit changes — observability for cascades. */
     costLastChangedAt: timestamp("cost_last_changed_at", { withTimezone: true }),
+
+    /** Sesi AE-62y — pack conversions ingredient-level.
+     *
+     * Use case dari tim gudang: Lychee Kaleng master unit "pcs", tapi
+     * staff biasanya beli & opname per "packs" (1 packs = 20 pcs). Tanpa
+     * pack mapping di sini, staff harus manual ×20 di kepala saat input
+     * opname → error-prone.
+     *
+     * Shape: Array<{ unitLabel: string; qtyPerBase: number }>
+     *   - unitLabel: nama satuan alternatif (mis. "packs", "karton", "dus")
+     *   - qtyPerBase: berapa banyak base-unit per 1 alternatif unit
+     *
+     * Example: Lychee Kaleng master "pcs" →
+     *   packConversions = [
+     *     { unitLabel: "packs", qtyPerBase: 20 },
+     *     { unitLabel: "karton", qtyPerBase: 240 }
+     *   ]
+     *
+     * Opname picker akan show pcs + packs + karton; saat staff pilih
+     * "packs" dan input 1 → server simpan 20 pcs.
+     *
+     * NULL atau [] = no alternatives, hanya master unit.
+     *
+     * Tidak bertabrakan dengan supplier_ingredients.packSize (yang
+     * supplier-scoped untuk Purchase flow); ini global per-ingredient
+     * untuk Opname + future modules. */
+    packConversions: jsonb("pack_conversions"),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

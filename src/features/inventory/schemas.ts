@@ -61,6 +61,28 @@ export const createIngredientSchema = z
 
 export type CreateIngredientInput = z.infer<typeof createIngredientSchema>;
 
+/** Sesi AE-62y — pack conversion entry. Validasi:
+ *   - unitLabel non-empty trim, max 20 chars
+ *   - qtyPerBase > 0, integer atau decimal
+ *   - Tidak ada server-side dedup di sini (client tanggung supaya UI
+ *     bisa kasih error message inline). Server validate via .refine */
+export const packConversionEntrySchema = z.object({
+  unitLabel: z.string().trim().min(1).max(20),
+  qtyPerBase: z.number().positive().max(1_000_000),
+});
+export type PackConversionEntry = z.infer<typeof packConversionEntrySchema>;
+
+export const packConversionsSchema = z
+  .array(packConversionEntrySchema)
+  .max(10)
+  .refine(
+    (arr) => {
+      const labels = arr.map((p) => p.unitLabel.trim().toLowerCase());
+      return new Set(labels).size === labels.length;
+    },
+    { message: "Label satuan tidak boleh duplikat (case-insensitive)" },
+  );
+
 export const updateIngredientSchema = z
   .object({
     name: z.string().trim().min(NAME_MIN).max(NAME_MAX).optional(),
@@ -71,6 +93,8 @@ export const updateIngredientSchema = z
     isActive: z.boolean().optional(),
     preparationYield: qtyPositive.nullable().optional(),
     section: sectionEnum,
+    /** Sesi AE-62y — opt-in pack conversion mappings. Null = wipe. */
+    packConversions: packConversionsSchema.nullable().optional(),
   })
   .refine(
     (v) => Object.keys(v).length > 0,

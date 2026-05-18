@@ -27,7 +27,7 @@ import type {
 import { AddOpnameItemModal } from "@/features/admin/sections/inventory/opname/AddOpnameItemModal";
 import {
   compatibleUnitsFor,
-  convertQty,
+  convertQtyWithIngredientPacks,
   resolveUnit,
 } from "@/lib/unit-conversion";
 import { cn } from "@/lib/utils";
@@ -204,11 +204,19 @@ function OpnameView() {
         }));
         return;
       }
-      // Sesi AE-20 — convert ke master unit kalau staff pilih unit lain.
+      // Sesi AE-20 → AE-62y — convert ke master unit kalau staff pilih unit
+      // lain. Pakai convertQtyWithIngredientPacks supaya ingredient-scoped
+      // pack conversions (mis. 1 packs = 20 pcs untuk Lychee Kaleng) bisa
+      // di-honor. Fallback ke same-dimension (Kg↔gr) lewat helper internal.
       const masterUnit = line.ingredient.unit;
       if (inputUnit !== masterUnit) {
-        const converted = convertQty(parsed, inputUnit, masterUnit);
-        if (converted === null) {
+        const convertRes = convertQtyWithIngredientPacks(
+          parsed,
+          inputUnit,
+          masterUnit,
+          line.ingredient.packConversions ?? null,
+        );
+        if (!convertRes.ok || convertRes.qtyMaster === null) {
           setDrafts((d) => ({
             ...d,
             [line.ingredientId]: {
@@ -220,7 +228,7 @@ function OpnameView() {
           }));
           return;
         }
-        actualQty = converted;
+        actualQty = convertRes.qtyMaster;
       } else {
         actualQty = parsed;
       }
@@ -528,11 +536,20 @@ function LineRow({
     if (Number.isFinite(p) && p >= 0) parsedActual = p;
   }
 
-  // Sesi AE-20 — convert input → master unit untuk diff calc + preview.
-  const convertedToMaster =
-    parsedActual !== null && inputUnit !== masterUnit
-      ? convertQty(parsedActual, inputUnit, masterUnit)
-      : parsedActual;
+  // Sesi AE-20 → AE-62y — convert input → master unit untuk diff calc +
+  // preview. Pakai convertQtyWithIngredientPacks supaya pack conversions
+  // (1 packs = 20 pcs) ikut ke-respect di preview live.
+  const ingredientPacks = line.ingredient.packConversions ?? null;
+  let convertedToMaster: number | null = parsedActual;
+  if (parsedActual !== null && inputUnit !== masterUnit) {
+    const r = convertQtyWithIngredientPacks(
+      parsedActual,
+      inputUnit,
+      masterUnit,
+      ingredientPacks,
+    );
+    convertedToMaster = r.qtyMaster;
+  }
   const diff =
     convertedToMaster !== null
       ? convertedToMaster - expectedQtyValue
@@ -541,15 +558,18 @@ function LineRow({
   const fmt = (n: number) =>
     new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(n);
 
-  // Unit options — kalau master "discrete" (Btl/Pcs/etc), staff cuma
-  // bisa input pakai master unit, dropdown disabled. Kalau mass/volume,
-  // staff bisa pilih (mis. master gr → bisa input pakai Kg).
-  const unitOptions = compatibleUnitsFor(masterUnit);
+  // Sesi AE-62y — unit options include ingredient pack alternatives.
+  // Untuk ingredient yang punya pack mapping (mis. "packs" 20 pcs untuk
+  // Lychee Kaleng), picker exposed walaupun master discrete. Tanpa pack
+  // alternatives + master discrete → picker disabled (fallback ke master only).
+  const unitOptions = compatibleUnitsFor(masterUnit, ingredientPacks);
   const masterMeta = resolveUnit(masterUnit);
+  const hasPackAlternatives =
+    ingredientPacks !== null && ingredientPacks.length > 0;
   const canPickUnit =
-    masterMeta !== null &&
-    masterMeta.dimension !== "discrete" &&
-    unitOptions.length > 1;
+    unitOptions.length > 1 &&
+    (hasPackAlternatives ||
+      (masterMeta !== null && masterMeta.dimension !== "discrete"));
 
   return (
     <li

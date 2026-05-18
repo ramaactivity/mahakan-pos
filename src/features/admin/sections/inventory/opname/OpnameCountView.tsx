@@ -99,6 +99,8 @@ export function OpnameCountView({
     id: string;
     name: string;
     unit: string;
+    /** Sesi AE-62y — current pack conversions (jsonb dari ingredients). */
+    packConversions: Array<{ unitLabel: string; qtyPerBase: number }> | null;
   } | null>(null);
   const [addItemOpen, setAddItemOpen] = useState(false);
 
@@ -654,6 +656,8 @@ export function OpnameCountView({
                               id: line.ingredientId,
                               name: line.ingredientNameSnapshot,
                               unit: effectiveUnit,
+                              packConversions:
+                                line.ingredient.packConversions ?? null,
                             })
                         : undefined
                     }
@@ -746,6 +750,7 @@ export function OpnameCountView({
           ingredientId={editUnitFor.id}
           ingredientName={editUnitFor.name}
           currentUnit={editUnitFor.unit}
+          currentPackConversions={editUnitFor.packConversions ?? null}
           onSaved={(newUnit) => {
             // Optimistic UI: push override so the row updates instantly,
             // independent of when the parent's silent refetch completes.
@@ -760,7 +765,9 @@ export function OpnameCountView({
             });
             setEditUnitFor(null);
             // Still trigger parent refresh so HppEstimate + history reflect
-            // the new unit on next render. The override hides the race.
+            // the new unit AND new packConversions on next render. The
+            // override hides the race for unit; packConversions tampak
+            // setelah refresh next.
             onChanged();
           }}
         />

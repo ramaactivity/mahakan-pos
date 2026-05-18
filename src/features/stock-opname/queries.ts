@@ -131,6 +131,8 @@ export async function fetchSessionDetail(
         isActive: ingredients.isActive,
         deletedAt: ingredients.deletedAt,
         section: ingredients.section,
+        /* Sesi AE-62y — pack conversions diteruskan ke UI untuk picker. */
+        packConversions: ingredients.packConversions,
       },
     })
     .from(stockOpnameLines)
@@ -143,7 +145,13 @@ export async function fetchSessionDetail(
 
   const lines: OpnameLineWithIngredient[] = lineRows.map((r) => ({
     ...r.line,
-    ingredient: r.ingredient,
+    ingredient: {
+      ...r.ingredient,
+      /* Cast jsonb to typed array. Null = no alternatives. */
+      packConversions: (r.ingredient.packConversions as
+        | Array<{ unitLabel: string; qtyPerBase: number }>
+        | null) ?? null,
+    },
   }));
 
   return {
