@@ -88,9 +88,13 @@ export function PurchaseRequestsSection() {
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
 
   // Sesi AE-18 — bulk receive state.
+  // Sesi AE-62s — `bulkChecked` per-item include/exclude. Default ON untuk
+  // item dengan sisa > 0 dan belum rejected, OFF untuk yang sudah penuh /
+  // rejected. User uncheck row yang mau di-skip (mis. masih PO supplier lain).
   const [bulkTarget, setBulkTarget] =
     useState<PurchaseRequestWithItems | null>(null);
   const [bulkQtys, setBulkQtys] = useState<Record<string, string>>({});
+  const [bulkChecked, setBulkChecked] = useState<Record<string, boolean>>({});
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
 
   // Sesi AE-19 — per-item reject state.
@@ -154,25 +158,25 @@ export function PurchaseRequestsSection() {
       toast.error("Qty tidak valid");
       return;
     }
-    const totalAfter = qty;
-    if (totalAfter > Number(receiveTarget.item.requestedQty)) {
-      toast.error("Qty melebihi qty diminta");
-      return;
-    }
+    /* Sesi AE-62s — no cap di FE. Over-receive di-allow (acara/ramai),
+     * backend return overReceivedQty di response untuk surface toast. */
     setReceiveSubmitting(true);
     const res = await receiveItem({
       itemId: receiveTarget.item.id,
-      receivedQty: totalAfter,
+      receivedQty: qty,
     });
     setReceiveSubmitting(false);
     if (!isOk(res)) {
       toast.error(res.error.message);
       return;
     }
+    const over = res.data.overReceivedQty;
     toast.success(
-      res.data.newStatus === "completed"
-        ? "Selesai diterima"
-        : "Qty diterima diperbarui",
+      over > 0
+        ? `Tersimpan · +${over.toLocaleString("id-ID")} ${receiveTarget.item.unitSnapshot} ekstra dari diminta`
+        : res.data.newStatus === "completed"
+          ? "Selesai diterima"
+          : "Qty diterima diperbarui",
     );
     setReceiveTarget(null);
     void refresh();
@@ -180,23 +184,51 @@ export function PurchaseRequestsSection() {
 
   function openBulk(req: PurchaseRequestWithItems) {
     setBulkTarget(req);
-    // Pre-fill with sisa untuk full fulfill.
-    const initial: Record<string, string> = {};
+    // Pre-fill qty dengan sisa (atau requested kalau belum diterima).
+    // Pre-check rows yang masih ada sisa > 0 dan belum di-reject.
+    const initialQty: Record<string, string> = {};
+    const initialChecked: Record<string, boolean> = {};
     for (const it of req.items) {
       const sisa = Number(it.requestedQty) - Number(it.receivedQty);
       const target = sisa > 0 ? Number(it.requestedQty) : Number(it.receivedQty);
-      initial[it.id] = String(target);
+      initialQty[it.id] = String(target);
+      initialChecked[it.id] = sisa > 0 && it.rejectedAt == null;
     }
-    setBulkQtys(initial);
+    setBulkQtys(initialQty);
+    setBulkChecked(initialChecked);
   }
 
-  function bulkFillAll() {
+  function bulkSetCheckedForAll(checked: boolean) {
     if (!bulkTarget) return;
-    const next: Record<string, string> = {};
+    const next: Record<string, boolean> = {};
     for (const it of bulkTarget.items) {
-      next[it.id] = String(Number(it.requestedQty));
+      // Hard-skip rejected items: tetap unchecked (action-nya beda — lihat Reject button).
+      next[it.id] = checked && it.rejectedAt == null;
     }
-    setBulkQtys(next);
+    setBulkChecked(next);
+  }
+
+  function bulkCheckOutstandingOnly() {
+    if (!bulkTarget) return;
+    const next: Record<string, boolean> = {};
+    for (const it of bulkTarget.items) {
+      const sisa = Number(it.requestedQty) - Number(it.receivedQty);
+      next[it.id] = sisa > 0 && it.rejectedAt == null;
+    }
+    setBulkChecked(next);
+  }
+
+  function bulkFillRequestedForChecked() {
+    if (!bulkTarget) return;
+    setBulkQtys((prev) => {
+      const next = { ...prev };
+      for (const it of bulkTarget.items) {
+        if (bulkChecked[it.id]) {
+          next[it.id] = String(Number(it.requestedQty));
+        }
+      }
+      return next;
+    });
   }
 
   function bulkResetReceived() {
@@ -211,20 +243,22 @@ export function PurchaseRequestsSection() {
   async function submitBulk() {
     if (!bulkTarget) return;
     const items: Array<{ itemId: string; receivedQty: number }> = [];
+    // Sesi AE-62s — kirim HANYA item yang di-checkbox-include. Yang unchecked
+    // di-skip (state tidak berubah — mis. masih PO supplier lain).
     for (const it of bulkTarget.items) {
+      if (!bulkChecked[it.id]) continue;
       const raw = bulkQtys[it.id] ?? "0";
       const n = parseFloat(raw.replace(",", "."));
       if (!Number.isFinite(n) || n < 0) {
         toast.error(`Qty tidak valid untuk ${it.ingredientNameSnapshot}`);
         return;
       }
-      if (n > Number(it.requestedQty)) {
-        toast.error(
-          `${it.ingredientNameSnapshot}: qty melebihi yang diminta`,
-        );
-        return;
-      }
+      // Over-receive di-allow di backend per AE-62s. UI tampilkan badge saja.
       items.push({ itemId: it.id, receivedQty: n });
+    }
+    if (items.length === 0) {
+      toast.error("Centang minimal 1 item untuk diterima");
+      return;
     }
     setBulkSubmitting(true);
     const res = await bulkReceiveItems({
@@ -236,17 +270,20 @@ export function PurchaseRequestsSection() {
       toast.error(res.error.message);
       return;
     }
+    const statusLabel =
+      res.data.newStatus === "completed"
+        ? "Selesai"
+        : res.data.newStatus === "partial"
+          ? "Sebagian"
+          : "Open";
     toast.success(
-      `${res.data.itemsUpdated} item ter-update · status: ${
-        res.data.newStatus === "completed"
-          ? "Selesai"
-          : res.data.newStatus === "partial"
-            ? "Sebagian"
-            : "Open"
-      }`,
+      res.data.overReceivedTotal > 0
+        ? `${res.data.itemsUpdated} item · +${res.data.overReceivedTotal} ekstra di ${res.data.overReceivedItems.length} item · ${statusLabel}`
+        : `${res.data.itemsUpdated} item ter-update · ${statusLabel}`,
     );
     setBulkTarget(null);
     setBulkQtys({});
+    setBulkChecked({});
     void refresh();
   }
 
@@ -320,11 +357,13 @@ export function PurchaseRequestsSection() {
             Belanja
           </h1>
           <p className="text-sm text-neutral-700">
-            Permintaan belanja dari kasir/staff. Ikuti alur:
+            Permintaan belanja dari kasir/staff. Alur:
             <strong> Open</strong> → terima sebagian (
             <strong>Sebagian</strong>) → semua diterima (
-            <strong>Selesai</strong>). Klik <strong>Terima Banyak</strong>{" "}
-            untuk update banyak item sekaligus.
+            <strong>Selesai</strong>). Klik{" "}
+            <strong>Terima Beberapa Item</strong> untuk centang banyak item
+            sekaligus — boleh terima lebih dari diminta kalau perlu beli
+            ekstra (acara/ramai).
           </p>
         </div>
       </header>
@@ -450,75 +489,199 @@ export function PurchaseRequestsSection() {
         }
       >
         {receiveTarget ? (
-          <div className="space-y-3">
-            <div>
-              <p className="text-sm text-neutral-600">Bahan</p>
-              <p className="text-base font-medium text-neutral-900">
-                {receiveTarget.item.ingredientNameSnapshot}
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <p className="text-neutral-600">Diminta</p>
-                <p className="font-medium text-neutral-900">
-                  {Number(receiveTarget.item.requestedQty).toLocaleString(
-                    "id-ID",
-                  )}{" "}
-                  {receiveTarget.item.unitSnapshot}
-                </p>
+          (() => {
+            const requested = Number(receiveTarget.item.requestedQty);
+            const prevReceived = Number(receiveTarget.item.receivedQty);
+            const unit = receiveTarget.item.unitSnapshot;
+            const parsedQty = parseInt(receiveQty || "0", 10);
+            const validQty = Number.isFinite(parsedQty) ? parsedQty : 0;
+            const overQty = Math.max(0, validQty - requested);
+            const sisa = Math.max(0, requested - prevReceived);
+            return (
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm text-neutral-600">Bahan</p>
+                  <p className="text-base font-medium text-neutral-900">
+                    {receiveTarget.item.ingredientNameSnapshot}
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-3 text-sm">
+                  <div>
+                    <p className="text-neutral-600">Diminta</p>
+                    <p className="font-medium text-neutral-900 font-mono">
+                      {requested.toLocaleString("id-ID")} {unit}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-neutral-600">Sudah diterima</p>
+                    <p className="font-medium text-neutral-900 font-mono">
+                      {prevReceived.toLocaleString("id-ID")} {unit}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-neutral-600">Sisa</p>
+                    <p
+                      className={cn(
+                        "font-medium font-mono",
+                        sisa > 0 ? "text-warning-700" : "text-mahakan-green-700",
+                      )}
+                    >
+                      {sisa.toLocaleString("id-ID")} {unit}
+                    </p>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700 mb-1">
+                    Total qty diterima ({unit})
+                  </label>
+                  <NumericInput
+                    value={receiveQty}
+                    onChange={setReceiveQty}
+                    allowDecimal={false}
+                  />
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <p className="text-xs text-neutral-600">
+                      Isi total kumulatif (bukan tambahan). Lebih dari diminta
+                      boleh — misal acara atau lagi rame.
+                    </p>
+                    {overQty > 0 ? (
+                      <Badge variant="success">
+                        +{overQty.toLocaleString("id-ID")} {unit} ekstra
+                      </Badge>
+                    ) : validQty > 0 && validQty === requested ? (
+                      <Badge variant="success">Penuh</Badge>
+                    ) : validQty > 0 && validQty < requested ? (
+                      <Badge variant="warning">
+                        Kurang {(requested - validQty).toLocaleString("id-ID")}{" "}
+                        {unit}
+                      </Badge>
+                    ) : null}
+                  </div>
+                </div>
               </div>
-              <div>
-                <p className="text-neutral-600">Sebelumnya</p>
-                <p className="font-medium text-neutral-900">
-                  {Number(receiveTarget.item.receivedQty).toLocaleString(
-                    "id-ID",
-                  )}{" "}
-                  {receiveTarget.item.unitSnapshot}
-                </p>
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-neutral-700 mb-1">
-                Total qty diterima ({receiveTarget.item.unitSnapshot})
-              </label>
-              <NumericInput
-                value={receiveQty}
-                onChange={setReceiveQty}
-                allowDecimal={false}
-              />
-              <p className="mt-1 text-xs text-neutral-600">
-                Isi total qty kumulatif (bukan tambahan). Maks{" "}
-                {Number(receiveTarget.item.requestedQty).toLocaleString(
-                  "id-ID",
-                )}
-                .
-              </p>
-            </div>
-          </div>
+            );
+          })()
         ) : null}
       </Modal>
 
-      {/* Sesi AE-18 — Bulk Receive Modal */}
+      {/* Sesi AE-18 (revamped AE-62s) — Bulk Receive Modal dengan checkbox-include.
+       * Tim purchasing minta: "ngga harus satu-satu di terima nya cuma dikecualikan
+       * satu aja". Default centang = item dengan sisa > 0; user uncheck row yang
+       * masih PO supplier lain (mis. minyak ayam). Yang unchecked di-skip dari
+       * bulk submit. Plus allow over-receive (badge "+N ekstra" di kolom Total). */}
       <Modal
         open={!!bulkTarget}
         onClose={() => setBulkTarget(null)}
-        title="Terima Banyak Item Sekaligus"
+        title="Terima Beberapa Item Sekaligus"
         description={
           bulkTarget
-            ? `${bulkTarget.items.length} item dari ${formatRequestLabel(bulkTarget)}`
+            ? `${bulkTarget.items.length} item dari ${formatRequestLabel(bulkTarget)} — centang yang mau diterima, uncheck untuk skip.`
             : undefined
         }
         size="2xl"
         footer={
-          <div className="flex w-full items-center justify-between gap-2">
-            <div className="flex gap-2">
+          bulkTarget
+            ? (() => {
+                const checkedCount = bulkTarget.items.filter(
+                  (it) => bulkChecked[it.id],
+                ).length;
+                let overTotal = 0;
+                let overCount = 0;
+                for (const it of bulkTarget.items) {
+                  if (!bulkChecked[it.id]) continue;
+                  const n = parseFloat(
+                    (bulkQtys[it.id] ?? "0").replace(",", "."),
+                  );
+                  if (Number.isFinite(n)) {
+                    const over = n - Number(it.requestedQty);
+                    if (over > 0) {
+                      overTotal += over;
+                      overCount += 1;
+                    }
+                  }
+                }
+                return (
+                  <div className="flex w-full flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs text-neutral-600">
+                      <span className="font-medium text-neutral-900">
+                        {checkedCount} dari {bulkTarget.items.length} item
+                      </span>{" "}
+                      dipilih
+                      {overTotal > 0 ? (
+                        <>
+                          {" · "}
+                          <span className="font-medium text-mahakan-green-700">
+                            +{overTotal.toLocaleString("id-ID")} ekstra di{" "}
+                            {overCount} item
+                          </span>
+                        </>
+                      ) : null}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => setBulkTarget(null)}
+                        disabled={bulkSubmitting}
+                      >
+                        Batal
+                      </Button>
+                      <Button
+                        onClick={submitBulk}
+                        disabled={bulkSubmitting || checkedCount === 0}
+                      >
+                        {bulkSubmitting
+                          ? "Menyimpan…"
+                          : `Terima ${checkedCount} Item`}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })()
+            : null
+        }
+      >
+        {bulkTarget ? (
+          <div className="space-y-3">
+            <div className="rounded-md border border-info-100 bg-info-50/40 px-3 py-2 text-[11px] text-info-700">
+              Centang item yang mau diterima. Uncheck untuk skip (mis. masih
+              tunggu supplier lain). Boleh terima <strong>lebih dari diminta</strong>{" "}
+              kalau perlu — badge hijau muncul kalau over. Yang unchecked
+              state-nya tidak berubah.
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
               <Button
                 size="sm"
                 variant="outline"
-                onClick={bulkFillAll}
+                onClick={() => bulkSetCheckedForAll(true)}
                 disabled={bulkSubmitting}
               >
-                <CheckCheck className="size-4" /> Penuhi Semua
+                <CheckCheck className="size-4" /> Centang Semua
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={bulkCheckOutstandingOnly}
+                disabled={bulkSubmitting}
+              >
+                Outstanding saja
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => bulkSetCheckedForAll(false)}
+                disabled={bulkSubmitting}
+              >
+                Uncheck semua
+              </Button>
+              <span className="mx-1 h-5 w-px bg-neutral-200" aria-hidden />
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={bulkFillRequestedForChecked}
+                disabled={bulkSubmitting}
+              >
+                Penuhi sisa (yang dicentang)
               </Button>
               <Button
                 size="sm"
@@ -526,35 +689,17 @@ export function PurchaseRequestsSection() {
                 onClick={bulkResetReceived}
                 disabled={bulkSubmitting}
               >
-                Reset
+                Reset ke nilai awal
               </Button>
             </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setBulkTarget(null)}
-                disabled={bulkSubmitting}
-              >
-                Batal
-              </Button>
-              <Button onClick={submitBulk} disabled={bulkSubmitting}>
-                {bulkSubmitting ? "Menyimpan…" : "Simpan Semua"}
-              </Button>
-            </div>
-          </div>
-        }
-      >
-        {bulkTarget ? (
-          <div className="space-y-3">
-            <p className="text-xs text-neutral-600">
-              Edit qty diterima per item. Klik <strong>Penuhi Semua</strong>{" "}
-              untuk auto-fill ke qty yang diminta. Status PR auto-update
-              setelah simpan (Open → Sebagian → Selesai).
-            </p>
+
             <div className="overflow-x-auto rounded-md border border-neutral-200 bg-white">
               <table className="w-full text-sm">
                 <thead className="bg-neutral-50 text-xs text-neutral-600">
                   <tr>
+                    <th className="w-10 px-3 py-2 text-left font-medium">
+                      <span className="sr-only">Pilih</span>
+                    </th>
                     <th className="px-3 py-2 text-left font-medium">Bahan</th>
                     <th className="px-3 py-2 text-right font-medium">Diminta</th>
                     <th className="px-3 py-2 text-right font-medium">
@@ -570,23 +715,66 @@ export function PurchaseRequestsSection() {
                     const requested = Number(it.requestedQty);
                     const previousReceived = Number(it.receivedQty);
                     const sisa = Math.max(0, requested - previousReceived);
+                    const checked = !!bulkChecked[it.id];
+                    const isRejected = it.rejectedAt != null;
                     const currentVal = bulkQtys[it.id] ?? "0";
                     const parsedCurrent = parseFloat(
                       currentVal.replace(",", "."),
                     );
+                    const overQty = Number.isFinite(parsedCurrent)
+                      ? Math.max(0, parsedCurrent - requested)
+                      : 0;
                     const isFulfilled =
                       Number.isFinite(parsedCurrent) &&
                       parsedCurrent >= requested;
                     return (
-                      <tr key={it.id}>
+                      <tr
+                        key={it.id}
+                        className={cn(
+                          "transition-colors",
+                          isRejected
+                            ? "bg-neutral-50/50 opacity-60"
+                            : !checked
+                              ? "bg-neutral-50/40"
+                              : "",
+                        )}
+                      >
+                        <td className="px-3 py-2 align-middle">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={isRejected || bulkSubmitting}
+                            onChange={(e) =>
+                              setBulkChecked((prev) => ({
+                                ...prev,
+                                [it.id]: e.target.checked,
+                              }))
+                            }
+                            aria-label={`Pilih ${it.ingredientNameSnapshot}`}
+                            className="size-4 cursor-pointer accent-mahakan-green-700 disabled:cursor-not-allowed"
+                          />
+                        </td>
                         <td className="px-3 py-2">
-                          <p className="font-medium text-neutral-900">
+                          <p
+                            className={cn(
+                              "font-medium",
+                              checked
+                                ? "text-neutral-900"
+                                : "text-neutral-500",
+                            )}
+                          >
                             {it.ingredientNameSnapshot}
                           </p>
-                          <p className="text-[11px] text-neutral-500">
-                            {it.unitSnapshot}
-                            {sisa > 0 ? ` · sisa ${sisa}` : " · sudah penuh"}
-                            {it.notes ? ` · ${it.notes}` : ""}
+                          <p className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-neutral-500">
+                            <span>{it.unitSnapshot}</span>
+                            {isRejected ? (
+                              <Badge variant="danger">Ditolak</Badge>
+                            ) : sisa > 0 ? (
+                              <span>· sisa {sisa.toLocaleString("id-ID")}</span>
+                            ) : (
+                              <Badge variant="success">Penuh</Badge>
+                            )}
+                            {it.notes ? <span>· {it.notes}</span> : null}
                           </p>
                         </td>
                         <td className="px-3 py-2 text-right font-mono">
@@ -596,26 +784,39 @@ export function PurchaseRequestsSection() {
                           {previousReceived.toLocaleString("id-ID")}
                         </td>
                         <td className="px-3 py-2 text-right">
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={currentVal}
-                            onChange={(e) =>
-                              setBulkQtys((prev) => ({
-                                ...prev,
-                                [it.id]: e.target.value,
-                              }))
-                            }
-                            className={cn(
-                              "h-9 w-24 rounded-md border bg-white px-2 text-right font-mono text-sm tabular-nums",
-                              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700/40 focus-visible:border-mahakan-green-700",
-                              isFulfilled
-                                ? "border-mahakan-green-700 text-mahakan-green-900"
-                                : parsedCurrent > 0
-                                  ? "border-warning-500 text-warning-700"
-                                  : "border-neutral-300 text-neutral-900",
-                            )}
-                          />
+                          <div className="flex items-center justify-end gap-2">
+                            {overQty > 0 ? (
+                              <Badge variant="success">
+                                +{overQty.toLocaleString("id-ID")}
+                              </Badge>
+                            ) : null}
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={currentVal}
+                              disabled={!checked || isRejected || bulkSubmitting}
+                              onChange={(e) =>
+                                setBulkQtys((prev) => ({
+                                  ...prev,
+                                  [it.id]: e.target.value,
+                                }))
+                              }
+                              className={cn(
+                                "h-9 w-24 rounded-md border bg-white px-2 text-right font-mono text-sm tabular-nums",
+                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700/40 focus-visible:border-mahakan-green-700",
+                                "disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-neutral-400",
+                                !checked
+                                  ? "border-neutral-200"
+                                  : overQty > 0
+                                    ? "border-mahakan-green-700 text-mahakan-green-900 bg-mahakan-green-50/40"
+                                    : isFulfilled
+                                      ? "border-mahakan-green-700 text-mahakan-green-900"
+                                      : parsedCurrent > 0
+                                        ? "border-warning-500 text-warning-700"
+                                        : "border-neutral-300 text-neutral-900",
+                              )}
+                            />
+                          </div>
                         </td>
                       </tr>
                     );

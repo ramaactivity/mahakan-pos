@@ -431,7 +431,15 @@ export async function listPurchaseRequests(
  */
 export async function receiveItem(
   input: ReceiveItemInput,
-): Promise<ApiResult<{ requestId: string; newStatus: PurchaseRequestStatus }>> {
+): Promise<
+  ApiResult<{
+    requestId: string;
+    newStatus: PurchaseRequestStatus;
+    /** Sesi AE-62s — qty diterima yang melebihi qty diminta (0 kalau ≤ diminta).
+     * Surface ke UI buat badge "+N ekstra" + audit. */
+    overReceivedQty: number;
+  }>
+> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "purchase_request.receive")) {
     return fail("FORBIDDEN", "Tidak punya hak terima barang");
@@ -587,6 +595,16 @@ export async function bulkReceiveItems(input: {
     requestId: string;
     newStatus: PurchaseRequestStatus;
     itemsUpdated: number;
+    /** Sesi AE-62s — total qty melebihi yang diminta (sum max(0,received-requested) per item). */
+    overReceivedTotal: number;
+    /** Detail per item yang over-receive — surface ke toast/audit. */
+    overReceivedItems: Array<{
+      itemId: string;
+      itemName: string;
+      requestedQty: number;
+      receivedQty: number;
+      overQty: number;
+    }>;
   }>
 > {
   const session = await requireSession();

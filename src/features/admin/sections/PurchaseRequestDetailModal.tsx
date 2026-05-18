@@ -214,7 +214,7 @@ export function PurchaseRequestDetailModal({
               size="sm"
               onClick={() => onBulkReceive(request)}
             >
-              <CheckCheck className="size-4" /> Terima Banyak
+              <CheckCheck className="size-4" /> Terima Beberapa
             </Button>
             {outstandingItemCount > 0 ? (
               <Button size="sm" onClick={() => onPullToPurchase(request)}>
