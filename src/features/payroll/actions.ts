@@ -24,6 +24,7 @@ import {
 } from "./schemas";
 import {
   computeBaseSalary,
+  computeDoubleShiftBonus,
   computeThrSuggestion,
   countLinesWithManualEdits,
   recomputeGrossNetV2,
@@ -299,6 +300,36 @@ export async function computePayrollLines(
   const latePerMinute = outletRow?.settings?.payroll?.latePerMinute ?? 0;
   const overtimePerMinute =
     outletRow?.settings?.payroll?.overtimePerMinute ?? 0;
+  /* Sesi AE-62ac — double-shift bonus config. Null = feature off. */
+  const doubleShiftConfig =
+    outletRow?.settings?.payroll?.doubleShift ?? null;
+
+  /* Sesi AE-62ac — also fetch per-day workMinutes per employee untuk
+   * deteksi double-shift days. Tidak bisa derive dari totalWorkMinutes
+   * agregat (need per-day breakdown). */
+  const perDayAttendance = doubleShiftConfig
+    ? await db
+        .select({
+          employeeId: attendanceRecords.employeeId,
+          shiftDate: attendanceRecords.shiftDate,
+          workMinutes: sql<number>`COALESCE(SUM(${attendanceRecords.workMinutes}), 0)::int`,
+        })
+        .from(attendanceRecords)
+        .where(
+          and(
+            eq(attendanceRecords.outletId, session.user.outletId),
+            gte(attendanceRecords.shiftDate, period.periodStart),
+            lte(attendanceRecords.shiftDate, period.periodEnd),
+          ),
+        )
+        .groupBy(attendanceRecords.employeeId, attendanceRecords.shiftDate)
+    : [];
+  const workMinutesByEmployee = new Map<string, number[]>();
+  for (const r of perDayAttendance) {
+    const arr = workMinutesByEmployee.get(r.employeeId) ?? [];
+    arr.push(r.workMinutes);
+    workMinutesByEmployee.set(r.employeeId, arr);
+  }
 
   // All active employees (generate lines even untuk yang tidak attendance).
   const allEmployees = await db
@@ -378,10 +409,27 @@ export async function computePayrollLines(
       const advanceDeduction = advanceSumByEmployee.get(emp.id) ?? 0;
       totalAdvancesLinked += advanceDeduction;
 
+      /* Sesi AE-62ac — auto-fill double-shift bonus. Pre-fix payroll
+       * compute hardcode bonus=0 (owner manual entry). Sekarang kalau
+       * outlet config doubleShift exists, helper compute bonus
+       * berdasarkan attendance per-day workMinutes ≥ minMinutes.
+       * Owner masih bisa override per line via updatePayrollLine
+       * (manual edit). */
+      const baseDailyForMultiplier =
+        (emp.paymentType as PaymentType | null) === "daily"
+          ? (emp.dailyRate ?? 0)
+          : Math.round((emp.salaryAmount ?? 0) / 30);
+      const dsResult = computeDoubleShiftBonus({
+        workMinutesPerDay: workMinutesByEmployee.get(emp.id) ?? [],
+        config: doubleShiftConfig,
+        baseDailyAmount: baseDailyForMultiplier,
+      });
+      const doubleShiftBonus = dsResult.totalBonus;
+
       const { grossPay, netPay } = recomputeGrossNetV2({
         baseSalary: baseRes.baseSalary,
         overtimePay,
-        bonus: 0,
+        bonus: doubleShiftBonus,
         thr: 0,
         lateDeduction,
         advanceDeduction,
@@ -397,7 +445,7 @@ export async function computePayrollLines(
         totalOvertimeMinutes,
         overtimePay,
         lateDeduction,
-        bonus: 0,
+        bonus: doubleShiftBonus,
         thr: 0,
         advanceDeduction,
         otherDeductions: 0,

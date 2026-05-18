@@ -148,3 +148,99 @@ export function countLinesWithManualEdits(
 ): number {
   return lines.filter(hasManualEdits).length;
 }
+
+/* ---------------- Double-shift bonus (sesi AE-62ac) ---------------- */
+
+export interface DoubleShiftBonusConfig {
+  /** Threshold workMinutes/day untuk dianggap double-shift. Default 600 (10 jam). */
+  minMinutes: number;
+  /** "fixed" = rupiah flat per double day. "multiplier" = decimal × baseDailyAmount. */
+  bonusType: "fixed" | "multiplier";
+  /** Fixed: rupiah (mis. 100_000). Multiplier: decimal (mis. 1.5 = 50% extra di atas base). */
+  bonusValue: number;
+}
+
+export interface DoubleShiftBonusInput {
+  /** Workminutes aggregated per shift day dari attendance records. */
+  workMinutesPerDay: number[];
+  config: DoubleShiftBonusConfig | null | undefined;
+  /** Base amount per hari (untuk multiplier mode):
+   *   - daily payment: dailyRate
+   *   - monthly: salaryAmount / 30
+   * Tidak relevan untuk fixed mode. */
+  baseDailyAmount: number;
+}
+
+export interface DoubleShiftBonusResult {
+  totalBonus: number;
+  daysFlagged: number;
+  /** Diagnostic untuk audit / UI preview. */
+  perDayBonus: number[];
+}
+
+/**
+ * Sesi AE-62ac — compute total bonus untuk double-shift days.
+ *
+ * Per owner directive (Mahakan): weekend full-shift 08:00-23:00 ATAU
+ * weekday holiday open-pagi 09:00-23:00 = double-shift. Karyawan
+ * (fixed atau daily) dapat tambahan flat bonus / multiplier.
+ *
+ * Implementasi:
+ *   - Loop workMinutesPerDay
+ *   - Day dengan workMinutes >= minMinutes → flag double
+ *   - Per flagged day, add bonus:
+ *     - "fixed": bonusValue (rupiah)
+ *     - "multiplier": baseDailyAmount × (bonusValue - 1)
+ *       (bonusValue=1.5 → 50% extra atas base; bonusValue=2 → 100% extra)
+ *   - Return totalBonus + daysFlagged + per-day breakdown
+ *
+ * config null/undefined → totalBonus=0 (feature off).
+ */
+export function computeDoubleShiftBonus(
+  input: DoubleShiftBonusInput,
+): DoubleShiftBonusResult {
+  if (!input.config) {
+    return {
+      totalBonus: 0,
+      daysFlagged: 0,
+      perDayBonus: input.workMinutesPerDay.map(() => 0),
+    };
+  }
+  const { minMinutes, bonusType, bonusValue } = input.config;
+  if (!Number.isFinite(minMinutes) || minMinutes <= 0) {
+    return {
+      totalBonus: 0,
+      daysFlagged: 0,
+      perDayBonus: input.workMinutesPerDay.map(() => 0),
+    };
+  }
+  if (!Number.isFinite(bonusValue) || bonusValue <= 0) {
+    return {
+      totalBonus: 0,
+      daysFlagged: 0,
+      perDayBonus: input.workMinutesPerDay.map(() => 0),
+    };
+  }
+
+  const perDayBonus: number[] = [];
+  let totalBonus = 0;
+  let daysFlagged = 0;
+  for (const workMin of input.workMinutesPerDay) {
+    if (!Number.isFinite(workMin) || workMin < minMinutes) {
+      perDayBonus.push(0);
+      continue;
+    }
+    daysFlagged += 1;
+    let dayBonus = 0;
+    if (bonusType === "fixed") {
+      dayBonus = Math.round(bonusValue);
+    } else {
+      // multiplier mode — extra ATAS base, jadi (multiplier - 1) × base
+      const extraMultiplier = Math.max(0, bonusValue - 1);
+      dayBonus = Math.round(input.baseDailyAmount * extraMultiplier);
+    }
+    totalBonus += dayBonus;
+    perDayBonus.push(dayBonus);
+  }
+  return { totalBonus, daysFlagged, perDayBonus };
+}

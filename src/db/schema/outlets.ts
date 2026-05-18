@@ -101,6 +101,31 @@ export type OutletSettings = {
      * Raya). Default 1.0 = 1× baseSalary (UU Indonesia). Owner edit di
      * settings kalau pakai konvensi lain. */
     thrMonthlyBaseMultiplier?: number;
+    /** Sesi AE-62ac — bonus tambahan untuk karyawan yang kerja
+     * double-shift / full-shift (mis. pagi+sore = 8:00-23:00 untuk weekend
+     * Mahakan, atau hari raya). Berlaku untuk fixed + daily salary
+     * employees (per owner directive: keduanya dapat tambahan).
+     *
+     * Detection: attendance.workMinutes >= doubleShiftMinMinutes per hari
+     * → flag sebagai double, owner-config bonus diterapkan.
+     *
+     * Default kalau undefined: feature off (tidak ada bonus). */
+    doubleShift?: {
+      /** Minimum workMinutes per hari untuk dianggap double-shift.
+       * Default 600 (= 10 jam). Weekend Mahakan full-shift 8:00-23:00 =
+       * 15 jam → easily passes. Normal weekday shift 14:00-22:00 = 8 jam
+       * → tidak pass. */
+      minMinutes: number;
+      /** Tipe bonus:
+       *   - "fixed": tambahan flat amount per hari double (mis. Rp 100k).
+       *   - "multiplier": basePerDay × multiplier (mis. 1.5× = 50% extra).
+       *     Untuk fixed salary employees, baseDailyAmount = monthlySalary
+       *     / 30 (atau scheduled days kalau owner config).
+       */
+      bonusType: "fixed" | "multiplier";
+      /** Untuk fixed: rupiah. Untuk multiplier: decimal (1.5 = 1.5×). */
+      bonusValue: number;
+    };
   };
   /** Sesi AE-55 — Revenue targets untuk indikator progress di Laporan.
    * Semua nilai dalam Rupiah, optional. Null/undefined = belum ada target. */
