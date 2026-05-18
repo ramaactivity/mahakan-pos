@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
   EmptyCard,
+  Select,
   Skeleton,
 } from "@/components/ui";
 import {
@@ -81,24 +82,23 @@ export function CapitalChangesReportView() {
               holder. Periode {periodStart} sampai {periodEnd}.
             </p>
           </div>
-          <div className="flex gap-2">
-            <select
-              value={year}
-              onChange={(e) => setYear(Number(e.target.value))}
-              className="rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"
-            >
-              {[defaultYear - 2, defaultYear - 1, defaultYear].map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
+          <div className="flex items-end gap-2">
+            <div className="min-w-[120px]">
+              <Select
+                label="Tahun"
+                value={String(year)}
+                onValueChange={(v) => setYear(Number(v ?? year))}
+                options={[defaultYear - 2, defaultYear - 1, defaultYear].map(
+                  (y) => ({ value: String(y), label: String(y) }),
+                )}
+              />
+            </div>
             <Button
               variant="outline"
               onClick={downloadCsv}
               disabled={!report}
             >
-              <Download className="mr-1.5 size-4" /> CSV
+              <Download className="mr-1.5 size-4" /> Export CSV
             </Button>
           </div>
         </CardHeader>

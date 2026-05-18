@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, FileText, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileText, Upload } from "lucide-react";
 import { Button, Modal, toast } from "@/components/ui";
 import {
   bulkImportInvestors,
@@ -245,6 +245,66 @@ export function InvestorImportWizard({
     onClose();
   }
 
+  /* Sesi AE-63 polish — Template CSV downloadable.
+   * Header sama dengan parser auto-detect supaya import langsung berhasil
+   * tanpa edit kolom. Include 2 row example (Mahakan-style). */
+  function handleDownloadTemplate() {
+    const header = [
+      "Nama Lengkap",
+      "Tanggal Lahir",
+      "Alamat Lengkap",
+      "Besaran Investasi",
+      "Bank",
+      "No Rekening",
+      "Atas Nama",
+      "Nomor Telefon",
+      "Akun Instagram",
+      "Email",
+      "pekerjaan",
+    ];
+    const sample = [
+      [
+        "Aan Najmutsaqib",
+        "1996-07-01",
+        '"Dsn mojounggul bareng jombang"',
+        "300000",
+        "BRI",
+        "624101014994534",
+        "Najmutsaqib",
+        "+6285815194914",
+        "@an_najmast_tsaqib",
+        "thomasahmad01@gmail.com",
+        "Pelajar / Mahasiswa",
+      ],
+      [
+        "Aina Noor Ade Faradilla",
+        "1999-06-02",
+        '"Komplek Kembang Larangan Jl. Manggar IV Blok B5 No.11, Tangerang"',
+        "500000",
+        "Mandiri",
+        "1640002282293",
+        "Aina Noor Ade Faradilla",
+        "+6287887302993",
+        "@naainaanoo",
+        "ainafaradilla@gmail.com",
+        "Pelajar / Mahasiswa",
+      ],
+    ];
+    const csv = [header.join(","), ...sample.map((r) => r.join(","))].join(
+      "\n",
+    );
+    const blob = new Blob(["﻿" + csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "template-import-investor-mahakan.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Template CSV ter-download — isi data lalu upload");
+  }
+
   const totalModal = parsed.parsedRows.reduce(
     (s, r) => s + r.modalDisetor,
     0,
@@ -280,15 +340,40 @@ export function InvestorImportWizard({
     >
       {step === "upload" ? (
         <div className="space-y-4">
-          <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-6 text-center">
+          {/* Template download — Mahakan owner's first ask di sesi ini. */}
+          <div className="rounded-lg border border-mahakan-green-700/30 bg-gradient-to-br from-mahakan-green-50 to-white p-4">
+            <div className="flex items-start gap-3">
+              <div className="rounded-full bg-mahakan-green-100 p-2">
+                <FileText className="size-4 text-mahakan-green-700" />
+              </div>
+              <div className="flex-1">
+                <h4 className="text-sm font-semibold text-mahakan-green-900">
+                  Belum punya CSV?
+                </h4>
+                <p className="mt-0.5 text-xs text-neutral-700">
+                  Download template Excel/CSV dengan kolom dan format yang
+                  sudah benar. Tinggal isi data lalu upload kembali.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDownloadTemplate}
+              >
+                <Download className="mr-1.5 size-4" /> Template
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 p-6 text-center">
             <Upload className="mx-auto size-8 text-neutral-400" />
-            <p className="mt-2 text-sm text-neutral-700">
-              Pilih file CSV dari export Sheets
+            <p className="mt-2 text-sm font-medium text-neutral-700">
+              Pilih file CSV (max 500 baris)
             </p>
             <p className="mt-1 text-xs text-neutral-500">
-              Header expected: Nama Lengkap, Tanggal Lahir, Alamat,
-              Besaran Investasi, Bank, No Rekening, Atas Nama, Nomor
-              Telefon, Akun Instagram, Email, pekerjaan
+              Auto-detect kolom: Nama Lengkap, Tanggal Lahir, Alamat,
+              Besaran Investasi, Bank, No Rekening, Atas Nama, Telefon,
+              Instagram, Email, Pekerjaan
             </p>
             <input
               type="file"
@@ -297,12 +382,21 @@ export function InvestorImportWizard({
                 const file = e.target.files?.[0];
                 if (file) handleFile(file);
               }}
-              className="mt-3 block w-full cursor-pointer rounded border border-neutral-300 bg-white p-2 text-sm"
+              className="mt-3 block w-full cursor-pointer rounded-md border border-neutral-300 bg-white p-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-mahakan-green-100 file:px-3 file:py-1 file:text-mahakan-green-900 hover:bg-neutral-100"
             />
           </div>
-          <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-900">
-            💡 Duplikat akan otomatis di-skip berdasar NIK atau nama (case-insensitive).
-            Max 500 baris per import.
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+              <p className="mb-1 font-semibold">💡 Anti-duplikat</p>
+              <p>Auto-skip baris dengan NIK / nama yang sudah ada
+                (case-insensitive).</p>
+            </div>
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <p className="mb-1 font-semibold">⚠️ Format tanggal</p>
+              <p>Pakai YYYY-MM-DD (mis. 1999-06-02) atau text bulan
+                ("02 June 1999").</p>
+            </div>
           </div>
         </div>
       ) : step === "preview" ? (
@@ -445,5 +539,3 @@ function Stat({
   );
 }
 
-/* Avoid unused-var lint */
-void FileText;

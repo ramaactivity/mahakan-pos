@@ -5,11 +5,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Banknote,
   ChevronRight,
+  ListChecks,
   Pencil,
   PlayCircle,
   Plus,
+  Trash2,
+  TrendingUp,
   Upload,
   Users,
+  type LucideIcon,
 } from "lucide-react";
 import {
   Badge,
@@ -200,58 +204,84 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
     { value: "exited", label: "Keluar" },
   ];
 
+  const totalModalActive = totalQuery.data?.total ?? 0;
+  const avgModal =
+    totalQuery.data && totalQuery.data.count > 0
+      ? Math.round(totalQuery.data.total / totalQuery.data.count)
+      : 0;
+  const totalDividendYtd = investors.reduce(
+    (s, i) => s + (i.dividendYtd ?? 0),
+    0,
+  );
+
   return (
     <div className="space-y-4">
-      {/* Summary card */}
-      <Card>
-        <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
-          <div className="flex items-center gap-3">
-            <div className="rounded-full bg-mahakan-green-100 p-3">
-              <Users className="size-5 text-mahakan-green-700" />
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-wide text-neutral-500">
-                Total Investor Aktif
-              </p>
-              <p className="text-xl font-bold text-mahakan-green-900">
-                {totalQuery.data?.count ?? "—"} orang ·{" "}
-                {totalQuery.data
-                  ? formatRupiah(totalQuery.data.total)
-                  : "—"}
-              </p>
-            </div>
-          </div>
-          {canManage ? (
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setImportOpen(true)}
-              >
-                <Upload className="mr-1.5 size-4" /> Import CSV
-              </Button>
-              <Button onClick={() => setCreateOpen(true)}>
-                <Plus className="mr-1.5 size-4" /> Tambah
-              </Button>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      {/* Filter bar */}
-      <div className="flex flex-wrap gap-2">
-        <Input
-          placeholder="Cari nama / NIK / email / telp..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 min-w-[200px]"
+      {/* Summary stats grid */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatTile
+          icon={Users}
+          label="Investor Aktif"
+          value={`${totalQuery.data?.count ?? 0} orang`}
+          sub={formatRupiah(totalModalActive)}
+          tone="primary"
         />
-        <Select
-          value={statusFilter}
-          onValueChange={(v) =>
-            setStatusFilter((v ?? "active") as InvestorStatus | "all")
+        <StatTile
+          icon={Banknote}
+          label="Rata-rata Modal"
+          value={formatRupiah(avgModal)}
+          sub="Per investor"
+        />
+        <StatTile
+          icon={TrendingUp}
+          label="Dividen YTD"
+          value={formatRupiah(totalDividendYtd)}
+          sub="Total dibayar"
+        />
+        <StatTile
+          icon={ListChecks}
+          label="Tampilan Saat Ini"
+          value={`${investors.length} ditampilkan`}
+          sub={
+            statusFilter === "all"
+              ? "Semua status"
+              : statusFilter === "active"
+                ? "Status aktif"
+                : statusFilter === "exited"
+                  ? "Status keluar"
+                  : "Status tidak aktif"
           }
-          options={statusOptions}
         />
+      </div>
+
+      {/* Action bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-white p-3">
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <Input
+            placeholder="🔍 Cari nama / NIK / email / telp..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="flex-1 min-w-[200px]"
+          />
+          <div className="min-w-[160px]">
+            <Select
+              value={statusFilter}
+              onValueChange={(v) =>
+                setStatusFilter((v ?? "active") as InvestorStatus | "all")
+              }
+              options={statusOptions}
+            />
+          </div>
+        </div>
+        {canManage ? (
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload className="mr-1.5 size-4" /> Import CSV
+            </Button>
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="mr-1.5 size-4" /> Tambah
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {/* List */}
@@ -259,43 +289,79 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
         <Skeleton className="h-64 w-full" />
       ) : investors.length === 0 ? (
         <EmptyCard
-          title="Belum ada investor"
-          description="Tambah satu-satu atau import CSV dari Sheets."
+          icon={Users}
+          title={search ? "Tidak ada hasil pencarian" : "Belum ada investor"}
+          description={
+            search
+              ? "Coba kata kunci lain atau ubah filter status."
+              : "Tambah investor satu-satu via tombol di atas, atau download template CSV → isi data → import."
+          }
         />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-neutral-200">
+        <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white shadow-sm">
           <table className="w-full text-sm">
             <thead className="bg-neutral-50 text-left text-neutral-600">
               <tr>
-                <th className="px-3 py-2 font-medium">Nama</th>
-                <th className="px-3 py-2 font-medium">Pekerjaan</th>
-                <th className="px-3 py-2 text-right font-medium">Modal</th>
-                <th className="px-3 py-2 text-right font-medium">
+                <th className="px-3 py-2.5 font-semibold">Nama</th>
+                <th className="px-3 py-2.5 font-semibold">Pekerjaan</th>
+                <th className="px-3 py-2.5 text-right font-semibold">
+                  Modal
+                </th>
+                <th className="px-3 py-2.5 font-semibold">% Share</th>
+                <th className="px-3 py-2.5 text-right font-semibold">
                   Dividen YTD
                 </th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 text-right font-medium">Aksi</th>
+                <th className="px-3 py-2.5 font-semibold">Status</th>
+                <th className="px-3 py-2.5 text-right font-semibold">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
-              {investors.map((inv) => (
-                <tr key={inv.id}>
+              {investors.map((inv) => {
+                const sharePct =
+                  totalModalActive > 0 && inv.status === "active"
+                    ? (inv.modalDisetor / totalModalActive) * 100
+                    : 0;
+                return (
+                <tr key={inv.id} className="transition-colors hover:bg-neutral-50">
                   <td className="px-3 py-2">
                     <p className="font-medium text-neutral-900">
                       {inv.fullName}
                     </p>
-                    {inv.email ? (
-                      <p className="text-xs text-neutral-500">{inv.email}</p>
-                    ) : null}
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-neutral-500">
+                      {inv.nik ? <span>NIK: {inv.nik.slice(0, 4)}…{inv.nik.slice(-3)}</span> : null}
+                      {inv.email ? <span>· {inv.email}</span> : null}
+                      {inv.igHandle ? <span>· {inv.igHandle}</span> : null}
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-neutral-700">
                     {inv.occupation ?? "—"}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums font-medium">
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-neutral-900">
                     {formatRupiah(inv.modalDisetor)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-neutral-700">
-                    {formatRupiah(inv.dividendYtd)}
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <div className="relative h-1.5 w-20 overflow-hidden rounded-full bg-neutral-200">
+                        <div
+                          className="absolute inset-y-0 left-0 bg-mahakan-green-700 transition-all"
+                          style={{
+                            width: `${Math.min(100, sharePct)}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="min-w-[40px] text-right text-[11px] font-medium tabular-nums text-neutral-700">
+                        {sharePct.toFixed(2)}%
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {inv.dividendYtd > 0 ? (
+                      <span className="text-emerald-700">
+                        {formatRupiah(inv.dividendYtd)}
+                      </span>
+                    ) : (
+                      <span className="text-neutral-400">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <StatusBadge status={inv.status} />
@@ -307,6 +373,7 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
                           variant="ghost"
                           size="sm"
                           onClick={() => setEditing(inv)}
+                          title="Edit"
                         >
                           <Pencil className="size-3.5" />
                         </Button>
@@ -314,15 +381,17 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
                           variant="ghost"
                           size="sm"
                           onClick={() => handleDelete(inv)}
-                          className="text-red-600"
+                          className="text-red-600 hover:bg-red-50"
+                          title="Hapus"
                         >
-                          Hapus
+                          <Trash2 className="size-3.5" />
                         </Button>
                       </div>
                     ) : null}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -390,61 +459,70 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
     qc.invalidateQueries({ queryKey: ["pengelola-total"] });
   }
 
+  const totalDividendYtd = pengelolaList.reduce(
+    (s, p) => s + (p.dividendYtd ?? 0),
+    0,
+  );
+
   return (
     <div className="space-y-4">
-      <Card>
-        <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
-          <div className="flex items-center gap-3">
-            <div className="rounded-full bg-amber-100 p-3">
-              <Banknote className="size-5 text-amber-700" />
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-wide text-neutral-500">
-                Total Modal Pengelola Aktif
-              </p>
-              <p className="text-xl font-bold text-amber-900">
-                {totalQuery.data?.count ?? "—"} orang ·{" "}
-                {totalQuery.data
-                  ? formatRupiah(totalQuery.data.total)
-                  : "—"}
-              </p>
-            </div>
-          </div>
+      {/* Summary cards (3-up) */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <StatTile
+          icon={Banknote}
+          label="Modal Pengelola"
+          value={
+            totalQuery.data ? formatRupiah(totalQuery.data.total) : "—"
+          }
+          sub={`${totalQuery.data?.count ?? 0} pengelola aktif`}
+          tone="amber"
+        />
+        <StatTile
+          icon={TrendingUp}
+          label="Dividen YTD (65% Pool)"
+          value={formatRupiah(totalDividendYtd)}
+          sub="Total dibagi ke pengelola"
+        />
+        <div className="flex items-end justify-end">
           {canManage ? (
             <Button onClick={() => setCreateOpen(true)}>
               <Plus className="mr-1.5 size-4" /> Tambah Pengelola
             </Button>
           ) : null}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {pengelolaQuery.isLoading ? (
         <Skeleton className="h-48 w-full" />
       ) : pengelolaList.length === 0 ? (
         <EmptyCard
+          icon={Banknote}
           title="Belum ada pengelola"
-          description="Tambah 5 manager Mahakan: Anisa, Intan, Bayu, Sekal, Ramadan."
+          description="Tambah 5 manager Mahakan: Anisa Amalia, Intan Nabila, Muhamad Bayu Kurnia, Muhaman Sekal Maulidan, Muhamad Ramadan Saputra."
         />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-neutral-200">
+        <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white shadow-sm">
           <table className="w-full text-sm">
             <thead className="bg-neutral-50 text-left text-neutral-600">
               <tr>
-                <th className="px-3 py-2 font-medium">Nama</th>
-                <th className="px-3 py-2 text-right font-medium">Modal</th>
-                <th className="px-3 py-2 text-right font-medium">
-                  Share Pool
+                <th className="px-3 py-2.5 font-semibold">Nama</th>
+                <th className="px-3 py-2.5 text-right font-semibold">
+                  Modal
                 </th>
-                <th className="px-3 py-2 text-right font-medium">
+                <th className="px-3 py-2.5 font-semibold">% Pool Share</th>
+                <th className="px-3 py-2.5 text-right font-semibold">
                   Dividen YTD
                 </th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 text-right font-medium">Aksi</th>
+                <th className="px-3 py-2.5 font-semibold">Status</th>
+                <th className="px-3 py-2.5 text-right font-semibold">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
               {pengelolaList.map((p) => (
-                <tr key={p.id}>
+                <tr
+                  key={p.id}
+                  className="transition-colors hover:bg-neutral-50"
+                >
                   <td className="px-3 py-2">
                     <p className="font-medium text-neutral-900">
                       {p.fullName}
@@ -453,14 +531,32 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
                       <p className="text-xs text-neutral-500">{p.email}</p>
                     ) : null}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums font-medium">
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-neutral-900">
                     {formatRupiah(p.modalDisetor)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-neutral-700">
-                    {p.sharePct.toFixed(2)}%
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <div className="relative h-2 w-28 overflow-hidden rounded-full bg-neutral-200">
+                        <div
+                          className="absolute inset-y-0 left-0 bg-gradient-to-r from-amber-400 to-amber-600 transition-all"
+                          style={{
+                            width: `${Math.min(100, p.sharePct)}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="min-w-[50px] text-right text-xs font-semibold tabular-nums text-amber-900">
+                        {p.sharePct.toFixed(2)}%
+                      </span>
+                    </div>
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-neutral-700">
-                    {formatRupiah(p.dividendYtd)}
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {p.dividendYtd > 0 ? (
+                      <span className="font-medium text-emerald-700">
+                        {formatRupiah(p.dividendYtd)}
+                      </span>
+                    ) : (
+                      <span className="text-neutral-400">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <StatusBadge status={p.status} />
@@ -472,6 +568,7 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
                           variant="ghost"
                           size="sm"
                           onClick={() => setEditing(p)}
+                          title="Edit"
                         >
                           <Pencil className="size-3.5" />
                         </Button>
@@ -479,9 +576,10 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
                           variant="ghost"
                           size="sm"
                           onClick={() => handleDelete(p)}
-                          className="text-red-600"
+                          className="text-red-600 hover:bg-red-50"
+                          title="Hapus"
                         >
-                          Hapus
+                          <Trash2 className="size-3.5" />
                         </Button>
                       </div>
                     ) : null}
@@ -579,81 +677,91 @@ function DistributionTab({
             Hitung Distribusi Bulanan
           </CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-wrap items-end gap-2">
-          <div>
-            <label className="block text-xs text-neutral-600">Tahun</label>
-            <select
-              value={year}
-              onChange={(e) => setYear(Number(e.target.value))}
-              className="rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-[140px]">
+              <Select
+                label="Tahun"
+                value={String(year)}
+                onValueChange={(v) => setYear(Number(v ?? year))}
+                options={[year - 2, year - 1, year, year + 1].map((y) => ({
+                  value: String(y),
+                  label: String(y),
+                }))}
+              />
+            </div>
+            <div className="min-w-[180px]">
+              <Select
+                label="Bulan"
+                value={String(month)}
+                onValueChange={(v) => setMonth(Number(v ?? month))}
+                options={MONTH_LABELS_ID.map((m, i) => ({
+                  value: String(i + 1),
+                  label: m,
+                }))}
+              />
+            </div>
+            <Button
+              onClick={handleCompute}
+              loading={computing}
+              disabled={!canCompute}
             >
-              {[year - 2, year - 1, year, year + 1].map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
+              <PlayCircle className="mr-1.5 size-4" />
+              Hitung Bulan Ini (draft)
+            </Button>
           </div>
-          <div>
-            <label className="block text-xs text-neutral-600">Bulan</label>
-            <select
-              value={month}
-              onChange={(e) => setMonth(Number(e.target.value))}
-              className="rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"
-            >
-              {MONTH_LABELS_ID.map((m, i) => (
-                <option key={i} value={i + 1}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </div>
-          <Button
-            onClick={handleCompute}
-            loading={computing}
-            disabled={!canCompute}
-          >
-            Hitung Bulan Ini (draft)
-          </Button>
-          <p className="text-xs text-neutral-500">
-            Server fetch Net Profit dari Income Statement + compute per
-            holder. Owner verify lalu approve.
+          <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            💡 Server fetch Net Profit dari Income Statement + compute per
+            holder. Owner verify per-baris lalu Approve & Post → jurnal
+            otomatis ter-create + email statement dikirim ke 115 holder.
           </p>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Distribusi Tercatat</CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <div>
+            <CardTitle>Distribusi Tercatat</CardTitle>
+            <p className="mt-1 text-xs text-neutral-600">
+              {distributions.length} distribusi · klik baris untuk detail
+            </p>
+          </div>
+          <Badge variant="neutral">
+            {distributions.filter((d) => d.status === "posted").length}{" "}
+            posted
+          </Badge>
         </CardHeader>
         <CardContent>
           {distributionsQuery.isLoading ? (
             <Skeleton className="h-32 w-full" />
           ) : distributions.length === 0 ? (
             <EmptyCard
+              icon={PlayCircle}
               title="Belum ada distribusi"
-              description="Klik 'Hitung Bulan Ini' untuk mulai."
+              description="Pilih tahun + bulan di atas, klik 'Hitung Bulan Ini' — server hitung otomatis dari Net Profit Income Statement."
             />
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-neutral-200">
+            <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white shadow-sm">
               <table className="w-full text-sm">
                 <thead className="bg-neutral-50 text-left text-neutral-600">
                   <tr>
-                    <th className="px-3 py-2 font-medium">Periode</th>
-                    <th className="px-3 py-2 text-right font-medium">
+                    <th className="px-3 py-2.5 font-semibold">Periode</th>
+                    <th className="px-3 py-2.5 text-right font-semibold">
                       Net Profit
                     </th>
-                    <th className="px-3 py-2 text-right font-medium">
+                    <th className="px-3 py-2.5 text-right font-semibold">
                       Bagi Hasil
                     </th>
-                    <th className="px-3 py-2 text-right font-medium">
-                      Investor
+                    <th className="px-3 py-2.5 text-right font-semibold">
+                      Pool Investor
                     </th>
-                    <th className="px-3 py-2 text-right font-medium">
-                      Pengelola
+                    <th className="px-3 py-2.5 text-right font-semibold">
+                      Pool Pengelola
                     </th>
-                    <th className="px-3 py-2 font-medium">Status</th>
-                    <th className="px-3 py-2 text-right font-medium">Aksi</th>
+                    <th className="px-3 py-2.5 font-semibold">Status</th>
+                    <th className="px-3 py-2.5 text-right font-semibold">
+                      Aksi
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
@@ -689,24 +797,33 @@ function DistributionRow({
   dist: ProfitDistribution;
   onView: () => void;
 }) {
+  const statusLabel: Record<typeof dist.status, string> = {
+    draft: "Draft",
+    approved: "Approved",
+    posted: "Posted ✓",
+    cancelled: "Cancelled",
+  };
   return (
-    <tr>
-      <td className="px-3 py-2 font-medium">
+    <tr
+      onClick={onView}
+      className="cursor-pointer transition-colors hover:bg-neutral-50"
+    >
+      <td className="px-3 py-2.5 font-medium text-neutral-900">
         {MONTH_LABELS_ID[dist.periodMonth - 1]} {dist.periodYear}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums">
+      <td className="px-3 py-2.5 text-right tabular-nums font-medium">
         {formatRupiah(dist.netProfitSnapshot)}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums">
+      <td className="px-3 py-2.5 text-right tabular-nums text-mahakan-green-900 font-semibold">
         {formatRupiah(dist.bagiHasilAmount)}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums">
+      <td className="px-3 py-2.5 text-right tabular-nums text-blue-700">
         {formatRupiah(dist.investorPoolAmount)}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums">
+      <td className="px-3 py-2.5 text-right tabular-nums text-amber-700">
         {formatRupiah(dist.pengelolaPoolAmount)}
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 py-2.5">
         <Badge
           variant={
             dist.status === "posted"
@@ -718,11 +835,18 @@ function DistributionRow({
                   : "info"
           }
         >
-          {dist.status}
+          {statusLabel[dist.status] ?? dist.status}
         </Badge>
       </td>
-      <td className="px-3 py-2 text-right">
-        <Button variant="ghost" size="sm" onClick={onView}>
+      <td className="px-3 py-2.5 text-right">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={(e) => {
+            e.stopPropagation();
+            onView();
+          }}
+        >
           Detail <ChevronRight className="ml-1 size-3.5" />
         </Button>
       </td>
@@ -743,5 +867,50 @@ function StatusBadge({ status }: { status: string }) {
     return <Badge variant="success">Aktif</Badge>;
   if (status === "exited") return <Badge variant="danger">Keluar</Badge>;
   return <Badge variant="neutral">Tidak aktif</Badge>;
+}
+
+function StatTile({
+  icon: Icon,
+  label,
+  value,
+  sub,
+  tone = "neutral",
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  sub: string;
+  tone?: "neutral" | "primary" | "amber";
+}) {
+  const cls =
+    tone === "primary"
+      ? "border-mahakan-green-700/30 bg-gradient-to-br from-mahakan-green-50 to-white"
+      : tone === "amber"
+        ? "border-amber-300/40 bg-gradient-to-br from-amber-50 to-white"
+        : "border-neutral-200 bg-white";
+  const iconCls =
+    tone === "primary"
+      ? "bg-mahakan-green-100 text-mahakan-green-700"
+      : tone === "amber"
+        ? "bg-amber-100 text-amber-700"
+        : "bg-neutral-100 text-neutral-700";
+  return (
+    <div className={`rounded-lg border p-3 ${cls}`}>
+      <div className="flex items-start gap-2">
+        <div className={`shrink-0 rounded-md p-2 ${iconCls}`}>
+          <Icon className="size-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-600">
+            {label}
+          </p>
+          <p className="truncate text-base font-bold tabular-nums text-neutral-900 lg:text-lg">
+            {value}
+          </p>
+          <p className="text-[11px] text-neutral-500">{sub}</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
