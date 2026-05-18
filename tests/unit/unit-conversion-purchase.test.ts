@@ -190,4 +190,71 @@ describe("convertPurchaseQty", () => {
       expect(masterCost).toBe(50);
     }
   });
+
+  /* Sesi AE-62af — ingredient-scoped pack conversions */
+  describe("ingredientPacks fallback", () => {
+    it("Lychee Kaleng: 1 packs = 20 pcs (master pcs)", () => {
+      const res = convertPurchaseQty({
+        qty: 2,
+        fromUnit: "packs",
+        masterUnit: "pcs",
+        pack: null,
+        ingredientPacks: [{ unitLabel: "packs", qtyPerBase: 20 }],
+      });
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.qtyMaster).toBe(40);
+        expect(res.mode).toBe("via-pack");
+      }
+    });
+
+    it("case-insensitive label match", () => {
+      const res = convertPurchaseQty({
+        qty: 1,
+        fromUnit: "PACKS",
+        masterUnit: "pcs",
+        pack: null,
+        ingredientPacks: [{ unitLabel: "packs", qtyPerBase: 20 }],
+      });
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.qtyMaster).toBe(20);
+    });
+
+    it("ingredientPacks prioritas atas supplier pack (lebih spesifik per-bahan)", () => {
+      const res = convertPurchaseQty({
+        qty: 1,
+        fromUnit: "packs",
+        masterUnit: "pcs",
+        // supplier kasih 10/pack, ingredient kasih 20/packs — ingredient menang
+        pack: { packSize: 10, packUnit: "pcs" },
+        ingredientPacks: [{ unitLabel: "packs", qtyPerBase: 20 }],
+      });
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.qtyMaster).toBe(20);
+    });
+
+    it("fallback ke supplier pack kalau ingredientPacks tidak match label", () => {
+      const res = convertPurchaseQty({
+        qty: 1,
+        fromUnit: "Pack",
+        masterUnit: "gr",
+        pack: { packSize: 1000, packUnit: "gr" },
+        ingredientPacks: [{ unitLabel: "dus", qtyPerBase: 24 }],
+      });
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.qtyMaster).toBe(1000);
+    });
+
+    it("PACK_UNKNOWN kalau tidak ada match di mana-mana", () => {
+      const res = convertPurchaseQty({
+        qty: 1,
+        fromUnit: "packs",
+        masterUnit: "pcs",
+        pack: null,
+        ingredientPacks: [{ unitLabel: "dus", qtyPerBase: 24 }],
+      });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error).toBe("PACK_UNKNOWN");
+    });
+  });
 });

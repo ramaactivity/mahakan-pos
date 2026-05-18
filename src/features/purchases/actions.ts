@@ -241,6 +241,12 @@ export async function createPurchase(
           fromUnit: item.unit ?? ing.unit,
           masterUnit: ing.unit,
           pack: packMap.get(item.ingredientId) ?? null,
+          /* Sesi AE-62af — server juga honor ingredient-scoped packs supaya
+           * client convert valid lewat di server re-validate path. */
+          ingredientPacks:
+            (ing.packConversions as
+              | Array<{ unitLabel: string; qtyPerBase: number }>
+              | null) ?? null,
         });
         if (!res.ok) {
           throw new Error(`UNIT_ERROR:${ing.name}:${res.message}`);

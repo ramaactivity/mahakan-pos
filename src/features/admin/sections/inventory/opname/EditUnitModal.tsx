@@ -102,6 +102,15 @@ export function EditUnitModal({
         setError("Label pack maksimal 20 karakter");
         return;
       }
+      /* Sesi AE-62af — guard: label tidak boleh pure-numeric. Staff yg salah
+       * ngerti pernah isi "1" di field label (mengira itu jumlah pack).
+       * Label harus nama satuan: packs / dus / karton / dst. */
+      if (/^[\d.,\s]+$/.test(label)) {
+        setError(
+          `Label "${label}" cuma angka. Isi nama satuannya (mis. packs, dus, karton), bukan jumlahnya.`,
+        );
+        return;
+      }
       if (label.toLowerCase() === trimmedUnit.toLowerCase()) {
         setError(
           `Label "${label}" sama dengan unit dasar — hapus atau ganti label.`,
@@ -276,48 +285,94 @@ export function EditUnitModal({
             </div>
           ) : (
             <div className="space-y-2">
-              {packs.map((p, idx) => (
-                <div
-                  key={idx}
-                  className="grid grid-cols-[1fr_auto_1fr_auto_auto] items-center gap-2 rounded-md border border-neutral-200 bg-white p-2"
-                >
-                  <Input
-                    value={p.unitLabel}
-                    onChange={(e) =>
-                      updatePack(idx, { unitLabel: e.target.value })
-                    }
-                    maxLength={20}
-                    placeholder="packs"
-                    aria-label={`Label pack baris ${idx + 1}`}
-                    className="text-sm"
-                  />
-                  <span className="text-xs text-neutral-500">=</span>
-                  <Input
-                    value={p.qtyPerBaseStr}
-                    onChange={(e) =>
-                      updatePack(idx, {
-                        qtyPerBaseStr: e.target.value.replace(/[^\d.,]/g, ""),
-                      })
-                    }
-                    inputMode="decimal"
-                    placeholder="20"
-                    aria-label={`Qty per pack baris ${idx + 1}`}
-                    className="text-sm font-mono text-right"
-                  />
-                  <span className="text-xs text-neutral-700 truncate">
-                    {unit.trim() || "—"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => removePack(idx)}
-                    disabled={submitting}
-                    aria-label="Hapus konversi"
-                    className="rounded-md border border-neutral-200 p-1.5 text-neutral-500 hover:bg-danger-100/40 hover:text-danger-500 disabled:opacity-50"
+              {packs.map((p, idx) => {
+                const parsedQty = parseFloat(
+                  p.qtyPerBaseStr.replace(",", "."),
+                );
+                const showPreview =
+                  p.unitLabel.trim().length > 0 &&
+                  Number.isFinite(parsedQty) &&
+                  parsedQty > 0;
+                return (
+                  <div
+                    key={idx}
+                    className="space-y-1.5 rounded-md border border-neutral-200 bg-white p-3"
                   >
-                    <Trash2 className="size-3.5" />
-                  </button>
-                </div>
-              ))}
+                    {/* Sesi AE-62af — explicit "1" prefix + labeled columns
+                     * supaya staff paham slot mana untuk apa. Pre-fix staff
+                     * pernah isi "1" di field label karena copy "1 packs =
+                     * 20 pcs" bikin bingung urutan input. */}
+                    <div className="flex flex-wrap items-end gap-2">
+                      <span className="pb-2 font-mono text-sm font-semibold text-neutral-700">
+                        1
+                      </span>
+                      <div className="flex-1 min-w-[120px]">
+                        <label className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                          Nama Pack
+                        </label>
+                        <Input
+                          value={p.unitLabel}
+                          onChange={(e) =>
+                            updatePack(idx, { unitLabel: e.target.value })
+                          }
+                          maxLength={20}
+                          placeholder="packs / dus / karton"
+                          aria-label={`Nama pack baris ${idx + 1}`}
+                          className="text-sm"
+                        />
+                      </div>
+                      <span className="pb-2 text-sm font-semibold text-neutral-500">
+                        =
+                      </span>
+                      <div className="w-24">
+                        <label className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                          Berapa
+                        </label>
+                        <Input
+                          value={p.qtyPerBaseStr}
+                          onChange={(e) =>
+                            updatePack(idx, {
+                              qtyPerBaseStr: e.target.value.replace(
+                                /[^\d.,]/g,
+                                "",
+                              ),
+                            })
+                          }
+                          inputMode="decimal"
+                          placeholder="20"
+                          aria-label={`Qty per pack baris ${idx + 1}`}
+                          className="text-sm font-mono text-right"
+                        />
+                      </div>
+                      <span className="pb-2 text-sm font-medium text-neutral-700">
+                        {unit.trim() || "—"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removePack(idx)}
+                        disabled={submitting}
+                        aria-label="Hapus konversi"
+                        className="mb-1 rounded-md border border-neutral-200 p-1.5 text-neutral-500 hover:bg-danger-100/40 hover:text-danger-500 disabled:opacity-50"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                    {showPreview ? (
+                      <p className="text-[11px] text-mahakan-green-700">
+                        ✓ Preview: <strong>1 {p.unitLabel.trim()}</strong> ={" "}
+                        <strong>
+                          {parsedQty.toLocaleString("id-ID")} {unit.trim() || "—"}
+                        </strong>
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-neutral-500">
+                        Isi nama pack (mis. <em>packs</em>) + berapa{" "}
+                        {unit.trim() || "satuan dasar"} dalam 1 pack.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 

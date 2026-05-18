@@ -31,7 +31,9 @@ import { lookupMarketPriceForPurchase } from "@/features/market-list";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import {
   convertPurchaseQty,
+  convertQtyWithIngredientPacks,
   resolveUnit,
+  type IngredientPackConversion,
   type PackInfo,
 } from "@/lib/unit-conversion";
 import { cn } from "@/lib/utils";
@@ -89,9 +91,19 @@ const COMMON_UNITS = [
 
 function buildUnitOptions(
   masterUnit: string | undefined,
+  ingredientPacks?: IngredientPackConversion[] | null,
 ): Array<{ value: string; label: string }> {
   const set = new Set<string>(COMMON_UNITS);
   if (masterUnit) set.add(masterUnit);
+  /* Sesi AE-62af — include ingredient-scoped pack conversions (mis. "packs"
+   * untuk Lychee Kaleng yang master pcs). Tanpa ini, staff tidak bisa pilih
+   * "packs" saat catat pembelian walau sudah set di Edit Satuan Bahan. */
+  if (ingredientPacks && ingredientPacks.length > 0) {
+    for (const p of ingredientPacks) {
+      const label = p.unitLabel.trim();
+      if (label.length > 0) set.add(label);
+    }
+  }
   return Array.from(set).map((u) => ({ value: u, label: u }));
 }
 
@@ -389,6 +401,9 @@ export function PurchaseFormModal({
         fromUnit: item.unit ?? ing.unit,
         masterUnit: ing.unit,
         pack: packByIngredient.get(item.ingredientId) ?? null,
+        ingredientPacks:
+          (ing.packConversions ??
+            null) as IngredientPackConversion[] | null,
       });
       if (!conv.ok) {
         setError(`Bahan "${ing.name}": ${conv.message}`);
@@ -614,7 +629,10 @@ export function PurchaseFormModal({
                 const lineTotal =
                   hasQty && costN >= 0 ? Math.round(qtyN * costN) : 0;
                 const unit = row.unit || ing?.unit || "";
-                const unitOptions = buildUnitOptions(ing?.unit);
+                const ingredientPacks =
+                  (ing?.packConversions ??
+                    null) as IngredientPackConversion[] | null;
+                const unitOptions = buildUnitOptions(ing?.unit, ingredientPacks);
                 /* Sesi AE-43 — preview konversi qty → master unit. Hanya
                  * compute kalau ada ingredient + qty valid + unit beda
                  * dari master. Server akan re-validate, tapi UI feedback
@@ -626,6 +644,7 @@ export function PurchaseFormModal({
                         fromUnit: unit || ing.unit,
                         masterUnit: ing.unit,
                         pack: packByIngredient.get(ing.id) ?? null,
+                        ingredientPacks,
                       })
                     : null;
                 const masterLabel = ing

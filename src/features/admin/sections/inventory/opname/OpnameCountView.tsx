@@ -43,6 +43,12 @@ import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { EditUnitModal } from "./EditUnitModal";
 import { AddOpnameItemModal } from "./AddOpnameItemModal";
+import {
+  compatibleUnitsFor,
+  convertQtyWithIngredientPacks,
+  resolveUnit,
+  type IngredientPackConversion,
+} from "@/lib/unit-conversion";
 
 interface OpnameCountViewProps {
   detail: OpnameSessionDetail;
@@ -55,6 +61,11 @@ interface OpnameCountViewProps {
 type LineState = {
   /** Local input string (may be empty / partial). */
   input: string;
+  /** Unit yang dipilih staff saat input (default = master unit).
+   *  Sesi AE-62af — supports ingredient pack alternatives (mis. "packs"
+   *  utk Lychee Kaleng yang master "pcs"). Server selalu terima qty
+   *  in master unit, jadi UI yang convert sebelum saveOpnameCount. */
+  inputUnit: string;
   /** Last persisted value — null means uncounted, number means counted. */
   saved: number | null;
   /** "saving" while debounced action is in flight, "saved" after success,
@@ -272,6 +283,20 @@ export function OpnameCountView({
     timersRef.current.set(ingredientId, t);
   }
 
+  function setInputUnit(ingredientId: string, nextUnit: string) {
+    setStateMap((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(ingredientId) ?? blankLineState();
+      next.set(ingredientId, { ...cur, inputUnit: nextUnit });
+      return next;
+    });
+    // Re-trigger save kalau sudah ada input value — qty interpretasi berubah.
+    const cur = stateMap.get(ingredientId);
+    if (cur && cur.input.trim().length > 0) {
+      scheduleSave(ingredientId, cur.input);
+    }
+  }
+
   async function persistLine(ingredientId: string, raw: string) {
     // Sesi AE-15 — accept decimal (mirror sesi AE-12 pattern dari purchases).
     // Allow koma OR titik as decimal separator (staff Indo biasa pakai koma).
@@ -295,6 +320,40 @@ export function OpnameCountView({
         return;
       }
       actualQty = n;
+
+      /* Sesi AE-62af — Convert qty kalau staff input pakai non-master unit
+       * (mis. "1 packs" → 20 pcs untuk Lychee Kaleng). Server selalu terima
+       * master unit. Helper handle same-dimension fallback (kg↔gr) +
+       * ingredient-scoped pack conversions. */
+      const cur = stateMap.get(ingredientId);
+      const inputUnit = cur?.inputUnit ?? "";
+      const line = detail.lines.find((l) => l.ingredientId === ingredientId);
+      const masterUnit = line?.unitSnapshot ?? line?.ingredient.unit ?? "";
+      const packs =
+        (line?.ingredient.packConversions ??
+          null) as IngredientPackConversion[] | null;
+      if (inputUnit && masterUnit && inputUnit !== masterUnit) {
+        const convertRes = convertQtyWithIngredientPacks(
+          actualQty,
+          inputUnit,
+          masterUnit,
+          packs,
+        );
+        if (!convertRes.ok || convertRes.qtyMaster === null) {
+          setStateMap((prev) => {
+            const next = new Map(prev);
+            const cs = next.get(ingredientId) ?? blankLineState();
+            next.set(ingredientId, {
+              ...cs,
+              status: "error",
+              errorMsg: `Gagal konversi ${inputUnit} → ${masterUnit}`,
+            });
+            return next;
+          });
+          return;
+        }
+        actualQty = convertRes.qtyMaster;
+      }
     }
 
     const res = await saveOpnameCount({
@@ -315,8 +374,13 @@ export function OpnameCountView({
         });
         return next;
       }
+      /* Sesi AE-62af — preserve raw input + unit (mirror mobile pattern).
+       * Pre-fix: replace input dengan String(actualQty) yang sudah dikonversi
+       * ke master unit → bikin "1 packs" muncul jadi "20 packs" yang nonsense.
+       * Sekarang input = raw user value, saved = master qty (server source). */
       next.set(ingredientId, {
-        input: actualQty === null ? "" : String(actualQty),
+        input: raw.trim(),
+        inputUnit: cur.inputUnit,
         saved: actualQty,
         status: "saved",
       });
@@ -646,9 +710,19 @@ export function OpnameCountView({
                     unitCost={line.unitCostAtSnapshot}
                     flowLoaded={flow !== null}
                     hasPriorOpname={flow?.hasPriorOpname ?? false}
-                    state={stateMap.get(line.ingredientId) ?? blankLineState()}
+                    packConversions={
+                      (line.ingredient.packConversions ??
+                        null) as IngredientPackConversion[] | null
+                    }
+                    state={
+                      stateMap.get(line.ingredientId) ??
+                      blankLineState(effectiveUnit)
+                    }
                     revealExpected={revealExpected}
                     onChange={(raw) => scheduleSave(line.ingredientId, raw)}
+                    onUnitChange={(next) =>
+                      setInputUnit(line.ingredientId, next)
+                    }
                     onEditUnit={
                       canEditUnit
                         ? () =>
@@ -815,9 +889,12 @@ interface CountRowProps {
   flowLoaded: boolean;
   /** False = "Stok Awal" estimate karena belum ada opname sebelumnya. */
   hasPriorOpname: boolean;
+  /** Sesi AE-62af — ingredient pack conversions (mis. 1 packs = 20 pcs). */
+  packConversions: IngredientPackConversion[] | null;
   state: LineState;
   revealExpected: boolean;
   onChange: (raw: string) => void;
+  onUnitChange: (nextUnit: string) => void;
   onEditUnit?: () => void;
 }
 
@@ -831,9 +908,11 @@ function CountRow({
   unitCost,
   flowLoaded,
   hasPriorOpname,
+  packConversions,
   state,
   revealExpected,
   onChange,
+  onUnitChange,
   onEditUnit,
 }: CountRowProps) {
   const counted = state.saved !== null;
@@ -842,6 +921,35 @@ function CountRow({
   const closingQty = state.saved ?? null;
   const usedQty =
     closingQty === null ? null : openingQty + purchasesQty - closingQty;
+  /* Sesi AE-62af — unit picker: surface pack alternatives + same-dimension
+   * units (kg↔gr) supaya staff bisa input "1 packs" saat opname. */
+  const unitOptions = compatibleUnitsFor(unit, packConversions);
+  const masterMeta = resolveUnit(unit);
+  const hasPackAlternatives =
+    packConversions !== null && packConversions.length > 0;
+  const canPickUnit =
+    unitOptions.length > 1 &&
+    (hasPackAlternatives ||
+      (masterMeta !== null && masterMeta.dimension !== "discrete"));
+  const currentInputUnit = state.inputUnit || unit;
+  /* Preview: kalau staff input non-master + qty valid, tampilkan konversi
+   * ke master unit supaya jelas berapa pcs yang akan disimpan. */
+  const parsedInput = parseFloat(state.input.trim().replace(",", "."));
+  const showConvPreview =
+    canPickUnit &&
+    currentInputUnit !== unit &&
+    Number.isFinite(parsedInput) &&
+    parsedInput > 0;
+  let convPreview: number | null = null;
+  if (showConvPreview) {
+    const r = convertQtyWithIngredientPacks(
+      parsedInput,
+      currentInputUnit,
+      unit,
+      packConversions,
+    );
+    convPreview = r.qtyMaster;
+  }
   const usedCost = usedQty === null ? null : usedQty * unitCost;
   const usedTone =
     usedQty === null
@@ -974,40 +1082,65 @@ function CountRow({
           </div>
         </div>
       </div>
-      <div className="flex items-center gap-2 sm:w-[200px]">
-        <input
-          aria-label={`Qty aktual ${name}`}
-          inputMode="decimal"
-          autoComplete="off"
-          placeholder="0"
-          value={state.input}
-          onChange={(e) => onChange(e.target.value)}
-          className={cn(
-            "h-11 w-full rounded-md border bg-white px-3 text-right font-mono text-base tabular-nums shadow-sm transition focus:outline-none focus:ring-2",
-            state.status === "error"
-              ? "border-danger-500 focus:ring-danger-500"
-              : "border-neutral-300 focus:border-mahakan-green-700 focus:ring-mahakan-green-700/40",
+      <div className="flex flex-col gap-1 sm:w-[280px]">
+        <div className="flex items-center gap-2">
+          <input
+            aria-label={`Qty aktual ${name}`}
+            inputMode="decimal"
+            autoComplete="off"
+            placeholder="0"
+            value={state.input}
+            onChange={(e) => onChange(e.target.value)}
+            className={cn(
+              "h-11 w-full rounded-md border bg-white px-3 text-right font-mono text-base tabular-nums shadow-sm transition focus:outline-none focus:ring-2",
+              state.status === "error"
+                ? "border-danger-500 focus:ring-danger-500"
+                : "border-neutral-300 focus:border-mahakan-green-700 focus:ring-mahakan-green-700/40",
+            )}
+            data-testid={`count-input-${ingredientId}`}
+          />
+          {canPickUnit ? (
+            <select
+              aria-label={`Satuan ${name}`}
+              value={currentInputUnit}
+              onChange={(e) => onUnitChange(e.target.value)}
+              className="h-11 min-w-[78px] rounded-md border border-neutral-300 bg-white px-2 text-sm font-medium text-neutral-900 shadow-sm focus:border-mahakan-green-700 focus:outline-none focus:ring-2 focus:ring-mahakan-green-700/40"
+            >
+              {unitOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-xs font-medium text-neutral-600 sm:w-[60px]">
+              {unit}
+            </span>
           )}
-          data-testid={`count-input-${ingredientId}`}
-        />
-        <div className="w-5 flex-none text-center" aria-live="polite">
-          {state.status === "saving" ? (
-            <Loader2
-              className="mx-auto size-4 animate-spin text-neutral-400"
-              aria-label="Menyimpan"
-            />
-          ) : state.status === "saved" ? (
-            <Check
-              className="mx-auto size-4 text-mahakan-green-700"
-              aria-label="Tersimpan"
-            />
-          ) : state.status === "error" ? (
-            <AlertCircle
-              className="mx-auto size-4 text-danger-500"
-              aria-label="Gagal"
-            />
-          ) : null}
+          <div className="w-5 flex-none text-center" aria-live="polite">
+            {state.status === "saving" ? (
+              <Loader2
+                className="mx-auto size-4 animate-spin text-neutral-400"
+                aria-label="Menyimpan"
+              />
+            ) : state.status === "saved" ? (
+              <Check
+                className="mx-auto size-4 text-mahakan-green-700"
+                aria-label="Tersimpan"
+              />
+            ) : state.status === "error" ? (
+              <AlertCircle
+                className="mx-auto size-4 text-danger-500"
+                aria-label="Gagal"
+              />
+            ) : null}
+          </div>
         </div>
+        {showConvPreview && convPreview !== null ? (
+          <p className="text-right text-[11px] text-mahakan-green-700">
+            = {convPreview.toLocaleString("id-ID")} {unit}
+          </p>
+        ) : null}
       </div>
       {state.status === "error" ? (
         <p className="text-xs text-danger-500 sm:basis-full sm:pl-8">
@@ -1052,15 +1185,17 @@ function FlowMetric({
   );
 }
 
-function blankLineState(): LineState {
-  return { input: "", saved: null, status: "idle" };
+function blankLineState(unit = ""): LineState {
+  return { input: "", inputUnit: unit, saved: null, status: "idle" };
 }
 
 function initialState(detail: OpnameSessionDetail): Map<string, LineState> {
   const m = new Map<string, LineState>();
   for (const l of detail.lines) {
+    const masterUnit = l.unitSnapshot ?? l.ingredient.unit ?? "";
     m.set(l.ingredientId, {
       input: l.actualQty === null ? "" : String(l.actualQty),
+      inputUnit: masterUnit,
       saved: l.actualQty,
       status: "idle",
     });

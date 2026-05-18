@@ -269,8 +269,12 @@ export function convertPurchaseQty(input: {
   fromUnit: string | null | undefined;
   masterUnit: string;
   pack?: PackInfo | null;
+  /** Sesi AE-62af — ingredient-scoped pack alternatives (mis. "packs"
+   * untuk Lychee Kaleng master pcs). Fallback kalau market-list pack
+   * tidak ada / tidak match label. */
+  ingredientPacks?: IngredientPackConversion[] | null;
 }): PurchaseConvertResult {
-  const { qty, fromUnit, masterUnit, pack } = input;
+  const { qty, fromUnit, masterUnit, pack, ingredientPacks } = input;
 
   if (!Number.isFinite(qty) || qty <= 0) {
     return {
@@ -337,11 +341,30 @@ export function convertPurchaseQty(input: {
   //   Mis. fromUnit="Pack", pack={packSize:1000, packUnit:"gr"}
   //     → 1 Pack = 1000 gr → qty Pack × 1000 gr = qtyMaster (kalau master gr)
   if (fromMeta.dimension === "discrete") {
+    /* Sesi AE-62af — coba ingredient-scoped packs dulu (lebih spesifik),
+     * fallback ke supplier pack info kalau ada. Match case-insensitive
+     * pada unitLabel — kalau owner set "packs" + staff pilih "Packs" → match. */
+    if (ingredientPacks && ingredientPacks.length > 0) {
+      const fromLc = (fromUnit ?? "").trim().toLowerCase();
+      const matched = ingredientPacks.find(
+        (p) => p.unitLabel.trim().toLowerCase() === fromLc,
+      );
+      if (matched && Number.isFinite(matched.qtyPerBase) && matched.qtyPerBase > 0) {
+        const qtyMaster = qty * matched.qtyPerBase;
+        return {
+          ok: true,
+          qtyMaster,
+          costFactor: qtyMaster / qty,
+          mode: "via-pack",
+          explain: `via Konversi Pack bahan: 1 ${matched.unitLabel} = ${matched.qtyPerBase} ${masterMeta.label}`,
+        };
+      }
+    }
     if (!pack) {
       return {
         ok: false,
         error: "PACK_UNKNOWN",
-        message: `Pilih supplier yang punya entry di Market List untuk bahan ini, supaya sistem tahu 1 ${fromUnit} = berapa ${masterUnit}.`,
+        message: `Sistem belum tahu 1 ${fromUnit} = berapa ${masterUnit}. Set di Edit Satuan Bahan → Konversi Pack, atau pilih supplier dengan Market List entry.`,
       };
     }
     // Convert pack.packUnit → masterUnit. Kalau pack.packUnit === fromUnit
