@@ -409,26 +409,30 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
 
   const pengelolaList = pengelolaQuery.data ?? [];
 
-  async function handleDelete(p: PengelolaWithStats) {
-    if (!window.confirm(`Hapus pengelola "${p.fullName}"?`)) return;
-    const res = await deletePengelola(p.id);
-    if (!isOk(res)) {
-      toast.error(res.error.message);
-      return;
-    }
-    toast.success(`Pengelola ${p.fullName} dihapus`);
+  /* Sesi AE-63 phase2 P2.3 — useCallback + useMemo mirror investor pattern. */
+  const handleDelete = useCallback(
+    async (p: PengelolaWithStats) => {
+      if (!window.confirm(`Hapus pengelola "${p.fullName}"?`)) return;
+      const res = await deletePengelola(p.id);
+      if (!isOk(res)) {
+        toast.error(res.error.message);
+        return;
+      }
+      toast.success(`Pengelola ${p.fullName} dihapus`);
+      qc.invalidateQueries({ queryKey: ["pengelola"] });
+      qc.invalidateQueries({ queryKey: ["pengelola-total"] });
+    },
+    [qc],
+  );
+
+  const refresh = useCallback(() => {
     qc.invalidateQueries({ queryKey: ["pengelola"] });
     qc.invalidateQueries({ queryKey: ["pengelola-total"] });
-  }
+  }, [qc]);
 
-  function refresh() {
-    qc.invalidateQueries({ queryKey: ["pengelola"] });
-    qc.invalidateQueries({ queryKey: ["pengelola-total"] });
-  }
-
-  const totalDividendYtd = pengelolaList.reduce(
-    (s, p) => s + (p.dividendYtd ?? 0),
-    0,
+  const totalDividendYtd = useMemo(
+    () => pengelolaList.reduce((s, p) => s + (p.dividendYtd ?? 0), 0),
+    [pengelolaList],
   );
 
   return (
@@ -486,72 +490,13 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
             </thead>
             <tbody className="divide-y divide-neutral-100">
               {pengelolaList.map((p) => (
-                <tr
+                <PengelolaRow
                   key={p.id}
-                  className="transition-colors hover:bg-neutral-50"
-                >
-                  <td className="px-3 py-2">
-                    <p className="font-medium text-neutral-900">
-                      {p.fullName}
-                    </p>
-                    {p.email ? (
-                      <p className="text-xs text-neutral-500">{p.email}</p>
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-neutral-900">
-                    {formatRupiah(p.modalDisetor)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <div className="relative h-2 w-28 overflow-hidden rounded-full bg-neutral-200">
-                        <div
-                          className="absolute inset-y-0 left-0 bg-gradient-to-r from-amber-400 to-amber-600 transition-all"
-                          style={{
-                            width: `${Math.min(100, p.sharePct)}%`,
-                          }}
-                        />
-                      </div>
-                      <span className="min-w-[50px] text-right text-xs font-semibold tabular-nums text-amber-900">
-                        {p.sharePct.toFixed(2)}%
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {p.dividendYtd > 0 ? (
-                      <span className="font-medium text-emerald-700">
-                        {formatRupiah(p.dividendYtd)}
-                      </span>
-                    ) : (
-                      <span className="text-neutral-400">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <StatusBadge status={p.status} />
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {canManage ? (
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditing(p)}
-                          title="Edit"
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDelete(p)}
-                          className="text-red-600 hover:bg-red-50"
-                          title="Hapus"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </div>
-                    ) : null}
-                  </td>
-                </tr>
+                  p={p}
+                  canManage={canManage}
+                  onEdit={setEditing}
+                  onDelete={handleDelete}
+                />
               ))}
             </tbody>
           </table>
@@ -906,6 +851,82 @@ const InvestorRow = memo(function InvestorRow({
               variant="ghost"
               size="sm"
               onClick={() => onDelete(inv)}
+              className="text-red-600 hover:bg-red-50"
+              title="Hapus"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+        ) : null}
+      </td>
+    </tr>
+  );
+});
+
+/* Sesi AE-63 phase2 P2.3 — Pengelola row (mirror InvestorRow memoization).
+ * 5 row biasanya, tapi pattern konsisten + future-proof kalau owner tambah. */
+const PengelolaRow = memo(function PengelolaRow({
+  p,
+  canManage,
+  onEdit,
+  onDelete,
+}: {
+  p: PengelolaWithStats;
+  canManage: boolean;
+  onEdit: (p: PengelolaWithStats) => void;
+  onDelete: (p: PengelolaWithStats) => void;
+}) {
+  return (
+    <tr className="transition-colors hover:bg-neutral-50">
+      <td className="px-3 py-2">
+        <p className="font-medium text-neutral-900">{p.fullName}</p>
+        {p.email ? (
+          <p className="text-xs text-neutral-500">{p.email}</p>
+        ) : null}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums font-semibold text-neutral-900">
+        {formatRupiah(p.modalDisetor)}
+      </td>
+      <td className="px-3 py-2">
+        <div className="flex items-center gap-2">
+          <div className="relative h-2 w-28 overflow-hidden rounded-full bg-neutral-200">
+            <div
+              className="absolute inset-y-0 left-0 bg-gradient-to-r from-amber-400 to-amber-600 transition-all"
+              style={{ width: `${Math.min(100, p.sharePct)}%` }}
+            />
+          </div>
+          <span className="min-w-[50px] text-right text-xs font-semibold tabular-nums text-amber-900">
+            {p.sharePct.toFixed(2)}%
+          </span>
+        </div>
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums">
+        {p.dividendYtd > 0 ? (
+          <span className="font-medium text-emerald-700">
+            {formatRupiah(p.dividendYtd)}
+          </span>
+        ) : (
+          <span className="text-neutral-400">—</span>
+        )}
+      </td>
+      <td className="px-3 py-2">
+        <StatusBadge status={p.status} />
+      </td>
+      <td className="px-3 py-2 text-right">
+        {canManage ? (
+          <div className="flex justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onEdit(p)}
+              title="Edit"
+            >
+              <Pencil className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onDelete(p)}
               className="text-red-600 hover:bg-red-50"
               title="Hapus"
             >

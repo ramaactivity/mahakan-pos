@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Send, X } from "lucide-react";
 import { Badge, Button, Modal, toast } from "@/components/ui";
 import {
@@ -255,11 +255,35 @@ function SummaryCard({
   );
 }
 
-function LinesTable({
-  lines,
-}: {
-  lines: { id: string; holderName: string; modalDisetorSnapshot: number; sharePct: string; amountRupiah: number }[];
-}) {
+/* Sesi AE-63 phase2 P2.4 — memoize line row supaya 115 row (5 pengelola +
+ * 110 investor) tidak recompute saat parent re-render (submit, approval
+ * status change, dst). String-cast `sharePct` di parse sekali per row. */
+interface DistLineProps {
+  id: string;
+  holderName: string;
+  modalDisetorSnapshot: number;
+  sharePct: string;
+  amountRupiah: number;
+}
+
+const DistLineRow = memo(function DistLineRow({ l }: { l: DistLineProps }) {
+  return (
+    <tr>
+      <td className="px-2 py-1 font-medium">{l.holderName}</td>
+      <td className="px-2 py-1 text-right tabular-nums text-neutral-600">
+        {formatRupiah(l.modalDisetorSnapshot)}
+      </td>
+      <td className="px-2 py-1 text-right tabular-nums text-neutral-600">
+        {Number(l.sharePct).toFixed(2)}%
+      </td>
+      <td className="px-2 py-1 text-right tabular-nums font-bold text-mahakan-green-900">
+        {formatRupiah(l.amountRupiah)}
+      </td>
+    </tr>
+  );
+});
+
+function LinesTable({ lines }: { lines: DistLineProps[] }) {
   return (
     <div className="max-h-64 overflow-y-auto rounded-md border border-neutral-200">
       <table className="w-full text-xs">
@@ -273,18 +297,7 @@ function LinesTable({
         </thead>
         <tbody className="divide-y divide-neutral-100">
           {lines.map((l) => (
-            <tr key={l.id}>
-              <td className="px-2 py-1 font-medium">{l.holderName}</td>
-              <td className="px-2 py-1 text-right tabular-nums text-neutral-600">
-                {formatRupiah(l.modalDisetorSnapshot)}
-              </td>
-              <td className="px-2 py-1 text-right tabular-nums text-neutral-600">
-                {Number(l.sharePct).toFixed(2)}%
-              </td>
-              <td className="px-2 py-1 text-right tabular-nums font-bold text-mahakan-green-900">
-                {formatRupiah(l.amountRupiah)}
-              </td>
-            </tr>
+            <DistLineRow key={l.id} l={l} />
           ))}
         </tbody>
       </table>

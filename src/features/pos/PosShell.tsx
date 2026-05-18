@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   FileText,
   Gift,
+  Loader2,
   MoreHorizontal,
   Percent,
   Plus,
@@ -21,22 +22,20 @@ import {
   Spinner,
   toast,
 } from "@/components/ui";
-import { ApproverOverrideModal } from "@/features/pos/components/ApproverOverrideModal";
+/* Sesi AE-63 phase2 P2.2 — Cashier-tab essentials eager (most-used).
+ * Modal + panel non-cashier di-lazy supaya initial parse bundle POS ringan.
+ * Tablet Galaxy A7 Lite CPU slow saat parse 22 modal × ~5-15KB each.
+ *
+ * Eager: cashier-tab UI (menu grid, cart, layout switcher).
+ * Lazy: 15 modal (rarely open) + 7 panel (non-default tab).
+ * Suspense fallback=null saat modal close (no UI shift); spinner saat
+ * panel switch (one-time chunk fetch). */
 import { CartLineItem } from "@/features/pos/components/CartLineItem";
 import { CategoryTabs } from "@/features/pos/components/CategoryTabs";
-import { CloseShiftModal } from "@/features/pos/components/CloseShiftModal";
-import { ComplimentModal } from "@/features/pos/components/ComplimentModal";
-import { PaymentModal } from "@/features/pos/components/PaymentModal";
-import { PromoPickerModal } from "@/features/pos/components/PromoPickerModal";
 import type { Promo } from "@/features/promos";
-import { RedeemPointsModal } from "@/features/pos/components/RedeemPointsModal";
 import { lookupCustomerByPhone } from "@/features/customers";
 import { FavoritesBar } from "@/features/pos/components/FavoritesBar";
 import { useFavorites } from "@/features/pos/components/useFavorites";
-import { HistoryDetailModal } from "@/features/pos/components/HistoryDetailModal";
-import { HistoryPanel } from "@/features/pos/components/HistoryPanel";
-import { ItemModifierModal } from "@/features/pos/components/ItemModifierModal";
-import { ItemNoteModal } from "@/features/pos/components/ItemNoteModal";
 import {
   LAYOUT_GRID_CLASS,
   MenuLayoutSwitcher,
@@ -49,20 +48,134 @@ import {
   useMenuSort,
 } from "@/features/pos/components/MenuSortSelect";
 import { MenuTile } from "@/features/pos/components/MenuTile";
-import { NewOrderModal } from "@/features/pos/components/NewOrderModal";
-import { OpenBillPanel } from "@/features/pos/components/OpenBillPanel";
-import { OrderMetadataModal } from "@/features/pos/components/OrderMetadataModal";
-import { PostActionPrintModal } from "@/features/pos/components/PostActionPrintModal";
-import { TransactionSuccessModal } from "@/features/pos/components/TransactionSuccessModal";
-import { OpenPriceModal } from "@/features/pos/components/OpenPriceModal";
-import { OpenShiftModal } from "@/features/pos/components/OpenShiftModal";
-import { OrderQueuePanel } from "@/features/pos/components/OrderQueuePanel";
 import { PosDashboardView } from "@/features/pos/components/PosDashboardView";
 import { PosLeftNav, type PosTab } from "@/features/pos/components/PosLeftNav";
-import { PettyCashPanel } from "@/features/pos/components/PettyCashPanel";
-import { KasOwnerPanel } from "@/features/pos/components/KasOwnerPanel";
-import { PosSettingsPanel } from "@/features/pos/components/PosSettingsPanel";
-import { ShiftPanel } from "@/features/pos/components/ShiftPanel";
+
+/* ─── Lazy: 15 modals (open hanya saat user action) ─── */
+const ApproverOverrideModal = lazy(() =>
+  import("@/features/pos/components/ApproverOverrideModal").then((m) => ({
+    default: m.ApproverOverrideModal,
+  })),
+);
+const CloseShiftModal = lazy(() =>
+  import("@/features/pos/components/CloseShiftModal").then((m) => ({
+    default: m.CloseShiftModal,
+  })),
+);
+const ComplimentModal = lazy(() =>
+  import("@/features/pos/components/ComplimentModal").then((m) => ({
+    default: m.ComplimentModal,
+  })),
+);
+const PaymentModal = lazy(() =>
+  import("@/features/pos/components/PaymentModal").then((m) => ({
+    default: m.PaymentModal,
+  })),
+);
+const PromoPickerModal = lazy(() =>
+  import("@/features/pos/components/PromoPickerModal").then((m) => ({
+    default: m.PromoPickerModal,
+  })),
+);
+const RedeemPointsModal = lazy(() =>
+  import("@/features/pos/components/RedeemPointsModal").then((m) => ({
+    default: m.RedeemPointsModal,
+  })),
+);
+const HistoryDetailModal = lazy(() =>
+  import("@/features/pos/components/HistoryDetailModal").then((m) => ({
+    default: m.HistoryDetailModal,
+  })),
+);
+const ItemModifierModal = lazy(() =>
+  import("@/features/pos/components/ItemModifierModal").then((m) => ({
+    default: m.ItemModifierModal,
+  })),
+);
+const ItemNoteModal = lazy(() =>
+  import("@/features/pos/components/ItemNoteModal").then((m) => ({
+    default: m.ItemNoteModal,
+  })),
+);
+const NewOrderModal = lazy(() =>
+  import("@/features/pos/components/NewOrderModal").then((m) => ({
+    default: m.NewOrderModal,
+  })),
+);
+const OrderMetadataModal = lazy(() =>
+  import("@/features/pos/components/OrderMetadataModal").then((m) => ({
+    default: m.OrderMetadataModal,
+  })),
+);
+const PostActionPrintModal = lazy(() =>
+  import("@/features/pos/components/PostActionPrintModal").then((m) => ({
+    default: m.PostActionPrintModal,
+  })),
+);
+const TransactionSuccessModal = lazy(() =>
+  import("@/features/pos/components/TransactionSuccessModal").then((m) => ({
+    default: m.TransactionSuccessModal,
+  })),
+);
+const OpenPriceModal = lazy(() =>
+  import("@/features/pos/components/OpenPriceModal").then((m) => ({
+    default: m.OpenPriceModal,
+  })),
+);
+const OpenShiftModal = lazy(() =>
+  import("@/features/pos/components/OpenShiftModal").then((m) => ({
+    default: m.OpenShiftModal,
+  })),
+);
+
+/* ─── Lazy: 7 panels (non-default tab) ─── */
+const HistoryPanel = lazy(() =>
+  import("@/features/pos/components/HistoryPanel").then((m) => ({
+    default: m.HistoryPanel,
+  })),
+);
+const OpenBillPanel = lazy(() =>
+  import("@/features/pos/components/OpenBillPanel").then((m) => ({
+    default: m.OpenBillPanel,
+  })),
+);
+const OrderQueuePanel = lazy(() =>
+  import("@/features/pos/components/OrderQueuePanel").then((m) => ({
+    default: m.OrderQueuePanel,
+  })),
+);
+const PettyCashPanel = lazy(() =>
+  import("@/features/pos/components/PettyCashPanel").then((m) => ({
+    default: m.PettyCashPanel,
+  })),
+);
+const KasOwnerPanel = lazy(() =>
+  import("@/features/pos/components/KasOwnerPanel").then((m) => ({
+    default: m.KasOwnerPanel,
+  })),
+);
+const PosSettingsPanel = lazy(() =>
+  import("@/features/pos/components/PosSettingsPanel").then((m) => ({
+    default: m.PosSettingsPanel,
+  })),
+);
+const ShiftPanel = lazy(() =>
+  import("@/features/pos/components/ShiftPanel").then((m) => ({
+    default: m.ShiftPanel,
+  })),
+);
+
+/* Suspense fallback untuk panel switch (one-time fetch chunk). */
+function PanelFallback() {
+  return (
+    <div className="flex h-full items-center justify-center p-6">
+      <div className="flex items-center gap-2 text-neutral-500">
+        <Loader2 className="size-5 animate-spin" />
+        <span className="text-sm">Memuat…</span>
+      </div>
+    </div>
+  );
+}
 import { buildLineItem, useCartStore } from "@/features/pos/cartStore";
 import { useSession } from "@/features/auth/SessionProvider";
 import { isOk } from "@/features/menu";
@@ -989,7 +1102,11 @@ export function PosShell() {
       />
 
       {/* MIDDLE COLUMN — content per tab. min-w-0 prevents flex child from
-       * overflowing parent (causes horizontal swaying di tablet). */}
+       * overflowing parent (causes horizontal swaying di tablet).
+       *
+       * Sesi AE-63 phase2 P2.2 — Cashier + dashboard tabs eager (default
+       * landing). Panel lain di-lazy wrapped Suspense. Spinner one-time
+       * saat chunk fetch pertama; setelah loaded, cached browser-side. */}
       <main className="flex-1 min-w-0 overflow-hidden">
         {tab === "dashboard" ? (
           <PosDashboardView cashierName={session.user.name} />
@@ -1015,62 +1132,66 @@ export function PosShell() {
             onToggleFavorite={toggleFavorite}
             onUnpinFavorite={removeFavorite}
           />
-        ) : tab === "open_bills" ? (
-          <OpenBillPanel
-            cashierName={session.user.name}
-            receiptConfig={receiptConfig}
-            refreshKey={historyRefreshKey}
-            onOpenSettings={() => setTab("settings")}
-            onEditBill={(trx) => {
-              const id = loadOpenBillIntoDraft(trx);
-              setTab("cashier");
-              setRightPanel({ kind: "cart", draftId: id });
-            }}
-            onCountChange={setOpenBillsCount}
-            onBillPaid={(trx) => {
-              // Sesi AE-26 — CRITICAL FIX: bump historyRefreshKey supaya
-              // Pesanan + History segera refetch. Sebelumnya hanya
-              // setPrintConfirm — bill yang baru dibayar hilang dari
-              // Bill Aktif (local tick refresh) tapi tidak muncul di
-              // Pesanan/History sampai 30s polling.
-              setHistoryRefreshKey((k) => k + 1);
-              setPrintConfirm({ trx, title: "Pembayaran sukses" });
-            }}
-          />
-        ) : tab === "queue" ? (
-          <OrderQueuePanel
-            cashierName={session.user.name}
-            receiptConfig={receiptConfig}
-            refreshKey={historyRefreshKey}
-            onOpenSettings={() => setTab("settings")}
-          />
-        ) : tab === "history" ? (
-          <HistoryPanel
-            refreshKey={historyRefreshKey}
-            onSelectTransaction={(id) => setHistoryDetailId(id)}
-          />
-        ) : tab === "shifts" ? (
-          <ShiftPanel
-            shift={shift}
-            loading={shiftLoading}
-            onRequestOpenShift={() => setOpenShiftOpen(true)}
-            onRequestCloseShift={() => setCloseShiftOpen(true)}
-          />
-        ) : tab === "petty_cash" ? (
-          <PettyCashPanel />
-        ) : tab === "kas" ? (
-          <KasOwnerPanel viewerRole={session.user.role} />
         ) : (
-          <PosSettingsPanel
-            shift={shift}
-            menuItems={menuItems}
-            categories={categories}
-            onMenuItemUpdated={(next) =>
-              setMenuItems((items) =>
-                items.map((it) => (it.id === next.id ? next : it)),
-              )
-            }
-          />
+          <Suspense fallback={<PanelFallback />}>
+            {tab === "open_bills" ? (
+              <OpenBillPanel
+                cashierName={session.user.name}
+                receiptConfig={receiptConfig}
+                refreshKey={historyRefreshKey}
+                onOpenSettings={() => setTab("settings")}
+                onEditBill={(trx) => {
+                  const id = loadOpenBillIntoDraft(trx);
+                  setTab("cashier");
+                  setRightPanel({ kind: "cart", draftId: id });
+                }}
+                onCountChange={setOpenBillsCount}
+                onBillPaid={(trx) => {
+                  // Sesi AE-26 — CRITICAL FIX: bump historyRefreshKey supaya
+                  // Pesanan + History segera refetch. Sebelumnya hanya
+                  // setPrintConfirm — bill yang baru dibayar hilang dari
+                  // Bill Aktif (local tick refresh) tapi tidak muncul di
+                  // Pesanan/History sampai 30s polling.
+                  setHistoryRefreshKey((k) => k + 1);
+                  setPrintConfirm({ trx, title: "Pembayaran sukses" });
+                }}
+              />
+            ) : tab === "queue" ? (
+              <OrderQueuePanel
+                cashierName={session.user.name}
+                receiptConfig={receiptConfig}
+                refreshKey={historyRefreshKey}
+                onOpenSettings={() => setTab("settings")}
+              />
+            ) : tab === "history" ? (
+              <HistoryPanel
+                refreshKey={historyRefreshKey}
+                onSelectTransaction={(id) => setHistoryDetailId(id)}
+              />
+            ) : tab === "shifts" ? (
+              <ShiftPanel
+                shift={shift}
+                loading={shiftLoading}
+                onRequestOpenShift={() => setOpenShiftOpen(true)}
+                onRequestCloseShift={() => setCloseShiftOpen(true)}
+              />
+            ) : tab === "petty_cash" ? (
+              <PettyCashPanel />
+            ) : tab === "kas" ? (
+              <KasOwnerPanel viewerRole={session.user.role} />
+            ) : (
+              <PosSettingsPanel
+                shift={shift}
+                menuItems={menuItems}
+                categories={categories}
+                onMenuItemUpdated={(next) =>
+                  setMenuItems((items) =>
+                    items.map((it) => (it.id === next.id ? next : it)),
+                  )
+                }
+              />
+            )}
+          </Suspense>
         )}
       </main>
 
@@ -1135,6 +1256,13 @@ export function PosShell() {
           ) : null}
         </aside>
       ) : null}
+
+      {/* Sesi AE-63 phase2 P2.2 — semua 15 modal di-lazy-load dalam Suspense
+       * boundary tunggal. fallback=null karena modal close = invisible (no
+       * UI shift). Saat modal pertama dibuka, chunk fetch ~50-150ms one-time
+       * lalu cached browser-side. Trade-off: defer ~100-150KB JS parse dari
+       * initial POS load → tablet boot lebih cepat. */}
+      <Suspense fallback={null}>
 
       {/* sesi AD-4 — Post-payment success owned by dedicated 2-column modal
        * instead of inline right-column panel. Receipt gets ~60% width for
@@ -1383,6 +1511,7 @@ export function PosShell() {
           }}
         />
       ) : null}
+      </Suspense>
     </div>
   );
 }

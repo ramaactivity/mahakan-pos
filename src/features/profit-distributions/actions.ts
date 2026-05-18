@@ -202,9 +202,12 @@ export async function computeDistributionForPeriod(
     pengelola: pengelolaRows,
   });
 
-  /* Save dalam transaction — replace existing draft kalau ada. */
+  /* Save dalam transaction — replace existing draft kalau ada.
+   * Sesi AE-63 phase2 P2.5 — track wasRecompute supaya audit event
+   * differentiate compute vs recompute (replace draft). Pre-fix: stub
+   * function always false → audit log misleading. */
   try {
-    const distId = await db.transaction(async (tx) => {
+    const txResult = await db.transaction(async (tx) => {
       const existingDraft = await tx
         .select({ id: profitDistributions.id })
         .from(profitDistributions)
@@ -218,7 +221,9 @@ export async function computeDistributionForPeriod(
         )
         .limit(1);
 
-      if (existingDraft.length > 0) {
+      const wasRecompute = existingDraft.length > 0;
+
+      if (wasRecompute) {
         /* Replace draft: delete lines + delete header, then re-insert. */
         await tx
           .delete(profitDistributionLines)
@@ -280,18 +285,20 @@ export async function computeDistributionForPeriod(
         await tx.insert(profitDistributionLines).values(lineRows);
       }
 
-      return inserted.id;
+      return { distId: inserted.id, wasRecompute };
     });
 
+    const { distId, wasRecompute } = txResult;
+
     logAudit({
-      eventType: existingDraftLogPlaceholder()
+      eventType: wasRecompute
         ? "distribution.recompute"
         : "distribution.compute",
       userId: session.user.id,
       entityType: "profit_distribution",
       entityId: distId,
       payload: {
-        summary: `Hitung distribusi ${MONTH_LABELS_ID[periodMonth - 1]} ${periodYear} — Net Profit Rp ${result.netProfit.toLocaleString("id-ID")}, BagiHasil Rp ${result.bagiHasilAmount.toLocaleString("id-ID")}`,
+        summary: `${wasRecompute ? "Re-compute" : "Hitung"} distribusi ${MONTH_LABELS_ID[periodMonth - 1]} ${periodYear} — Net Profit Rp ${result.netProfit.toLocaleString("id-ID")}, BagiHasil Rp ${result.bagiHasilAmount.toLocaleString("id-ID")}`,
         context: {
           periodYear,
           periodMonth,
@@ -302,13 +309,21 @@ export async function computeDistributionForPeriod(
           investorCount: result.perInvestor.length,
           pengelolaCount: result.perPengelola.length,
           status: result.status,
+          wasRecompute,
         },
       },
       metadata: {
         outletId: session.user.outletId,
         actorRole: session.user.role,
       },
-    }).catch((e) => console.error("[audit distribution.compute]", e));
+    }).catch((e) =>
+      console.error(
+        wasRecompute
+          ? "[audit distribution.recompute]"
+          : "[audit distribution.compute]",
+        e,
+      ),
+    );
 
     const full = await fetchDistributionWithLines(
       session.user.outletId,
@@ -322,12 +337,6 @@ export async function computeDistributionForPeriod(
       logAndSanitize(e, "distribution.compute", "Operasi database gagal"),
     );
   }
-}
-
-/* Helper bool — di-stub untuk audit branching. Always returns false
- * placeholder; actual recompute path handled inline. */
-function existingDraftLogPlaceholder(): boolean {
-  return false;
 }
 
 // ---------- Approve + Post ----------
