@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AdminLeftNav,
   type AdminSection,
@@ -29,9 +29,75 @@ import { StaffSection } from "@/features/admin/sections/StaffSection";
 import { SuppliersSection } from "@/features/admin/sections/SuppliersSection";
 import { useSession } from "@/features/auth/SessionProvider";
 
+/* Sesi AE-63 polish-2 — daftar AdminSection valid untuk hash-routing
+ * validation (filter invalid hash dari URL). */
+const VALID_SECTIONS: ReadonlySet<AdminSection> = new Set([
+  "dashboard",
+  "menu",
+  "inventory",
+  "suppliers",
+  "purchase_requests",
+  "customers",
+  "staff",
+  "employees",
+  "hr_operations",
+  "shifts",
+  "cash",
+  "setoran_tunai",
+  "finance",
+  "accounting",
+  "balance_account",
+  "reconciliation",
+  "promos",
+  "reports",
+  "audit",
+  "journal_retry",
+  "investors",
+  "settings",
+]);
+
+function readSectionFromHash(): AdminSection {
+  if (typeof window === "undefined") return "dashboard";
+  const hash = window.location.hash.replace(/^#/, "");
+  return VALID_SECTIONS.has(hash as AdminSection)
+    ? (hash as AdminSection)
+    : "dashboard";
+}
+
 export function AdminShell() {
   const { session, logout } = useSession();
-  const [section, setSection] = useState<AdminSection>("dashboard");
+  const [section, setSectionState] = useState<AdminSection>("dashboard");
+
+  /* Sesi AE-63 polish-2 — Section state persist via URL hash.
+   * Owner directive: refresh harus stay di section yang sama (sebelumnya
+   * selalu kembali ke dashboard). URL hash approach:
+   *  - shareable link (mis. /dashboard#investors)
+   *  - browser back/forward natural
+   *  - no localStorage staleness
+   * Listen hashchange untuk back-button support. */
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setSectionState(readSectionFromHash());
+    /* eslint-enable react-hooks/set-state-in-effect */
+    function onHashChange() {
+      setSectionState(readSectionFromHash());
+    }
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  const setSection = useCallback((next: AdminSection) => {
+    setSectionState(next);
+    if (typeof window !== "undefined") {
+      /* History.replaceState supaya tidak menumpuk entries setiap klik
+       * nav. User pakai back-button balik ke halaman previous (login/POS)
+       * bukan section sebelumnya, sesuai expectation. */
+      const nextHash = `#${next}`;
+      if (window.location.hash !== nextHash) {
+        window.history.replaceState(null, "", nextHash);
+      }
+    }
+  }, []);
 
   if (!session) return null;
 
