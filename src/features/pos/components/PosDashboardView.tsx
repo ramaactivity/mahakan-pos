@@ -126,13 +126,22 @@ export function PosDashboardView({
           </div>
         )}
 
-        {/* Sesi AE-62aj — Motivasi banner + Achievement gamify strip.
-         *  Motivasi: pesan tier-based dengan tip upselling konkret bahasa santai.
-         *  Achievement: chips daily/weekly/monthly + rank + celebration banner
-         *  saat tercapai. Tanpa DB persistence, derived dari TargetProgressData. */}
+        {/* Sesi AE-62aj/ak — Motivasi banner + Achievement gamify strip.
+         *  topItem inject dinamis ke tip pool supaya pesan refer ke
+         *  best-seller hari ini, bukan item ngasal. */}
         {target ? (
           <>
-            <MotivasiBanner data={target} />
+            <MotivasiBanner
+              data={target}
+              topItem={
+                report?.topItems[0]
+                  ? {
+                      name: report.topItems[0].name,
+                      quantity: report.topItems[0].quantity,
+                    }
+                  : null
+              }
+            />
             <AchievementStrip data={target} />
           </>
         ) : null}

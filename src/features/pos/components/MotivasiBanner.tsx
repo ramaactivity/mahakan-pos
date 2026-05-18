@@ -34,32 +34,60 @@ interface MotivasiCopy {
   Icon: React.ComponentType<{ className?: string }>;
 }
 
+/* Sesi AE-62ak — tip pool refer ke menu Mahakan ASLI (per audit
+ * scripts/_oneshot/check-menu-categories-modifiers.ts):
+ *
+ * Categories: Coffee Based, Non-Coffee, Tea Based, Frappe, Mocktail,
+ *   Manual Brew, Ice Cream, Bakmie, Ricebowl, Sweets, Bites, Literan
+ * Modifiers: Extra Shot (+8k), Extra Topping Ayam (+10k), Tingkat Es/Gula
+ * Signature: Pablo Eskopi, Matcha & The Bear, Mont Blanc, Ariana Green Tea,
+ *   Ricebowl Ayam Sambal Matah, Bakmi Ayam Chilli Oil, Mixed Platter,
+ *   Croffle Ice Cream
+ * Sweets: Churros Choco Dip, Croffle Ice Cream, Roti Bakar Keju
+ * Bites: Dimsum, French Fries, Tahu Walik, Samosa Kare, Mixed Platter
+ */
 const TIPS_LOW: string[] = [
-  "Upsell add-on dessert (Donut, Croffle) tiap pesan kopi ☕ + 🧁",
-  "Tawarin upgrade size: regular → large cuma +Rp 5k",
-  "Suggest combo paket hemat — makan + minum lebih untung",
-  "Recommend menu signature kalau customer bingung baca menu",
-  "Tag-on extra shot atau syrup buat kopi (margin tinggi)",
-  "Kasi sample mini ke meja yang lagi nunggu — induce craving",
+  "Tag-on Extra Shot (+Rp 8rb) buat yang pesan kopi — margin tinggi",
+  "Tawarin Sweets (Croffle, Churros, Roti Bakar) buat yang nongkrong sama kopi",
+  "Recommend signature ke customer baru: Pablo Eskopi, Matcha & The Bear, Mont Blanc",
+  "Cross-sell: yang pesan Ricebowl/Bakmie → tawarin minuman dingin",
+  "Push Bites (French Fries, Dimsum, Tahu Walik) buat customer yang lagi ngobrol",
+  "Customer ≥2 orang? Recommend Mixed Platter — sharing portion mantap",
+  "Tawarin Extra Topping Ayam (+Rp 10rb) buat Ricebowl Ayam / Bakmi Ayam",
+  "Yang udah makan berat → tawarin Ice Cream (Affogato/Matchagatto) atau Mocktail",
+  "Suggest signature Mocktail Mont Blanc / Cardi Breeze buat yang mau yang refreshing",
 ];
 
 const TIPS_MID: string[] = [
-  "Tetap konsisten — recommend best-seller hari ini ke customer baru",
-  "Push add-on di transaksi solo (1 menu doang) → coba complete-the-meal",
-  "Reminder ke regular: ada menu baru / promo bundle apa hari ini",
-  "Cross-sell: yang pesan kopi → tawarin pastry, yang makanan → tawarin minuman",
+  "Konsisten recommend signature (Pablo Eskopi, Matcha & The Bear, Mont Blanc)",
+  "Solo order (1 menu)? Complete-the-meal: tambahin Sweets atau Bites",
+  "Cross-sell: kopi → Croffle/Churros, makanan → minuman dingin",
+  "Reminder ke regular: tanya signature mereka udah pesan belum",
+  "Push Manual Brew (Japanese / V60) ke customer yang minat coffee specialty",
 ];
 
 const TIPS_HIGH: string[] = [
   "Hampir tembus! Push 1-2 order lagi pasti dapet 🏆",
-  "Tawarin take-away buat customer yang udah selesai — extra order",
-  "Last push: rekomendasi minuman buat yang udah selesai makan",
+  "Tawarin take-away minuman buat customer yang udah selesai",
+  "Last push: rekomendasi Ice Cream atau Sweets sebagai penutup",
+  "Tawarin Literan buat dibawa pulang — order besar tipis",
 ];
 
 function pickTip(tips: string[]): string {
   // Pseudo-random tapi stable per render — pakai jam supaya rotate tiap jam.
   const hour = new Date().getHours();
   return tips[hour % tips.length];
+}
+
+/** Inject dynamic tip yang refer ke top item hari ini (kalau ada).
+ *  Pre-pend ke pool sehingga 1/(N+1) kemungkinan kepilih per jam. */
+function buildTipPool(
+  baseTips: string[],
+  topItem: { name: string; quantity: number } | null,
+): string[] {
+  if (!topItem) return baseTips;
+  const dynamicTip = `"${topItem.name}" lagi laku hari ini (${topItem.quantity}× sold) — recommend ke customer lain`;
+  return [dynamicTip, ...baseTips];
 }
 
 function tierFromPct(pct: number | null): Tier {
@@ -189,7 +217,16 @@ function copyForTier(tier: Tier, hourWib: number): MotivasiCopy {
   }
 }
 
-export function MotivasiBanner({ data }: { data: TargetProgressData }) {
+export function MotivasiBanner({
+  data,
+  topItem = null,
+}: {
+  data: TargetProgressData;
+  /** Optional top-selling item hari ini untuk dynamic tip injection
+   *  (sesi AE-62ak — pre-fix tips referensi item ngasal "Donut" yg tidak
+   *  ada di menu Mahakan; sekarang tip dinamis pakai data real). */
+  topItem?: { name: string; quantity: number } | null;
+}) {
   const pct = data.daily.pct;
   const hourWib = useMemo(() => {
     /* WIB hour for context-aware copy (pagi/siang/sore). */
@@ -199,7 +236,11 @@ export function MotivasiBanner({ data }: { data: TargetProgressData }) {
 
   const tier = tierFromPct(pct);
   const copy = useMemo(() => copyForTier(tier, hourWib), [tier, hourWib]);
-  const tip = useMemo(() => pickTip(copy.tips), [copy.tips]);
+  const tipPool = useMemo(
+    () => buildTipPool(copy.tips, topItem),
+    [copy.tips, topItem],
+  );
+  const tip = useMemo(() => pickTip(tipPool), [tipPool]);
   const Icon = copy.Icon;
 
   return (
