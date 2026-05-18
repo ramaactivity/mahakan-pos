@@ -246,19 +246,42 @@ export async function upsertSchedule(
       .returning();
   }
 
+  /* Sesi AE-62ab — recompute attendance late + OT untuk shiftDate ini.
+   * HR salah input jadwal Charlotte (10:00 → harus 14:00). Pre-fix:
+   * "telat 2h 41m" stale walau schedule udah di-fix. Sekarang: setelah
+   * upsert, attendance records auto-sinkron via helper pure
+   * computeLateMinutes + computeOvertimeMinutes. */
+  const { recomputeAttendanceForSchedule } = await import(
+    "@/features/attendance/recompute"
+  );
+  const recompute = await recomputeAttendanceForSchedule({
+    outletId: session.user.outletId,
+    employeeId: v.employeeId,
+    shiftDate: v.scheduleDate,
+    newSchedule: {
+      dayOff: row.dayOff,
+      startTime: row.startTime ?? null,
+      endTime: row.endTime ?? null,
+    },
+  });
+
   logAudit({
     eventType: "schedule.upsert",
     userId: session.user.id,
     entityType: "schedule",
     entityId: row.id,
     payload: {
-      summary: `Jadwal ${emp.fullName} ${row.scheduleDate} ${row.dayOff ? "OFF" : `${row.startTime}–${row.endTime}`}`,
+      summary:
+        recompute.recomputedCount > 0
+          ? `Jadwal ${emp.fullName} ${row.scheduleDate} ${row.dayOff ? "OFF" : `${row.startTime}–${row.endTime}`} · ${recompute.recomputedCount} attendance re-computed`
+          : `Jadwal ${emp.fullName} ${row.scheduleDate} ${row.dayOff ? "OFF" : `${row.startTime}–${row.endTime}`}`,
       after: {
         employeeId: emp.id,
         scheduleDate: row.scheduleDate,
         dayOff: row.dayOff,
         startTime: row.startTime,
         endTime: row.endTime,
+        attendanceRecompute: recompute.records,
       },
     },
     metadata: {
@@ -287,6 +310,18 @@ export async function deleteSchedule(
     return fail("FORBIDDEN", "Jadwal dari outlet lain");
   }
   await db.delete(employeeSchedules).where(eq(employeeSchedules.id, id));
+
+  /* Sesi AE-62ab — schedule deleted = no metrics. Recompute mark unknown. */
+  const { recomputeAttendanceForSchedule } = await import(
+    "@/features/attendance/recompute"
+  );
+  await recomputeAttendanceForSchedule({
+    outletId: session.user.outletId,
+    employeeId: row.employeeId,
+    shiftDate: row.scheduleDate,
+    newSchedule: null,
+  });
+
   return ok({ id });
 }
 
