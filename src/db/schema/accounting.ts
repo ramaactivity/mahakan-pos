@@ -227,6 +227,23 @@ export const journalEntries = pgTable(
     index("idx_je_period").on(t.periodId),
     index("idx_je_source").on(t.sourceType, t.sourceId),
     index("idx_je_outlet_date").on(t.outletId, t.entryDate),
+    /* Sesi AE-62t — defense-in-depth UNIQUE pada (outletId, sourceType, sourceId)
+     * untuk ACTIVE entries (posted/draft, source_id non-null). Reversed entries
+     * boleh duplikat karena legal pattern (post → reverse → re-post di sumber
+     * yang sama, mis. pos_sale → pos_void → re-create dari koreksi).
+     *
+     * Sebelumnya: idempotency check di `recordJournal.findExistingEntry`
+     * adalah SELECT-then-INSERT (TOCTOU race) — 2 concurrent hook fires bisa
+     * silent duplicate post → GL overstatement permanent. UNIQUE constraint
+     * guarantee 1 active entry per (outlet, source) pair di DB level.
+     *
+     * Source-less entries (manual / opening_balance) di-exclude — manual entries
+     * harus boleh duplikat. */
+    uniqueIndex("ux_je_outlet_source_active")
+      .on(t.outletId, t.sourceType, t.sourceId)
+      .where(
+        sql`${t.sourceId} IS NOT NULL AND ${t.status} IN ('posted', 'draft')`,
+      ),
   ],
 );
 

@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "ux_transactions_pager_open_per_shift" ON "transactions" USING btree ("shift_id","pager_number") WHERE "transactions"."pager_number" IS NOT NULL AND "transactions"."status" = 'open';--> statement-breakpoint
+CREATE UNIQUE INDEX "ux_je_outlet_source_active" ON "journal_entries" USING btree ("outlet_id","source_type","source_id") WHERE "journal_entries"."source_id" IS NOT NULL AND "journal_entries"."status" IN ('posted', 'draft');

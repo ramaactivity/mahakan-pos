@@ -7,6 +7,7 @@ import {
   bigint,
   integer,
   index,
+  uniqueIndex,
   check,
 } from "drizzle-orm/pg-core";
 import { outlets } from "./outlets";
@@ -123,6 +124,15 @@ export const transactions = pgTable(
     index("idx_transactions_outlet_date").on(t.outletId, t.createdAt),
     index("idx_transactions_status").on(t.status),
     index("idx_transactions_payment_method").on(t.paymentMethod),
+    /* Sesi AE-62t — partial UNIQUE pada (shiftId, pagerNumber) untuk OPEN bills
+     * only. Race condition: 2 kasir paralel bisa assign pager 5 ke 2 bill
+     * yang masih open → customer bingung "kok pager-ku dipakai 2 orang".
+     * Setelah bill paid, pagerNumber tetap di-record (audit) tapi fisik pager
+     * udah kembali ke meja kasir → boleh di-reassign ke open bill baru.
+     * Karena itu filter `status = 'open'`, bukan all-rows unique. */
+    uniqueIndex("ux_transactions_pager_open_per_shift")
+      .on(t.shiftId, t.pagerNumber)
+      .where(sql`${t.pagerNumber} IS NOT NULL AND ${t.status} = 'open'`),
     check(
       "ck_transactions_pager_range",
       sql`${t.pagerNumber} IS NULL OR ${t.pagerNumber} BETWEEN 1 AND 99`,
