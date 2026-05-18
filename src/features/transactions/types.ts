@@ -225,6 +225,8 @@ export interface RefundTransactionPartialInput {
   reason: string;
   approverToken?: string;
   approvalCode?: string;
+  /** Sesi AE-62v — UUID untuk idempotent submit (network retry / double-click). */
+  clientRefId?: string;
 }
 
 /**

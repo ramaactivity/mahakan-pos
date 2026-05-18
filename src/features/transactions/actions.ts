@@ -90,19 +90,30 @@ async function resolveActiveOwnerId(outletId: string): Promise<string | null> {
 }
 
 /**
- * Authorize a void/refund based on outlet's approval mode. Returns the
- * `approverId` to record on the transaction + ok flag, or fails the
- * current action with a typed result.
+ * Pre-authorize void/refund — RESOLVE mode + validate kelengkapan
+ * credential, TANPA consume token/code. Caller wajib `consumeVoidRefundCredential`
+ * INSIDE db.transaction(...) supaya consume atomic dengan source action
+ * (Sesi AE-62v — fix orphan token risk).
  */
-async function authorizeVoidRefund(
+type VoidRefundAuth =
+  | {
+      ok: true;
+      mode: "code";
+      approvalCode: string;
+      ownerId: string | null;
+    }
+  | {
+      ok: true;
+      mode: "pin";
+      approverToken: string;
+    }
+  | { ok: false; code: string; message: string };
+
+async function prepareVoidRefundAuth(
   outletId: string,
-  transactionId: string,
   actionType: "pos.transaction.void" | "pos.transaction.refund",
   v: { approverToken?: string; approvalCode?: string },
-): Promise<
-  | { ok: true; approverId: string | null }
-  | { ok: false; code: string; message: string }
-> {
+): Promise<VoidRefundAuth> {
   const kind = actionType === "pos.transaction.void" ? "void" : "refund";
   const mode = await resolveApprovalMode(outletId, kind);
   if (mode === "code") {
@@ -113,14 +124,14 @@ async function authorizeVoidRefund(
         message: `${kind === "void" ? "Void" : "Refund"} butuh kode approval dari Owner`,
       };
     }
-    const res = await consumeApprovalCode(transactionId, actionType, v.approvalCode);
-    if (!isApprovalOk(res)) {
-      return { ok: false, code: res.error.code, message: res.error.message };
-    }
     const ownerId = await resolveActiveOwnerId(outletId);
-    return { ok: true, approverId: ownerId };
+    return {
+      ok: true,
+      mode: "code",
+      approvalCode: v.approvalCode,
+      ownerId,
+    };
   }
-  // Legacy pin mode
   if (!v.approverToken) {
     return {
       ok: false,
@@ -128,19 +139,46 @@ async function authorizeVoidRefund(
       message: `${kind === "void" ? "Void" : "Refund"} butuh PIN approver`,
     };
   }
+  return { ok: true, mode: "pin", approverToken: v.approverToken };
+}
+
+/**
+ * Consume void/refund credential INSIDE outer db.transaction (Sesi AE-62v).
+ * Returns approverId atau throws untuk caller catch.
+ */
+async function consumeVoidRefundCredential(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  prepared: Extract<VoidRefundAuth, { ok: true }>,
+  transactionId: string,
+  actionType: "pos.transaction.void" | "pos.transaction.refund",
+): Promise<string | null> {
+  if (prepared.mode === "code") {
+    // Note: consumeApprovalCode tidak tx-aware (uses its own atomicity via
+    // approvalCodes table update); orphan risk lebih kecil karena code-mode
+    // sudah single-use enforced via approvalCodes.consumedAt. Acceptable.
+    const res = await consumeApprovalCode(
+      transactionId,
+      actionType,
+      prepared.approvalCode,
+    );
+    if (!isApprovalOk(res)) {
+      throw new Error(`APPROVAL_CODE_FAILED:${res.error.code}:${res.error.message}`);
+    }
+    return prepared.ownerId;
+  }
+  // PIN mode — consume token inside this tx supaya atomic dengan source action.
   try {
     const consumed = await consumeApproverToken(
-      v.approverToken,
+      prepared.approverToken,
       actionType,
       transactionId,
+      tx,
     );
-    return { ok: true, approverId: consumed.approverId };
+    return consumed.approverId;
   } catch (e) {
-    return {
-      ok: false,
-      code: "APPROVER_TOKEN_INVALID",
-      message: e instanceof Error ? e.message : "Token gagal",
-    };
+    throw new Error(
+      `APPROVER_TOKEN_INVALID:${e instanceof Error ? e.message : "Token gagal"}`,
+    );
   }
 }
 import {
@@ -349,6 +387,9 @@ export async function createTransaction(
   // NOT parallelized with the batch above because token consume is
   // destructive (decrements a counter) — we don't want to consume a token
   // if shift validation will fail.
+  // Sesi AE-62v — validate token presence early, DEFER consume ke INSIDE tx.
+  // Sebelumnya consume di sini → kalau menu check / DB insert later gagal,
+  // token jadi orphan (staff harus minta PIN baru tanpa transaksi terjadi).
   let discountApproverId: string | null = null;
   if (v.discountAmount > 0 && session.user.role === "staff") {
     if (!v.discountApproverToken) {
@@ -356,17 +397,6 @@ export async function createTransaction(
         "APPROVER_REQUIRED",
         "Staff butuh approver untuk apply discount",
       );
-    }
-    try {
-      const consumed = await consumeApproverToken(
-        v.discountApproverToken,
-        "pos.discount.apply",
-        null,
-      );
-      discountApproverId = consumed.approverId;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Token gagal";
-      return fail("APPROVER_TOKEN_INVALID", msg);
     }
   }
 
@@ -458,6 +488,23 @@ export async function createTransaction(
 
   try {
     const result = await db.transaction(async (tx) => {
+      // Sesi AE-62v — consume discount approver token INSIDE tx (atomic
+      // rollback bila tx fail). Token presence sudah di-validate di luar.
+      if (v.discountAmount > 0 && session.user.role === "staff") {
+        try {
+          const consumed = await consumeApproverToken(
+            v.discountApproverToken!,
+            "pos.discount.apply",
+            null,
+            tx,
+          );
+          discountApproverId = consumed.approverId;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Token gagal";
+          throw new Error(`APPROVER_TOKEN_INVALID:${msg}`);
+        }
+      }
+
       // Acquire advisory lock keyed on outlet+day to serialize seq generation.
       // Lock auto-releases at COMMIT/ROLLBACK.
       await tx.execute(
@@ -775,6 +822,14 @@ export async function createTransaction(
         "Saldo poin member berubah saat checkout. Coba ulang dengan jumlah lebih kecil.",
       );
     }
+    /* Sesi AE-62v — approver token consume yang sekarang INSIDE tx throws
+     * dengan prefix APPROVER_TOKEN_INVALID:. Surface clean error ke kasir. */
+    if (e instanceof Error && e.message.startsWith("APPROVER_TOKEN_INVALID:")) {
+      return fail(
+        "APPROVER_TOKEN_INVALID",
+        e.message.replace(/^APPROVER_TOKEN_INVALID:/, "") || "Token gagal",
+      );
+    }
     return fail("DB_ERROR", logAndSanitize(e, "transactions", "Operasi database gagal"));
   }
 }
@@ -802,16 +857,16 @@ export async function voidTransaction(
   // in code mode, the .request perm gates initiation (already enforced when
   // requestApprovalCode was called). Either path produces a valid token/code
   // pre-call here; we just need the user to have *some* role.
-  const auth_ = await authorizeVoidRefund(
+  // Sesi AE-62v — pre-resolve credential mode + validate kelengkapan TANPA
+  // consume. Actual consume di-defer ke INSIDE db.transaction supaya atomic.
+  const prepared = await prepareVoidRefundAuth(
     session.user.outletId,
-    v.transactionId,
     "pos.transaction.void",
     v,
   );
-  if (!auth_.ok) {
-    return fail(auth_.code, auth_.message);
+  if (!prepared.ok) {
+    return fail(prepared.code, prepared.message);
   }
-  const approverId = auth_.approverId;
 
   const [current] = await db
     .select()
@@ -831,19 +886,31 @@ export async function voidTransaction(
   const shiftCheck = await assertShiftOpen(current.shiftId);
   if (!shiftCheck.ok) return fail(shiftCheck.code, shiftCheck.message);
 
-  const { updated, restoredIngredientIds } = await db.transaction(async (tx) => {
-    const [updatedRow] = await tx
-      .update(transactions)
-      .set({
-        status: "voided",
-        voidedAt: new Date(),
-        voidedBy: session.user.id,
-        voidedApprover: approverId,
-        voidReason: v.reason,
-        updatedAt: new Date(),
-      })
-      .where(eq(transactions.id, v.transactionId))
-      .returning();
+  let approverId: string | null = null;
+  let updated: typeof transactions.$inferSelect;
+  let restoredIngredientIds: string[];
+  try {
+    const txResult = await db.transaction(async (tx) => {
+      // Sesi AE-62v — consume credential INSIDE tx supaya rollback safe.
+      approverId = await consumeVoidRefundCredential(
+        tx,
+        prepared,
+        v.transactionId,
+        "pos.transaction.void",
+      );
+
+      const [updatedRow] = await tx
+        .update(transactions)
+        .set({
+          status: "voided",
+          voidedAt: new Date(),
+          voidedBy: session.user.id,
+          voidedApprover: approverId,
+          voidReason: v.reason,
+          updatedAt: new Date(),
+        })
+        .where(eq(transactions.id, v.transactionId))
+        .returning();
 
     const restored = await restoreStockForTransaction(
       tx,
@@ -877,8 +944,29 @@ export async function voidTransaction(
         .where(eq(promos.id, u.promoId));
     }
 
-    return { updated: updatedRow, restoredIngredientIds: restored };
-  });
+      return { updated: updatedRow, restoredIngredientIds: restored };
+    });
+    updated = txResult.updated;
+    restoredIngredientIds = txResult.restoredIngredientIds;
+  } catch (e) {
+    /* Sesi AE-62v — surface credential errors clean ke kasir (was 500
+     * sebelumnya karena throw bubble out of tx callback). */
+    if (e instanceof Error && e.message.startsWith("APPROVER_TOKEN_INVALID:")) {
+      return fail(
+        "APPROVER_TOKEN_INVALID",
+        e.message.replace(/^APPROVER_TOKEN_INVALID:/, "") || "Token gagal",
+      );
+    }
+    if (e instanceof Error && e.message.startsWith("APPROVAL_CODE_FAILED:")) {
+      const rest = e.message.replace(/^APPROVAL_CODE_FAILED:/, "");
+      const [code, ...msgParts] = rest.split(":");
+      return fail(code || "APPROVAL_CODE_FAILED", msgParts.join(":") || "Kode approval gagal");
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "transactions.void", "Operasi database gagal"),
+    );
+  }
 
   if (restoredIngredientIds.length > 0) {
     reevaluateSoldOutForIngredients(restoredIngredientIds).catch((e) =>
@@ -960,17 +1048,15 @@ export async function refundTransaction(
   }
   const v = parsed.data;
 
-  // Authorization: outlet flag picks PIN-mode or code-mode. See helper.
-  const auth_ = await authorizeVoidRefund(
+  // Sesi AE-62v — pre-resolve credential mode, defer consume ke INSIDE tx.
+  const prepared = await prepareVoidRefundAuth(
     session.user.outletId,
-    v.transactionId,
     "pos.transaction.refund",
     v,
   );
-  if (!auth_.ok) {
-    return fail(auth_.code, auth_.message);
+  if (!prepared.ok) {
+    return fail(prepared.code, prepared.message);
   }
-  const approverId = auth_.approverId;
 
   const [current] = await db
     .select()
@@ -1024,8 +1110,19 @@ export async function refundTransaction(
 
   const todayDate = todayWibYmd().replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
 
-  const { result, restoredIngredientIds } = await db.transaction(
-    async (tx) => {
+  let approverId: string | null = null;
+  let result: typeof transactions.$inferSelect;
+  let restoredIngredientIds: string[];
+  try {
+    const txResult = await db.transaction(async (tx) => {
+      // Sesi AE-62v — consume credential INSIDE tx untuk atomic rollback.
+      approverId = await consumeVoidRefundCredential(
+        tx,
+        prepared,
+        v.transactionId,
+        "pos.transaction.refund",
+      );
+
       const [updated] = await tx
         .update(transactions)
         .set({
@@ -1126,8 +1223,27 @@ export async function refundTransaction(
       }
 
       return { result: updated, restoredIngredientIds: restored };
-    },
-  );
+    });
+    result = txResult.result;
+    restoredIngredientIds = txResult.restoredIngredientIds;
+  } catch (e) {
+    /* Sesi AE-62v — surface credential errors clean. */
+    if (e instanceof Error && e.message.startsWith("APPROVER_TOKEN_INVALID:")) {
+      return fail(
+        "APPROVER_TOKEN_INVALID",
+        e.message.replace(/^APPROVER_TOKEN_INVALID:/, "") || "Token gagal",
+      );
+    }
+    if (e instanceof Error && e.message.startsWith("APPROVAL_CODE_FAILED:")) {
+      const rest = e.message.replace(/^APPROVAL_CODE_FAILED:/, "");
+      const [code, ...msgParts] = rest.split(":");
+      return fail(code || "APPROVAL_CODE_FAILED", msgParts.join(":") || "Kode approval gagal");
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "transactions.refund", "Operasi database gagal"),
+    );
+  }
 
   if (restoredIngredientIds.length > 0) {
     reevaluateSoldOutForIngredients(restoredIngredientIds).catch((e) =>
@@ -1223,16 +1339,46 @@ export async function refundTransactionPartial(
   }
   const v = parsed.data;
 
-  const auth_ = await authorizeVoidRefund(
+  /* Sesi AE-62v — idempotency: kalau clientRefId provided dan refund_event
+   * dengan id ini sudah ada, return existing (cepat, tanpa re-execute side
+   * effects). Mencegah duplicate refund + double GL post saat network retry. */
+  if (v.clientRefId) {
+    const [existing] = await db
+      .select({
+        id: refundEvents.id,
+        transactionId: refundEvents.transactionId,
+      })
+      .from(refundEvents)
+      .where(eq(refundEvents.clientRefId, v.clientRefId))
+      .limit(1);
+    if (existing) {
+      // Defensive: ensure clientRefId-matched event belongs to same trx (paranoia).
+      if (existing.transactionId !== v.transactionId) {
+        return fail(
+          "CLIENT_REF_ID_MISMATCH",
+          "ID idempotency mismatch — generate UUID baru untuk submit ini.",
+        );
+      }
+      const [currentTrx] = await db
+        .select()
+        .from(transactions)
+        .where(eq(transactions.id, existing.transactionId))
+        .limit(1);
+      if (currentTrx) {
+        return ok({ transaction: currentTrx, eventId: existing.id });
+      }
+    }
+  }
+
+  // Sesi AE-62v — pre-resolve credential, defer consume ke INSIDE tx.
+  const prepared = await prepareVoidRefundAuth(
     session.user.outletId,
-    v.transactionId,
     "pos.transaction.refund",
     v,
   );
-  if (!auth_.ok) {
-    return fail(auth_.code, auth_.message);
+  if (!prepared.ok) {
+    return fail(prepared.code, prepared.message);
   }
-  const approverId = auth_.approverId;
 
   const [current] = await db
     .select()
@@ -1317,7 +1463,17 @@ export async function refundTransactionPartial(
   const newCumulative = current.refundedAmount + computation.totalRefunded;
   const nextStatus = nextStatusAfterRefund(newCumulative, current.total);
 
-  const result = await db.transaction(async (tx) => {
+  let approverId: string | null = null;
+  let result: { transaction: typeof transactions.$inferSelect; eventId: string };
+  try {
+    result = await db.transaction(async (tx) => {
+    // Sesi AE-62v — consume credential INSIDE tx untuk atomic rollback.
+    approverId = await consumeVoidRefundCredential(
+      tx,
+      prepared,
+      v.transactionId,
+      "pos.transaction.refund",
+    );
     // Insert refund event
     const [evt] = await tx
       .insert(refundEvents)
@@ -1329,6 +1485,8 @@ export async function refundTransactionPartial(
         reason: v.reason,
         createdByUserId: session.user.id,
         approverUserId: approverId,
+        /* Sesi AE-62v — store clientRefId untuk idempotent retry. */
+        clientRefId: v.clientRefId ?? null,
       })
       .returning();
 
@@ -1410,7 +1568,52 @@ export async function refundTransactionPartial(
     }
 
     return { transaction: updated, eventId: evt.id };
-  });
+    });
+  } catch (e) {
+    /* Sesi AE-62v — race: 2 parallel POST dengan same clientRefId, first
+     * wins INSERT (ux_refund_events_client_ref UNIQUE), second gets dup
+     * error. Recovery: return existing event sebagai "ok" (idempotent semantic). */
+    if (
+      v.clientRefId &&
+      e instanceof Error &&
+      /ux_refund_events_client_ref|client_ref_id|unique/i.test(e.message)
+    ) {
+      const [existing] = await db
+        .select({
+          id: refundEvents.id,
+          transactionId: refundEvents.transactionId,
+        })
+        .from(refundEvents)
+        .where(eq(refundEvents.clientRefId, v.clientRefId))
+        .limit(1);
+      if (existing) {
+        const [currentTrx] = await db
+          .select()
+          .from(transactions)
+          .where(eq(transactions.id, existing.transactionId))
+          .limit(1);
+        if (currentTrx) {
+          return ok({ transaction: currentTrx, eventId: existing.id });
+        }
+      }
+    }
+    /* Sesi AE-62v — surface credential errors clean. */
+    if (e instanceof Error && e.message.startsWith("APPROVER_TOKEN_INVALID:")) {
+      return fail(
+        "APPROVER_TOKEN_INVALID",
+        e.message.replace(/^APPROVER_TOKEN_INVALID:/, "") || "Token gagal",
+      );
+    }
+    if (e instanceof Error && e.message.startsWith("APPROVAL_CODE_FAILED:")) {
+      const rest = e.message.replace(/^APPROVAL_CODE_FAILED:/, "");
+      const [code, ...msgParts] = rest.split(":");
+      return fail(code || "APPROVAL_CODE_FAILED", msgParts.join(":") || "Kode approval gagal");
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "transactions.refund-partial", "Operasi database gagal"),
+    );
+  }
 
   await logAudit({
     eventType: "transaction.refund.partial",
@@ -1792,15 +1995,19 @@ export async function editOpenBill(
       if (!locked) throw new Error("NOT_FOUND");
       if (locked.status !== "open") throw new Error("TRX_NOT_OPEN");
 
-      // Sesi AE-62k — consume approver token INSIDE tx supaya kalau tx
-      // rollback (any failure), token tidak ke-consume orphan. Postgres
-      // tx-scoped consumeApproverToken: token marked used hanya saat commit.
+      // Sesi AE-62k → AE-62v fix — consume approver token INSIDE tx via `tx`
+      // executor parameter. Sebelumnya (AE-62k) panggil pakai `db` global
+      // dari dalam tx callback, padahal `db.insert` pakai pool connection
+      // yang berbeda — consume tetap auto-committed di luar outer tx →
+      // orphan kalau outer rollback. AE-62v: pass `tx` ke consumeApproverToken
+      // supaya insert atomic dengan outer tx.
       if (v.discountAmount > 0 && session.user.role === "staff") {
         try {
           const consumed = await consumeApproverToken(
             v.discountApproverToken!,
             "pos.discount.apply",
             null,
+            tx,
           );
           discountApproverId = consumed.approverId;
         } catch (e) {

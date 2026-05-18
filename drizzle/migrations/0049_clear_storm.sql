@@ -1,0 +1,2 @@
+ALTER TABLE "refund_events" ADD COLUMN "client_ref_id" uuid;--> statement-breakpoint
+CREATE UNIQUE INDEX "ux_refund_events_client_ref" ON "refund_events" USING btree ("client_ref_id") WHERE "refund_events"."client_ref_id" IS NOT NULL;

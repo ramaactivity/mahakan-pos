@@ -254,10 +254,15 @@ export function HistoryDetailModal({
       setTrx({ ...trx, ...res.data });
       toast.success("Transaksi di-void");
     } else if (partialItems && partialItems.length > 0) {
+      /* Sesi AE-62v — generate clientRefId per submit untuk idempotent
+       * server-side dedup. Network retry / double-click → second call
+       * dengan UUID yang sama return existing refund_event tanpa
+       * duplicate journal post. */
       const res = await refundTransactionPartial({
         transactionId: trx.id,
         items: partialItems,
         reason: reasonText,
+        clientRefId: crypto.randomUUID(),
         ...authPayload,
       });
       if (!isOk(res)) {

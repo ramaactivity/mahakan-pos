@@ -125,6 +125,11 @@ export const refundTransactionPartialSchema = z.object({
     .trim()
     .regex(/^\d{6}$/)
     .optional(),
+  /** Sesi AE-62v — client-generated UUID untuk idempotent submit. Network
+   * retry / double-click → second submit dengan same id return existing
+   * refund_event instead of insert duplicate. Optional supaya UI lama
+   * (tanpa generate) tetap jalan. */
+  clientRefId: z.uuid().optional(),
 });
 
 export const addSplitPaymentSchema = z

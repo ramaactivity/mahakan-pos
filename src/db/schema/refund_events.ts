@@ -7,6 +7,7 @@ import {
   bigint,
   integer,
   index,
+  uniqueIndex,
   check,
 } from "drizzle-orm/pg-core";
 import { outlets } from "./outlets";
@@ -50,6 +51,12 @@ export const refundEvents = pgTable(
     /** Approver: PIN-derived (legacy mode) OR Owner-via-code (B-2 code mode). */
     approverUserId: uuid("approver_user_id").references(() => users.id),
 
+    /** Sesi AE-62v — client-generated idempotency key untuk prevent
+     * duplicate refund_events kalau jaringan retry POST. Pattern mirror
+     * transactions.client_ref_id. Nullable supaya legacy rows pre-AE-62v
+     * tetap valid; new flows wajib pass. */
+    clientRefId: uuid("client_ref_id"),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -58,6 +65,12 @@ export const refundEvents = pgTable(
     index("idx_refund_events_transaction").on(t.transactionId),
     index("idx_refund_events_outlet_created").on(t.outletId, t.createdAt),
     check("ck_refund_events_total_pos", sql`${t.totalRefunded} > 0`),
+    /* Sesi AE-62v — partial unique kalau clientRefId non-null. Idempotent
+     * insert: second POST dengan same clientRefId → caller return existing
+     * row instead of insert duplicate. */
+    uniqueIndex("ux_refund_events_client_ref")
+      .on(t.clientRefId)
+      .where(sql`${t.clientRefId} IS NOT NULL`),
   ],
 );
 

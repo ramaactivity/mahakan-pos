@@ -68,11 +68,25 @@ export interface ConsumedApprover {
  * INSERT (PRIMARY KEY collision = already used). Throws on any failure —
  * caller maps to API error. The atomic INSERT closes the race that the
  * previous in-memory Map had under multi-instance Vercel serverless.
+ *
+ * Sesi AE-62v — optional `dbExec` parameter supaya caller bisa pass `tx`
+ * dari `db.transaction(async (tx) => ...)` block. Penting untuk void/refund/
+ * editOpenBill: kalau consume pakai `db.insert(...)` langsung (default),
+ * insert jadi auto-committed di connection berbeda dari outer tx — orphan
+ * token bila outer tx rollback. Pass `tx` supaya consume atomic dengan
+ * source action.
+ *
+ * AE-62k claim "tx-scoped consume" sebenarnya NOT achieved tanpa `dbExec`
+ * param ini — comment di editOpenBill yang dulu jadi misleading. Fix
+ * sekarang real.
  */
 export async function consumeApproverToken(
   token: string,
   expectedActionType: Permission,
   expectedTargetEntityId: string | null,
+  /** Optional drizzle tx executor — kalau di-pass, insert jadi atomic dengan
+   * outer tx. Default pakai `db` (auto-commit, original behavior). */
+  dbExec: Pick<typeof db, "insert"> = db,
 ): Promise<ConsumedApprover> {
   const { payload } = await jwtVerify(token, getSecret(), {
     issuer: ISSUER,
@@ -92,7 +106,7 @@ export async function consumeApproverToken(
   // Atomic single-use enforcement. ON CONFLICT DO NOTHING returns 0 rows when
   // the jti was already consumed; a successful insert returns 1 row.
   const expSec = (payload.exp ?? Math.floor(Date.now() / 1000)) as number;
-  const inserted = await db
+  const inserted = await dbExec
     .insert(consumedApproverTokens)
     .values({
       jti,
@@ -105,7 +119,8 @@ export async function consumeApproverToken(
     throw new Error("APPROVER_TOKEN_ALREADY_USED");
   }
 
-  // Probabilistic GC of expired rows
+  // Probabilistic GC of expired rows — never use tx executor for GC supaya
+  // GC failure tidak rollback consume.
   void maybeGarbageCollect();
 
   return {
