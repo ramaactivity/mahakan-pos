@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Ban, CheckCircle2, RotateCcw } from "lucide-react";
+import { Ban, CheckCircle2, Pencil, RotateCcw, ShieldCheck } from "lucide-react";
 import {
   Badge,
   Button,
@@ -13,6 +13,9 @@ import {
 import { ApproverOverrideModal } from "./ApproverOverrideModal";
 import { ApprovalCodeModal } from "./ApprovalCodeModal";
 import { PrintStationButtons } from "./PrintStationButtons";
+import { TransactionCorrectionModal } from "./TransactionCorrectionModal";
+import { TransactionCorrectionApproveModal } from "./TransactionCorrectionApproveModal";
+import { TransactionCorrectionRejectModal } from "./TransactionCorrectionRejectModal";
 import {
   isOk,
   getSplitBreakdown,
@@ -22,10 +25,16 @@ import {
   refundTransaction,
   refundTransactionPartial,
   markServed,
+  type PaymentMethod,
   type RefundTransactionPartialItem,
   type SplitPaymentBreakdown,
   type TransactionWithItems,
 } from "@/features/transactions";
+import {
+  cancelTransactionCorrection,
+  getTransactionCorrectionState,
+  type CorrectionAvailabilityResult,
+} from "@/features/transactions/correction-actions";
 import { useSession } from "@/features/auth/SessionProvider";
 import type {
   ReceiptConfig,
@@ -85,6 +94,13 @@ export function HistoryDetailModal({
   const [splitBreakdown, setSplitBreakdown] =
     useState<SplitPaymentBreakdown | null>(null);
   const [loading, setLoading] = useState(true);
+  /* Sesi AE-62r — koreksi transaksi state. */
+  const [correctionState, setCorrectionState] =
+    useState<CorrectionAvailabilityResult | null>(null);
+  const [correctionFormOpen, setCorrectionFormOpen] = useState(false);
+  const [correctionApproveOpen, setCorrectionApproveOpen] = useState(false);
+  const [correctionRejectOpen, setCorrectionRejectOpen] = useState(false);
+  const [cancellingCorrection, setCancellingCorrection] = useState(false);
 
   function handleReprintLogged(_key: string, sections: TicketSection[]) {
     if (!trx) return;
@@ -124,13 +140,20 @@ export function HistoryDetailModal({
       setError(null);
       setPartialMode(false);
       setPartialQty({});
+      setCorrectionState(null);
       return;
     }
     let cancelled = false;
     setLoading(true);
     setSplitBreakdown(null);
+    setCorrectionState(null);
     async function load() {
-      const res = await getTransaction(trxId!);
+      /* Sesi AE-62r — parallel fetch trx + correction state untuk satu
+       * roundtrip view (lihat correction-actions.getTransactionCorrectionState). */
+      const [res, corrRes] = await Promise.all([
+        getTransaction(trxId!),
+        getTransactionCorrectionState(trxId!),
+      ]);
       if (cancelled) return;
       if (isOk(res)) {
         setTrx(res.data);
@@ -146,6 +169,9 @@ export function HistoryDetailModal({
           if (isOk(splitRes)) setSplitBreakdown(splitRes.data);
         }
       }
+      if (isOk(corrRes)) {
+        setCorrectionState(corrRes.data);
+      }
       setLoading(false);
     }
     void load();
@@ -153,6 +179,34 @@ export function HistoryDetailModal({
       cancelled = true;
     };
   }, [open, trxId]);
+
+  async function refreshCorrectionState() {
+    if (!trxId) return;
+    const res = await getTransactionCorrectionState(trxId);
+    if (isOk(res)) setCorrectionState(res.data);
+  }
+
+  async function handleCancelCorrection() {
+    if (!correctionState?.pendingCorrection) return;
+    if (
+      !window.confirm(
+        "Batalkan permintaan koreksi ini? Kasir tetap bisa request ulang nanti.",
+      )
+    )
+      return;
+    setCancellingCorrection(true);
+    const res = await cancelTransactionCorrection({
+      correctionId: correctionState.pendingCorrection.id,
+    });
+    setCancellingCorrection(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.info("Permintaan koreksi dibatalkan.");
+    await refreshCorrectionState();
+    onChanged();
+  }
 
   if (!open) return null;
 
@@ -313,7 +367,14 @@ export function HistoryDetailModal({
   return (
     <>
       <Modal
-        open={open && !approverOpen && actionModal === null}
+        open={
+          open &&
+          !approverOpen &&
+          actionModal === null &&
+          !correctionFormOpen &&
+          !correctionApproveOpen &&
+          !correctionRejectOpen
+        }
         onClose={onClose}
         title={trx?.transactionNumber ?? "Memuat…"}
         description={
@@ -334,11 +395,51 @@ export function HistoryDetailModal({
         ) : (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <StatusBadge status={trx.status} />
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge status={trx.status} />
+                {correctionState?.pendingCorrection ? (
+                  <Badge variant="warning">Koreksi Pending</Badge>
+                ) : null}
+              </div>
               <span className="font-mono text-base font-bold text-neutral-900">
                 {formatRupiah(trx.total)}
               </span>
             </div>
+
+            {correctionState?.pendingCorrection ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
+                <p className="font-medium">
+                  Koreksi diajukan oleh{" "}
+                  {correctionState.pendingCorrection.requestedByName ?? "kasir"}{" "}
+                  — menunggu approval Owner.
+                </p>
+                <p className="mt-0.5 text-amber-800">
+                  Ubah ke{" "}
+                  <strong>
+                    {paymentMethodLabel(
+                      correctionState.pendingCorrection
+                        .correctedPaymentMethod as PaymentMethod,
+                    )}
+                  </strong>
+                  ,{" "}
+                  <strong>
+                    {formatRupiah(
+                      correctionState.pendingCorrection.correctedTotal,
+                    )}
+                  </strong>
+                  . Alasan: {correctionState.pendingCorrection.reason}
+                  {correctionState.pendingCorrection.codeFirstTwo ? (
+                    <>
+                      {" "}
+                      · Kode mulai{" "}
+                      <span className="font-mono font-semibold">
+                        {correctionState.pendingCorrection.codeFirstTwo}…
+                      </span>
+                    </>
+                  ) : null}
+                </p>
+              </div>
+            ) : null}
 
             <div className="space-y-2 max-h-[260px] overflow-y-auto rounded-md border border-neutral-200 bg-white p-3">
               {trx.items.map((item) => (
@@ -521,6 +622,44 @@ export function HistoryDetailModal({
                   }}
                 >
                   <RotateCcw className="size-4" aria-hidden /> Refund
+                </Button>
+              ) : null}
+              {/* Sesi AE-62r — koreksi transaksi action buttons */}
+              {correctionState?.eligibility.eligible &&
+              !correctionState.pendingCorrection ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setCorrectionFormOpen(true)}
+                >
+                  <Pencil className="size-4" aria-hidden /> Koreksi Transaksi
+                </Button>
+              ) : null}
+              {correctionState?.pendingCorrection?.canApprove ? (
+                <Button
+                  size="sm"
+                  onClick={() => setCorrectionApproveOpen(true)}
+                >
+                  <ShieldCheck className="size-4" aria-hidden /> Approve Koreksi
+                </Button>
+              ) : null}
+              {correctionState?.pendingCorrection?.canReject ? (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setCorrectionRejectOpen(true)}
+                >
+                  <Ban className="size-4" aria-hidden /> Tolak
+                </Button>
+              ) : null}
+              {correctionState?.pendingCorrection?.canCancel ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCancelCorrection}
+                  loading={cancellingCorrection}
+                >
+                  Batalkan Koreksi
                 </Button>
               ) : null}
               <Button variant="ghost" size="sm" onClick={onClose}>
@@ -744,6 +883,62 @@ export function HistoryDetailModal({
             setPendingApproval(null);
           }}
           onApproved={onCodeApproved}
+        />
+      ) : null}
+
+      {/* Sesi AE-62r — koreksi modal trio */}
+      {trx ? (
+        <TransactionCorrectionModal
+          open={correctionFormOpen}
+          trx={trx}
+          currentSplitBreakdown={splitBreakdown}
+          onClose={() => setCorrectionFormOpen(false)}
+          onSubmitted={async () => {
+            setCorrectionFormOpen(false);
+            await refreshCorrectionState();
+            onChanged();
+          }}
+        />
+      ) : null}
+      {trx && correctionState?.pendingCorrection ? (
+        <TransactionCorrectionApproveModal
+          open={correctionApproveOpen}
+          correctionId={correctionState.pendingCorrection.id}
+          transactionNumber={trx.transactionNumber}
+          summary={{
+            originalPaymentMethod: trx.paymentMethod,
+            originalTotal: trx.total,
+            correctedPaymentMethod:
+              correctionState.pendingCorrection.correctedPaymentMethod,
+            correctedTotal: correctionState.pendingCorrection.correctedTotal,
+            reason: correctionState.pendingCorrection.reason,
+            codeFirstTwo: correctionState.pendingCorrection.codeFirstTwo,
+            requestedByName: correctionState.pendingCorrection.requestedByName,
+          }}
+          onClose={() => setCorrectionApproveOpen(false)}
+          onApproved={async () => {
+            setCorrectionApproveOpen(false);
+            await refreshCorrectionState();
+            // Re-fetch trx untuk reflect paymentMethod/total baru.
+            if (trxId) {
+              const res = await getTransaction(trxId);
+              if (isOk(res)) setTrx(res.data);
+            }
+            onChanged();
+          }}
+        />
+      ) : null}
+      {trx && correctionState?.pendingCorrection ? (
+        <TransactionCorrectionRejectModal
+          open={correctionRejectOpen}
+          correctionId={correctionState.pendingCorrection.id}
+          transactionNumber={trx.transactionNumber}
+          onClose={() => setCorrectionRejectOpen(false)}
+          onRejected={async () => {
+            setCorrectionRejectOpen(false);
+            await refreshCorrectionState();
+            onChanged();
+          }}
         />
       ) : null}
     </>
