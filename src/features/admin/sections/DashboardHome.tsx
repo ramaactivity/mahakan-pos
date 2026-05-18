@@ -97,7 +97,7 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
       if (!res.success) throw new Error(res.error.message);
       return res.data;
     },
-    staleTime: 30 * 1000, // 30s — staff clock in/out frequently
+    staleTime: 2 * 60 * 1000, // 2min — BO tidak butuh real-time absensi (AE-63 audit P1.3)
   });
 
   const payrollQuery = useQuery({

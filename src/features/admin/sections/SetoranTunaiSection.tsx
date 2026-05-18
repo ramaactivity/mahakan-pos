@@ -575,7 +575,7 @@ function PendingDepositsList({
       if (!res.ok) throw new Error(res.error.message);
       return res.data.rows;
     },
-    staleTime: 15 * 1000,
+    staleTime: 60 * 1000, // AE-63 audit P1.3: 15s → 60s, BO review tidak butuh sub-minute
   });
   const rows = pendingQuery.data ?? [];
   const loading = pendingQuery.isLoading;

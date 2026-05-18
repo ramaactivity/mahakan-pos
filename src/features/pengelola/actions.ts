@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { pengelola } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
@@ -165,8 +165,21 @@ export async function updatePengelola(
         updatedAt: new Date(),
         updatedBy: session.user.id,
       })
-      .where(eq(pengelola.id, id))
+      /* Sesi AE-63 audit P0 — outlet-scope di WHERE clause. */
+      .where(
+        and(
+          eq(pengelola.id, id),
+          eq(pengelola.outletId, session.user.outletId),
+        ),
+      )
       .returning();
+
+    if (!row) {
+      return fail(
+        "NOT_FOUND",
+        "Pengelola tidak ditemukan / outlet mismatch",
+      );
+    }
 
     logAudit({
       eventType: "pengelola.update",
@@ -209,10 +222,16 @@ export async function deletePengelola(
   }
   const existing = await fetchPengelolaById(session.user.outletId, id);
   if (!existing) return fail("NOT_FOUND", "Pengelola tidak ditemukan");
+  /* Sesi AE-63 audit P0 — outlet-scope di WHERE. */
   await db
     .update(pengelola)
     .set({ deletedAt: new Date(), updatedBy: session.user.id })
-    .where(eq(pengelola.id, id));
+    .where(
+      and(
+        eq(pengelola.id, id),
+        eq(pengelola.outletId, session.user.outletId),
+      ),
+    );
 
   logAudit({
     eventType: "pengelola.delete",

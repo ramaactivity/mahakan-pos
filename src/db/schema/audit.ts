@@ -30,5 +30,13 @@ export const auditLogs = pgTable(
     index("idx_audit_logs_user").on(t.userId),
     index("idx_audit_logs_entity").on(t.entityType, t.entityId),
     index("idx_audit_logs_created").on(t.createdAt),
+    /* Sesi AE-63 audit P1 — composite untuk entity history pagination
+     * (mis. tampil semua activity per investor sorted by date desc).
+     * Existing 2 separate index force planner sort kalau LIMIT/OFFSET. */
+    index("idx_audit_logs_entity_time").on(
+      t.entityType,
+      t.entityId,
+      t.createdAt,
+    ),
   ],
 );

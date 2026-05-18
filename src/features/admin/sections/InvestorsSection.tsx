@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Banknote,
@@ -156,6 +156,8 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
+  /* Sesi AE-63 audit P1.3 — staleTime 2min. Investor data jarang berubah
+   * (manual edit), refetch boros saat tab switch / search debounce ulang. */
   const investorsQuery = useQuery({
     queryKey: ["investors", { search, statusFilter }],
     queryFn: async () => {
@@ -167,6 +169,7 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data;
     },
+    staleTime: 2 * 60 * 1000,
   });
 
   const totalQuery = useQuery({
@@ -176,26 +179,33 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data;
     },
+    staleTime: 2 * 60 * 1000,
   });
 
   const investors = investorsQuery.data?.items ?? [];
 
-  async function handleDelete(inv: InvestorWithStats) {
-    if (!window.confirm(`Hapus investor "${inv.fullName}"?`)) return;
-    const res = await deleteInvestor(inv.id);
-    if (!isOk(res)) {
-      toast.error(res.error.message);
-      return;
-    }
-    toast.success(`Investor ${inv.fullName} dihapus`);
-    qc.invalidateQueries({ queryKey: ["investors"] });
-    qc.invalidateQueries({ queryKey: ["investors-total"] });
-  }
+  /* Sesi AE-63 audit P1.2 — useCallback supaya InvestorRow.memo stable.
+   * Tanpa useCallback, parent re-render bikin handler ref baru per render
+   * → React.memo bypass → 110 row re-render. */
+  const handleDelete = useCallback(
+    async (inv: InvestorWithStats) => {
+      if (!window.confirm(`Hapus investor "${inv.fullName}"?`)) return;
+      const res = await deleteInvestor(inv.id);
+      if (!isOk(res)) {
+        toast.error(res.error.message);
+        return;
+      }
+      toast.success(`Investor ${inv.fullName} dihapus`);
+      qc.invalidateQueries({ queryKey: ["investors"] });
+      qc.invalidateQueries({ queryKey: ["investors-total"] });
+    },
+    [qc],
+  );
 
-  function refresh() {
+  const refresh = useCallback(() => {
     qc.invalidateQueries({ queryKey: ["investors"] });
     qc.invalidateQueries({ queryKey: ["investors-total"] });
-  }
+  }, [qc]);
 
   const statusOptions: SelectOption[] = [
     { value: "all", label: "Semua status" },
@@ -204,14 +214,36 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
     { value: "exited", label: "Keluar" },
   ];
 
+  /* Sesi AE-63 audit P1.2 — memoize derived data supaya tidak recompute
+   * tiap parent setState (search, filter change). 110 investor × reduce
+   * tanpa memo = unnecessary work each render. */
   const totalModalActive = totalQuery.data?.total ?? 0;
-  const avgModal =
-    totalQuery.data && totalQuery.data.count > 0
-      ? Math.round(totalQuery.data.total / totalQuery.data.count)
-      : 0;
-  const totalDividendYtd = investors.reduce(
-    (s, i) => s + (i.dividendYtd ?? 0),
-    0,
+  const avgModal = useMemo(
+    () =>
+      totalQuery.data && totalQuery.data.count > 0
+        ? Math.round(totalQuery.data.total / totalQuery.data.count)
+        : 0,
+    [totalQuery.data],
+  );
+  const totalDividendYtd = useMemo(
+    () => investors.reduce((s, i) => s + (i.dividendYtd ?? 0), 0),
+    [investors],
+  );
+  /* Pre-compute sharePct + masked NIK per row sekali, supaya InvestorRow
+   * (memoized) dapet stable primitive props vs recompute per render. */
+  const investorsView = useMemo(
+    () =>
+      investors.map((inv) => ({
+        ...inv,
+        sharePct:
+          totalModalActive > 0 && inv.status === "active"
+            ? (inv.modalDisetor / totalModalActive) * 100
+            : 0,
+        nikMasked: inv.nik
+          ? `${inv.nik.slice(0, 4)}…${inv.nik.slice(-3)}`
+          : null,
+      })),
+    [investors, totalModalActive],
   );
 
   return (
@@ -316,82 +348,15 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
-              {investors.map((inv) => {
-                const sharePct =
-                  totalModalActive > 0 && inv.status === "active"
-                    ? (inv.modalDisetor / totalModalActive) * 100
-                    : 0;
-                return (
-                <tr key={inv.id} className="transition-colors hover:bg-neutral-50">
-                  <td className="px-3 py-2">
-                    <p className="font-medium text-neutral-900">
-                      {inv.fullName}
-                    </p>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-neutral-500">
-                      {inv.nik ? <span>NIK: {inv.nik.slice(0, 4)}…{inv.nik.slice(-3)}</span> : null}
-                      {inv.email ? <span>· {inv.email}</span> : null}
-                      {inv.igHandle ? <span>· {inv.igHandle}</span> : null}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-neutral-700">
-                    {inv.occupation ?? "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-neutral-900">
-                    {formatRupiah(inv.modalDisetor)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <div className="relative h-1.5 w-20 overflow-hidden rounded-full bg-neutral-200">
-                        <div
-                          className="absolute inset-y-0 left-0 bg-mahakan-green-700 transition-all"
-                          style={{
-                            width: `${Math.min(100, sharePct)}%`,
-                          }}
-                        />
-                      </div>
-                      <span className="min-w-[40px] text-right text-[11px] font-medium tabular-nums text-neutral-700">
-                        {sharePct.toFixed(2)}%
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {inv.dividendYtd > 0 ? (
-                      <span className="text-emerald-700">
-                        {formatRupiah(inv.dividendYtd)}
-                      </span>
-                    ) : (
-                      <span className="text-neutral-400">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <StatusBadge status={inv.status} />
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {canManage ? (
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditing(inv)}
-                          title="Edit"
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDelete(inv)}
-                          className="text-red-600 hover:bg-red-50"
-                          title="Hapus"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </div>
-                    ) : null}
-                  </td>
-                </tr>
-                );
-              })}
+              {investorsView.map((inv) => (
+                <InvestorRow
+                  key={inv.id}
+                  inv={inv}
+                  canManage={canManage}
+                  onEdit={setEditing}
+                  onDelete={handleDelete}
+                />
+              ))}
             </tbody>
           </table>
         </div>
@@ -429,6 +394,7 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data;
     },
+    staleTime: 2 * 60 * 1000, // AE-63 audit P1.3
   });
 
   const totalQuery = useQuery({
@@ -438,6 +404,7 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data;
     },
+    staleTime: 2 * 60 * 1000,
   });
 
   const pengelolaList = pengelolaQuery.data ?? [];
@@ -629,6 +596,7 @@ function DistributionTab({
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data;
     },
+    staleTime: 2 * 60 * 1000, // AE-63 audit P1.3
   });
 
   const previewQuery = useQuery({
@@ -861,6 +829,94 @@ function ReportTab() {
 }
 
 /* ─────────────────────────── SHARED ─────────────────────────── */
+
+/* Sesi AE-63 audit P1.2 — memoized row component. Props stable per item
+ * (Investor data + canCallback refs), supaya search/filter parent re-render
+ * tidak trigger re-render 110 row.
+ *
+ * View type extends InvestorWithStats dengan precomputed sharePct + nikMasked
+ * (lihat investorsView useMemo di InvestorsTab). */
+type InvestorRowView = InvestorWithStats & {
+  sharePct: number;
+  nikMasked: string | null;
+};
+
+const InvestorRow = memo(function InvestorRow({
+  inv,
+  canManage,
+  onEdit,
+  onDelete,
+}: {
+  inv: InvestorRowView;
+  canManage: boolean;
+  onEdit: (inv: InvestorWithStats) => void;
+  onDelete: (inv: InvestorWithStats) => void;
+}) {
+  return (
+    <tr className="transition-colors hover:bg-neutral-50">
+      <td className="px-3 py-2">
+        <p className="font-medium text-neutral-900">{inv.fullName}</p>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-neutral-500">
+          {inv.nikMasked ? <span>NIK: {inv.nikMasked}</span> : null}
+          {inv.email ? <span>· {inv.email}</span> : null}
+          {inv.igHandle ? <span>· {inv.igHandle}</span> : null}
+        </div>
+      </td>
+      <td className="px-3 py-2 text-neutral-700">{inv.occupation ?? "—"}</td>
+      <td className="px-3 py-2 text-right tabular-nums font-semibold text-neutral-900">
+        {formatRupiah(inv.modalDisetor)}
+      </td>
+      <td className="px-3 py-2">
+        <div className="flex items-center gap-2">
+          <div className="relative h-1.5 w-20 overflow-hidden rounded-full bg-neutral-200">
+            <div
+              className="absolute inset-y-0 left-0 bg-mahakan-green-700 transition-all"
+              style={{ width: `${Math.min(100, inv.sharePct)}%` }}
+            />
+          </div>
+          <span className="min-w-[40px] text-right text-[11px] font-medium tabular-nums text-neutral-700">
+            {inv.sharePct.toFixed(2)}%
+          </span>
+        </div>
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums">
+        {inv.dividendYtd > 0 ? (
+          <span className="text-emerald-700">
+            {formatRupiah(inv.dividendYtd)}
+          </span>
+        ) : (
+          <span className="text-neutral-400">—</span>
+        )}
+      </td>
+      <td className="px-3 py-2">
+        <StatusBadge status={inv.status} />
+      </td>
+      <td className="px-3 py-2 text-right">
+        {canManage ? (
+          <div className="flex justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onEdit(inv)}
+              title="Edit"
+            >
+              <Pencil className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onDelete(inv)}
+              className="text-red-600 hover:bg-red-50"
+              title="Hapus"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+        ) : null}
+      </td>
+    </tr>
+  );
+});
 
 function StatusBadge({ status }: { status: string }) {
   if (status === "active")

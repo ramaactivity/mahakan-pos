@@ -95,6 +95,16 @@ export const capitalMovements = pgTable(
     ),
     index("idx_capital_movements_outlet_date").on(t.outletId, t.occurredAt),
     index("idx_capital_movements_distribution").on(t.distributionId),
+    /* Sesi AE-63 audit P1 — investor/pengelola stats aggregation query
+     * pattern: WHERE outletId=X AND holderType=Y AND holderId=ANY(...).
+     * Existing idx_capital_movements_holder mulai dari (holderType, holderId);
+     * untuk filter outletId-first (yang lebih selective di multi-outlet
+     * future), tambah index leading dengan outletId. */
+    index("idx_cm_outlet_holder").on(
+      t.outletId,
+      t.holderType,
+      t.holderId,
+    ),
     check("ck_capital_movements_amount_nonzero", sql`${t.amount} != 0`),
   ],
 );

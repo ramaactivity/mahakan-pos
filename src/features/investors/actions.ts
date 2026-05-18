@@ -193,8 +193,20 @@ export async function updateInvestor(
         updatedAt: new Date(),
         updatedBy: session.user.id,
       })
-      .where(eq(investors.id, id))
+      /* Sesi AE-63 audit P0 — outlet-scope di WHERE clause (defense-in-depth).
+       * Pre-check fetchInvestorById sudah validate, tapi mutation WAJIB
+       * ulang verify supaya race condition / pre-check bypass aman. */
+      .where(
+        and(
+          eq(investors.id, id),
+          eq(investors.outletId, session.user.outletId),
+        ),
+      )
       .returning();
+
+    if (!row) {
+      return fail("NOT_FOUND", "Investor tidak ditemukan / outlet mismatch");
+    }
 
     logAudit({
       eventType: "investor.update",
@@ -245,11 +257,17 @@ export async function deleteInvestor(
   const existing = await fetchInvestorById(session.user.outletId, id);
   if (!existing) return fail("NOT_FOUND", "Investor tidak ditemukan");
 
-  /* Soft-delete supaya history dividen tetap consistent. */
+  /* Soft-delete supaya history dividen tetap consistent.
+   * Sesi AE-63 audit P0 — outlet-scope di WHERE. */
   await db
     .update(investors)
     .set({ deletedAt: new Date(), updatedBy: session.user.id })
-    .where(eq(investors.id, id));
+    .where(
+      and(
+        eq(investors.id, id),
+        eq(investors.outletId, session.user.outletId),
+      ),
+    );
 
   logAudit({
     eventType: "investor.delete",
@@ -321,8 +339,17 @@ export async function bulkImportInvestors(
     errors: [],
   };
 
-  /* Insert sequential supaya error per-row jelas. Performance OK untuk
-   * 500-row max. Bisa di-chunk batch insert kalau perlu nanti. */
+  /* Sesi AE-63 audit P1.5 — batch insert. Pre-fix: 1 INSERT per row =
+   * 500 round-trips ke DB (jaringan Vercel↔Neon Singapore). Sekarang:
+   * 1. Filter dup di app-side (dari pre-fetch existing set).
+   * 2. INSERT batch all non-dup rows dengan onConflictDoNothing.
+   * 3. Kalau ada row yang silently skipped (race with unique index), retry
+   *    per row individu untuk capture error message yang jelas. */
+  const dedupedRows: Array<{
+    rowIdx: number;
+    values: typeof investors.$inferInsert;
+  }> = [];
+
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const isDup =
@@ -332,8 +359,13 @@ export async function bulkImportInvestors(
       result.skippedDuplicate += 1;
       continue;
     }
-    try {
-      await db.insert(investors).values({
+    /* Track di seen-sets supaya kalau import file punya dup internally
+     * (mis. 2 row dengan NIK sama), row ke-2 di-skip. */
+    if (r.nik) existingByNik.add(r.nik);
+    existingByName.add(r.fullName.trim().toLowerCase());
+    dedupedRows.push({
+      rowIdx: i + 1,
+      values: {
         outletId: session.user.outletId,
         fullName: r.fullName,
         nik: r.nik ?? null,
@@ -350,19 +382,47 @@ export async function bulkImportInvestors(
         status: "active",
         createdBy: session.user.id,
         updatedBy: session.user.id,
-      });
-      if (r.nik) existingByNik.add(r.nik);
-      existingByName.add(r.fullName.trim().toLowerCase());
-      result.inserted += 1;
+      },
+    });
+  }
+
+  if (dedupedRows.length > 0) {
+    try {
+      /* Single batch INSERT — drastically faster than per-row loop.
+       * onConflictDoNothing handles race kalau ada concurrent import,
+       * partial unique index ux_investors_outlet_nik mengkacau. */
+      const insertedIds = await db
+        .insert(investors)
+        .values(dedupedRows.map((d) => d.values))
+        .onConflictDoNothing()
+        .returning({ id: investors.id });
+      result.inserted = insertedIds.length;
+      /* Beda antara dedupedRows.length dan insertedIds.length = race-conflict
+       * baris (insert skipped diam-diam oleh onConflictDoNothing). Hitung
+       * sebagai duplikat — owner sudah tahu Mahakan duplikat tidak di-insert. */
+      const racedSkipped = dedupedRows.length - insertedIds.length;
+      if (racedSkipped > 0) result.skippedDuplicate += racedSkipped;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "DB error";
-      if (/ux_investors_outlet_nik|ux_investors_outlet_email/.test(msg)) {
-        result.skippedDuplicate += 1;
-      } else {
-        result.errors.push({
-          row: i + 1,
-          reason: logAndSanitize(e, "investors.import", "DB error"),
-        });
+      /* Batch fail (rare — e.g., schema mismatch). Fallback ke per-row
+       * loop supaya partial import + error detail jelas. */
+      const msg = e instanceof Error ? e.message : "Batch insert error";
+      console.error("[investor bulk import batch failed, falling back]", msg);
+      for (const d of dedupedRows) {
+        try {
+          await db.insert(investors).values(d.values);
+          result.inserted += 1;
+        } catch (rowErr) {
+          const rmsg =
+            rowErr instanceof Error ? rowErr.message : "DB error";
+          if (/ux_investors_outlet_nik|ux_investors_outlet_email/.test(rmsg)) {
+            result.skippedDuplicate += 1;
+          } else {
+            result.errors.push({
+              row: d.rowIdx,
+              reason: logAndSanitize(rowErr, "investors.import", "DB error"),
+            });
+          }
+        }
       }
     }
   }

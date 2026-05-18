@@ -238,6 +238,10 @@ export const journalEntries = pgTable(
     index("idx_je_period").on(t.periodId),
     index("idx_je_source").on(t.sourceType, t.sourceId),
     index("idx_je_outlet_date").on(t.outletId, t.entryDate),
+    /* Sesi AE-63 audit P1 — period close + balance queries filter by
+     * status='posted'. Extend (outletId, entryDate, status) supaya index-only
+     * scan untuk getAccountBalances + period close iteration. */
+    index("idx_je_date_status").on(t.outletId, t.entryDate, t.status),
     /* Sesi AE-62t — defense-in-depth UNIQUE pada (outletId, sourceType, sourceId)
      * untuk ACTIVE entries (posted/draft, source_id non-null). Reversed entries
      * boleh duplikat karena legal pattern (post → reverse → re-post di sumber

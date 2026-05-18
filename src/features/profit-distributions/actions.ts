@@ -542,6 +542,8 @@ export async function cancelDistribution(
     return fail("INVALID_STATE", "Distribusi sudah cancelled");
   }
 
+  /* Sesi AE-63 audit P0 — outlet-scope di WHERE supaya tidak bisa
+   * cancel distribusi outlet lain walaupun bypass pre-check. */
   await db
     .update(profitDistributions)
     .set({
@@ -549,7 +551,12 @@ export async function cancelDistribution(
       cancelledAt: new Date(),
       cancelledReason: reason.trim(),
     })
-    .where(eq(profitDistributions.id, id));
+    .where(
+      and(
+        eq(profitDistributions.id, id),
+        eq(profitDistributions.outletId, session.user.outletId),
+      ),
+    );
 
   logAudit({
     eventType: "distribution.cancel",
