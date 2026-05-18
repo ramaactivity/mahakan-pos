@@ -127,6 +127,22 @@ export type OutletSettings = {
       bonusValue: number;
     } | null;
   };
+  /** Sesi AE-63 — Profit distribution config (Modal & Dividen). Default
+   *  per Sheets owner Mahakan. Editable di Settings → Modal & Dividen. */
+  dividendConfig?: {
+    /** % dari Net Profit. Default 10.00. */
+    bagiHasilPct: number;
+    /** Loss buffer reserve % dari Net Profit. Default 3.00. */
+    lossPct: number;
+    /** Capex reserve % dari Net Profit. Default 0.70. */
+    capexPct: number;
+    /** Retained earnings tertahan eksplisit % (residue dari rounding
+     *  auto masuk juga ke retained). Default 0.20. */
+    retainedPct: number;
+    /** Pool split investor vs pengelola dalam Bagi Hasil. Total 100. */
+    investorPoolPct: number;
+    pengelolaPoolPct: number;
+  };
   /** Sesi AE-55 — Revenue targets untuk indikator progress di Laporan.
    * Semua nilai dalam Rupiah, optional. Null/undefined = belum ada target. */
   targets?: {
