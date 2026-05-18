@@ -18,7 +18,10 @@ export {
   finalizePayrollPeriod,
   listPayrollLines,
   listPayrollPeriods,
+  listPayslipEmailsForPeriod,
   markPayrollPaid,
+  resendPayslipForLine,
+  resendPayslipsForPeriod,
   updatePayrollLine,
 } from "./actions";
 

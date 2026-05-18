@@ -8,11 +8,13 @@ import { EmployeeAdvancesSection } from "./EmployeeAdvancesSection";
 import { HrReportsSection } from "./HrReportsSection";
 import { PayrollSection } from "./PayrollSection";
 import { SchedulesSection } from "./SchedulesSection";
+import { SlipGajiSection } from "./SlipGajiSection";
 
 type HrOperationsTab =
   | "attendance"
   | "schedules"
   | "payroll"
+  | "slip_gaji"
   | "kasbon"
   | "reports";
 
@@ -20,6 +22,7 @@ const TABS: Array<{ key: HrOperationsTab; label: string }> = [
   { key: "attendance", label: "Absensi" },
   { key: "schedules", label: "Jadwal" },
   { key: "payroll", label: "Payroll" },
+  { key: "slip_gaji", label: "Slip Gaji" },
   { key: "kasbon", label: "Kasbon" },
   { key: "reports", label: "Laporan" },
 ];
@@ -30,6 +33,7 @@ const VALID_TABS: ReadonlySet<string> = new Set([
   "attendance",
   "schedules",
   "payroll",
+  "slip_gaji",
   "kasbon",
   "reports",
 ]);
@@ -106,6 +110,8 @@ export function HrOperationsSection({ viewerRole }: HrOperationsSectionProps) {
         <SchedulesSection />
       ) : tab === "payroll" ? (
         <PayrollSection viewerRole={viewerRole} />
+      ) : tab === "slip_gaji" ? (
+        <SlipGajiSection />
       ) : tab === "kasbon" ? (
         <EmployeeAdvancesSection />
       ) : (
