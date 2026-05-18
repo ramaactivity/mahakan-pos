@@ -48,6 +48,23 @@ export interface OvertimeComputeResult {
   scheduledEndAt: Date;
 }
 
+/** Normalize "H:MM" / "HH:MM" / "HH:MM:SS" → "HH:MM:SS" untuk ISO date
+ *  construction. Postgres `time` column kirim "HH:MM:SS"; user input via
+ *  HTML <input type="time"> kirim "HH:MM". Both jadi valid input.
+ *
+ *  Sesi AE-63 hotfix: pre-fix pakai padStart(5,"0") on string assumed
+ *  "HH:MM" length 5. Kalau input sudah punya seconds → concatenated
+ *  ":00" extra → "HH:MM:SS:00" invalid ISO → NaN overtime → query crash. */
+function normalizeTimeToHHMMSS(time: string): string {
+  const trimmed = time.trim();
+  const parts = trimmed.split(":");
+  if (parts.length < 2 || parts.length > 3) return "00:00:00"; // defensive
+  const hh = (parts[0] ?? "0").padStart(2, "0");
+  const mm = (parts[1] ?? "0").padStart(2, "0");
+  const ss = (parts[2] ?? "00").padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
 export function computeOvertimeMinutes(
   input: OvertimeComputeInput,
 ): OvertimeComputeResult {
@@ -58,8 +75,24 @@ export function computeOvertimeMinutes(
   /* Build scheduledEndAt sebagai UTC moment. shiftDate dalam WIB; jadi
    * "shiftDate + endTime" di WIB → kalau overnight, geser +1 hari. WIB
    * offset +07:00 (Cisarua, no DST). */
-  const baseIsoWib = `${input.shiftDate}T${input.scheduledEndTime.padStart(5, "0")}:00+07:00`;
+  const normalizedEnd = normalizeTimeToHHMMSS(input.scheduledEndTime);
+  const baseIsoWib = `${input.shiftDate}T${normalizedEnd}+07:00`;
   let scheduledEndAt = new Date(baseIsoWib);
+
+  /* Defensive: kalau ISO masih invalid (mis. shiftDate rusak), fallback
+   * ke overtimeMinutes=0 supaya tidak crash query. Log warning supaya
+   * owner aware. */
+  if (Number.isNaN(scheduledEndAt.getTime())) {
+    console.error(
+      `[overtime-compute] Invalid date construction: shiftDate=${input.shiftDate}, endTime=${input.scheduledEndTime}`,
+    );
+    return {
+      overtimeMinutes: 0,
+      isOvernightSchedule,
+      scheduledEndAt: input.clockOutAt,
+    };
+  }
+
   if (isOvernightSchedule) {
     scheduledEndAt = new Date(
       scheduledEndAt.getTime() + 24 * 60 * 60 * 1000,
@@ -69,8 +102,9 @@ export function computeOvertimeMinutes(
   const diffMs = input.clockOutAt.getTime() - scheduledEndAt.getTime();
   const overtimeMinutes = Math.max(0, Math.floor(diffMs / 60_000));
 
+  /* Final guard — jangan return NaN ke DB. */
   return {
-    overtimeMinutes,
+    overtimeMinutes: Number.isFinite(overtimeMinutes) ? overtimeMinutes : 0,
     isOvernightSchedule,
     scheduledEndAt,
   };

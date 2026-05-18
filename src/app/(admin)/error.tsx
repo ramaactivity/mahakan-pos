@@ -13,7 +13,30 @@ export default function AdminError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[admin error]", error);
+    /* Sesi AE-63 hotfix-2 — fuller logging supaya owner-side debug bisa
+     * tahu error real-nya. Sebelumnya hanya log Error object yang
+     * ke-truncate di console. POST ke server endpoint juga supaya
+     * masuk Vercel logs. */
+    console.error("[admin error] message:", error.message);
+    console.error("[admin error] name:", error.name);
+    console.error("[admin error] digest:", error.digest);
+    console.error("[admin error] stack:", error.stack);
+    if (typeof window !== "undefined") {
+      fetch("/api/_internal/client-error", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: error.message,
+          name: error.name,
+          digest: error.digest,
+          stack: error.stack,
+          path: window.location.pathname,
+          userAgent: navigator.userAgent,
+        }),
+      }).catch(() => {
+        /* swallow — endpoint mungkin belum ada */
+      });
+    }
   }, [error]);
 
   return (
