@@ -22,6 +22,7 @@ import {
   Wallet,
   Receipt,
   History,
+  HandCoins,
   Wallet as WalletIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -49,6 +50,7 @@ export type AdminSection =
   | "reports"
   | "audit"
   | "journal_retry"
+  | "investors"
   | "settings";
 
 interface AdminLeftNavProps {
@@ -125,6 +127,13 @@ const NAV_GROUPS: NavGroup[] = [
       /* Sesi AE-62w — antrian retry untuk failed journal hooks.
        * Owner trigger retry / abandon. Manager view-only (via RBAC). */
       { key: "journal_retry", label: "Antrian Jurnal", Icon: AlertTriangle },
+    ],
+  },
+  {
+    heading: "Modal & Dividen",
+    items: [
+      /* Sesi AE-63 — Investor + Pengelola + distribusi dividen bulanan. */
+      { key: "investors", label: "Investor", Icon: HandCoins, ownerOnly: false },
     ],
   },
   {

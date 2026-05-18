@@ -17,6 +17,7 @@ import { CustomersSection } from "@/features/admin/sections/CustomersSection";
 import { DashboardHome } from "@/features/admin/sections/DashboardHome";
 import { EmployeesSection } from "@/features/admin/sections/EmployeesSection";
 import { InventorySection } from "@/features/admin/sections/InventorySection";
+import { InvestorsSection } from "@/features/admin/sections/InvestorsSection";
 import { MenuSection } from "@/features/admin/sections/MenuSection";
 import { BalanceAccountSection } from "@/features/admin/sections/BalanceAccountSection";
 import { ReconciliationSection } from "@/features/admin/sections/ReconciliationSection";
@@ -90,6 +91,8 @@ export function AdminShell() {
           <AuditLogSection viewerRole={session.user.role} />
         ) : section === "journal_retry" ? (
           <JournalRetryQueueSection />
+        ) : section === "investors" ? (
+          <InvestorsSection viewerRole={session.user.role} />
         ) : section === "settings" ? (
           <SettingsSection />
         ) : null}
