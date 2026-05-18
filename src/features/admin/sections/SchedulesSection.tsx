@@ -57,10 +57,14 @@ export const DEFAULT_SHIFT_TEMPLATES: ReadonlyArray<{
   start: string;
   end: string;
 }> = [
+  /* Sesi AE-62ae — defaults disesuaikan ops Mahakan owner directive 2026-05-18.
+   *   - Weekday: buka 14:00-22:00, staff masuk 13:00 (prep 1 jam).
+   *   - Weekend: buka 09:00-23:00 dengan 3 shift (Pagi/Siang/Full=double).
+   * Owner edit lewat Settings → Template Shift kalau outlet beda jam ops. */
+  { label: "Weekday", start: "13:00", end: "22:00" },
   { label: "Pagi", start: "08:00", end: "17:00" },
-  { label: "Siang", start: "10:00", end: "19:00" },
-  { label: "Sore", start: "14:00", end: "23:00" },
-  { label: "Full", start: "08:00", end: "23:00" },
+  { label: "Siang", start: "13:00", end: "23:00" },
+  { label: "Full / Double", start: "08:00", end: "23:00" },
 ];
 
 function isoDate(d: Date): string {

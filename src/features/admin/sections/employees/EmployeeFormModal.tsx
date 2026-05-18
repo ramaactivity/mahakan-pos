@@ -473,6 +473,7 @@ export function EmployeeFormModal({
               value={email}
               onChange={(e) => setEmail(e.target.value.slice(0, 120))}
               disabled={submitting}
+              hint="Dipakai untuk auto-kirim slip gaji setelah payroll dibayar"
             />
             <Input
               label="No. HP"
