@@ -46,6 +46,12 @@ export const approvalCodes = pgTable(
         /* Sesi AE-62o — shift rebalancing dengan owner approval.
          * Target = shift_rebalances.id (not transaction). */
         "shift.rebalance",
+        /* Sesi AE-62r — per-transaction correction (paymentMethod/total swap).
+         * Target = transaction_corrections.id (not transaction itself —
+         * separate target column to keep idx_approval_codes_lookup uncontested
+         * when a trx happens to have both a pending void code and a pending
+         * correction code). */
+        "pos.transaction.correction",
       ],
     }).notNull(),
 
@@ -59,6 +65,12 @@ export const approvalCodes = pgTable(
 
     /** Sesi AE-62o — alternative target untuk action_type='shift.rebalance'. */
     targetShiftRebalanceId: uuid("target_shift_rebalance_id"),
+
+    /** Sesi AE-62r — alternative target untuk action_type='pos.transaction.correction'.
+     * Separate dari targetTransactionId supaya idx_approval_codes_lookup
+     * (yang index targetTransactionId) tidak collide saat trx punya pending
+     * void code DAN pending correction code bersamaan. */
+    targetTransactionCorrectionId: uuid("target_transaction_correction_id"),
 
     outletId: uuid("outlet_id")
       .notNull()
@@ -122,11 +134,28 @@ export const approvalCodes = pgTable(
       "ck_approval_codes_revoked_pair",
       sql`(${t.revokedAt} IS NULL AND ${t.revokedByUserId} IS NULL) OR (${t.revokedAt} IS NOT NULL AND ${t.revokedByUserId} IS NOT NULL)`,
     ),
-    /** Sesi AE-62o — exactly one target set per action_type. */
+    /** Sesi AE-62r — exactly one target set per action_type (3-way XOR).
+     * Extends AE-62o 2-way (rebalance vs trx) with 3rd path (correction). */
     check(
       "ck_approval_codes_target_xor",
-      sql`(${t.actionType} = 'shift.rebalance' AND ${t.targetShiftRebalanceId} IS NOT NULL AND ${t.targetTransactionId} IS NULL)
-       OR (${t.actionType} != 'shift.rebalance' AND ${t.targetTransactionId} IS NOT NULL AND ${t.targetShiftRebalanceId} IS NULL)`,
+      sql`(${t.actionType} IN ('pos.transaction.void','pos.transaction.refund')
+            AND ${t.targetTransactionId} IS NOT NULL
+            AND ${t.targetShiftRebalanceId} IS NULL
+            AND ${t.targetTransactionCorrectionId} IS NULL)
+       OR (${t.actionType} = 'shift.rebalance'
+            AND ${t.targetShiftRebalanceId} IS NOT NULL
+            AND ${t.targetTransactionId} IS NULL
+            AND ${t.targetTransactionCorrectionId} IS NULL)
+       OR (${t.actionType} = 'pos.transaction.correction'
+            AND ${t.targetTransactionCorrectionId} IS NOT NULL
+            AND ${t.targetTransactionId} IS NULL
+            AND ${t.targetShiftRebalanceId} IS NULL)`,
+    ),
+    /** Sesi AE-62r — fast lookup of active correction codes. */
+    index("idx_approval_codes_correction_lookup").on(
+      t.targetTransactionCorrectionId,
+      t.actionType,
+      t.consumedAt,
     ),
   ],
 );

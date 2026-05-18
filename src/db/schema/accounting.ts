@@ -182,6 +182,13 @@ export const journalEntries = pgTable(
         "opname_adjustment",
         "period_close",
         "period_reopen",
+        /* Sesi AE-62r — per-transaction correction approved.
+         * pos_sale_reversal: Dr↔Cr swap dari original pos_sale (no COGS lines).
+         * pos_sale_correction: re-post dengan corrected paymentMethod/total (no COGS lines).
+         * sourceId = transaction_corrections.id (BUKAN transactions.id supaya
+         * tidak collide dengan original pos_sale source key — lihat Trap T8). */
+        "pos_sale_reversal",
+        "pos_sale_correction",
       ],
     }).notNull(),
 

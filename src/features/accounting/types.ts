@@ -49,7 +49,10 @@ export type JournalSourceType =
   | "shift_variance"
   | "opname_adjustment"
   | "period_close"
-  | "period_reopen";
+  | "period_reopen"
+  /* Sesi AE-62r — per-transaction correction (paymentMethod/total swap). */
+  | "pos_sale_reversal"
+  | "pos_sale_correction";
 
 export type JournalEntryStatus = "draft" | "posted" | "reversed";
 
