@@ -125,7 +125,7 @@ export type OutletSettings = {
       bonusType: "fixed" | "multiplier";
       /** Untuk fixed: rupiah. Untuk multiplier: decimal (1.5 = 1.5×). */
       bonusValue: number;
-    };
+    } | null;
   };
   /** Sesi AE-55 — Revenue targets untuk indikator progress di Laporan.
    * Semua nilai dalam Rupiah, optional. Null/undefined = belum ada target. */

@@ -247,6 +247,18 @@ const attendanceSettingsSchema = z.object({
 const payrollSettingsSchema = z.object({
   latePerMinute: z.number().int().min(0).max(99_999).optional(),
   overtimePerMinute: z.number().int().min(0).max(99_999).optional(),
+  /** Sesi AE-62ac — bonus untuk karyawan double-shift / full-shift.
+   * Optional — kalau owner unset, fitur off (bonus=0).
+   * minMinutes default 600 (10 jam). bonusType "fixed"|"multiplier". */
+  doubleShift: z
+    .object({
+      minMinutes: z.number().int().min(60).max(1440),
+      bonusType: z.enum(["fixed", "multiplier"]),
+      bonusValue: z.number().min(0).max(10_000_000),
+    })
+    .nullable()
+    .optional(),
+  thrMonthlyBaseMultiplier: z.number().min(0).max(10).optional(),
 });
 
 /* Sesi AE-53 — schedule shift templates editable per outlet.

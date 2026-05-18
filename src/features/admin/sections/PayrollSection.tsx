@@ -74,6 +74,13 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
   const [savingSettings, setSavingSettings] = useState(false);
   const [latePerMin, setLatePerMin] = useState<string>("");
   const [otPerMin, setOtPerMin] = useState<string>("");
+  /* Sesi AE-62ac — double-shift bonus state (owner-config). */
+  const [dsEnabled, setDsEnabled] = useState(false);
+  const [dsMinHours, setDsMinHours] = useState<string>("10");
+  const [dsBonusType, setDsBonusType] = useState<"fixed" | "multiplier">(
+    "fixed",
+  );
+  const [dsBonusValue, setDsBonusValue] = useState<string>("100000");
 
   const canManage = viewerRole === "owner";
 
@@ -119,6 +126,16 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
         setOtPerMin(
           p.overtimePerMinute != null ? String(p.overtimePerMinute) : "",
         );
+        /* Sesi AE-62ac — load doubleShift config. */
+        const ds = p.doubleShift;
+        if (ds) {
+          setDsEnabled(true);
+          setDsMinHours(String(Math.round(ds.minMinutes / 60)));
+          setDsBonusType(ds.bonusType);
+          setDsBonusValue(String(ds.bonusValue));
+        } else {
+          setDsEnabled(false);
+        }
         setSettingsLoaded(true);
       }
     })();
@@ -140,10 +157,42 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
       toast.error("Rate harus angka non-negatif");
       return;
     }
+
+    /* Sesi AE-62ac — validate + build doubleShift payload. */
+    let doubleShiftPayload:
+      | { minMinutes: number; bonusType: "fixed" | "multiplier"; bonusValue: number }
+      | null = null;
+    if (dsEnabled) {
+      const hrs = parseFloat(dsMinHours.replace(",", "."));
+      const val = parseFloat(dsBonusValue.replace(",", "."));
+      if (!Number.isFinite(hrs) || hrs < 1 || hrs > 24) {
+        toast.error("Min jam double-shift harus 1-24");
+        return;
+      }
+      if (!Number.isFinite(val) || val <= 0) {
+        toast.error(
+          dsBonusType === "fixed"
+            ? "Bonus rupiah harus > 0"
+            : "Multiplier harus > 0 (mis. 1.5 = 50% extra)",
+        );
+        return;
+      }
+      if (dsBonusType === "multiplier" && val < 1) {
+        toast.error("Multiplier minimum 1.0 (kalau 1.0 = no extra)");
+        return;
+      }
+      doubleShiftPayload = {
+        minMinutes: Math.round(hrs * 60),
+        bonusType: dsBonusType,
+        bonusValue: dsBonusType === "fixed" ? Math.round(val) : val,
+      };
+    }
+
     setSavingSettings(true);
     const res = await updatePayrollSettings({
       latePerMinute: lateNum,
       overtimePerMinute: otNum,
+      doubleShift: doubleShiftPayload,
     });
     setSavingSettings(false);
     if (!outletIsOk(res)) {
@@ -346,6 +395,104 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
             Diaplikasikan saat klik &ldquo;Recompute&rdquo; di periode draft.
             Owner masih bisa override per line lewat tombol pencil.
           </p>
+
+          {/* Sesi AE-62ac — Bonus Double-Shift section */}
+          <div className="rounded-md border border-neutral-200 bg-white p-3 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-mahakan-green-900">
+                  Bonus Double-Shift / Full-Shift
+                </p>
+                <p className="text-[11px] text-neutral-600">
+                  Tambahan otomatis untuk karyawan yang kerja shift panjang
+                  (mis. weekend Mahakan 08:00-23:00 = 15 jam, atau
+                  tanggal merah). Berlaku untuk fixed & daily salary.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={dsEnabled}
+                onClick={() => setDsEnabled((v) => !v)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border transition-colors ${
+                  dsEnabled
+                    ? "border-mahakan-green-700 bg-mahakan-green-700"
+                    : "border-neutral-300 bg-neutral-200"
+                }`}
+              >
+                <span
+                  className={`inline-block size-5 rounded-full bg-white shadow transition-transform ${
+                    dsEnabled ? "translate-x-5" : "translate-x-0.5"
+                  }`}
+                />
+              </button>
+            </div>
+
+            {dsEnabled ? (
+              <div className="space-y-2">
+                <Input
+                  label="Min Jam Kerja per Hari = Double-Shift"
+                  type="text"
+                  inputMode="decimal"
+                  value={dsMinHours}
+                  onChange={(e) =>
+                    setDsMinHours(e.target.value.replace(/[^\d.,]/g, ""))
+                  }
+                  hint="Default 10 jam. Karyawan yang work ≥ ini per hari dapat bonus."
+                  disabled={savingSettings}
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDsBonusType("fixed")}
+                    disabled={savingSettings}
+                    className={`rounded-md border py-2 text-xs font-medium transition-colors ${
+                      dsBonusType === "fixed"
+                        ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                        : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
+                    }`}
+                  >
+                    Rupiah flat
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDsBonusType("multiplier")}
+                    disabled={savingSettings}
+                    className={`rounded-md border py-2 text-xs font-medium transition-colors ${
+                      dsBonusType === "multiplier"
+                        ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                        : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
+                    }`}
+                  >
+                    Multiplier × base
+                  </button>
+                </div>
+                <Input
+                  label={
+                    dsBonusType === "fixed"
+                      ? "Bonus (Rp per hari double-shift)"
+                      : "Multiplier (mis. 1.5 = 50% extra atas base)"
+                  }
+                  type="text"
+                  inputMode="decimal"
+                  value={dsBonusValue}
+                  onChange={(e) =>
+                    setDsBonusValue(e.target.value.replace(/[^\d.,]/g, ""))
+                  }
+                  hint={
+                    dsBonusType === "fixed"
+                      ? "Contoh: 100000 → tiap hari double, +Rp 100.000 di gross"
+                      : "Contoh: 1.5 → +50% atas base daily (dailyRate atau salary/30)"
+                  }
+                  disabled={savingSettings}
+                />
+              </div>
+            ) : (
+              <p className="text-[11px] text-neutral-500">
+                Toggle ON untuk aktifkan. Off = bonus=0 (legacy behavior).
+              </p>
+            )}
+          </div>
         </div>
       </Modal>
 
