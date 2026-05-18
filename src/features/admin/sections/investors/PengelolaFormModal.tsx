@@ -18,6 +18,17 @@ import {
 } from "@/features/pengelola";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 
+/** Defensive wrapper — parseRupiah throws on empty/invalid input.
+ *  Render path tidak boleh throw, jadi fallback ke 0. */
+function safeParseRupiah(s: string): number {
+  if (!s || s.trim() === "") return 0;
+  try {
+    return parseRupiah(s);
+  } catch {
+    return 0;
+  }
+}
+
 interface PengelolaFormModalProps {
   open: boolean;
   initial: Pengelola | null;
@@ -86,7 +97,7 @@ export function PengelolaFormModal({
     if (submitting) return;
     setErr(null);
 
-    const modal = parseRupiah(modalInput);
+    const modal = safeParseRupiah(modalInput);
     if (!Number.isFinite(modal) || modal < 0) {
       setErr("Modal harus angka non-negatif");
       return;
@@ -186,8 +197,8 @@ export function PengelolaFormModal({
           inputMode="numeric"
           disabled={submitting}
           hint={
-            parseRupiah(modalInput) > 0
-              ? `= ${formatRupiah(parseRupiah(modalInput))}`
+            safeParseRupiah(modalInput) > 0
+              ? `= ${formatRupiah(safeParseRupiah(modalInput))}`
               : undefined
           }
         />
