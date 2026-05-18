@@ -36,6 +36,11 @@ export interface ExifCheckResult {
   reason?: string;
   /** When ok=true, the parsed timestamp from EXIF — for audit log. */
   capturedAt?: Date;
+  /** Sesi AE-62aa — GPS coords dari EXIF (kalau phone embed). Dipakai oleh
+   * clock-mobile untuk cross-check vs submitted gpsLat/gpsLng. NULL = phone
+   * tidak embed GPS (privacy mode, atau JPEG re-encoded yang strip GPS).
+   * Caller decide reject-or-allow saat GPS absent. */
+  exifGps?: { lat: number; lng: number } | null;
 }
 
 /** Max age (in milliseconds) untuk EXIF DateTimeOriginal sebelum dianggap stale.
@@ -62,10 +67,26 @@ export async function validateSelfieEXIF(
     return { ok: false, reason: "File bukan JPEG (kamera kasih JPEG)" };
   }
 
-  let parsed: { DateTimeOriginal?: Date | string; OffsetTimeOriginal?: string } | null = null;
+  let parsed:
+    | {
+        DateTimeOriginal?: Date | string;
+        OffsetTimeOriginal?: string;
+        /* Sesi AE-62aa — extract GPS untuk cross-check anti-spoofing. */
+        latitude?: number;
+        longitude?: number;
+      }
+    | null = null;
   try {
     parsed = await exifr.parse(buffer, {
-      pick: ["DateTimeOriginal", "OffsetTimeOriginal"],
+      pick: [
+        "DateTimeOriginal",
+        "OffsetTimeOriginal",
+        "GPSLatitude",
+        "GPSLongitude",
+        "GPSLatitudeRef",
+        "GPSLongitudeRef",
+      ],
+      gps: true,
     });
   } catch {
     return {
@@ -119,5 +140,15 @@ export async function validateSelfieEXIF(
     };
   }
 
-  return { ok: true, capturedAt: captured };
+  /* Sesi AE-62aa — extract GPS lat/lng kalau phone embed di EXIF. exifr
+   * dengan opsi gps:true return `latitude`+`longitude` sebagai decimal. */
+  const exifGps =
+    typeof parsed.latitude === "number" &&
+    typeof parsed.longitude === "number" &&
+    Number.isFinite(parsed.latitude) &&
+    Number.isFinite(parsed.longitude)
+      ? { lat: parsed.latitude, lng: parsed.longitude }
+      : null;
+
+  return { ok: true, capturedAt: captured, exifGps };
 }

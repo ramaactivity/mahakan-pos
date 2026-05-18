@@ -284,6 +284,58 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  /* Sesi AE-62aa — anti-GPS-spoofing cross-check.
+   *
+   * Threat: karyawan absen dari rumah pakai browser DevTools / Mock Location
+   * → tampered gpsLat/gpsLng = outlet center → distance check pass.
+   *
+   * Mitigasi: selfie capture include EXIF GPS (kalau phone embed). Compare
+   * EXIF GPS vs submitted coords. Diskrepansi > 200m = suspect spoofing.
+   *
+   * Trade-off: phone old / privacy mode tidak embed GPS → exifGps null.
+   * Tidak hard-fail (false positive risk untuk legit karyawan), tapi
+   * AUDIT FLAG supaya owner punya visibility untuk investigate pattern. */
+  const SUSPECT_GPS_DIFF_M = 200;
+  let exifGpsCheckFlag: "match" | "mismatch" | "absent" = "absent";
+  let exifGpsDistance: number | null = null;
+  if (exifResult.exifGps) {
+    exifGpsDistance = haversineDistanceMeters(
+      { lat: gpsLat, lng: gpsLng },
+      exifResult.exifGps,
+    );
+    if (exifGpsDistance > SUSPECT_GPS_DIFF_M) {
+      exifGpsCheckFlag = "mismatch";
+      await logAudit({
+        eventType: "attendance.mobile_rejected",
+        userId: null,
+        entityType: "attendance",
+        entityId: matched.id,
+        payload: {
+          summary: `🚨 ${matched.fullName} ditolak — GPS selfie ≠ GPS browser (selisih ${Math.round(exifGpsDistance)}m). Suspect spoofing.`,
+          context: {
+            mode,
+            browserGps: { lat: gpsLat, lng: gpsLng },
+            selfieGps: exifResult.exifGps,
+            distance: exifGpsDistance,
+            outletGps: { lat: gpsCenter.lat, lng: gpsCenter.lng },
+          },
+        },
+        metadata: { outletId: matched.outletId, actorRole: "system" },
+      }).catch((e) =>
+        console.error("[audit attendance gps mismatch]", e),
+      );
+      return jsonError(
+        "GPS_MISMATCH",
+        `Lokasi GPS di selfie tidak cocok dengan lokasi browser (selisih ${Math.round(exifGpsDistance)}m). Pastikan kamu absen dari lokasi kerja, bukan dari rumah.`,
+        400,
+      );
+    }
+    exifGpsCheckFlag = "match";
+  }
+  /* Catatan: kalau exifGpsCheckFlag === "absent", audit di clock-in/out
+   * log di-tag supaya owner bisa filter pattern (mis. karyawan tertentu
+   * konsisten upload selfie tanpa GPS → kemungkinan strip EXIF). */
+
   // Idempotency dedup — kalau ada record dalam 60s dengan clientRefId sama, return existing
   if (clientRefId) {
     const [existing] = await db
@@ -501,8 +553,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       entityType: "attendance",
       entityId: row.id,
       payload: {
-        summary: `Mobile clock-in: ${matched.fullName}${isLate === "yes" ? ` (telat ${lateMinutes} mnt)` : ""}`,
-        context: { distance, isLate, lateMinutes },
+        summary: `Mobile clock-in: ${matched.fullName}${isLate === "yes" ? ` (telat ${lateMinutes} mnt)` : ""}${exifGpsCheckFlag === "absent" ? " · ⚠ no-exif-gps" : ""}`,
+        context: {
+          distance,
+          isLate,
+          lateMinutes,
+          /* Sesi AE-62aa — tag flag supaya owner bisa filter audit log
+           * cari karyawan yang konsisten absent EXIF GPS (suspect strip). */
+          exifGpsCheck: exifGpsCheckFlag,
+          exifGpsDistance,
+        },
       },
       metadata: { outletId: matched.outletId, actorRole: "system" },
     }).catch((e) => console.error("[audit mobile clock_in]", e));
@@ -533,23 +593,22 @@ export async function POST(request: Request): Promise<NextResponse> {
     openRow.shiftDate,
   );
   if (schedule && !schedule.dayOff && schedule.endTime && schedule.startTime) {
-    // Sesi AE-62i — mirror overnight shift logic dari backoffice clockOut
-    // (src/features/attendance/actions.ts:270-286). Sebelumnya naive
-    // actualEnd - scheduledEnd → bartender close 02:00 dapat NEGATIVE OT
-    // (zeroed) → undercount late-night work.
-    const scheduledEnd = timeStringToMinutes(schedule.endTime);
-    const scheduledStart = timeStringToMinutes(schedule.startTime);
-    const isOvernight = scheduledEnd < scheduledStart;
-    const actualEnd = minutesIntoWibDay(now);
-    let diff: number;
-    if (isOvernight) {
-      const adjustedActual =
-        actualEnd >= scheduledStart ? actualEnd : actualEnd + 1440;
-      diff = adjustedActual - (scheduledEnd + 1440);
-    } else {
-      diff = actualEnd - scheduledEnd;
-    }
-    overtimeMinutes = Math.max(0, diff);
+    /* Sesi AE-62i → AE-62aa — pakai pure helper computeOvertimeMinutes.
+     * Pre-fix (AE-62i) handle overnight schedule correctly tapi MISS case
+     * normal-day-schedule + clock-out past midnight (bartender schedule
+     * 14:00-22:00, actual clock-out 01:00 next-day → naive returns 0 OT
+     * padahal real 180 min). Helper Date-arithmetic based, unit-tested
+     * 10 cases di tests/unit/overtime-compute.test.ts. */
+    const { computeOvertimeMinutes } = await import(
+      "@/features/attendance/overtime-compute"
+    );
+    const otResult = computeOvertimeMinutes({
+      shiftDate: openRow.shiftDate,
+      scheduledStartTime: schedule.startTime,
+      scheduledEndTime: schedule.endTime,
+      clockOutAt: now,
+    });
+    overtimeMinutes = otResult.overtimeMinutes;
   }
 
   const [updated] = await db
@@ -582,8 +641,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     entityType: "attendance",
     entityId: updated.id,
     payload: {
-      summary: `Mobile clock-out: ${matched.fullName} (${workMinutes} mnt kerja${overtimeMinutes && overtimeMinutes > 0 ? `, OT ${overtimeMinutes} mnt` : ""})`,
-      context: { distance, workMinutes, overtimeMinutes },
+      summary: `Mobile clock-out: ${matched.fullName} (${workMinutes} mnt kerja${overtimeMinutes && overtimeMinutes > 0 ? `, OT ${overtimeMinutes} mnt` : ""})${exifGpsCheckFlag === "absent" ? " · ⚠ no-exif-gps" : ""}`,
+      context: {
+        distance,
+        workMinutes,
+        overtimeMinutes,
+        exifGpsCheck: exifGpsCheckFlag,
+        exifGpsDistance,
+      },
     },
     metadata: { outletId: matched.outletId, actorRole: "system" },
   }).catch((e) => console.error("[audit mobile clock_out]", e));

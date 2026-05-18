@@ -261,29 +261,25 @@ export async function clockOut(
 
   // Overtime detection: lookup schedule for the shift_date; if found
   // + non-day-off + has end_time, compute minutes past scheduled end.
-  // Handles overnight shifts where end_time < start_time.
+  //
+  // Sesi AE-62aa — pakai pure helper computeOvertimeMinutes yang aware
+  // cross-midnight clock-out (Date-arithmetic based). Pre-fix logic
+  // (minutesIntoWibDay-based) MISS case schedule normal-day + clock-out
+  // past midnight → overtime undercount. Helper unit-tested 10 cases.
   let overtimeMinutes: number | null = null;
   const schedule = await fetchScheduleByEmployeeAndDate(
     current.employeeId,
     current.shiftDate,
   );
   if (schedule && !schedule.dayOff && schedule.endTime && schedule.startTime) {
-    const scheduledEnd = timeStringToMinutes(schedule.endTime);
-    const scheduledStart = timeStringToMinutes(schedule.startTime);
-    const isOvernight = scheduledEnd < scheduledStart;
-    const actualEnd = minutesIntoWibDay(now);
-    let diff: number;
-    if (isOvernight) {
-      // Overnight: scheduledEnd is "tomorrow morning" in real time.
-      // If actualEnd already past midnight (< scheduledStart), compare
-      // directly; if still pre-midnight (>= scheduledStart), add 1440.
-      const adjustedActual =
-        actualEnd >= scheduledStart ? actualEnd : actualEnd + 1440;
-      diff = adjustedActual - (scheduledEnd + 1440);
-    } else {
-      diff = actualEnd - scheduledEnd;
-    }
-    overtimeMinutes = Math.max(0, diff);
+    const { computeOvertimeMinutes } = await import("./overtime-compute");
+    const otResult = computeOvertimeMinutes({
+      shiftDate: current.shiftDate,
+      scheduledStartTime: schedule.startTime,
+      scheduledEndTime: schedule.endTime,
+      clockOutAt: now,
+    });
+    overtimeMinutes = otResult.overtimeMinutes;
   }
 
   const [row] = await db
