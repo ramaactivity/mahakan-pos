@@ -1823,8 +1823,14 @@ export async function getOutletThreshold(outletId: string): Promise<number> {
 
 /**
  * Sesi AE-62h — variance threshold per-outlet. Default 10k (cocok untuk
- * outlet kecil), bisa di-override via outlet.settings.shift.varianceThreshold
- * untuk outlet high-volume (50k-100k variance normal di rush hour).
+ * outlet kecil), bisa di-override via Settings → Threshold (UI di
+ * SettingsTunablesModal).
+ *
+ * Sesi AE-62t fix: PATH MISMATCH BUG. UI Settings tulis ke
+ * `settings.thresholds.shiftVarianceAlert` (via updateThresholds), tapi
+ * helper ini dulu baca dari `settings.shift.varianceThreshold` →
+ * threshold owner-set NEVER applied. Sekarang baca dari path UI dulu,
+ * fallback ke legacy path kalau pre-fix outlet data masih ada.
  *
  * Sebelumnya: hardcoded 10_000 di ShiftsSection + CloseShiftModal +
  * VerifyDepositModal → alert fatigue di high-volume outlet, atau under-detect
@@ -1839,9 +1845,17 @@ export async function getShiftVarianceThreshold(
     .where(sql`id = ${outletId}`)
     .limit(1);
   const settings = (r?.settings ?? {}) as {
+    /** Sesi AE-62t — canonical path (matches UI updateThresholds). */
+    thresholds?: { shiftVarianceAlert?: number };
+    /** Legacy path (pre-fix). Fallback only — UI tidak pernah tulis ke sini,
+     * tapi kalau ada data manual hand-edited di DB, honor it. */
     shift?: { varianceThreshold?: number };
   };
-  return settings?.shift?.varianceThreshold ?? 10_000;
+  const canonical = settings?.thresholds?.shiftVarianceAlert;
+  if (typeof canonical === "number" && canonical >= 0) return canonical;
+  const legacy = settings?.shift?.varianceThreshold;
+  if (typeof legacy === "number" && legacy >= 0) return legacy;
+  return 10_000;
 }
 
 // Re-exports so consumers can `import { ... } from "@/features/finance"`.

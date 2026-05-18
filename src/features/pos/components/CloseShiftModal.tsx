@@ -41,7 +41,10 @@ import { cn } from "@/lib/utils";
 import { BelanjaSubmissionModal } from "./BelanjaSubmissionModal";
 import { CloseOpenBillModal } from "./CloseOpenBillModal";
 
-const VARIANCE_THRESHOLD = 10_000;
+/* Sesi AE-62t — variance threshold default 10k kalau prop tidak di-pass
+ * dari parent. Owner bisa override via Pengaturan → Threshold (path
+ * settings.thresholds.shiftVarianceAlert). PosShell pass nilai live. */
+const DEFAULT_VARIANCE_THRESHOLD = 10_000;
 
 interface SummaryPreview {
   paid: { count: number; cash: number; qris: number; cardBca: number };
@@ -102,6 +105,11 @@ interface CloseShiftModalProps {
   userId: string;
   cashierName: string;
   receiptConfig: ReceiptConfig | null;
+  /** Sesi AE-62t — owner-tunable variance alert threshold dari
+   * outlet.settings.thresholds.shiftVarianceAlert. Fallback 10k kalau
+   * undefined (sebelumnya hardcoded 10k di sini, sekarang live dari
+   * Pengaturan Owner). */
+  varianceThreshold?: number;
   onClose: () => void;
   onClosed: () => void;
   onOpenSettings: () => void;
@@ -130,10 +138,12 @@ export function CloseShiftModal({
   shift,
   cashierName,
   receiptConfig,
+  varianceThreshold,
   onClose,
   onClosed,
   onOpenSettings,
 }: CloseShiftModalProps) {
+  const VARIANCE_THRESHOLD = varianceThreshold ?? DEFAULT_VARIANCE_THRESHOLD;
   const [summary, setSummary] = useState<SummaryPreview | null>(null);
   const [openBills, setOpenBills] = useState<
     Array<{
@@ -645,12 +655,14 @@ export function CloseShiftModal({
                 edcVariance={edcVariance}
                 edcInputEmpty={edc.trim().length === 0}
                 totalVarianceAbs={totalVarianceAbs}
+                varianceThreshold={VARIANCE_THRESHOLD}
                 onActivateField={setActiveField}
               />
               <VarianceIndicator
                 parsedCash={parsedCash}
                 variance={variance}
                 varianceFlag={varianceFlag}
+                varianceThreshold={VARIANCE_THRESHOLD}
               />
               {(summary.petty.expenseCashCount > 0 ||
                 summary.petty.incomeCashCount > 0 ||
@@ -866,8 +878,11 @@ function BalanceVerificationPanel(props: {
   edcVariance: number;
   edcInputEmpty: boolean;
   totalVarianceAbs: number;
+  /** Sesi AE-62t — live threshold dari outlet settings. */
+  varianceThreshold: number;
   onActivateField: (field: ActiveField) => void;
 }) {
+  const VARIANCE_THRESHOLD = props.varianceThreshold;
   const rows: Array<{
     key: ActiveField;
     label: string;
@@ -1019,11 +1034,15 @@ function VarianceIndicator({
   parsedCash,
   variance,
   varianceFlag,
+  varianceThreshold,
 }: {
   parsedCash: number;
   variance: number;
   varianceFlag: "warn" | "ok";
+  /** Sesi AE-62t — live threshold (untuk display text). */
+  varianceThreshold: number;
 }) {
+  const VARIANCE_THRESHOLD = varianceThreshold;
   return (
     <>
       <section

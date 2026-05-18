@@ -217,6 +217,11 @@ export function PosShell() {
   const [receiptConfig, setReceiptConfig] = useState<ReceiptConfig | null>(
     null,
   );
+  /* Sesi AE-62t — variance alert threshold dari outlet settings (Pengaturan
+   * → Threshold). Default 10k kalau outlet belum loaded atau setting null.
+   * Threaded ke CloseShiftModal supaya peringatan kasir live update saat
+   * owner ubah di Pengaturan. */
+  const [varianceThreshold, setVarianceThreshold] = useState<number>(10_000);
 
   // Menu
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -351,6 +356,11 @@ export function PosShell() {
           voidMode: approval?.voidMode === "code" ? "code" : "pin",
           refundMode: approval?.refundMode === "code" ? "code" : "pin",
         });
+        // Sesi AE-62t — pull live varianceThreshold dari outlet settings.
+        const thr = res.data.settings?.thresholds?.shiftVarianceAlert;
+        if (typeof thr === "number" && thr >= 0) {
+          setVarianceThreshold(thr);
+        }
         // Phase 2.2 — derive expected shift close from outlet operational
         // hours (today's closeTime in WIB). Null kalau hari ini tutup atau
         // closeTime tidak diset.
@@ -1301,6 +1311,7 @@ export function PosShell() {
           userId={session.user.id}
           cashierName={session.user.name ?? "Kasir"}
           receiptConfig={receiptConfig}
+          varianceThreshold={varianceThreshold}
           onClose={() => setCloseShiftOpen(false)}
           onClosed={async () => {
             setCloseShiftOpen(false);

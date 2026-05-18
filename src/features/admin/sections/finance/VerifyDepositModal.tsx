@@ -21,6 +21,7 @@ import {
   rejectCashDeposit,
   verifyCashDeposit,
 } from "@/features/finance/actions";
+import { getOwnOutlet } from "@/features/outlets";
 import type { CashDeposit } from "@/features/finance/types";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDate } from "@/lib/date";
@@ -40,7 +41,9 @@ const REJECT_TEMPLATES = [
   "Tujuan bank salah",
 ] as const;
 
-const VARIANCE_THRESHOLD = 10_000;
+/* Sesi AE-62t — default kalau outlet belum loaded. Live value di-fetch dari
+ * outlet.settings.thresholds.shiftVarianceAlert. */
+const DEFAULT_VARIANCE_THRESHOLD = 10_000;
 
 /**
  * Sesi AE-9 redesign — VerifyDepositModal full-screen 2-col mirror
@@ -81,6 +84,22 @@ export function VerifyDepositModal({
     enabled: open && deposit !== null,
   });
   const cashOnHand = dashboardQuery.data?.cashOnHand ?? null;
+
+  /* Sesi AE-62t — live variance threshold dari outlet settings. Cached
+   * lama (settings rarely change). Shared cache dengan ShiftsSection. */
+  const outletQuery = useQuery({
+    queryKey: ["admin", "outlet", "own"],
+    queryFn: async () => {
+      const res = await getOwnOutlet();
+      if (res.success !== true) throw new Error(res.error.message);
+      return res.data;
+    },
+    staleTime: 5 * 60 * 1000,
+    enabled: open,
+  });
+  const VARIANCE_THRESHOLD =
+    outletQuery.data?.settings?.thresholds?.shiftVarianceAlert ??
+    DEFAULT_VARIANCE_THRESHOLD;
 
   useEffect(() => {
     if (!open || !deposit) return;
@@ -258,6 +277,7 @@ export function VerifyDepositModal({
               cashOnHand={cashOnHand}
               variance={variance}
               varianceFlag={varianceFlag}
+              varianceThreshold={VARIANCE_THRESHOLD}
             />
           ) : null}
 
@@ -431,12 +451,16 @@ function ComparisonPanel({
   cashOnHand,
   variance,
   varianceFlag,
+  varianceThreshold,
 }: {
   depositAmount: number;
   cashOnHand: number | null;
   variance: number | null;
   varianceFlag: "match" | "small" | "warn" | null;
+  /** Sesi AE-62t — live threshold dari outlet settings (display only). */
+  varianceThreshold: number;
 }) {
+  const VARIANCE_THRESHOLD = varianceThreshold;
   const flagClasses = {
     match: "border-success-500 bg-success-100 text-success-500",
     small: "border-warning-500 bg-warning-100 text-warning-500",

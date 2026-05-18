@@ -15,12 +15,15 @@ import {
 import { ShiftDetailModal } from "./shifts/ShiftDetailModal";
 import { PendingRebalancesPanel } from "./shifts/PendingRebalancesPanel";
 import { isOk, listShifts, type Shift } from "@/features/shifts";
+import { getOwnOutlet } from "@/features/outlets";
 import { listUsers, type PublicUser } from "@/features/users";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
-const VARIANCE_THRESHOLD = 10_000;
+/* Sesi AE-62t — variance threshold default kalau outlet belum loaded.
+ * Live value di-fetch dari outlet.settings.thresholds.shiftVarianceAlert. */
+const DEFAULT_VARIANCE_THRESHOLD = 10_000;
 
 export function ShiftsSection() {
   const [tab, setTab] = useState<"history" | "rebalance">("history");
@@ -44,6 +47,20 @@ export function ShiftsSection() {
       return res.data.items;
     },
   });
+  /* Sesi AE-62t — fetch outlet untuk pull live variance threshold. Cached
+   * sangat lama (settings rarely change), shared dengan section lain. */
+  const outletQuery = useQuery({
+    queryKey: ["admin", "outlet", "own"],
+    queryFn: async () => {
+      const res = await getOwnOutlet();
+      if (res.success !== true) throw new Error(res.error.message);
+      return res.data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const VARIANCE_THRESHOLD =
+    outletQuery.data?.settings?.thresholds?.shiftVarianceAlert ??
+    DEFAULT_VARIANCE_THRESHOLD;
   const shifts = useMemo(() => shiftsQuery.data ?? [], [shiftsQuery.data]);
   const users = useMemo(() => usersQuery.data ?? [], [usersQuery.data]);
   const loading = shiftsQuery.isLoading || usersQuery.isLoading;
