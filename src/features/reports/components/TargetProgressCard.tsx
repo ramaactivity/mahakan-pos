@@ -171,33 +171,38 @@ export function TargetProgressCard({
     );
   }
 
+  /* Sesi AE-62ai — denser 3-col layout untuk tablet landscape (Galaxy A7
+   * Lite 1340×800). Stack di portrait/mobile. Pre-fix: 3 stacked rows = banyak
+   * scroll, lebar kanan kosong. Sekarang 3 col side-by-side di lg breakpoint. */
   return (
-    <div className="space-y-4 rounded-lg border border-neutral-200 bg-white p-4">
-      <div className="flex items-center gap-2">
+    <div className="rounded-lg border border-neutral-200 bg-white p-4">
+      <div className="mb-3 flex items-center gap-2">
         <Target className="size-5 text-mahakan-green-700" />
         <h3 className="font-semibold text-neutral-900">Target Pendapatan</h3>
       </div>
-      <ProgressRow
-        label="Hari Ini"
-        icon={TrendingUp}
-        scale={data.daily}
-        subLabel={data.daily.dateLabel}
-        showRupiah={showRupiah}
-      />
-      <ProgressRow
-        label="Minggu Ini"
-        icon={TrendingUp}
-        scale={data.weekly}
-        subLabel="7 hari terakhir"
-        showRupiah={showRupiah}
-      />
-      <ProgressRow
-        label="Bulan Ini"
-        icon={Trophy}
-        scale={data.monthly}
-        subLabel={data.monthly.monthLabel}
-        showRupiah={showRupiah}
-      />
+      <div className="grid gap-4 lg:grid-cols-3">
+        <ProgressRow
+          label="Hari Ini"
+          icon={TrendingUp}
+          scale={data.daily}
+          subLabel={data.daily.dateLabel}
+          showRupiah={showRupiah}
+        />
+        <ProgressRow
+          label="Minggu Ini"
+          icon={TrendingUp}
+          scale={data.weekly}
+          subLabel="7 hari terakhir"
+          showRupiah={showRupiah}
+        />
+        <ProgressRow
+          label="Bulan Ini"
+          icon={Trophy}
+          scale={data.monthly}
+          subLabel={data.monthly.monthLabel}
+          showRupiah={showRupiah}
+        />
+      </div>
     </div>
   );
 }

@@ -52,6 +52,7 @@ import { formatRupiah } from "@/lib/format";
 import { paymentMethodLabel } from "@/lib/payment-method";
 import type { AdminSection } from "@/features/admin/components/AdminLeftNav";
 import { setHrOperationsInitialTab } from "./HrOperationsSection";
+import { setReportsInitialTab } from "./ReportsSection";
 import { OpnameMonthlyBanner } from "./inventory/opname/OpnameMonthlyBanner";
 
 interface DashboardHomeProps {
@@ -287,13 +288,25 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
         />
       </div>
 
-      {/* Target Pendapatan — sesi AE-62ah. Hide kalau semua 3 scale target
-       *  belum di-set (cuma noise). Owner edit di Reports → Targets. */}
-      {targetProgress &&
-      (targetProgress.daily.target != null ||
+      {/* Target Pendapatan — sesi AE-62ah/ai. Always-show: kalau belum
+       *  ada target → kasih CTA "Set Target" supaya owner tahu fitur ada. */}
+      {targetProgress ? (
+        targetProgress.daily.target != null ||
         targetProgress.weekly.target != null ||
-        targetProgress.monthly.target != null) ? (
-        <TargetProgressCard data={targetProgress} showRupiah />
+        targetProgress.monthly.target != null ? (
+          <TargetProgressCard data={targetProgress} showRupiah />
+        ) : (
+          <TargetEmptyCard
+            onTap={
+              onNavigate
+                ? () => {
+                    setReportsInitialTab("targets");
+                    onNavigate("reports");
+                  }
+                : undefined
+            }
+          />
+        )
       ) : null}
 
       {/* Accounting MTD summary — visible kalau ada data ledger */}
@@ -883,5 +896,37 @@ function HrPayrollCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/* Sesi AE-62ai — empty state card untuk Target Pendapatan kalau belum di-set. */
+function TargetEmptyCard({ onTap }: { onTap?: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onTap}
+      disabled={!onTap}
+      className="group w-full rounded-lg border border-dashed border-mahakan-green-700/40 bg-mahakan-green-50/40 p-4 text-left transition-colors hover:bg-mahakan-green-50 disabled:cursor-default disabled:hover:bg-mahakan-green-50/40"
+    >
+      <div className="flex items-start gap-3">
+        <div className="rounded-full bg-mahakan-green-100 p-2">
+          <TrendingUp className="size-5 text-mahakan-green-700" />
+        </div>
+        <div className="flex-1">
+          <h3 className="font-semibold text-mahakan-green-900">
+            Set Target Pendapatan
+          </h3>
+          <p className="mt-1 text-sm text-neutral-700">
+            Belum ada target harian/mingguan/bulanan. Set sekarang supaya
+            kasir bisa lihat progress + termotivasi di POS Dashboard.
+          </p>
+          {onTap ? (
+            <span className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-mahakan-green-700 group-hover:underline">
+              Atur target sekarang <ChevronRight className="size-3.5" />
+            </span>
+          ) : null}
+        </div>
+      </div>
+    </button>
   );
 }

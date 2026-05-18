@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ClosingShiftView } from "./reports/ClosingShiftView";
 import { DailySalesView } from "./reports/DailySalesView";
 import { HppView } from "./reports/HppView";
@@ -74,6 +74,16 @@ const REPORT_GROUPS: ReportGroup[] = [
   },
 ];
 
+/* Sesi AE-62ai — cross-section handover: caller (DashboardHome target
+ * empty card CTA) set sessionStorage key sebelum navigate ke "reports",
+ * lalu Section mount baca & clear. Mirror pattern setHrOperationsInitialTab. */
+const INITIAL_TAB_STORAGE_KEY = "reports:initial-tab";
+
+export function setReportsInitialTab(tab: ReportTab) {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(INITIAL_TAB_STORAGE_KEY, tab);
+}
+
 interface ReportsSectionProps {
   viewerRole: Role;
 }
@@ -81,6 +91,16 @@ interface ReportsSectionProps {
 export function ReportsSection({ viewerRole }: ReportsSectionProps) {
   const [tab, setTab] = useState<ReportTab>("sales");
   const isOwner = viewerRole === "owner";
+
+  useEffect(() => {
+    const stored = sessionStorage.getItem(INITIAL_TAB_STORAGE_KEY);
+    if (stored) {
+      /* eslint-disable react-hooks/set-state-in-effect */
+      setTab(stored as ReportTab);
+      /* eslint-enable react-hooks/set-state-in-effect */
+      sessionStorage.removeItem(INITIAL_TAB_STORAGE_KEY);
+    }
+  }, []);
 
   const visibleGroups = REPORT_GROUPS.map((g) => ({
     heading: g.heading,
