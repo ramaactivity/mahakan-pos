@@ -30,54 +30,61 @@ export async function fetchPengelola(
     );
   const totalModal = Number(totalRow?.total ?? 0);
 
-  /* Dividend aggregates per holder (scoped holderType='pengelola'). */
-  const dividendAgg = db.$with("dividend_agg").as(
-    db
+  /* Sesi AE-63e-hotfix: 2 query terpisah dibanding CTE pattern (lebih
+   * predictable di Next.js production runtime). */
+  const baseRows = await db
+    .select()
+    .from(pengelola)
+    .where(
+      and(eq(pengelola.outletId, outletId), isNull(pengelola.deletedAt)),
+    )
+    .orderBy(desc(pengelola.modalDisetor), pengelola.fullName);
+
+  const ids = baseRows.map((r) => r.id);
+  const statsByHolder = new Map<
+    string,
+    { dividendYtd: number; dividendLifetime: number }
+  >();
+  if (ids.length > 0) {
+    const aggRows = await db
       .select({
         holderId: capitalMovements.holderId,
-        dividendYtd: sql<string>`COALESCE(SUM(${capitalMovements.amount}) FILTER (WHERE ${capitalMovements.kind} = 'dividend_credit' AND ${capitalMovements.occurredAt} >= ${yearStart}), 0)`.as(
-          "dividend_ytd",
-        ),
-        dividendLifetime: sql<string>`COALESCE(SUM(${capitalMovements.amount}) FILTER (WHERE ${capitalMovements.kind} = 'dividend_credit'), 0)`.as(
-          "dividend_lifetime",
-        ),
+        dividendYtd: sql<string>`COALESCE(SUM(${capitalMovements.amount}) FILTER (WHERE ${capitalMovements.kind} = 'dividend_credit' AND ${capitalMovements.occurredAt} >= ${yearStart}), 0)`,
+        dividendLifetime: sql<string>`COALESCE(SUM(${capitalMovements.amount}) FILTER (WHERE ${capitalMovements.kind} = 'dividend_credit'), 0)`,
       })
       .from(capitalMovements)
       .where(
         and(
           eq(capitalMovements.holderType, "pengelola"),
           eq(capitalMovements.outletId, outletId),
+          sql`${capitalMovements.holderId} = ANY(${ids})`,
         ),
       )
-      .groupBy(capitalMovements.holderId),
-  );
+      .groupBy(capitalMovements.holderId);
 
-  const rows = await db
-    .with(dividendAgg)
-    .select({
-      p: pengelola,
-      dividendYtd: sql<string>`COALESCE(${dividendAgg.dividendYtd}, 0)`,
-      dividendLifetime: sql<string>`COALESCE(${dividendAgg.dividendLifetime}, 0)`,
-    })
-    .from(pengelola)
-    .leftJoin(dividendAgg, eq(dividendAgg.holderId, pengelola.id))
-    .where(
-      and(
-        eq(pengelola.outletId, outletId),
-        isNull(pengelola.deletedAt),
-      ),
-    )
-    .orderBy(desc(pengelola.modalDisetor), pengelola.fullName);
+    for (const r of aggRows) {
+      statsByHolder.set(r.holderId, {
+        dividendYtd: Number(r.dividendYtd),
+        dividendLifetime: Number(r.dividendLifetime),
+      });
+    }
+  }
 
-  return rows.map((r) => ({
-    ...r.p,
-    dividendYtd: Number(r.dividendYtd),
-    dividendLifetime: Number(r.dividendLifetime),
-    sharePct:
-      totalModal > 0 && r.p.status === "active"
-        ? Number(((r.p.modalDisetor / totalModal) * 100).toFixed(4))
-        : 0,
-  }));
+  return baseRows.map((p) => {
+    const stats = statsByHolder.get(p.id) ?? {
+      dividendYtd: 0,
+      dividendLifetime: 0,
+    };
+    return {
+      ...p,
+      dividendYtd: stats.dividendYtd,
+      dividendLifetime: stats.dividendLifetime,
+      sharePct:
+        totalModal > 0 && p.status === "active"
+          ? Number(((p.modalDisetor / totalModal) * 100).toFixed(4))
+          : 0,
+    };
+  });
 }
 
 export async function fetchPengelolaById(

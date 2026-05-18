@@ -51,57 +51,62 @@ export async function fetchInvestors(
     .where(and(...conditions));
   const total = Number(totalQuery[0]?.count ?? 0);
 
-  /* Stat sub-aggregates per-investor:
-   *  - dividendYtd: SUM(dividend_credit kind WHERE occurredAt >= year start)
-   *  - dividendLifetime: SUM(dividend_credit kind)
-   *  - movementCount: COUNT(*)
-   * LEFT JOIN aggregated subquery scoped by holderType='investor'. */
-  const dividendAgg = db.$with("dividend_agg").as(
-    db
+  /* Sesi AE-63e-hotfix: pakai 2 query terpisah dibanding CTE pattern.
+   * CTE `db.$with()` di Drizzle kadang trigger error di Next.js production
+   * runtime walaupun typecheck/build OK. Simpler subquery aggregation
+   * lebih predictable. */
+  const baseRows = await db
+    .select()
+    .from(investors)
+    .where(and(...conditions))
+    .orderBy(desc(investors.modalDisetor), investors.fullName)
+    .limit(pageSize)
+    .offset(offset);
+
+  /* Aggregate stats by holder dalam 1 query terpisah. */
+  const investorIds = baseRows.map((r) => r.id);
+  const statsByHolder = new Map<
+    string,
+    { dividendYtd: number; dividendLifetime: number; movementCount: number }
+  >();
+  if (investorIds.length > 0) {
+    const aggRows = await db
       .select({
         holderId: capitalMovements.holderId,
-        dividendYtd: sql<string>`COALESCE(SUM(${capitalMovements.amount}) FILTER (WHERE ${capitalMovements.kind} = 'dividend_credit' AND ${capitalMovements.occurredAt} >= ${yearStart}), 0)`.as(
-          "dividend_ytd",
-        ),
-        dividendLifetime: sql<string>`COALESCE(SUM(${capitalMovements.amount}) FILTER (WHERE ${capitalMovements.kind} = 'dividend_credit'), 0)`.as(
-          "dividend_lifetime",
-        ),
-        movementCount: sql<string>`COUNT(*)`.as("movement_count"),
+        dividendYtd: sql<string>`COALESCE(SUM(${capitalMovements.amount}) FILTER (WHERE ${capitalMovements.kind} = 'dividend_credit' AND ${capitalMovements.occurredAt} >= ${yearStart}), 0)`,
+        dividendLifetime: sql<string>`COALESCE(SUM(${capitalMovements.amount}) FILTER (WHERE ${capitalMovements.kind} = 'dividend_credit'), 0)`,
+        movementCount: sql<string>`COUNT(*)`,
       })
       .from(capitalMovements)
       .where(
         and(
           eq(capitalMovements.holderType, "investor"),
           eq(capitalMovements.outletId, outletId),
+          sql`${capitalMovements.holderId} = ANY(${investorIds})`,
         ),
       )
-      .groupBy(capitalMovements.holderId),
-  );
+      .groupBy(capitalMovements.holderId);
 
-  const rows = await db
-    .with(dividendAgg)
-    .select({
-      i: investors,
-      dividendYtd: sql<string>`COALESCE(${dividendAgg.dividendYtd}, 0)`,
-      dividendLifetime: sql<string>`COALESCE(${dividendAgg.dividendLifetime}, 0)`,
-      movementCount: sql<string>`COALESCE(${dividendAgg.movementCount}, 0)`,
-    })
-    .from(investors)
-    .leftJoin(dividendAgg, eq(dividendAgg.holderId, investors.id))
-    .where(and(...conditions))
-    .orderBy(desc(investors.modalDisetor), investors.fullName)
-    .limit(pageSize)
-    .offset(offset);
+    for (const r of aggRows) {
+      statsByHolder.set(r.holderId, {
+        dividendYtd: Number(r.dividendYtd),
+        dividendLifetime: Number(r.dividendLifetime),
+        movementCount: Number(r.movementCount),
+      });
+    }
+  }
 
   return {
-    items: rows.map((r) => ({
-      ...r.i,
-      dividendYtd: Number(r.dividendYtd),
-      dividendLifetime: Number(r.dividendLifetime),
-      movementCount: Number(r.movementCount),
-    })),
+    items: baseRows.map((i) => {
+      const stats = statsByHolder.get(i.id) ?? {
+        dividendYtd: 0,
+        dividendLifetime: 0,
+        movementCount: 0,
+      };
+      return { ...i, ...stats };
+    }),
     total,
-    hasMore: offset + rows.length < total,
+    hasMore: offset + baseRows.length < total,
   };
 }
 

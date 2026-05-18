@@ -59,3 +59,35 @@ export interface ComputeDistributionInput {
    *  null/undefined, server fetch dari Income Statement. */
   netProfitOverride?: number | null;
 }
+
+/* Sesi AE-63e — Laporan Perubahan Modal types. Extracted dari
+ * capital-changes-report.ts karena file itu pakai "use server"
+ * directive yang tidak boleh export non-async values. */
+export interface CapitalChangeRow {
+  holderType: "investor" | "pengelola";
+  holderId: string;
+  holderName: string;
+  modalDisetor: number;
+  saldoAwal: number;
+  setoran: number;
+  dividen: number;
+  withdrawal: number;
+  adjustment: number;
+  saldoAkhir: number;
+}
+
+export interface CapitalChangesReport {
+  periodStart: string;
+  periodEnd: string;
+  investors: CapitalChangeRow[];
+  pengelola: CapitalChangeRow[];
+  totals: {
+    saldoAwalInvestor: number;
+    saldoAwalPengelola: number;
+    setoranTotal: number;
+    dividenTotal: number;
+    withdrawalTotal: number;
+    saldoAkhirInvestor: number;
+    saldoAkhirPengelola: number;
+  };
+}

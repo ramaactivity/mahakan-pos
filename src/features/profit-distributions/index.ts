@@ -1,5 +1,7 @@
 export type {
   ApiResult,
+  CapitalChangeRow,
+  CapitalChangesReport,
   ComputeDistributionInput,
   DistributionLineWithHolder,
   DistributionStatus,
@@ -26,8 +28,4 @@ export {
   type HolderLine,
 } from "./compute-pure";
 
-export {
-  fetchCapitalChangesReport,
-  type CapitalChangesReport,
-  type CapitalChangeRow,
-} from "./capital-changes-report";
+export { fetchCapitalChangesReport } from "./capital-changes-report";

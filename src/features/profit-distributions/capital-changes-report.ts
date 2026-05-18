@@ -8,7 +8,13 @@ import {
   pengelola,
 } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
-import { fail, ok, type ApiResult } from "./types";
+import {
+  fail,
+  ok,
+  type ApiResult,
+  type CapitalChangeRow,
+  type CapitalChangesReport,
+} from "./types";
 
 /**
  * Sesi AE-63e — Laporan Perubahan Modal (Statement of Changes in Equity).
@@ -27,36 +33,10 @@ import { fail, ok, type ApiResult } from "./types";
  *  - withdrawal: SUM amount WHERE kind = 'withdrawal' AND in range
  *  - adjustment: SUM amount (signed) WHERE kind = 'adjustment'
  *  - saldoAkhir = saldoAwal + setoran + dividen - withdrawal ± adjustment
+ *
+ * Sesi AE-63e-hotfix: types CapitalChangeRow + CapitalChangesReport pindah
+ * ke types.ts karena "use server" directive tidak boleh export non-async.
  */
-
-export interface CapitalChangeRow {
-  holderType: "investor" | "pengelola";
-  holderId: string;
-  holderName: string;
-  modalDisetor: number;
-  saldoAwal: number;
-  setoran: number;
-  dividen: number;
-  withdrawal: number;
-  adjustment: number;
-  saldoAkhir: number;
-}
-
-export interface CapitalChangesReport {
-  periodStart: string;
-  periodEnd: string;
-  investors: CapitalChangeRow[];
-  pengelola: CapitalChangeRow[];
-  totals: {
-    saldoAwalInvestor: number;
-    saldoAwalPengelola: number;
-    setoranTotal: number;
-    dividenTotal: number;
-    withdrawalTotal: number;
-    saldoAkhirInvestor: number;
-    saldoAkhirPengelola: number;
-  };
-}
 
 export async function fetchCapitalChangesReport(args: {
   periodStart: string;
