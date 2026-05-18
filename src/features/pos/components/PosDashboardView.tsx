@@ -12,6 +12,8 @@ import { Skeleton } from "@/components/ui";
 import { getDailySalesReport, getTargetProgress, isOk } from "@/features/reports";
 import { getTodayAttendanceStatus } from "@/features/attendance/actions";
 import { TargetProgressCard } from "@/features/reports/components/TargetProgressCard";
+import { AchievementStrip } from "./AchievementStrip";
+import { MotivasiBanner } from "./MotivasiBanner";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -123,6 +125,17 @@ export function PosDashboardView({
             Target pendapatan belum di-set. Hubungi owner untuk konfigurasi.
           </div>
         )}
+
+        {/* Sesi AE-62aj — Motivasi banner + Achievement gamify strip.
+         *  Motivasi: pesan tier-based dengan tip upselling konkret bahasa santai.
+         *  Achievement: chips daily/weekly/monthly + rank + celebration banner
+         *  saat tercapai. Tanpa DB persistence, derived dari TargetProgressData. */}
+        {target ? (
+          <>
+            <MotivasiBanner data={target} />
+            <AchievementStrip data={target} />
+          </>
+        ) : null}
 
         {/* Stats row — 4 col di landscape, 2 col tablet portrait, 1 col mobile */}
         <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
