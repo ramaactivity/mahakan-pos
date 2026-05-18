@@ -1,0 +1,1 @@
+ALTER TABLE "purchase_request_items" DROP CONSTRAINT "ck_pri_received_lte_requested";

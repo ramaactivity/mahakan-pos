@@ -442,13 +442,16 @@ export async function receiveItem(
 
   type ReceiveError =
     | "ITEM_NOT_FOUND"
-    | "QTY_EXCEEDS_REQUESTED"
     | "REQUEST_NOT_FOUND"
     | "CROSS_OUTLET"
     | "REQUEST_CANCELLED";
   type ReceiveResult =
     | { error: ReceiveError }
-    | { requestId: string; newStatus: PurchaseRequestStatus };
+    | {
+        requestId: string;
+        newStatus: PurchaseRequestStatus;
+        overReceivedQty: number;
+      };
 
   const result: ReceiveResult = await db.transaction(async (tx) => {
     const [item] = await tx
@@ -458,9 +461,9 @@ export async function receiveItem(
       .limit(1);
     if (!item) return { error: "ITEM_NOT_FOUND" };
 
-    if (input.receivedQty > Number(item.requestedQty)) {
-      return { error: "QTY_EXCEEDS_REQUESTED" };
-    }
+    /* Sesi AE-62s — allow over-receive (no cap di backend). Tim purchasing
+     * boleh beli lebih dari yang diminta saat acara/ramai. Over diff
+     * di-surface ke audit log + UI badge supaya tetap visible ke owner. */
 
     const [parent] = await tx
       .select()
@@ -521,13 +524,16 @@ export async function receiveItem(
         .where(eq(purchaseRequests.id, parent.id));
     }
 
-    return { requestId: parent.id, newStatus };
+    const overReceivedQty = Math.max(
+      0,
+      input.receivedQty - Number(item.requestedQty),
+    );
+    return { requestId: parent.id, newStatus, overReceivedQty };
   });
 
   if ("error" in result) {
     const messages: Record<ReceiveError, string> = {
       ITEM_NOT_FOUND: "Item tidak ditemukan",
-      QTY_EXCEEDS_REQUESTED: "Qty diterima melebihi qty diminta",
       REQUEST_NOT_FOUND: "Request tidak ditemukan",
       CROSS_OUTLET: "Request dari outlet lain",
       REQUEST_CANCELLED: "Request sudah dibatalkan",
@@ -541,10 +547,14 @@ export async function receiveItem(
     entityType: "purchase_request_item",
     entityId: input.itemId,
     payload: {
-      summary: `Qty diterima: ${input.receivedQty}; status sekarang: ${result.newStatus}`,
+      summary:
+        result.overReceivedQty > 0
+          ? `Qty diterima: ${input.receivedQty} (+${result.overReceivedQty} ekstra dari diminta); status: ${result.newStatus}`
+          : `Qty diterima: ${input.receivedQty}; status sekarang: ${result.newStatus}`,
       after: {
         receivedQty: input.receivedQty,
         requestStatus: result.newStatus,
+        overReceivedQty: result.overReceivedQty,
       },
     },
     metadata: {
@@ -553,7 +563,11 @@ export async function receiveItem(
     },
   }).catch((e) => console.error("[audit purchase_request.receive]", e));
 
-  return ok(result);
+  return ok({
+    requestId: result.requestId,
+    newStatus: result.newStatus,
+    overReceivedQty: result.overReceivedQty,
+  });
 }
 
 /**
@@ -592,14 +606,24 @@ export async function bulkReceiveItems(input: {
     | "REQUEST_NOT_FOUND"
     | "CROSS_OUTLET"
     | "REQUEST_CANCELLED"
-    | "ITEM_NOT_IN_REQUEST"
-    | "QTY_EXCEEDS_REQUESTED";
+    | "ITEM_NOT_IN_REQUEST";
   type BulkResult =
     | { error: BulkErr; itemId?: string }
     | {
         requestId: string;
         newStatus: PurchaseRequestStatus;
         itemsUpdated: number;
+        /** Sesi AE-62s — total qty over-request across all items (sum of
+         * max(0, received - requested) per item). For audit visibility. */
+        overReceivedTotal: number;
+        /** Daftar item yang over-receive (untuk audit detail). */
+        overReceivedItems: Array<{
+          itemId: string;
+          itemName: string;
+          requestedQty: number;
+          receivedQty: number;
+          overQty: number;
+        }>;
       };
 
   const result: BulkResult = await db.transaction(async (tx) => {
@@ -630,14 +654,19 @@ export async function bulkReceiveItems(input: {
       if (!row || row.requestId !== input.requestId) {
         return { error: "ITEM_NOT_IN_REQUEST", itemId: it.itemId };
       }
-      if (it.receivedQty > Number(row.requestedQty)) {
-        return { error: "QTY_EXCEEDS_REQUESTED", itemId: it.itemId };
-      }
+      /* Sesi AE-62s — allow over-receive (no cap di backend). */
     }
 
     // Apply updates.
     const now = new Date();
     let itemsUpdated = 0;
+    const overReceivedItems: Array<{
+      itemId: string;
+      itemName: string;
+      requestedQty: number;
+      receivedQty: number;
+      overQty: number;
+    }> = [];
     for (const it of input.items) {
       const row = byId.get(it.itemId)!;
       const oldQty = Number(row.receivedQty);
@@ -651,7 +680,21 @@ export async function bulkReceiveItems(input: {
         })
         .where(eq(purchaseRequestItems.id, it.itemId));
       itemsUpdated++;
+      const overQty = it.receivedQty - Number(row.requestedQty);
+      if (overQty > 0) {
+        overReceivedItems.push({
+          itemId: it.itemId,
+          itemName: row.ingredientNameSnapshot,
+          requestedQty: Number(row.requestedQty),
+          receivedQty: it.receivedQty,
+          overQty,
+        });
+      }
     }
+    const overReceivedTotal = overReceivedItems.reduce(
+      (s, r) => s + r.overQty,
+      0,
+    );
 
     // Recompute parent status once (after all updates).
     const [agg] = await tx
@@ -689,7 +732,13 @@ export async function bulkReceiveItems(input: {
         .where(eq(purchaseRequests.id, parent.id));
     }
 
-    return { requestId: parent.id, newStatus, itemsUpdated };
+    return {
+      requestId: parent.id,
+      newStatus,
+      itemsUpdated,
+      overReceivedTotal,
+      overReceivedItems,
+    };
   });
 
   if ("error" in result) {
@@ -698,7 +747,6 @@ export async function bulkReceiveItems(input: {
       CROSS_OUTLET: "Request dari outlet lain",
       REQUEST_CANCELLED: "Request sudah dibatalkan",
       ITEM_NOT_IN_REQUEST: "Salah satu item bukan bagian dari request ini",
-      QTY_EXCEEDS_REQUESTED: "Salah satu qty melebihi yang diminta",
     };
     return fail(result.error, messages[result.error]);
   }
@@ -709,10 +757,15 @@ export async function bulkReceiveItems(input: {
     entityType: "purchase_request",
     entityId: result.requestId,
     payload: {
-      summary: `Bulk receive ${result.itemsUpdated} item; status: ${result.newStatus}`,
+      summary:
+        result.overReceivedTotal > 0
+          ? `Bulk receive ${result.itemsUpdated} item (+${result.overReceivedTotal} ekstra dari diminta di ${result.overReceivedItems.length} item); status: ${result.newStatus}`
+          : `Bulk receive ${result.itemsUpdated} item; status: ${result.newStatus}`,
       after: {
         itemsUpdated: result.itemsUpdated,
         requestStatus: result.newStatus,
+        overReceivedTotal: result.overReceivedTotal,
+        overReceivedItems: result.overReceivedItems,
       },
     },
     metadata: {
@@ -721,7 +774,13 @@ export async function bulkReceiveItems(input: {
     },
   }).catch((e) => console.error("[audit purchase_request.bulk-receive]", e));
 
-  return ok(result);
+  return ok({
+    requestId: result.requestId,
+    newStatus: result.newStatus,
+    itemsUpdated: result.itemsUpdated,
+    overReceivedTotal: result.overReceivedTotal,
+    overReceivedItems: result.overReceivedItems,
+  });
 }
 
 /**

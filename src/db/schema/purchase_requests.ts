@@ -132,9 +132,10 @@ export const purchaseRequestItems = pgTable(
     index("idx_pri_ingredient").on(t.ingredientId),
     check("ck_pri_requested_qty_pos", sql`${t.requestedQty} > 0`),
     check("ck_pri_received_qty_nonneg", sql`${t.receivedQty} >= 0`),
-    check(
-      "ck_pri_received_lte_requested",
-      sql`${t.receivedQty} <= ${t.requestedQty}`,
-    ),
+    /* Sesi AE-62s — drop legacy `received_qty <= requested_qty` check.
+     * Per pesan tim gudang/purchasing: kadang harus beli LEBIH dari yang
+     * diminta saat acara/ramai. Final decision di purchasing, bukan staff
+     * yang request. Backend + UI allow over-receive (qty bebas ≥0), audit
+     * payload flag `overReceivedQty` supaya owner tetap punya visibility. */
   ],
 );
