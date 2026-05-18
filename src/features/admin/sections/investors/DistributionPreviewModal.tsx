@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, CheckCircle2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Send, X } from "lucide-react";
 import { Badge, Button, Modal, toast } from "@/components/ui";
 import {
   approveAndPostDistribution,
   cancelDistribution,
   isOk,
+  resendStatementsForDistribution,
   type DistributionWithLines,
 } from "@/features/profit-distributions";
 import { formatRupiah } from "@/lib/format";
@@ -70,6 +71,28 @@ export function DistributionPreviewModal({
     onClose();
   }
 
+  async function handleResendAll() {
+    if (submitting || !dist) return;
+    if (
+      !window.confirm(
+        `Kirim ulang statement ke ${dist.lines.length} holder periode ${periodLabel}?`,
+      )
+    ) {
+      return;
+    }
+    setSubmitting(true);
+    const res = await resendStatementsForDistribution(dist.id);
+    setSubmitting(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    const s = res.data;
+    toast.success(
+      `Statement: ${s.sent} terkirim, ${s.failed} gagal, ${s.skippedNoEmail} tanpa email, ${s.logged} logged`,
+    );
+  }
+
   async function handleCancel() {
     if (submitting || !dist) return;
     const reason = window.prompt("Alasan cancel distribusi:", "");
@@ -119,6 +142,15 @@ export function DistributionPreviewModal({
                 <CheckCircle2 className="mr-1.5 size-4" /> Approve & Post
               </Button>
             </>
+          ) : null}
+          {isPosted && canApprove ? (
+            <Button
+              variant="outline"
+              onClick={handleResendAll}
+              disabled={submitting}
+            >
+              <Send className="mr-1.5 size-4" /> Kirim Ulang Statement
+            </Button>
           ) : null}
         </>
       }

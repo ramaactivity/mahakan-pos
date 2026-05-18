@@ -15,6 +15,8 @@ export {
   computeDistributionForPeriod,
   getDistribution,
   listDistributions,
+  resendStatementForLine,
+  resendStatementsForDistribution,
 } from "./actions";
 
 export {
@@ -23,3 +25,9 @@ export {
   type ComputeDistributionResult,
   type HolderLine,
 } from "./compute-pure";
+
+export {
+  fetchCapitalChangesReport,
+  type CapitalChangesReport,
+  type CapitalChangeRow,
+} from "./capital-changes-report";

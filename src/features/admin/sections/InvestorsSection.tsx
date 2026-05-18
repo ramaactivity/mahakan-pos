@@ -50,6 +50,7 @@ import {
   listDistributions,
   type ProfitDistribution,
 } from "@/features/profit-distributions";
+import { CapitalChangesReportView } from "./investors/CapitalChangesReportView";
 import { InvestorFormModal } from "./investors/InvestorFormModal";
 import { InvestorImportWizard } from "./investors/InvestorImportWizard";
 import { PengelolaFormModal } from "./investors/PengelolaFormModal";
@@ -729,15 +730,10 @@ function DistributionRow({
   );
 }
 
-/* ─────────────────────────── REPORT TAB (placeholder) ─────────────────────────── */
+/* ─────────────────────────── REPORT TAB ─────────────────────────── */
 
 function ReportTab() {
-  return (
-    <EmptyCard
-      title="Laporan Perubahan Modal"
-      description="Tab ini diisi di Phase E — saldo awal → setoran → dividen → withdrawal → saldo akhir per investor per periode. Coming soon."
-    />
-  );
+  return <CapitalChangesReportView />;
 }
 
 /* ─────────────────────────── SHARED ─────────────────────────── */

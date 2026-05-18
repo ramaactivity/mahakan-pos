@@ -474,7 +474,29 @@ export async function approveAndPostDistribution(
       },
     }).catch((e) => console.error("[audit distribution.post]", e));
 
-    /* Email statement send akan ditambahkan Phase E (after() hook). */
+    /* Sesi AE-63e — Email statement bulk via Next.js after() hook supaya
+     * Vercel guarantee task selesai setelah server action return ke client. */
+    const { after } = await import("next/server");
+    after(async () => {
+      try {
+        const { sendStatementsForDistribution } = await import(
+          "./statement-send"
+        );
+        const sum = await sendStatementsForDistribution({
+          distributionId: id,
+          trigger: "auto",
+          sentByUserId: session.user.id,
+          actorOutletId: session.user.outletId,
+          actorRole: session.user.role,
+        });
+        console.log(
+          `[distribution.approve] statement auto-send ${periodLabel}:`,
+          sum,
+        );
+      } catch (e) {
+        console.error("[distribution.approve] statement send threw:", e);
+      }
+    });
 
     const final = await fetchDistributionWithLines(
       session.user.outletId,
@@ -544,4 +566,62 @@ export async function cancelDistribution(
   }).catch((e) => console.error("[audit distribution.cancel]", e));
 
   return ok({ id });
+}
+
+// ---------- Resend statement (manual) ----------
+
+export async function resendStatementForLine(
+  lineId: string,
+): Promise<ApiResult<{ status: string; message: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "investor_statement.resend")) {
+    return fail("FORBIDDEN", "Tidak punya hak kirim statement");
+  }
+  const { sendStatementForLine } = await import("./statement-send");
+  const r = await sendStatementForLine({
+    lineId,
+    trigger: "manual",
+    sentByUserId: session.user.id,
+    actorOutletId: session.user.outletId,
+    actorRole: session.user.role,
+  });
+  return ok({ status: r.status, message: r.message });
+}
+
+export async function resendStatementsForDistribution(
+  distributionId: string,
+): Promise<
+  ApiResult<{
+    total: number;
+    sent: number;
+    failed: number;
+    logged: number;
+    skippedNoEmail: number;
+    skippedZeroAmount: number;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "investor_statement.resend")) {
+    return fail("FORBIDDEN", "Tidak punya hak kirim statement");
+  }
+  const dist = await fetchDistributionWithLines(
+    session.user.outletId,
+    distributionId,
+  );
+  if (!dist) return fail("NOT_FOUND", "Distribusi tidak ditemukan");
+  if (dist.status !== "posted") {
+    return fail(
+      "INVALID_STATE",
+      "Distribusi belum di-post, tidak bisa kirim statement",
+    );
+  }
+  const { sendStatementsForDistribution } = await import("./statement-send");
+  const sum = await sendStatementsForDistribution({
+    distributionId,
+    trigger: "manual",
+    sentByUserId: session.user.id,
+    actorOutletId: session.user.outletId,
+    actorRole: session.user.role,
+  });
+  return ok(sum);
 }
