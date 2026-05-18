@@ -6,6 +6,7 @@ import {
   type AdminSection,
 } from "@/features/admin/components/AdminLeftNav";
 import { AuditLogSection } from "@/features/admin/sections/AuditLogSection";
+import { JournalRetryQueueSection } from "@/features/admin/sections/JournalRetryQueueSection";
 import { HrOperationsSection } from "@/features/admin/sections/HrOperationsSection";
 import { CashSection } from "@/features/admin/sections/CashSection";
 import { FinanceSection } from "@/features/admin/sections/FinanceSection";
@@ -87,6 +88,8 @@ export function AdminShell() {
           <ReportsSection viewerRole={session.user.role} />
         ) : section === "audit" ? (
           <AuditLogSection viewerRole={session.user.role} />
+        ) : section === "journal_retry" ? (
+          <JournalRetryQueueSection />
         ) : section === "settings" ? (
           <SettingsSection />
         ) : null}

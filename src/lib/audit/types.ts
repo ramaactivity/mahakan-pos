@@ -187,6 +187,11 @@ export const AUDIT_EVENT_TYPES = [
    * manual retry/reconcile. Detail full di payload (sourceType + sourceId
    * + error message). */
   "journal.posting_failed",
+  /* Sesi AE-62w — retry queue lifecycle untuk failed journal hook. */
+  "journal.retry.enqueued",
+  "journal.retry.succeeded",
+  "journal.retry.failed",
+  "journal.retry.abandoned",
   "opening_balance.posted",
   "report.income_statement.export",
   "report.balance_sheet.export",
@@ -289,6 +294,7 @@ export type AuditEntityType =
   | "chart_of_accounts"
   | "accounting_period"
   | "journal_entry"
+  | "journal_retry_queue"
   | "fixed_asset"
   | "bank_account"
   | "historical_daily_summary"

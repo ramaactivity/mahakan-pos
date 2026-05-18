@@ -351,6 +351,13 @@
       "when": 1779084411321,
       "tag": "0049_clear_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1779085020073,
+      "tag": "0050_massive_richard_fisk",
+      "breakpoints": true
     }
   ]
 }

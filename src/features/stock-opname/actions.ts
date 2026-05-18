@@ -906,17 +906,23 @@ export async function finalizeOpname(
       const { fireJournalHook, postJournalForOpnameAdjustment } = await import(
         "@/features/accounting/hooks"
       );
+      const opnameArgs = {
+        outletId: session.user.outletId,
+        opnameSessionId: v.sessionId,
+        sessionLabel: sessRow?.periodLabel ?? "—",
+        sectionDiffs,
+        entryDate: todayWib,
+        actorId: session.user.id,
+      };
       fireJournalHook(
-        () =>
-          postJournalForOpnameAdjustment({
-            outletId: session.user.outletId,
-            opnameSessionId: v.sessionId,
-            sessionLabel: sessRow?.periodLabel ?? "—",
-            sectionDiffs,
-            entryDate: todayWib,
-            actorId: session.user.id,
-          }),
+        () => postJournalForOpnameAdjustment(opnameArgs),
         "opname_adjustment",
+        {
+          sourceId: v.sessionId,
+          outletId: session.user.outletId,
+          actorId: session.user.id,
+        },
+        { label: "opname_adjustment", args: opnameArgs },
       );
     }
   }

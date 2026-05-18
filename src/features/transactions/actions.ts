@@ -782,14 +782,20 @@ export async function createTransaction(
     // sesi AD-11: hoisted dynamic import to top of file to skip ~5-10ms
     // module load on every paid transaction.
     if (!opts.skipEarn && result.trx.status === "paid") {
+      const posSaleArgs = {
+        outletId: session.user.outletId,
+        transactionId: result.trx.id,
+        actorId: session.user.id,
+      };
       fireJournalHook(
-        () =>
-          postJournalForPosSale({
-            outletId: session.user.outletId,
-            transactionId: result.trx.id,
-            actorId: session.user.id,
-          }),
+        () => postJournalForPosSale(posSaleArgs),
         "pos_sale",
+        {
+          sourceId: result.trx.id,
+          outletId: session.user.outletId,
+          actorId: session.user.id,
+        },
+        { label: "pos_sale", args: posSaleArgs },
       );
     }
 
@@ -1017,15 +1023,21 @@ export async function voidTransaction(
       amount: Number(it.subtotal),
       cogs: Number(it.cogs ?? 0),
     }));
+    const posVoidArgs = {
+      outletId: session.user.outletId,
+      transactionId: v.transactionId,
+      items: aggItems,
+      actorId: session.user.id,
+    };
     fireJournalHook(
-      () =>
-        postJournalForPosVoid({
-          outletId: session.user.outletId,
-          transactionId: v.transactionId,
-          items: aggItems,
-          actorId: session.user.id,
-        }),
+      () => postJournalForPosVoid(posVoidArgs),
       "pos_void",
+      {
+        sourceId: v.transactionId,
+        outletId: session.user.outletId,
+        actorId: session.user.id,
+      },
+      { label: "pos_void", args: posVoidArgs },
     );
   }
 
@@ -1293,18 +1305,24 @@ export async function refundTransaction(
       amount: Number(it.subtotal),
       cogs: Number(it.cogs ?? 0),
     }));
+    const fullRefundArgs = {
+      outletId: session.user.outletId,
+      transactionId: result.id,
+      refundEventId: result.id, // full-refund: 1:1 ke transaction
+      refundedAmount: result.total,
+      items: aggItems,
+      reverseCogs: true,
+      actorId: session.user.id,
+    };
     fireJournalHook(
-      () =>
-        postJournalForPosRefund({
-          outletId: session.user.outletId,
-          transactionId: result.id,
-          refundEventId: result.id, // full-refund: 1:1 ke transaction
-          refundedAmount: result.total,
-          items: aggItems,
-          reverseCogs: true,
-          actorId: session.user.id,
-        }),
+      () => postJournalForPosRefund(fullRefundArgs),
       "pos_refund_full",
+      {
+        sourceId: result.id,
+        outletId: session.user.outletId,
+        actorId: session.user.id,
+      },
+      { label: "pos_refund", args: fullRefundArgs },
     );
   }
 
@@ -1682,18 +1700,24 @@ export async function refundTransactionPartial(
       amount: v.amount,
       cogs: v.cogs,
     }));
+    const partialRefundArgs = {
+      outletId: session.user.outletId,
+      transactionId: result.transaction.id,
+      refundEventId: result.eventId,
+      refundedAmount: computation.totalRefunded,
+      items: aggItems,
+      reverseCogs: true,
+      actorId: session.user.id,
+    };
     fireJournalHook(
-      () =>
-        postJournalForPosRefund({
-          outletId: session.user.outletId,
-          transactionId: result.transaction.id,
-          refundEventId: result.eventId,
-          refundedAmount: computation.totalRefunded,
-          items: aggItems,
-          reverseCogs: true,
-          actorId: session.user.id,
-        }),
+      () => postJournalForPosRefund(partialRefundArgs),
       "pos_refund_partial",
+      {
+        sourceId: result.eventId,
+        outletId: session.user.outletId,
+        actorId: session.user.id,
+      },
+      { label: "pos_refund", args: partialRefundArgs },
     );
   }
 

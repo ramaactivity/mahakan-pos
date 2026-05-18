@@ -333,6 +333,13 @@ export const permissions = {
   "accounting.report.view": ["owner", "manager"],
   "accounting.report.export": ["owner"],
   "accounting.opening_balance.input": ["owner"],
+
+  /* Sesi AE-62w — journal retry queue (owner-only sensitive — re-trigger
+   * GL post). Manager + supervisor view-only via audit log (read scope
+   * sudah dikasih AE-62u). Future bisa kasih manager retry kalau perlu. */
+  "journal_retry.view": ["owner", "manager"],
+  "journal_retry.retry": ["owner"],
+  "journal_retry.abandon": ["owner"],
 } as const satisfies Record<string, ReadonlyArray<Role>>;
 
 export type Permission = keyof typeof permissions;

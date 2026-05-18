@@ -1221,14 +1221,21 @@ export async function postJournalForOpnameAdjustment(args: {
  *
  * Sesi AE-46 — selain console.error, write ke audit log
  * `journal.posting_failed` supaya owner dapat visibility di Back Office
- * tanpa harus check Vercel runtime logs. Detail tersimpan di payload
- * (label = sourceType, context.sourceId = ID kalau bisa di-extract, raw
- * error message). Audit log juga survive cold start (DB-backed). Future
- * enhancement: Back Office action "Re-trigger failed journal posts".
+ * tanpa harus check Vercel runtime logs.
  *
- * @param fn       — async function yang panggil postJournalForXxx
- * @param label    — sourceType (mis. "purchase_create", "pos_sale")
- * @param context  — optional metadata buat traceability (sourceId, outletId)
+ * Sesi AE-62w — store-and-forward retry queue. Caller bisa pass
+ * `retrySpec: { label, args }` supaya saat hook throw, args di-snapshot
+ * ke `journal_retry_queue` untuk owner re-trigger via Admin → Antrian
+ * Jurnal Gagal. Tanpa retrySpec, behavior backward-compat (audit-only,
+ * sama AE-46).
+ *
+ * @param fn         — async function yang panggil postJournalForXxx
+ * @param label      — sourceType (mis. "purchase_create", "pos_sale")
+ * @param context    — optional metadata buat traceability (sourceId, outletId)
+ * @param retrySpec  — optional snapshot args untuk enqueue retry kalau gagal.
+ *                     Hanya label yang ada di RETRY_QUEUE_HOOK_LABELS yang
+ *                     bisa di-dispatch retry — label lain still log audit
+ *                     tapi tidak masuk queue.
  */
 export function fireJournalHook(
   fn: () => Promise<void>,
@@ -1237,6 +1244,12 @@ export function fireJournalHook(
     sourceId?: string;
     outletId?: string;
     actorId?: string;
+  },
+  retrySpec?: {
+    /** Hook label untuk dispatcher (cocok dengan RETRY_QUEUE_HOOK_LABELS). */
+    label: string;
+    /** JSON-serializable args snapshot. */
+    args: Record<string, unknown>;
   },
 ): void {
   fn().catch(async (e) => {
@@ -1269,6 +1282,28 @@ export function fireJournalHook(
       });
     } catch (auditErr) {
       console.error(`[journal:${label}] audit log failure`, auditErr);
+    }
+
+    /* Sesi AE-62w — enqueue ke retry queue kalau retrySpec + outletId ada
+     * dan label retryable. Best-effort: enqueue failure tidak break source
+     * action (sudah committed). */
+    if (retrySpec && context?.outletId) {
+      try {
+        const { enqueueFailedJournal } = await import("./retry-queue");
+        const { isRetryableHookLabel } = await import("./retry-queue-types");
+        if (isRetryableHookLabel(retrySpec.label)) {
+          await enqueueFailedJournal({
+            outletId: context.outletId,
+            hookLabel: retrySpec.label,
+            hookArgs: retrySpec.args,
+            sourceType: label,
+            sourceId: context.sourceId,
+            error: e,
+          });
+        }
+      } catch (queueErr) {
+        console.error(`[journal:${label}] retry-queue enqueue failure`, queueErr);
+      }
     }
   });
 }

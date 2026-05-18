@@ -262,14 +262,20 @@ export async function createExpense(
     const { fireJournalHook, postJournalForExpenseCreate } = await import(
       "@/features/accounting/hooks"
     );
+    const expenseArgs = {
+      outletId: session.user.outletId,
+      expenseId: row.id,
+      actorId: session.user.id,
+    };
     fireJournalHook(
-      () =>
-        postJournalForExpenseCreate({
-          outletId: session.user.outletId,
-          expenseId: row.id,
-          actorId: session.user.id,
-        }),
+      () => postJournalForExpenseCreate(expenseArgs),
       "expense_create",
+      {
+        sourceId: row.id,
+        outletId: session.user.outletId,
+        actorId: session.user.id,
+      },
+      { label: "expense_create", args: expenseArgs },
     );
   }
 
@@ -327,18 +333,24 @@ export async function createIncome(
     const { fireJournalHook, postJournalForIncomeCreate } = await import(
       "@/features/accounting/hooks"
     );
+    const incomeArgs = {
+      outletId: session.user.outletId,
+      incomeId: row.id,
+      amount: Number(row.amount),
+      description: row.description,
+      paymentMethod: row.paymentMethod as "cash" | "transfer" | "other",
+      entryDate: String(row.incomeDate),
+      actorId: session.user.id,
+    };
     fireJournalHook(
-      () =>
-        postJournalForIncomeCreate({
-          outletId: session.user.outletId,
-          incomeId: row.id,
-          amount: Number(row.amount),
-          description: row.description,
-          paymentMethod: row.paymentMethod as "cash" | "transfer" | "other",
-          entryDate: String(row.incomeDate),
-          actorId: session.user.id,
-        }),
+      () => postJournalForIncomeCreate(incomeArgs),
       "income_create",
+      {
+        sourceId: row.id,
+        outletId: session.user.outletId,
+        actorId: session.user.id,
+      },
+      { label: "income_create", args: incomeArgs },
     );
   }
 

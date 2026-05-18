@@ -25,6 +25,7 @@ export * from "./cash_deposits";
 export * from "./aggregator_settlements";
 export * from "./settlement_logs";
 export * from "./accounting";
+export * from "./journal_retry_queue";
 export * from "./fixed_assets";
 export * from "./bank-accounts";
 export * from "./market_list";

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertTriangle,
   Banknote,
   BarChart3,
   BookOpen,
@@ -47,6 +48,7 @@ export type AdminSection =
   | "promos"
   | "reports"
   | "audit"
+  | "journal_retry"
   | "settings";
 
 interface AdminLeftNavProps {
@@ -120,6 +122,9 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "accounting", label: "Akuntansi", Icon: BookOpen },
       { key: "reports", label: "Laporan", Icon: BarChart3 },
       { key: "reconciliation", label: "Rekonsiliasi", Icon: History },
+      /* Sesi AE-62w — antrian retry untuk failed journal hooks.
+       * Owner trigger retry / abandon. Manager view-only (via RBAC). */
+      { key: "journal_retry", label: "Antrian Jurnal", Icon: AlertTriangle },
     ],
   },
   {
