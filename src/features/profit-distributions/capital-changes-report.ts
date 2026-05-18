@@ -8,11 +8,11 @@ import {
   pengelola,
 } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
+import { buildCapitalChangesReport } from "./capital-changes-pure";
 import {
   fail,
   ok,
   type ApiResult,
-  type CapitalChangeRow,
   type CapitalChangesReport,
 } from "./types";
 
@@ -89,96 +89,24 @@ export async function fetchCapitalChangesReport(args: {
     .where(eq(capitalMovements.outletId, outletId))
     .groupBy(capitalMovements.holderType, capitalMovements.holderId, capitalMovements.kind);
 
-  /* Pivot to per-holder. Note: query returns 1 row per (holder, kind)
-   * because of GROUP BY kind. Actually no — we used FILTER WHERE kind=X
-   * inside SUM, so single row per (holderType, holderId). Let me re-verify. */
-  /* The query has GROUP BY (holderType, holderId, kind) — that's wrong
-   * for our purpose; want GROUP BY (holderType, holderId) only. Fix
-   * below: do separate pass. */
-  const aggByHolder = new Map<
-    string,
-    {
-      saldoAwal: number;
-      setoran: number;
-      dividen: number;
-      withdrawal: number;
-      adjustment: number;
-    }
-  >();
-  for (const m of movements) {
-    const key = `${m.holderType}:${m.holderId}`;
-    const existing = aggByHolder.get(key) ?? {
-      saldoAwal: 0,
-      setoran: 0,
-      dividen: 0,
-      withdrawal: 0,
-      adjustment: 0,
-    };
-    existing.saldoAwal = Math.max(existing.saldoAwal, Number(m.saldoAwal));
-    existing.setoran += Number(m.setoran);
-    existing.dividen += Number(m.dividen);
-    existing.withdrawal += Number(m.withdrawal);
-    existing.adjustment += Number(m.adjustment);
-    aggByHolder.set(key, existing);
-  }
-
-  function buildRows(
-    rows: Array<{ id: string; fullName: string; modalDisetor: number }>,
-    holderType: "investor" | "pengelola",
-  ): CapitalChangeRow[] {
-    return rows.map((r) => {
-      const agg = aggByHolder.get(`${holderType}:${r.id}`) ?? {
-        saldoAwal: 0,
-        setoran: 0,
-        dividen: 0,
-        withdrawal: 0,
-        adjustment: 0,
-      };
-      const saldoAkhir =
-        agg.saldoAwal +
-        agg.setoran +
-        agg.dividen -
-        agg.withdrawal +
-        agg.adjustment;
-      return {
-        holderType,
-        holderId: r.id,
-        holderName: r.fullName,
-        modalDisetor: r.modalDisetor,
-        saldoAwal: agg.saldoAwal,
-        setoran: agg.setoran,
-        dividen: agg.dividen,
-        withdrawal: agg.withdrawal,
-        adjustment: agg.adjustment,
-        saldoAkhir,
-      };
-    });
-  }
-
-  const investorList = buildRows(investorRows, "investor");
-  const pengelolaList = buildRows(pengelolaRows, "pengelola");
-
-  const totals = {
-    saldoAwalInvestor: investorList.reduce((s, r) => s + r.saldoAwal, 0),
-    saldoAwalPengelola: pengelolaList.reduce((s, r) => s + r.saldoAwal, 0),
-    setoranTotal:
-      investorList.reduce((s, r) => s + r.setoran, 0) +
-      pengelolaList.reduce((s, r) => s + r.setoran, 0),
-    dividenTotal:
-      investorList.reduce((s, r) => s + r.dividen, 0) +
-      pengelolaList.reduce((s, r) => s + r.dividen, 0),
-    withdrawalTotal:
-      investorList.reduce((s, r) => s + r.withdrawal, 0) +
-      pengelolaList.reduce((s, r) => s + r.withdrawal, 0),
-    saldoAkhirInvestor: investorList.reduce((s, r) => s + r.saldoAkhir, 0),
-    saldoAkhirPengelola: pengelolaList.reduce((s, r) => s + r.saldoAkhir, 0),
-  };
-
-  return ok({
-    periodStart: args.periodStart,
-    periodEnd: args.periodEnd,
-    investors: investorList,
-    pengelola: pengelolaList,
-    totals,
-  });
+  /* Sesi AE-63 phase3 P3.4 — pivot + total aggregation di-pindah ke pure
+   * helper `buildCapitalChangesReport` (capital-changes-pure.ts) supaya
+   * testable tanpa DB. SQL part di sini cuma fetch raw rows. */
+  return ok(
+    buildCapitalChangesReport({
+      periodStart: args.periodStart,
+      periodEnd: args.periodEnd,
+      investorRows,
+      pengelolaRows,
+      movementRows: movements.map((m) => ({
+        holderType: m.holderType,
+        holderId: m.holderId,
+        saldoAwal: Number(m.saldoAwal),
+        setoran: Number(m.setoran),
+        dividen: Number(m.dividen),
+        withdrawal: Number(m.withdrawal),
+        adjustment: Number(m.adjustment),
+      })),
+    }),
+  );
 }

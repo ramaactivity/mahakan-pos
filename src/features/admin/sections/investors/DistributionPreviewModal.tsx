@@ -1,6 +1,7 @@
 "use client";
 
-import { memo, useState } from "react";
+import { memo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { AlertTriangle, CheckCircle2, Send, X } from "lucide-react";
 import { Badge, Button, Modal, toast } from "@/components/ui";
 import {
@@ -11,6 +12,7 @@ import {
   type DistributionWithLines,
 } from "@/features/profit-distributions";
 import { formatRupiah } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 interface DistributionPreviewModalProps {
   open: boolean;
@@ -257,7 +259,12 @@ function SummaryCard({
 
 /* Sesi AE-63 phase2 P2.4 — memoize line row supaya 115 row (5 pengelola +
  * 110 investor) tidak recompute saat parent re-render (submit, approval
- * status change, dst). String-cast `sharePct` di parse sekali per row. */
+ * status change, dst). String-cast `sharePct` di parse sekali per row.
+ *
+ * Sesi AE-63 phase3 P3.1 — converted dari `<tr>` ke `<div role="row">` grid
+ * supaya bisa di-virtualize. Pengelola section (5 row) + Investor section
+ * (110 row) sama-sama pakai LinesTable. Investor table jadi list virtual,
+ * DOM scroll sebelum: 110 row × 4 cell = 440 nodes; sesudah: ~12 visible. */
 interface DistLineProps {
   id: string;
   holderName: string;
@@ -266,41 +273,109 @@ interface DistLineProps {
   amountRupiah: number;
 }
 
+const LINES_COLS = "grid-cols-[minmax(140px,2fr)_100px_80px_120px]";
+
 const DistLineRow = memo(function DistLineRow({ l }: { l: DistLineProps }) {
   return (
-    <tr>
-      <td className="px-2 py-1 font-medium">{l.holderName}</td>
-      <td className="px-2 py-1 text-right tabular-nums text-neutral-600">
+    <div
+      role="row"
+      className={cn(
+        "grid items-center border-b border-neutral-100 text-xs",
+        LINES_COLS,
+      )}
+    >
+      <div role="cell" className="px-2 py-1 font-medium">
+        {l.holderName}
+      </div>
+      <div
+        role="cell"
+        className="px-2 py-1 text-right tabular-nums text-neutral-600"
+      >
         {formatRupiah(l.modalDisetorSnapshot)}
-      </td>
-      <td className="px-2 py-1 text-right tabular-nums text-neutral-600">
+      </div>
+      <div
+        role="cell"
+        className="px-2 py-1 text-right tabular-nums text-neutral-600"
+      >
         {Number(l.sharePct).toFixed(2)}%
-      </td>
-      <td className="px-2 py-1 text-right tabular-nums font-bold text-mahakan-green-900">
+      </div>
+      <div
+        role="cell"
+        className="px-2 py-1 text-right tabular-nums font-bold text-mahakan-green-900"
+      >
         {formatRupiah(l.amountRupiah)}
-      </td>
-    </tr>
+      </div>
+    </div>
   );
 });
 
 function LinesTable({ lines }: { lines: DistLineProps[] }) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: lines.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 28,
+    overscan: 10,
+  });
+
   return (
-    <div className="max-h-64 overflow-y-auto rounded-md border border-neutral-200">
-      <table className="w-full text-xs">
-        <thead className="sticky top-0 bg-neutral-50 text-left text-neutral-600">
-          <tr>
-            <th className="px-2 py-1.5">Nama</th>
-            <th className="px-2 py-1.5 text-right">Modal</th>
-            <th className="px-2 py-1.5 text-right">Share %</th>
-            <th className="px-2 py-1.5 text-right">Dividen</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-neutral-100">
-          {lines.map((l) => (
-            <DistLineRow key={l.id} l={l} />
-          ))}
-        </tbody>
-      </table>
+    <div className="rounded-md border border-neutral-200">
+      {/* Header */}
+      <div
+        role="row"
+        className={cn(
+          "grid border-b border-neutral-200 bg-neutral-50 text-left text-xs text-neutral-600",
+          LINES_COLS,
+        )}
+      >
+        <div role="columnheader" className="px-2 py-1.5">
+          Nama
+        </div>
+        <div role="columnheader" className="px-2 py-1.5 text-right">
+          Modal
+        </div>
+        <div role="columnheader" className="px-2 py-1.5 text-right">
+          Share %
+        </div>
+        <div role="columnheader" className="px-2 py-1.5 text-right">
+          Dividen
+        </div>
+      </div>
+      {/* Virtualized body */}
+      <div
+        ref={parentRef}
+        role="rowgroup"
+        className="max-h-64 overflow-y-auto"
+      >
+        <div
+          style={{
+            height: virtualizer.getTotalSize(),
+            width: "100%",
+            position: "relative",
+          }}
+        >
+          {virtualizer.getVirtualItems().map((vRow) => {
+            const l = lines[vRow.index];
+            if (!l) return null;
+            return (
+              <div
+                key={vRow.key}
+                data-index={vRow.index}
+                ref={virtualizer.measureElement}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${vRow.start}px)`,
+                }}
+              >
+                <DistLineRow l={l} />
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { attendanceRecords, outlets } from "@/db/schema";
 import { computeLateMinutes } from "./late-compute";
 import { computeOvertimeMinutes } from "./overtime-compute";
+import { deriveAttendanceMetrics } from "./recompute-pure";
 
 /**
  * Sesi AE-62ab — recompute late + overtime untuk attendance_records yang
@@ -89,55 +90,32 @@ export async function recomputeAttendanceForSchedule(
 
   const result: RecomputeResult = { recomputedCount: 0, records: [] };
   for (const rec of records) {
-    let newIsLate: "yes" | "no" | "unknown" = "unknown";
-    let newLateMinutes: number | null = null;
-    let newOvertimeMinutes: number | null = null;
-
-    /* Case 1: schedule deleted OR dayOff → no metrics. */
-    if (
-      !input.newSchedule ||
-      input.newSchedule.dayOff ||
-      !input.newSchedule.startTime
-    ) {
-      newIsLate = "unknown";
-      newLateMinutes = null;
-      newOvertimeMinutes = null;
-    } else {
-      /* Case 2: active schedule. Re-derive late + OT. */
-      const lateRes = computeLateMinutes({
-        shiftDate: input.shiftDate,
-        scheduledStartTime: input.newSchedule.startTime,
-        scheduledEndTime: input.newSchedule.endTime ?? null,
-        clockInAt: rec.clockInAt,
-        graceMinutes: grace,
-      });
-      newIsLate = lateRes.isLate;
-      newLateMinutes = lateRes.lateMinutes;
-
-      /* Overtime — hanya kalau record sudah clock-out + ada end time. */
-      if (rec.clockOutAt && input.newSchedule.endTime) {
-        const otRes = computeOvertimeMinutes({
-          shiftDate: input.shiftDate,
-          scheduledStartTime: input.newSchedule.startTime,
-          scheduledEndTime: input.newSchedule.endTime,
-          clockOutAt: rec.clockOutAt,
-        });
-        newOvertimeMinutes = otRes.overtimeMinutes;
-      }
-    }
+    /* Sesi AE-63 phase3 P3.4 — decision logic dipindah ke pure helper
+     * `deriveAttendanceMetrics` supaya bisa di-unit-test tanpa DB. Pre-fix:
+     * 3 branch (schedule null / dayOff / active) di-inline → coverage
+     * sulit + duplikasi risk kalau ada caller lain. */
+    const derived = deriveAttendanceMetrics({
+      shiftDate: input.shiftDate,
+      newSchedule: input.newSchedule,
+      clockInAt: rec.clockInAt,
+      clockOutAt: rec.clockOutAt,
+      graceMinutes: grace,
+      computeLate: computeLateMinutes,
+      computeOvertime: computeOvertimeMinutes,
+    });
 
     const changed =
-      rec.isLate !== newIsLate ||
-      rec.lateMinutes !== newLateMinutes ||
-      rec.overtimeMinutes !== newOvertimeMinutes;
+      rec.isLate !== derived.isLate ||
+      rec.lateMinutes !== derived.lateMinutes ||
+      rec.overtimeMinutes !== derived.overtimeMinutes;
     if (!changed) continue;
 
     await db
       .update(attendanceRecords)
       .set({
-        isLate: newIsLate,
-        lateMinutes: newLateMinutes,
-        overtimeMinutes: newOvertimeMinutes,
+        isLate: derived.isLate,
+        lateMinutes: derived.lateMinutes,
+        overtimeMinutes: derived.overtimeMinutes,
         updatedAt: new Date(),
       })
       .where(eq(attendanceRecords.id, rec.id));
@@ -145,11 +123,11 @@ export async function recomputeAttendanceForSchedule(
     result.records.push({
       recordId: rec.id,
       isLateBefore: rec.isLate,
-      isLateAfter: newIsLate,
+      isLateAfter: derived.isLate,
       lateMinutesBefore: rec.lateMinutes,
-      lateMinutesAfter: newLateMinutes,
+      lateMinutesAfter: derived.lateMinutes,
       overtimeMinutesBefore: rec.overtimeMinutes,
-      overtimeMinutesAfter: newOvertimeMinutes,
+      overtimeMinutesAfter: derived.overtimeMinutes,
     });
     result.recomputedCount += 1;
   }
