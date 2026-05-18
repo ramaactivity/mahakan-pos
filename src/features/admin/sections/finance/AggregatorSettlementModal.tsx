@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
+  Download,
   FileSpreadsheet,
   Pencil,
   Upload,
@@ -47,6 +48,120 @@ const CHANNEL_OPTIONS: Array<{ value: AggregatorChannel; label: string }> = [
 function todayIso(): string {
   const wibOffset = 7 * 60 * 60 * 1000;
   return new Date(Date.now() + wibOffset).toISOString().slice(0, 10);
+}
+
+/* Sesi AE-63 polish-3 — CSV template generator per channel. Owner request:
+ * "tolong buatkan template csv-nya agar lebih mudah untuk mengolah datanya".
+ *
+ * Format per channel mengikuti convention export aggregator app:
+ * - GoFood: Tanggal Pesanan + Total Pemasukan + Komisi GoFood + Pemasukan Bersih
+ * - GrabFood: Order Date + Gross Amount + Commission + Net Amount
+ * - ShopeeFood: Tanggal Transaksi + Subtotal + Biaya + Net
+ * - EDC/QRIS/Generic: Tanggal + Gross + Fee + Net
+ *
+ * Parser auto-detect via keyword di src/features/finance/aggregator-csv-parser.ts
+ * (KEYWORD_DATE/GROSS/FEE/NET). Template header design supaya parser langsung
+ * recognize, owner tinggal isi data row tanpa perlu rename kolom. */
+function generateTemplateCsv(channel: AggregatorChannel): {
+  filename: string;
+  csv: string;
+} {
+  const today = todayIso();
+  const yesterday = (() => {
+    const d = new Date(Date.now() - 86400 * 1000 + 7 * 60 * 60 * 1000);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  let headers: string[] = [];
+  let sample: string[][] = [];
+  let label = "";
+
+  switch (channel) {
+    case "gofood":
+      label = "gofood";
+      headers = [
+        "Tanggal Pesanan",
+        "ID Pesanan",
+        "Total Pemasukan",
+        "Komisi GoFood",
+        "Pemasukan Bersih",
+      ];
+      sample = [
+        [yesterday, "GF-MHK-001", "150000", "30000", "120000"],
+        [yesterday, "GF-MHK-002", "85000", "17000", "68000"],
+        [today, "GF-MHK-003", "240000", "48000", "192000"],
+      ];
+      break;
+    case "grabfood":
+      label = "grabfood";
+      headers = [
+        "Order Date",
+        "Order ID",
+        "Gross Amount",
+        "Commission",
+        "Net Amount",
+      ];
+      sample = [
+        [yesterday, "GRB-MHK-001", "175000", "35000", "140000"],
+        [yesterday, "GRB-MHK-002", "95000", "19000", "76000"],
+        [today, "GRB-MHK-003", "320000", "64000", "256000"],
+      ];
+      break;
+    case "shopeefood":
+      label = "shopeefood";
+      headers = [
+        "Tanggal Transaksi",
+        "Order ID",
+        "Subtotal",
+        "Biaya",
+        "Net",
+      ];
+      sample = [
+        [yesterday, "SPF-MHK-001", "120000", "24000", "96000"],
+        [yesterday, "SPF-MHK-002", "65000", "13000", "52000"],
+        [today, "SPF-MHK-003", "210000", "42000", "168000"],
+      ];
+      break;
+    case "qris":
+      label = "qris";
+      headers = ["Tanggal", "Reference No", "Gross", "Fee MDR", "Net"];
+      sample = [
+        [yesterday, "QR-2026051700001", "500000", "3500", "496500"],
+        [today, "QR-2026051800001", "350000", "2450", "347550"],
+      ];
+      break;
+    default:
+      label = "edc";
+      headers = ["Tanggal", "Reference No", "Gross", "Fee MDR", "Net"];
+      sample = [
+        [yesterday, "EDC-BCA-001", "850000", "12750", "837250"],
+        [today, "EDC-BCA-002", "1250000", "18750", "1231250"],
+      ];
+      break;
+  }
+
+  const csv = [
+    headers.join(","),
+    ...sample.map((r) =>
+      r.map((c) => (c.includes(",") ? `"${c}"` : c)).join(","),
+    ),
+  ].join("\n");
+
+  return {
+    filename: `template-settlement-${label}-mahakan.csv`,
+    csv: "﻿" + csv, // BOM untuk Excel UTF-8 support
+  };
+}
+
+function downloadCsvTemplate(channel: AggregatorChannel) {
+  const { filename, csv } = generateTemplateCsv(channel);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 type Mode = "manual" | "import";
@@ -317,32 +432,72 @@ export function AggregatorSettlementModal({ open, onClose, onSaved }: Props) {
 
           {/* File upload */}
           {!csvFile ? (
-            <div className="rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 p-6 text-center">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv,text/csv,.txt"
-                hidden
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void handleFilePick(f);
-                }}
-              />
-              <Upload className="mx-auto size-8 text-neutral-400" aria-hidden />
-              <p className="mt-2 text-sm font-medium text-neutral-900">
-                Upload file CSV dari aggregator app
-              </p>
-              <p className="text-xs text-neutral-500">
-                GoFood / GrabFood / ShopeeFood — sistem auto-detect kolom
-                Tanggal + Gross + Komisi.
-              </p>
-              <Button
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                className="mt-3"
-              >
-                <Upload className="size-4" /> Pilih File CSV
-              </Button>
+            <div className="space-y-3">
+              {/* Template download card */}
+              <div className="rounded-lg border border-mahakan-green-700/30 bg-gradient-to-br from-mahakan-green-50 to-white p-4">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-full bg-mahakan-green-100 p-2">
+                    <FileSpreadsheet className="size-4 text-mahakan-green-700" />
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="text-sm font-semibold text-mahakan-green-900">
+                      Belum punya CSV?
+                    </h4>
+                    <p className="mt-0.5 text-xs text-neutral-700">
+                      Download template CSV untuk channel{" "}
+                      <strong>
+                        {CHANNEL_OPTIONS.find((c) => c.value === channel)
+                          ?.label ?? channel}
+                      </strong>{" "}
+                      dengan kolom + 2-3 row sample. Buka di Excel,
+                      tambahkan data, save, lalu upload ke sini.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      downloadCsvTemplate(channel);
+                      toast.success(
+                        `Template ${CHANNEL_OPTIONS.find((c) => c.value === channel)?.label ?? channel} ter-download`,
+                      );
+                    }}
+                  >
+                    <Download className="mr-1.5 size-4" /> Template
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 p-6 text-center">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv,text/csv,.txt"
+                  hidden
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void handleFilePick(f);
+                  }}
+                />
+                <Upload
+                  className="mx-auto size-8 text-neutral-400"
+                  aria-hidden
+                />
+                <p className="mt-2 text-sm font-medium text-neutral-900">
+                  Upload file CSV dari aggregator app
+                </p>
+                <p className="text-xs text-neutral-500">
+                  GoFood / GrabFood / ShopeeFood — sistem auto-detect kolom
+                  Tanggal + Gross + Komisi.
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="mt-3"
+                >
+                  <Upload className="size-4" /> Pilih File CSV
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="rounded-md border border-neutral-200 bg-white p-3">
