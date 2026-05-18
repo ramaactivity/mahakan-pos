@@ -315,7 +315,13 @@ export async function getTransactionsByIds(
 
 export async function createTransaction(
   input: CreateTransactionInput,
-  opts: { skipEarn?: boolean } = {},
+  opts: {
+    skipEarn?: boolean;
+    /** Sesi AE-62x — kalau true (dipakai dari saveAsOpenBill), skip
+     * applyStockDeductions + leave transactions.stock_deducted_at NULL.
+     * closeOpenBill akan deduct nanti saat bill di-pay. */
+    deferStock?: boolean;
+  } = {},
 ): Promise<ApiResult<TransactionWithItems>> {
   const session = await requireSession();
 
@@ -655,14 +661,22 @@ export async function createTransaction(
         );
       }
 
-      // Apply ingredient deductions + insert sale_deduct movements
-      await applyStockDeductions(
-        tx,
-        session.user.outletId,
-        session.user.id,
-        insertedTrx.id,
-        flow,
-      );
+      // Sesi AE-62x — defer stock kalau saveAsOpenBill (deferStock=true).
+      // Direct sale: deduct sekarang + stamp stock_deducted_at.
+      // Open bill: skip + leave NULL → closeOpenBill akan deduct.
+      if (!opts.deferStock) {
+        await applyStockDeductions(
+          tx,
+          session.user.outletId,
+          session.user.id,
+          insertedTrx.id,
+          flow,
+        );
+        await tx
+          .update(transactions)
+          .set({ stockDeductedAt: new Date() })
+          .where(eq(transactions.id, insertedTrx.id));
+      }
 
       const modRows: Array<typeof transactionItemModifiers.$inferInsert> = [];
       v.items.forEach((it, idx) => {
@@ -2011,7 +2025,15 @@ export async function editOpenBill(
       // both delete same items, both insert different items → first edit's
       // items hilang silently. Sekarang serialize.
       const [locked] = await tx
-        .select({ id: transactions.id, status: transactions.status })
+        .select({
+          id: transactions.id,
+          status: transactions.status,
+          /* Sesi AE-62x — defer-stock discriminator (lihat saveAsOpenBill).
+           * NULL = open bill baru, stock belum di-deduct → skip restore +
+           * skip re-deduct. Non-NULL = legacy bill yang sudah ke-deduct →
+           * restore old + deduct new (perilaku lama). */
+          stockDeductedAt: transactions.stockDeductedAt,
+        })
         .from(transactions)
         .where(eq(transactions.id, v.transactionId))
         .for("update")
@@ -2041,15 +2063,18 @@ export async function editOpenBill(
         }
       }
 
-      // Step 1: restore stock for the existing items (mirrors void semantics
-      // but uses kind=edit_restore so movement history is filterable).
-      await restoreStockForTransaction(
-        tx,
-        session.user.outletId,
-        session.user.id,
-        v.transactionId,
-        "edit_restore",
-      );
+      // Step 1: Sesi AE-62x — restore stock HANYA kalau sebelumnya di-deduct
+      // (legacy bill pre-AE-62x). Defer-mode bill (stockDeductedAt NULL)
+      // tidak punya inventory_movement untuk di-restore.
+      if (locked.stockDeductedAt !== null) {
+        await restoreStockForTransaction(
+          tx,
+          session.user.outletId,
+          session.user.id,
+          v.transactionId,
+          "edit_restore",
+        );
+      }
 
       // Step 2: delete existing modifiers + items. Modifiers FK has no
       // ON DELETE CASCADE so we have to drop them first.
@@ -2183,13 +2208,20 @@ export async function editOpenBill(
         }
       }
 
-      await applyStockDeductions(
-        tx,
-        session.user.outletId,
-        session.user.id,
-        v.transactionId,
-        flow,
-      );
+      /* Sesi AE-62x — apply stock deduction HANYA kalau legacy bill
+       * (stock sudah ke-deduct sebelumnya, perlu re-deduct setelah edit).
+       * Defer-mode bill (NULL): closeOpenBill akan deduct nanti dengan
+       * items terbaru. COGS snapshot di transaction_items.cogs sudah
+       * di-update di loop atas, jadi report tetap akurat. */
+      if (locked.stockDeductedAt !== null) {
+        await applyStockDeductions(
+          tx,
+          session.user.outletId,
+          session.user.id,
+          v.transactionId,
+          flow,
+        );
+      }
 
       const modRows: Array<typeof transactionItemModifiers.$inferInsert> = [];
       v.items.forEach((it, idx) => {
@@ -2367,7 +2399,15 @@ export async function saveAsOpenBill(
   };
   // Skip earn here — bill not yet paid. closeOpenBill fires earn when the
   // bill actually transitions to status="paid".
-  const created = await createTransaction(placeholder, { skipEarn: true });
+  //
+  // Sesi AE-62x — deferStock=true: open bill TIDAK deduct ingredient stock.
+  // closeOpenBill akan deduct saat bayar. cancelOpenBill skip restore
+  // (tidak ada yang perlu di-restore). Mengurangi phantom stock loss kalau
+  // bill abandoned & kasir lupa cancel.
+  const created = await createTransaction(placeholder, {
+    skipEarn: true,
+    deferStock: true,
+  });
   if (!isOk(created)) return created;
 
   // Step 2: flip to open status + reset payment fields. cashReceived stays
@@ -2481,6 +2521,10 @@ export async function closeOpenBill(
           id: transactions.id,
           status: transactions.status,
           total: transactions.total,
+          /* Sesi AE-62x — discriminator: NULL = defer mode, perlu deduct
+           * sekarang. Non-NULL = legacy bill yang sudah ke-deduct saat
+           * saveAsOpenBill lama (atau direct sale path), skip re-deduct. */
+          stockDeductedAt: transactions.stockDeductedAt,
         })
         .from(transactions)
         .where(eq(transactions.id, input.transactionId))
@@ -2488,6 +2532,72 @@ export async function closeOpenBill(
         .limit(1);
       if (!locked) throw new Error("NOT_FOUND");
       if (locked.status !== "open") throw new Error("TRX_NOT_OPEN");
+
+      /* Sesi AE-62x — Defer Stock: kalau stock belum di-deduct (open bill
+       * baru AE-62x+), lakukan deduct sekarang dengan items snapshot from
+       * transaction_items. Recipe cost di-recompute pakai ingredient cost
+       * SEKARANG (di close time) — kasir/customer-visible total tidak
+       * berubah, tapi COGS-side jadi reflect cost saat ingredient actually
+       * dipakai (mirip direct sale). */
+      if (locked.stockDeductedAt === null) {
+        const itemsForClose = await tx
+          .select({
+            id: transactionItemsSchema.id,
+            menuItemId: transactionItemsSchema.menuItemId,
+            variant: transactionItemsSchema.variant,
+            quantity: transactionItemsSchema.quantity,
+          })
+          .from(transactionItemsSchema)
+          .where(eq(transactionItemsSchema.transactionId, input.transactionId));
+        if (itemsForClose.length > 0) {
+          const flow = await computeStockFlowForOrder(
+            tx,
+            session.user.outletId,
+            itemsForClose.map((it) => ({
+              transactionItemId: it.id,
+              menuItemId: it.menuItemId,
+              variant: it.variant,
+              quantity: it.quantity,
+            })),
+          );
+          await applyStockDeductions(
+            tx,
+            session.user.outletId,
+            session.user.id,
+            input.transactionId,
+            flow,
+          );
+          /* Patch trx.cogs + per-item cogs juga di sini supaya report COGS
+           * accurate dengan ingredient cost saat actual deduction. */
+          const hasAnyCogs =
+            flow.itemsWithoutRecipe.length < itemsForClose.length;
+          if (hasAnyCogs) {
+            await tx
+              .update(transactions)
+              .set({ cogs: flow.totalCogs })
+              .where(eq(transactions.id, input.transactionId));
+          }
+          const cogsPatches = itemsForClose
+            .map((ti) => ({
+              id: ti.id,
+              cogs: flow.itemCogsByTrxItemId.get(ti.id),
+            }))
+            .filter(
+              (p): p is { id: string; cogs: number } =>
+                p.cogs !== undefined && p.cogs > 0,
+            );
+          if (cogsPatches.length > 0) {
+            await Promise.all(
+              cogsPatches.map((p) =>
+                tx
+                  .update(transactionItemsSchema)
+                  .set({ cogs: p.cogs })
+                  .where(eq(transactionItemsSchema.id, p.id)),
+              ),
+            );
+          }
+        }
+      }
 
       // Re-fetch fresh paid-sum INSIDE the lock untuk re-validate remaining.
       const freshPaidAgg = await tx
@@ -2546,6 +2656,13 @@ export async function closeOpenBill(
             paymentMethod: "split",
             cashReceived: null,
             cashChange: null,
+            /* Sesi AE-62x — stamp deduct timestamp kalau baru deduct (defer
+             * mode). Kalau sudah set sebelumnya (legacy / direct sale),
+             * leave it (COALESCE-like semantic via conditional set). */
+            stockDeductedAt:
+              locked.stockDeductedAt === null
+                ? new Date()
+                : locked.stockDeductedAt,
             updatedAt: new Date(),
           })
           .where(eq(transactions.id, input.transactionId));
@@ -2559,6 +2676,10 @@ export async function closeOpenBill(
               input.paymentMethod === "cash" ? input.cashReceived : null,
             cashChange:
               input.paymentMethod === "cash" ? freshCashChange : null,
+            stockDeductedAt:
+              locked.stockDeductedAt === null
+                ? new Date()
+                : locked.stockDeductedAt,
             updatedAt: new Date(),
           })
           .where(eq(transactions.id, input.transactionId));
@@ -2674,6 +2795,11 @@ export async function cancelOpenBill(
           id: transactions.id,
           status: transactions.status,
           outletId: transactions.outletId,
+          /* Sesi AE-62x — kalau NULL (defer mode, open bill AE-62x+),
+           * skip restoreStockForTransaction karena stock TIDAK pernah
+           * di-deduct. Kalau non-NULL (legacy pre-AE-62x open bill),
+           * restore dengan flow lama. */
+          stockDeductedAt: transactions.stockDeductedAt,
         })
         .from(transactions)
         .where(eq(transactions.id, v.transactionId))
@@ -2699,14 +2825,18 @@ export async function cancelOpenBill(
         .where(eq(transactions.id, v.transactionId))
         .returning();
 
-      // Restore stock (sale_deduct → void_restore).
-      const restored = await restoreStockForTransaction(
-        tx,
-        session.user.outletId,
-        session.user.id,
-        v.transactionId,
-        "void_restore",
-      );
+      // Sesi AE-62x — restore stock HANYA kalau sebelumnya di-deduct
+      // (legacy bill). Defer-mode bill (stockDeductedAt NULL) no-op.
+      let restored: string[] = [];
+      if (locked.stockDeductedAt !== null) {
+        restored = await restoreStockForTransaction(
+          tx,
+          session.user.outletId,
+          session.user.id,
+          v.transactionId,
+          "void_restore",
+        );
+      }
 
       // Restore loyalty points (kalau ada redeem) + claw back earned.
       // For open bill, earn TIDAK fired di saveAsOpenBill (skipEarn=true),
@@ -2739,7 +2869,7 @@ export async function cancelOpenBill(
     updated = result.updated;
     restoredIngredientIds = result.restoredIds;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "DB error";
+    const msg = e instanceof Error ? e.message : "";
     if (msg === "NOT_FOUND") {
       return fail("NOT_FOUND", "Transaksi tidak ditemukan");
     }

@@ -112,6 +112,23 @@ export const transactions = pgTable(
      * stored in promo_usages.discountAmount. */
     promoId: uuid("promo_id"),
 
+    /** Sesi AE-62x — defer stock deduction untuk saveAsOpenBill.
+     *
+     * Sebelumnya: saveAsOpenBill langsung deduct ingredient stock + insert
+     * inventory_movement saat bill dibuat. Kalau customer batal & kasir
+     * lupa cancelOpenBill (workaround AE-62k), stock loss permanen.
+     *
+     * Sekarang: open bill TIDAK deduct stock. Stock deduction terjadi saat
+     * closeOpenBill (status='paid') ATAU createTransaction direct (langsung
+     * paid). Column ini timestamp saat stock deduct happened — NULL = belum
+     * di-deduct (open bill defer mode).
+     *
+     * Backward-compat: bills lama (pre-AE-62x) yang sudah di-deduct akan
+     * have non-null timestamp setelah migration backfill. Discriminator
+     * untuk closeOpenBill / editOpenBill / cancelOpenBill route ke flow
+     * lama (restore stock) vs flow baru (no-op). */
+    stockDeductedAt: timestamp("stock_deducted_at", { withTimezone: true }),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
