@@ -806,7 +806,6 @@ export async function listShiftRebalances(opts: {
     .limit(limit);
 
   // Resolve approver names + cashier names + shift dates separately
-  const rebalanceIds = rows.map((r) => r.r.id);
   const userIds = new Set<string>();
   for (const r of rows) {
     if (r.r.approvedBy) userIds.add(r.r.approvedBy);

@@ -152,7 +152,7 @@ function ValidationTab({
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [asOfDate]);
 
@@ -313,7 +313,7 @@ function TrialBalanceTab() {
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [range.from, range.to]);
 
@@ -469,7 +469,7 @@ function IncomeStatementTab() {
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [range.from, range.to, compareMode]);
 
@@ -624,7 +624,7 @@ function BalanceSheetTab() {
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [asOfDate]);
 
@@ -801,7 +801,7 @@ function CashFlowTab() {
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [range.from, range.to]);
 
@@ -997,13 +997,13 @@ function GeneralLedgerTab({
   useEffect(() => {
     fetchAccounts({ isActive: true }).then((res) => {
       if (res.ok) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
+         
         setAccounts(res.data);
         // Auto-resolve initialAccountCode → accountId on first mount.
         if (initialAccountCode) {
           const match = res.data.find((a) => a.code === initialAccountCode);
           if (match) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect
+             
             setAccountId(match.id);
           }
         }
@@ -1027,7 +1027,7 @@ function GeneralLedgerTab({
 
   useEffect(() => {
     if (!accountId) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [accountId, range.from, range.to]);
 

@@ -13,8 +13,6 @@ import {
   Button,
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
   EmptyCard,
   Input,
   Modal,
@@ -23,7 +21,6 @@ import {
 } from "@/components/ui";
 import {
   approveShiftRebalance,
-  cancelShiftRebalance,
   listShiftRebalances,
   rejectShiftRebalance,
   type ShiftRebalance,
@@ -75,6 +72,15 @@ export function PendingRebalancesPanel() {
   const [actionMode, setActionMode] = useState<"approve" | "reject" | null>(
     null,
   );
+
+  /* Sesi AE-62ag — ticking clock untuk live-age. Update tiap 60s supaya
+   * badge "stale" (>1h) muncul tanpa user reload. Date.now() di render
+   * dilarang lint (impure); pakai state ticker yang React track sendiri. */
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -169,6 +175,7 @@ export function PendingRebalancesPanel() {
               <RebalanceCard
                 key={r.id}
                 row={r}
+                nowMs={nowMs}
                 onApprove={
                   canApprove && r.status === "pending_approval"
                     ? () => {
@@ -212,13 +219,17 @@ function RebalanceCard({
   row,
   onApprove,
   onReject,
+  nowMs,
 }: {
   row: RebalanceRow;
   onApprove?: () => void;
   onReject?: () => void;
+  /** Sesi AE-62ag — passed dari parent (ticking state) supaya age update
+   * setiap menit tanpa langgar React purity rule (Date.now() di render). */
+  nowMs: number;
 }) {
   const ageMin = Math.floor(
-    (Date.now() - new Date(row.requestedAt).getTime()) / 60_000,
+    (nowMs - new Date(row.requestedAt).getTime()) / 60_000,
   );
   const isStale = row.status === "pending_approval" && ageMin > 60;
 

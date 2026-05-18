@@ -31,7 +31,6 @@ import { lookupMarketPriceForPurchase } from "@/features/market-list";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import {
   convertPurchaseQty,
-  convertQtyWithIngredientPacks,
   resolveUnit,
   type IngredientPackConversion,
   type PackInfo,

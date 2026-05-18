@@ -20,10 +20,10 @@ export function CashOnHandTile() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!canView) {
-      setLoading(false);
-      return;
-    }
+    /* Sesi AE-62ag — !canView path dihandle oleh early-return di bawah
+     * (return null). Effect ini tetap exit kalau !canView untuk hindari
+     * fetch + setState cascade (lint react-hooks/set-state-in-effect). */
+    if (!canView) return;
     let mounted = true;
     fetchCashOnHand()
       .then((res) => {

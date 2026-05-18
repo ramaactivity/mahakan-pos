@@ -128,6 +128,10 @@ export const AUDIT_EVENT_TYPES = [
   "attendance.mobile_clock_out",
   "attendance.mobile_rejected",
   "attendance.drive_upload_failed",
+  /* Sesi AE-62ag — mobile PIN endpoint audit. PIN-only auth tanpa session,
+   * jadi userId NULL — context cukup pakai entityId / payload.summary. */
+  "attendance_mobile.pin_invalid",
+  "attendance_mobile.pin_inactive_employee",
   // HR (Sesi C-8) — Schedule + Payroll.
   "schedule.upsert",
   "schedule.copy_week",

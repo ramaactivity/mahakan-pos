@@ -273,7 +273,7 @@ export function EditUnitModal({
               <p className="mt-0.5 text-[11px] text-neutral-600">
                 Daftar satuan alternatif yang bisa dipakai saat opname / catat
                 pembelian. Mis. Lychee Kaleng: <strong>1 packs = 20 pcs</strong>.
-                Staff input "1 packs", sistem otomatis hitung 20 pcs di stok.
+                Staff input &ldquo;1 packs&rdquo;, sistem otomatis hitung 20 pcs di stok.
               </p>
             </div>
           </div>

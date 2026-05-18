@@ -147,7 +147,7 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [filterSourceType, filterStatus, filterRange.from, filterRange.to]);
 

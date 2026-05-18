@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -81,13 +81,20 @@ export function AggregatorSettlementModal({ open, onClose, onSaved }: Props) {
 
   // Import mode state
   const [csvFile, setCsvFile] = useState<File | null>(null);
-  const [csvText, setCsvText] = useState<string>("");
   const [parseResult, setParseResult] = useState<ParseCsvResult | null>(null);
   const [aggregationMode, setAggregationMode] = useState<"daily" | "single">(
     "daily",
   );
-  const [aggregated, setAggregated] = useState<AggregateResult[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /* Sesi AE-62ag — `aggregated` derived dari parseResult + mode, jadi useMemo
+   * (pre-fix pakai useState + useEffect → lint set-state-in-effect cascade). */
+  const aggregated: AggregateResult[] = useMemo(() => {
+    if (!parseResult) return [];
+    if (aggregationMode === "daily") return aggregateDaily(parseResult.rows);
+    const single = aggregateSinglePeriod(parseResult.rows);
+    return single ? [single] : [];
+  }, [parseResult, aggregationMode]);
 
   useEffect(() => {
     if (!open) return;
@@ -102,31 +109,14 @@ export function AggregatorSettlementModal({ open, onClose, onSaved }: Props) {
     setReferenceNo("");
     setNotes("");
     setCsvFile(null);
-    setCsvText("");
     setParseResult(null);
-    setAggregated([]);
     setAggregationMode("daily");
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open]);
 
-  // Re-aggregate when parse result or mode changes
-  useEffect(() => {
-    if (!parseResult) {
-      setAggregated([]);
-      return;
-    }
-    if (aggregationMode === "daily") {
-      setAggregated(aggregateDaily(parseResult.rows));
-    } else {
-      const single = aggregateSinglePeriod(parseResult.rows);
-      setAggregated(single ? [single] : []);
-    }
-  }, [parseResult, aggregationMode]);
-
   async function handleFilePick(file: File) {
     setCsvFile(file);
     const text = await file.text();
-    setCsvText(text);
     const result = parseAggregatorCsv(text);
     setParseResult(result);
     if (result.rows.length === 0) {
@@ -371,9 +361,7 @@ export function AggregatorSettlementModal({ open, onClose, onSaved }: Props) {
                   size="sm"
                   onClick={() => {
                     setCsvFile(null);
-                    setCsvText("");
-                    setParseResult(null);
-                    setAggregated([]);
+                                    setParseResult(null);
                   }}
                 >
                   Hapus

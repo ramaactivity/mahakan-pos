@@ -65,7 +65,7 @@ export function DepreciationModal({ open, onClose, onPosted }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load(targetMonth);
   }, [targetMonth]);
 

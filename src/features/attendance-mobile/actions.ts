@@ -91,6 +91,18 @@ export async function verifyAttendancePin(pin: string): Promise<VerifyResult> {
   await new Promise((r) => setTimeout(r, 300));
 
   if (!matched) {
+    /* Sesi AE-62ag — audit log PIN fail untuk Owner visibility anti-brute.
+     * Catatan: tidak ada session/userId di endpoint mobile (PIN-only auth);
+     * pakai null userId, entityId NULL — context cuma PIN prefix masked. */
+    logAudit({
+      eventType: "attendance_mobile.pin_invalid",
+      userId: null,
+      entityType: "attendance",
+      entityId: null,
+      payload: {
+        summary: `Mobile PIN tidak dikenali (digit count: ${pin.length})`,
+      },
+    }).catch((e) => console.error("[audit attendance_mobile.pin_invalid]", e));
     return {
       ok: false,
       error: {
@@ -101,6 +113,18 @@ export async function verifyAttendancePin(pin: string): Promise<VerifyResult> {
   }
 
   if (matched.status !== "active") {
+    logAudit({
+      eventType: "attendance_mobile.pin_inactive_employee",
+      userId: null,
+      entityType: "employee",
+      entityId: matched.id,
+      payload: {
+        summary: `Mobile PIN cocok tapi karyawan tidak aktif: ${matched.fullName} (status=${matched.status})`,
+      },
+      metadata: { outletId: matched.outletId },
+    }).catch((e) =>
+      console.error("[audit attendance_mobile.pin_inactive_employee]", e),
+    );
     return {
       ok: false,
       error: {

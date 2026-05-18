@@ -940,10 +940,12 @@ export async function markPayrollPaid(
     );
   }
 
-  // Sesi AE-62ad — Auto-kirim slip gaji ke email karyawan (fire-and-forget).
-  // Tidak boleh block return; gagal kirim individual cuma di-log + bisa
-  // resend manual dari UI Slip Gaji.
-  void (async () => {
+  // Sesi AE-62ad → AE-62ag — auto-kirim slip gaji setelah response dikirim.
+  // Pakai Next.js after() supaya Vercel guarantee task tetap jalan setelah
+  // server action return ke client (pre-fix: fire-and-forget `void async`
+  // bisa di-terminate awal oleh runtime, terutama untuk loop N karyawan).
+  const { after } = await import("next/server");
+  after(async () => {
     try {
       const { sendPayslipsForPeriod } = await import("./payslip-send");
       const summary = await sendPayslipsForPeriod({
@@ -960,7 +962,7 @@ export async function markPayrollPaid(
     } catch (e) {
       console.error("[payroll.markPaid] payslip auto-send threw:", e);
     }
-  })();
+  });
 
   return ok(result.row);
 }
