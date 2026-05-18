@@ -17,6 +17,11 @@ export const AUDIT_EVENT_TYPES = [
   "transaction.open_bill.close",
   "transaction.open_bill.edit",
   "transaction.open_bill.cancel",
+  /* Sesi AE-62o — shift rebalancing workflow events. */
+  "shift.rebalance.request",
+  "shift.rebalance.approve",
+  "shift.rebalance.reject",
+  "shift.rebalance.cancel",
   "transaction.reprint",
   "transaction.split_payment.add",
   // Menu
@@ -234,6 +239,7 @@ export type AuditEntityType =
   | "cash_deposit"
   | "aggregator_settlement"
   | "reconciliation_note"
+  | "shift_rebalance"
   | "chart_of_accounts"
   | "accounting_period"
   | "journal_entry"

@@ -45,6 +45,7 @@ export type JournalSourceType =
   | "cash_deposit_verified"
   | "cash_deposit_unverified"
   | "aggregator_settlement"
+  | "shift_variance_reversal"
   | "shift_variance"
   | "opname_adjustment"
   | "period_close"

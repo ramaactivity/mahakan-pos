@@ -2,6 +2,7 @@ export * from "./outlets";
 export * from "./users";
 export * from "./menu";
 export * from "./shifts";
+export * from "./shift_rebalances";
 export * from "./transactions";
 export * from "./expenses";
 export * from "./audit";

@@ -125,10 +125,22 @@ export async function requestApprovalCode(
     return fail("INVALID_REASON", "Alasan 3-200 karakter");
   }
 
+  // Sesi AE-62o — kalau actionType="shift.rebalance", caller harus pakai
+  // requestShiftRebalance dari @/features/shifts/rebalance-actions, bukan
+  // function ini. Fungsi ini hanya untuk pos.transaction.* yang butuh
+  // transactionId.
+  if (!input.transactionId) {
+    return fail(
+      "INVALID_INPUT",
+      "transactionId wajib untuk pos.transaction.* — untuk shift.rebalance pakai requestShiftRebalance.",
+    );
+  }
+  const transactionId = input.transactionId;
+
   const [trx] = await db
     .select()
     .from(transactions)
-    .where(eq(transactions.id, input.transactionId))
+    .where(eq(transactions.id, transactionId))
     .limit(1);
   if (!trx) return fail("TRX_NOT_FOUND", "Transaksi tidak ditemukan");
   if (trx.outletId !== session.user.outletId) {
@@ -158,7 +170,7 @@ export async function requestApprovalCode(
     .set({ revokedAt: new Date(), revokedByUserId: session.user.id })
     .where(
       and(
-        eq(approvalCodes.targetTransactionId, input.transactionId),
+        eq(approvalCodes.targetTransactionId, transactionId),
         eq(approvalCodes.actionType, input.actionType),
         isNull(approvalCodes.consumedAt),
         isNull(approvalCodes.revokedAt),
@@ -178,7 +190,7 @@ export async function requestApprovalCode(
       codeHash,
       codeFirstTwo,
       actionType: input.actionType,
-      targetTransactionId: input.transactionId,
+      targetTransactionId: transactionId,
       outletId: session.user.outletId,
       requestedByUserId: session.user.id,
       reason,

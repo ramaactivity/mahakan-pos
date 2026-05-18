@@ -97,7 +97,7 @@ async function resolveActiveOwnerId(outletId: string): Promise<string | null> {
 async function authorizeVoidRefund(
   outletId: string,
   transactionId: string,
-  actionType: ApprovalActionType,
+  actionType: "pos.transaction.void" | "pos.transaction.refund",
   v: { approverToken?: string; approvalCode?: string },
 ): Promise<
   | { ok: true; approverId: string | null }

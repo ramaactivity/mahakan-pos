@@ -178,6 +178,7 @@ export const journalEntries = pgTable(
         "cash_deposit_unverified",
         "aggregator_settlement",
         "shift_variance",
+        "shift_variance_reversal",
         "opname_adjustment",
         "period_close",
         "period_reopen",

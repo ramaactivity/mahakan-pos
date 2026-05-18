@@ -5,10 +5,18 @@ export type ApprovalCode = InferSelectModel<typeof approvalCodes>;
 
 export type ApprovalActionType =
   | "pos.transaction.void"
-  | "pos.transaction.refund";
+  | "pos.transaction.refund"
+  /* Sesi AE-62o — shift rebalancing dengan owner approval. Target =
+   * shift_rebalances.id, bukan transactions.id. */
+  | "shift.rebalance";
 
 export interface RequestApprovalCodeInput {
-  transactionId: string;
+  /** Untuk pos.transaction.* — transactionId. Untuk shift.rebalance —
+   * shiftRebalanceId (di kolom targetShiftRebalanceId, bukan
+   * targetTransactionId). Use shiftRebalanceId field below for clarity. */
+  transactionId?: string;
+  /** Sesi AE-62o — alternative target untuk shift.rebalance action. */
+  shiftRebalanceId?: string;
   actionType: ApprovalActionType;
   reason: string;
 }

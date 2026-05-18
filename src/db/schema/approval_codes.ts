@@ -40,14 +40,25 @@ export const approvalCodes = pgTable(
     codeFirstTwo: text("code_first_two").notNull(),
 
     actionType: text("action_type", {
-      enum: ["pos.transaction.void", "pos.transaction.refund"],
+      enum: [
+        "pos.transaction.void",
+        "pos.transaction.refund",
+        /* Sesi AE-62o — shift rebalancing dengan owner approval.
+         * Target = shift_rebalances.id (not transaction). */
+        "shift.rebalance",
+      ],
     }).notNull(),
 
     /** Transaction this code authorizes — prevents code laundering across
-     * unrelated transactions. */
-    targetTransactionId: uuid("target_transaction_id")
-      .notNull()
-      .references(() => transactions.id),
+     * unrelated transactions. NULLABLE per sesi AE-62o supaya bisa target
+     * non-transaction entities (mis. shift_rebalances). CHECK constraint
+     * enforce exactly satu target di-set sesuai action_type. */
+    targetTransactionId: uuid("target_transaction_id").references(
+      () => transactions.id,
+    ),
+
+    /** Sesi AE-62o — alternative target untuk action_type='shift.rebalance'. */
+    targetShiftRebalanceId: uuid("target_shift_rebalance_id"),
 
     outletId: uuid("outlet_id")
       .notNull()
@@ -110,6 +121,12 @@ export const approvalCodes = pgTable(
     check(
       "ck_approval_codes_revoked_pair",
       sql`(${t.revokedAt} IS NULL AND ${t.revokedByUserId} IS NULL) OR (${t.revokedAt} IS NOT NULL AND ${t.revokedByUserId} IS NOT NULL)`,
+    ),
+    /** Sesi AE-62o — exactly one target set per action_type. */
+    check(
+      "ck_approval_codes_target_xor",
+      sql`(${t.actionType} = 'shift.rebalance' AND ${t.targetShiftRebalanceId} IS NOT NULL AND ${t.targetTransactionId} IS NULL)
+       OR (${t.actionType} != 'shift.rebalance' AND ${t.targetTransactionId} IS NOT NULL AND ${t.targetShiftRebalanceId} IS NULL)`,
     ),
   ],
 );

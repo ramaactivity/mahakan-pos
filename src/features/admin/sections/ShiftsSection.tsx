@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Eye, Receipt } from "lucide-react";
+import { AlertTriangle, Eye, Pencil, Receipt } from "lucide-react";
 import {
   Badge,
   Button,
@@ -13,6 +13,7 @@ import {
   Skeleton,
 } from "@/components/ui";
 import { ShiftDetailModal } from "./shifts/ShiftDetailModal";
+import { PendingRebalancesPanel } from "./shifts/PendingRebalancesPanel";
 import { isOk, listShifts, type Shift } from "@/features/shifts";
 import { listUsers, type PublicUser } from "@/features/users";
 import { formatRupiah } from "@/lib/format";
@@ -22,6 +23,7 @@ import { cn } from "@/lib/utils";
 const VARIANCE_THRESHOLD = 10_000;
 
 export function ShiftsSection() {
+  const [tab, setTab] = useState<"history" | "rebalance">("history");
   const [varianceFilter, setVarianceFilter] = useState<"all" | "flag">("all");
   const [openShift, setOpenShift] = useState<Shift | null>(null);
 
@@ -84,24 +86,65 @@ export function ShiftsSection() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant={varianceFilter === "all" ? "primary" : "outline"}
-            onClick={() => setVarianceFilter("all")}
-          >
-            Semua ({shifts.length})
-          </Button>
-          <Button
-            size="sm"
-            variant={varianceFilter === "flag" ? "primary" : "outline"}
-            onClick={() => setVarianceFilter("flag")}
-          >
-            <AlertTriangle className="size-4" aria-hidden /> Flagged (
-            {flaggedCount})
-          </Button>
+          {tab === "history" ? (
+            <>
+              <Button
+                size="sm"
+                variant={varianceFilter === "all" ? "primary" : "outline"}
+                onClick={() => setVarianceFilter("all")}
+              >
+                Semua ({shifts.length})
+              </Button>
+              <Button
+                size="sm"
+                variant={varianceFilter === "flag" ? "primary" : "outline"}
+                onClick={() => setVarianceFilter("flag")}
+              >
+                <AlertTriangle className="size-4" aria-hidden /> Flagged (
+                {flaggedCount})
+              </Button>
+            </>
+          ) : null}
         </div>
       </header>
 
+      {/* Sesi AE-62o — tab navigation: History | Rebalancing queue */}
+      <div className="flex gap-1 border-b border-neutral-200">
+        <button
+          type="button"
+          onClick={() => setTab("history")}
+          className={cn(
+            "relative px-4 py-2 text-sm font-medium transition-colors",
+            tab === "history"
+              ? "text-mahakan-green-900"
+              : "text-neutral-600 hover:text-neutral-900",
+          )}
+        >
+          Riwayat Shift
+          {tab === "history" ? (
+            <span className="absolute inset-x-0 -bottom-px h-0.5 bg-mahakan-green-700" />
+          ) : null}
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("rebalance")}
+          className={cn(
+            "relative inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors",
+            tab === "rebalance"
+              ? "text-mahakan-green-900"
+              : "text-neutral-600 hover:text-neutral-900",
+          )}
+        >
+          <Pencil className="size-4" aria-hidden /> Rebalancing
+          {tab === "rebalance" ? (
+            <span className="absolute inset-x-0 -bottom-px h-0.5 bg-mahakan-green-700" />
+          ) : null}
+        </button>
+      </div>
+
+      {tab === "rebalance" ? <PendingRebalancesPanel /> : null}
+
+      {tab === "history" ? (
       <Card>
         <CardHeader />
         <CardContent className="px-0">
@@ -243,6 +286,7 @@ export function ShiftsSection() {
           )}
         </CardContent>
       </Card>
+      ) : null}
 
       <ShiftDetailModal
         shift={openShift}

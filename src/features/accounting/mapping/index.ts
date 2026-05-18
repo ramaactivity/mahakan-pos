@@ -22,7 +22,10 @@ export type {
   AggregatorChannel,
   AggregatorSettlementInput,
 } from "./aggregatorSettlement";
-export { mapShiftVariance } from "./shiftVariance";
+export {
+  mapShiftVariance,
+  mapShiftVarianceReversal,
+} from "./shiftVariance";
 export type { ShiftVarianceInput } from "./shiftVariance";
 export {
   mapCategoryToAccounts,

@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, Wallet } from "lucide-react";
-import { Badge, Modal, Skeleton } from "@/components/ui";
+import { ChevronDown, ChevronUp, Pencil, Wallet } from "lucide-react";
+import { Badge, Button, Modal, Skeleton } from "@/components/ui";
 import { isOk, listTransactions, type Transaction } from "@/features/transactions";
 import type { Shift } from "@/features/shifts";
+import { ShiftRebalanceModal } from "@/features/shifts/components/ShiftRebalanceModal";
+import { useSession } from "@/features/auth/SessionProvider";
+import { hasPermission } from "@/lib/auth/rbac";
 import type { PublicUser } from "@/features/users";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime, formatIndonesianTime } from "@/lib/date";
@@ -14,13 +17,20 @@ interface ShiftDetailModalProps {
   shift: Shift | null;
   user: PublicUser | null;
   onClose: () => void;
+  /** Optional callback to refetch shift list after rebalance request. */
+  onRebalanceRequested?: () => void;
 }
 
 export function ShiftDetailModal({
   shift,
   user,
   onClose,
+  onRebalanceRequested,
 }: ShiftDetailModalProps) {
+  const { session } = useSession();
+  const role = session?.user.role ?? "staff";
+  const canRequestRebalance = hasPermission(role, "shift.rebalance.request");
+  const [rebalanceOpen, setRebalanceOpen] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [showVoidRefund, setShowVoidRefund] = useState(false);
@@ -103,6 +113,7 @@ export function ShiftDetailModal({
     (shopeefoodSettlement ?? 0) > 0;
 
   return (
+    <>
     <Modal
       open={shift !== null}
       onClose={onClose}
@@ -113,7 +124,7 @@ export function ShiftDetailModal({
       size="xl"
     >
       <div className="space-y-4">
-        {/* Status + variance badge */}
+        {/* Status + variance badge + Rebalance button */}
         <div className="flex flex-wrap items-center gap-2">
           {shift.status === "open" ? (
             <Badge variant="success">Open</Badge>
@@ -134,6 +145,18 @@ export function ShiftDetailModal({
                 {formatRupiah(shift.variance)}
               </Badge>
             )
+          ) : null}
+          {/* Sesi AE-62o — Suggest Correction (manager/owner only, untuk shift closed) */}
+          {shift.status === "closed" && canRequestRebalance ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setRebalanceOpen(true)}
+              className="ml-auto"
+              title="Ajukan koreksi shift dengan approval Owner"
+            >
+              <Pencil className="size-4" aria-hidden /> Suggest Correction
+            </Button>
           ) : null}
         </div>
 
@@ -417,6 +440,21 @@ export function ShiftDetailModal({
         </div>
       </div>
     </Modal>
+    {/* Sesi AE-62o — Rebalance request modal. Reuse for kasir + manager. */}
+    <ShiftRebalanceModal
+      open={rebalanceOpen}
+      shift={shift}
+      source="manager_backoffice"
+      expectedCash={expectedCashEstimate}
+      posActualQris={paidQris}
+      posActualCardBca={paidCard}
+      onClose={() => setRebalanceOpen(false)}
+      onSubmitted={() => {
+        setRebalanceOpen(false);
+        onRebalanceRequested?.();
+      }}
+    />
+    </>
   );
 }
 

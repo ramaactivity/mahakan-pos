@@ -32,6 +32,7 @@ import {
   mapPurchaseCreate,
   mapPurchasePay,
   mapShiftVariance,
+  mapShiftVarianceReversal,
   resolveBankCodeFromDestination,
   type AggregatedItem,
   type AggregatorChannel,
@@ -636,6 +637,109 @@ export async function postJournalForShiftVariance(args: {
     lines,
     actorId: args.actorId,
   });
+}
+
+/**
+ * Sesi AE-62o — postJournalForShiftRebalance: handle reverse + new entry
+ * pair saat owner approve rebalancing.
+ *
+ * Workflow:
+ *   1. Kalau originalVariance != 0 → post reverse entry (sourceType
+ *      "shift_variance_reversal", sourceId = shiftRebalances.id)
+ *   2. Kalau correctedVariance != 0 → post new shift_variance entry
+ *      (sourceType "shift_variance", sourceId = shiftId — TAPI sudah
+ *      ada existing entry, jadi pakai shiftRebalanceId sebagai sourceId
+ *      untuk distinct)
+ *   3. Mark original entry status='reversed' + link reversedByEntryId
+ *      (mirror sesi AE-62h cash_deposit_unverified pattern)
+ *
+ * Returns both entry IDs supaya caller bisa link ke shift_rebalances row
+ * untuk audit trail.
+ */
+export async function postJournalForShiftRebalance(args: {
+  outletId: string;
+  shiftId: string;
+  shiftRebalanceId: string;
+  shiftLabel: string;
+  originalVariance: number;
+  correctedVariance: number;
+  reason: string;
+  entryDate: string;
+  actorId: string;
+}): Promise<{ reverseEntryId: string | null; correctedEntryId: string | null }> {
+  if (!(await isAutoJournalEnabled(args.outletId))) {
+    return { reverseEntryId: null, correctedEntryId: null };
+  }
+
+  let reverseEntryId: string | null = null;
+  let correctedEntryId: string | null = null;
+
+  // Step 1: reverse original kalau != 0
+  if (args.originalVariance !== 0) {
+    const reverseLines = mapShiftVarianceReversal({
+      shiftId: args.shiftId,
+      shiftLabel: args.shiftLabel,
+      outletId: args.outletId,
+      entryDate: args.entryDate,
+      variance: args.originalVariance,
+      reason: args.reason,
+    });
+    if (reverseLines.length > 0) {
+      const result = await recordJournal({
+        outletId: args.outletId,
+        entryDate: args.entryDate,
+        description: `REVERSE selisih kas ${args.shiftLabel}: ${args.reason}`,
+        sourceType: "shift_variance_reversal",
+        sourceId: args.shiftRebalanceId,
+        lines: reverseLines,
+        actorId: args.actorId,
+      });
+      reverseEntryId = result.entryId;
+
+      // Mark original entry as reversed.
+      await db
+        .update(journalEntries)
+        .set({
+          status: "reversed",
+          reversedByEntryId: result.entryId,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(journalEntries.outletId, args.outletId),
+            eq(journalEntries.sourceType, "shift_variance"),
+            eq(journalEntries.sourceId, args.shiftId),
+            sql`${journalEntries.status} = 'posted'`,
+          ),
+        );
+    }
+  }
+
+  // Step 2: post new entry sesuai correctedVariance kalau != 0.
+  // sourceId = shiftRebalanceId (not shiftId) untuk distinct dari original.
+  if (args.correctedVariance !== 0) {
+    const newLines = mapShiftVariance({
+      shiftId: args.shiftId,
+      shiftLabel: `${args.shiftLabel} (REBALANCED)`,
+      outletId: args.outletId,
+      entryDate: args.entryDate,
+      variance: args.correctedVariance,
+    });
+    if (newLines.length > 0) {
+      const result = await recordJournal({
+        outletId: args.outletId,
+        entryDate: args.entryDate,
+        description: `Selisih kas REBALANCED ${args.shiftLabel} (${args.correctedVariance > 0 ? "+" : ""}${args.correctedVariance}): ${args.reason}`,
+        sourceType: "shift_variance",
+        sourceId: args.shiftRebalanceId,
+        lines: newLines,
+        actorId: args.actorId,
+      });
+      correctedEntryId = result.entryId;
+    }
+  }
+
+  return { reverseEntryId, correctedEntryId };
 }
 
 // ============================================================

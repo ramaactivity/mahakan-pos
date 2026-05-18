@@ -64,3 +64,54 @@ export function mapShiftVariance(input: ShiftVarianceInput): JournalLineInput[] 
     },
   ];
 }
+
+/**
+ * Sesi AE-62o — mapShiftVarianceReversal: post reverse entry untuk rebalance.
+ *
+ * Saat owner approve rebalancing, kita perlu:
+ *   1. Reverse original variance entry (kalau variance lama != 0)
+ *   2. Post new entry sesuai corrected variance (kalau != 0)
+ *
+ * Helper ini bantu step 1 — mirror mapShiftVariance tapi dengan debit/credit
+ * di-swap. sourceType="shift_variance_reversal" (new enum value AE-62o).
+ *
+ * Note: actual "new variance" entry posted via existing mapShiftVariance
+ * dengan input.variance = correctedVariance. Hook caller handle both
+ * sequencing in single transaction (lihat postJournalForShiftVarianceReversal).
+ */
+export function mapShiftVarianceReversal(
+  input: ShiftVarianceInput & { reason: string },
+): JournalLineInput[] {
+  if (input.variance === 0) return [];
+  const abs = Math.abs(input.variance);
+
+  if (input.variance < 0) {
+    // Original was Dr 6902 / Cr 1101. Reverse: Dr 1101 / Cr 6902.
+    return [
+      {
+        accountCode: "1101",
+        debit: abs,
+        description: `REVERSE selisih kas (kurang) — ${input.shiftLabel}: ${input.reason}`,
+      },
+      {
+        accountCode: "6902",
+        credit: abs,
+        description: `REVERSE — ${input.shiftLabel}`,
+      },
+    ];
+  }
+
+  // Original was Dr 1101 / Cr 6902 (surplus). Reverse: Dr 6902 / Cr 1101.
+  return [
+    {
+      accountCode: "6902",
+      debit: abs,
+      description: `REVERSE selisih kas (lebih) — ${input.shiftLabel}: ${input.reason}`,
+    },
+    {
+      accountCode: "1101",
+      credit: abs,
+      description: `REVERSE — ${input.shiftLabel}`,
+    },
+  ];
+}

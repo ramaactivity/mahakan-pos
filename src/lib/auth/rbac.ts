@@ -44,6 +44,17 @@ export const permissions = {
   "shift.view_own": ["owner", "manager", "supervisor", "staff"],
   "shift.view_all": ["owner", "manager", "supervisor"],
   "shift.force_close": ["owner"],
+  /* Sesi AE-62o — shift rebalancing dengan owner approval.
+   * .request: kasir/manager submit correction request (email ke owner)
+   * .approve: owner verify code → apply correction
+   * .reject: owner/manager reject pending
+   * .cancel: requester withdraw before approve
+   * .view: list pending + history */
+  "shift.rebalance.request": ["owner", "manager", "supervisor", "staff"],
+  "shift.rebalance.approve": ["owner"],
+  "shift.rebalance.reject": ["owner", "manager"],
+  "shift.rebalance.cancel": ["owner", "manager", "supervisor", "staff"],
+  "shift.rebalance.view": ["owner", "manager", "supervisor"],
 
   // Menu CRUD — supervisor TIDAK bisa edit master menu (master data scope).
   "menu.item.create": ["owner", "manager"],
