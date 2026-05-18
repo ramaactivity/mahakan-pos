@@ -81,8 +81,11 @@ function pad2(n: number): string {
  * Resolve account refs in lines. Each line must have accountId OR accountCode.
  * Returns lines with accountId populated. Throws "ACCOUNT_NOT_FOUND" or
  * "ACCOUNT_INACTIVE" on resolve failure.
+ *
+ * Sesi AE-63 phase4 — exported supaya updateDraftJournalEntry bisa reuse
+ * validation logic yang sama dengan recordJournal (DRY).
  */
-async function resolveAccounts(
+export async function resolveAccounts(
   outletId: string,
   lines: JournalLineInput[],
 ): Promise<{ accountId: string; debit: number; credit: number; description: string | null; metadata: Record<string, unknown> | null }[]> {
@@ -132,8 +135,10 @@ async function resolveAccounts(
 
 /**
  * Validate XOR + non-negative + balance. Returns sums for caller logging.
+ *
+ * Sesi AE-63 phase4 — exported (sama alasan dengan resolveAccounts).
  */
-function validateLines(
+export function validateLines(
   resolved: { debit: number; credit: number }[],
 ): { totalDebit: number; totalCredit: number } {
   if (resolved.length < 2) {

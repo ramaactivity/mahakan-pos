@@ -19,7 +19,10 @@ import {
   Skeleton,
   toast,
 } from "@/components/ui";
-import { createAggregatorSettlement } from "@/features/finance/actions";
+import {
+  createAggregatorSettlement,
+  getAggregatorChannelSalesInRange,
+} from "@/features/finance/actions";
 import type { AggregatorChannel } from "@/features/finance/types";
 import {
   aggregateDaily,
@@ -201,6 +204,47 @@ export function AggregatorSettlementModal({ open, onClose, onSaved }: Props) {
     "daily",
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /* Sesi AE-63 phase4 — POS sales reference untuk channel+period dipilih.
+   * Staff finance: "ketika klik tanggal bisa langsung muncul total
+   * penjualan pada payment methode tsb" — untuk monthly aggregator,
+   * statement provider sumber kebenaran, tapi reference POS sales bantu
+   * sanity check sebelum input. */
+  const [posReference, setPosReference] = useState<{
+    grossSales: number;
+    transactionCount: number;
+    loading: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!open || mode !== "manual" || !periodFrom || !periodTo) {
+      setPosReference(null);
+      return;
+    }
+    let cancelled = false;
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
+    setPosReference({ grossSales: 0, transactionCount: 0, loading: true });
+    void (async () => {
+      const res = await getAggregatorChannelSalesInRange({
+        channel,
+        fromDate: periodFrom,
+        toDate: periodTo,
+      });
+      if (cancelled) return;
+      if (res.ok) {
+        setPosReference({
+          grossSales: res.data.grossSales,
+          transactionCount: res.data.transactionCount,
+          loading: false,
+        });
+      } else {
+        setPosReference(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, mode, channel, periodFrom, periodTo]);
 
   /* Sesi AE-62ag — `aggregated` derived dari parseResult + mode, jadi useMemo
    * (pre-fix pakai useState + useEffect → lint set-state-in-effect cascade). */
@@ -385,6 +429,72 @@ export function AggregatorSettlementModal({ open, onClose, onSaved }: Props) {
               required
             />
           </div>
+          {/* Sesi AE-63 phase4 — POS reference card untuk sanity check.
+            * Hanya tampil untuk channel POS-tracked (EDC BCA + QRIS).
+            * GoFood/Grab/Shopee tidak punya per-transaction record di POS. */}
+          {posReference &&
+          (channel === "edc_bca" || channel === "qris") ? (
+            <div className="rounded-md border border-mahakan-green-700/30 bg-mahakan-green-50/40 p-3 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-mahakan-green-900">
+                    Referensi POS
+                  </p>
+                  {posReference.loading ? (
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Menghitung dari transaksi POS…
+                    </p>
+                  ) : posReference.grossSales === 0 ? (
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Belum ada transaksi POS untuk channel + periode ini.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="mt-0.5 font-mono text-base font-semibold text-mahakan-green-900">
+                        {formatRupiah(posReference.grossSales)}
+                      </p>
+                      <p className="text-xs text-neutral-600">
+                        {posReference.transactionCount} transaksi POS untuk{" "}
+                        {CHANNEL_OPTIONS.find((c) => c.value === channel)?.label}{" "}
+                        di periode ini
+                      </p>
+                    </>
+                  )}
+                </div>
+                {!posReference.loading && posReference.grossSales > 0 ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setGrossAmount(String(posReference.grossSales))
+                    }
+                  >
+                    Pakai sebagai Gross
+                  </Button>
+                ) : null}
+              </div>
+              <p className="mt-2 text-[11px] text-neutral-500">
+                Sanity check — sumber kebenaran tetap statement bank/provider
+                (bisa beda karena timing settle, refund, atau fee).
+              </p>
+            </div>
+          ) : null}
+          {/* Note untuk channel aggregator delivery (gofood/grab/shopee) */}
+          {(channel === "gofood" ||
+            channel === "grabfood" ||
+            channel === "shopeefood") &&
+          mode === "manual" ? (
+            <div className="rounded-md border border-blue-200 bg-blue-50/40 p-3 text-xs text-blue-900">
+              <p>
+                <span className="font-semibold">
+                  {CHANNEL_OPTIONS.find((c) => c.value === channel)?.label}
+                </span>{" "}
+                tidak tercatat per-transaksi di POS. Input gross dari statement
+                aggregator app atau import via CSV (tab di atas).
+              </p>
+            </div>
+          ) : null}
           <NumericInput
             label="Gross (sebelum fee)"
             value={grossAmount}

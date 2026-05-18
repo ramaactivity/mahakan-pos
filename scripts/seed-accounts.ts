@@ -128,6 +128,14 @@ const DEFAULTS: DefaultAccount[] = [
   { code: "6503", name: "Beban Penyusutan Peralatan Bar", type: "expense", normalBalance: "debit", parentCode: "6500", isSystem: false, isActiveOnSeed: false, displayOrder: 42, notes: "Sesi W" },
   { code: "6504", name: "Beban Penyusutan Peralatan IT", type: "expense", normalBalance: "debit", parentCode: "6500", isSystem: false, isActiveOnSeed: false, displayOrder: 43, notes: "Sesi W" },
 
+  // ============ 66xx CSR & Sosial (sesi AE-63 phase4) ============
+  /* Sesi AE-63 phase4 — staff finance request: "Request penambahan akun
+   * pada beban untuk: Sumbangan sosial, Corporate Social Responsibility
+   * Expense". Conceptually distinct dari operational store costs (63xx)
+   * + payment fees (64xx) → group sendiri 66xx. */
+  { code: "6601", name: "Sumbangan Sosial", type: "expense", normalBalance: "debit", parentCode: "6600", isSystem: false, displayOrder: 45, notes: "Manual entry — donasi ke yayasan/komunitas/individual yang tidak terkait promosi" },
+  { code: "6602", name: "Beban CSR (Corporate Social Responsibility)", type: "expense", normalBalance: "debit", parentCode: "6600", isSystem: false, displayOrder: 46, notes: "Manual entry — program CSR (mis. coffee for kids, neighbour outreach), beda dengan marketing yang track ROI" },
+
   // ============ 69xx Lain-lain ============
   { code: "6901", name: "Lain-lain", type: "expense", normalBalance: "debit", parentCode: "6900", isSystem: true, displayOrder: 50, notes: "Default fallback untuk expense tanpa akun explicit" },
   { code: "6902", name: "Selisih Kas (Variance Shift)", type: "expense", normalBalance: "debit", parentCode: "6900", isSystem: true, displayOrder: 51, notes: "Auto-debit/credit saat shift close dengan variance != 0" },

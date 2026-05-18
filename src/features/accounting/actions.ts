@@ -38,7 +38,7 @@ import {
   mapPeriodClose,
   type AccountBalance as PeriodCloseAccountBalance,
 } from "./mapping";
-import { recordJournal } from "./posting";
+import { recordJournal, resolveAccounts, validateLines } from "./posting";
 import {
   buildBalanceSheet,
   buildCashFlowStatement,
@@ -1208,6 +1208,196 @@ export async function deleteDraftJournalEntry(
   });
 
   return ok({ deleted: true, entryNumber: original.entryNumber });
+}
+
+/**
+ * Sesi AE-63 phase4 — Update draft journal entry in-place. Staff finance
+ * request: edit draft kalau ada kesalahan pencatatan, tanpa harus
+ * delete + recreate (yang akan ubah entry number).
+ *
+ * Atomicity: dalam satu transaction:
+ *   1. Re-validate semua lines (accounts exist + XOR + balance)
+ *   2. Update header (entryDate, description, status optional)
+ *   3. Delete old lines
+ *   4. Insert new lines dengan lineNumber baru
+ *
+ * Guards:
+ *  - RBAC: status='draft' → accounting.journal.draft; status='posted' →
+ *    accounting.journal.post (kalau update + post sekaligus, butuh hak post)
+ *  - Hanya sourceType='manual' (system entries immutable)
+ *  - Hanya entry status='draft' yang bisa di-edit. Posted → harus reverse.
+ *  - outletId scope match (defense-in-depth)
+ *
+ * Entry number TIDAK berubah (preserve audit trail kalau staff pernah
+ * forward ke owner sebelum edit).
+ */
+export type UpdateDraftJournalInput = {
+  entryId: string;
+  entryDate: string;
+  description: string;
+  lines: ManualJournalLineInput[];
+  /** Optional — kalau di-set 'posted', sekalian transition status saat update.
+   * Default tetap 'draft' (just save edits). */
+  newStatus?: "draft" | "posted";
+};
+
+export async function updateDraftJournalEntry(
+  input: UpdateDraftJournalInput,
+): Promise<
+  ApiResult<{ entryId: string; entryNumber: string; status: string }>
+> {
+  const session = await requireSession();
+  const targetStatus = input.newStatus ?? "draft";
+
+  if (targetStatus === "draft") {
+    if (!hasPermission(session.user.role, "accounting.journal.draft")) {
+      return fail("FORBIDDEN", "Tidak punya hak edit draft entry");
+    }
+  } else {
+    if (!hasPermission(session.user.role, "accounting.journal.post")) {
+      return fail("FORBIDDEN", "Hanya Owner yang dapat post entry");
+    }
+  }
+
+  if (!input.description || input.description.trim().length < 3) {
+    return fail("VALIDATION", "Deskripsi minimal 3 karakter");
+  }
+  if (!input.lines || input.lines.length < 2) {
+    return fail("VALIDATION", "Entry minimal 2 baris");
+  }
+  for (const l of input.lines) {
+    if (l.debit < 0 || l.credit < 0) {
+      return fail("VALIDATION", "Nilai debit/credit tidak boleh negatif");
+    }
+    if ((l.debit > 0 && l.credit > 0) || (l.debit === 0 && l.credit === 0)) {
+      return fail(
+        "VALIDATION",
+        "Setiap baris harus debit ATAU credit, bukan keduanya / kosong",
+      );
+    }
+  }
+
+  /* Fetch + validate target entry sebelum touch DB. */
+  const original = await getJournalEntryById(
+    session.user.outletId,
+    input.entryId,
+  );
+  if (!original) return fail("NOT_FOUND", "Entry tidak ditemukan");
+  if (original.status !== "draft") {
+    return fail(
+      "INVALID_STATE",
+      `Entry status ${original.status} — hanya draft yang bisa di-edit. Posted entry harus di-reverse.`,
+    );
+  }
+  if (original.sourceType !== "manual") {
+    return fail(
+      "INVALID_STATE",
+      "Hanya entry manual yang bisa di-edit. System entry harus melalui source-nya.",
+    );
+  }
+
+  /* Resolve + validate lines via shared posting helpers (DRY dengan
+   * recordJournal). Throws kalau ada masalah, kita catch + map ke
+   * structured error. */
+  let resolved: Awaited<ReturnType<typeof resolveAccounts>>;
+  try {
+    resolved = await resolveAccounts(
+      session.user.outletId,
+      input.lines.map((l) => ({
+        accountId: l.accountId,
+        debit: l.debit,
+        credit: l.credit,
+        description: l.description ?? null,
+      })),
+    );
+    validateLines(resolved);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.startsWith("ACCOUNT_NOT_FOUND")) {
+      return fail("VALIDATION", `Akun tidak ditemukan: ${msg.split(":")[1] ?? ""}`);
+    }
+    if (msg.startsWith("ACCOUNT_INACTIVE")) {
+      return fail("VALIDATION", `Akun nonaktif: ${msg.split(":")[1] ?? ""}`);
+    }
+    if (msg.startsWith("JOURNAL_IMBALANCED")) {
+      return fail("VALIDATION", "Debit tidak balance dengan credit");
+    }
+    return fail("VALIDATION", msg);
+  }
+
+  /* Apply update in transaction: header update + lines wipe + reinsert.
+   * journal_lines.entry_id ON DELETE CASCADE, tapi kita pakai explicit
+   * delete supaya bisa reinsert dengan urutan stabil. */
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(journalEntries)
+        .set({
+          entryDate: input.entryDate,
+          description: input.description.trim(),
+          status: targetStatus,
+          postedAt: targetStatus === "posted" ? new Date() : null,
+          postedBy: targetStatus === "posted" ? session.user.id : null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(journalEntries.id, input.entryId),
+            eq(journalEntries.outletId, session.user.outletId),
+            eq(journalEntries.status, "draft"),
+          ),
+        );
+
+      await tx
+        .delete(journalLines)
+        .where(eq(journalLines.entryId, input.entryId));
+
+      const linesToInsert = resolved.map((l, idx) => ({
+        entryId: input.entryId,
+        lineNumber: idx + 1,
+        accountId: l.accountId,
+        debit: l.debit,
+        credit: l.credit,
+        description: l.description,
+        metadata: l.metadata,
+      }));
+      await tx.insert(journalLines).values(linesToInsert);
+    });
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "accounting", "Operasi database gagal"),
+    );
+  }
+
+  await logAudit({
+    eventType:
+      targetStatus === "posted"
+        ? "journal_entry.post"
+        : "journal_entry.update_draft",
+    userId: session.user.id,
+    entityType: "journal_entry",
+    entityId: input.entryId,
+    payload: {
+      summary: `Edit ${original.entryNumber} (${targetStatus}) — ${input.description}`,
+      before: {
+        description: original.description,
+        entryDate: original.entryDate,
+        lineCount: original.lines.length,
+      },
+      after: {
+        description: input.description.trim(),
+        entryDate: input.entryDate,
+        lineCount: input.lines.length,
+      },
+    },
+  });
+
+  return ok({
+    entryId: input.entryId,
+    entryNumber: original.entryNumber,
+    status: targetStatus,
+  });
 }
 
 // ============================================================

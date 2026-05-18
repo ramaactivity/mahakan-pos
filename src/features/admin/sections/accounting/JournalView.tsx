@@ -7,6 +7,7 @@ import {
   Filter,
   Info,
   Loader2,
+  Pencil,
   Plus,
   RotateCcw,
   Trash2,
@@ -87,6 +88,10 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
   const [rows, setRows] = useState<JournalEntryWithLines[]>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  /* Sesi AE-63 phase4 — edit-in-place untuk draft entry. */
+  const [editEntry, setEditEntry] = useState<JournalEntryWithLines | null>(
+    null,
+  );
 
   // Filters
   const [filterSourceType, setFilterSourceType] = useState<string>("all");
@@ -379,8 +384,10 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
           rows={rows}
           canReverse={canReverse}
           canDeleteDraft={canPost}
+          canEditDraft={canDraft}
           onReverse={onReverse}
           onDeleteDraft={onDeleteDraft}
+          onEditDraft={setEditEntry}
         />
       )}
 
@@ -395,6 +402,19 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
           isOwner={viewerRole === "owner"}
         />
       ) : null}
+
+      {editEntry ? (
+        <JournalEntryModal
+          open={editEntry != null}
+          editEntry={editEntry}
+          onClose={() => setEditEntry(null)}
+          onSaved={() => {
+            setEditEntry(null);
+            void load();
+          }}
+          isOwner={viewerRole === "owner"}
+        />
+      ) : null}
     </div>
   );
 }
@@ -403,14 +423,18 @@ function RowList({
   rows,
   canReverse,
   canDeleteDraft,
+  canEditDraft,
   onReverse,
   onDeleteDraft,
+  onEditDraft,
 }: {
   rows: JournalEntryWithLines[];
   canReverse: boolean;
   canDeleteDraft: boolean;
+  canEditDraft: boolean;
   onReverse: (e: JournalEntryWithLines) => void;
   onDeleteDraft: (e: JournalEntryWithLines) => void;
+  onEditDraft: (e: JournalEntryWithLines) => void;
 }) {
   return (
     <div className="space-y-2">
@@ -452,6 +476,23 @@ function RowList({
                   title="Reverse entry (posted)"
                 >
                   <RotateCcw className="size-3.5" />
+                </button>
+              ) : null}
+              {/* Sesi AE-63 phase4 — edit draft entry (only draft+manual). */}
+              {canEditDraft &&
+              entry.status === "draft" &&
+              entry.sourceType === "manual" ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onEditDraft(entry);
+                  }}
+                  className="inline-flex items-center gap-1 rounded p-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-mahakan-green-700"
+                  aria-label={`Edit draft ${entry.entryNumber}`}
+                  title="Edit draft"
+                >
+                  <Pencil className="size-3.5" />
                 </button>
               ) : null}
               {/* Sesi AE-63 phase4 — delete draft entry (only draft+manual). */}

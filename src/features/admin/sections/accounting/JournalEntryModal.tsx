@@ -15,8 +15,12 @@ import {
 import {
   fetchAccounts,
   saveManualJournal,
+  updateDraftJournalEntry,
 } from "@/features/accounting/actions";
-import type { AccountListRow } from "@/features/accounting/types";
+import type {
+  AccountListRow,
+  JournalEntryWithLines,
+} from "@/features/accounting/types";
 import { formatRupiah } from "@/lib/money";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +30,10 @@ interface Props {
   onSaved: () => void;
   /** Owner can post directly. Manager can save as draft. */
   isOwner: boolean;
+  /** Sesi AE-63 phase4 — kalau di-set, modal berjalan di edit mode.
+   * Pre-fill date/description/lines dari draft. Pada save, panggil
+   * updateDraftJournalEntry (entryId stable, no new entry number). */
+  editEntry?: JournalEntryWithLines | null;
 }
 
 type LineDraft = {
@@ -46,7 +54,14 @@ function blankLine(): LineDraft {
   };
 }
 
-export function JournalEntryModal({ open, onClose, onSaved, isOwner }: Props) {
+export function JournalEntryModal({
+  open,
+  onClose,
+  onSaved,
+  isOwner,
+  editEntry,
+}: Props) {
+  const isEdit = editEntry != null;
   const [accounts, setAccounts] = useState<AccountListRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -59,9 +74,31 @@ export function JournalEntryModal({ open, onClose, onSaved, isOwner }: Props) {
   useEffect(() => {
     if (!open) return;
     /* eslint-disable react-hooks/set-state-in-effect */
-    setEntryDate(new Date().toISOString().slice(0, 10));
-    setDescription("");
-    setLines([blankLine(), blankLine()]);
+    if (editEntry) {
+      /* Pre-fill from existing draft. entryDate dari DB kemungkinan
+       * sudah YYYY-MM-DD string atau Date — coerce ke string. */
+      const dateStr =
+        typeof editEntry.entryDate === "string"
+          ? editEntry.entryDate
+          : new Date(editEntry.entryDate).toISOString().slice(0, 10);
+      setEntryDate(dateStr);
+      setDescription(editEntry.description);
+      setLines(
+        editEntry.lines.length >= 2
+          ? editEntry.lines.map((l) => ({
+              id: l.id,
+              accountId: l.accountId,
+              debit: String(Number(l.debit) || 0),
+              credit: String(Number(l.credit) || 0),
+              description: l.description ?? "",
+            }))
+          : [blankLine(), blankLine()],
+      );
+    } else {
+      setEntryDate(new Date().toISOString().slice(0, 10));
+      setDescription("");
+      setLines([blankLine(), blankLine()]);
+    }
     setError(null);
     setLoading(true);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -71,7 +108,7 @@ export function JournalEntryModal({ open, onClose, onSaved, isOwner }: Props) {
         else toast.error(res.error.message);
       })
       .finally(() => setLoading(false));
-  }, [open]);
+  }, [open, editEntry]);
 
   const accountOptions: ComboboxOption[] = useMemo(
     () =>
@@ -143,24 +180,37 @@ export function JournalEntryModal({ open, onClose, onSaved, isOwner }: Props) {
     }
 
     setSubmitting(true);
-    const res = await saveManualJournal({
-      entryDate,
-      description: description.trim(),
-      status,
-      lines: validLines.map((l) => ({
-        accountId: l.accountId!,
-        debit: Number(l.debit),
-        credit: Number(l.credit),
-        description: l.description.trim() || null,
-      })),
-    });
+    const inputLines = validLines.map((l) => ({
+      accountId: l.accountId!,
+      debit: Number(l.debit),
+      credit: Number(l.credit),
+      description: l.description.trim() || null,
+    }));
+    const res = isEdit
+      ? await updateDraftJournalEntry({
+          entryId: editEntry!.id,
+          entryDate,
+          description: description.trim(),
+          newStatus: status,
+          lines: inputLines,
+        })
+      : await saveManualJournal({
+          entryDate,
+          description: description.trim(),
+          status,
+          lines: inputLines,
+        });
     setSubmitting(false);
 
     if (res.ok) {
       toast.success(
-        status === "draft"
-          ? `Draft ${res.data.entryNumber} disimpan`
-          : `Entry ${res.data.entryNumber} terposting`,
+        isEdit
+          ? status === "posted"
+            ? `Entry ${res.data.entryNumber} ter-edit + ter-post`
+            : `Draft ${res.data.entryNumber} ter-update`
+          : status === "draft"
+            ? `Draft ${res.data.entryNumber} disimpan`
+            : `Entry ${res.data.entryNumber} terposting`,
       );
       onSaved();
     } else {
@@ -172,11 +222,13 @@ export function JournalEntryModal({ open, onClose, onSaved, isOwner }: Props) {
     <Modal
       open={open}
       onClose={onClose}
-      title="Entry Jurnal Manual"
+      title={isEdit ? `Edit Draft ${editEntry!.entryNumber}` : "Entry Jurnal Manual"}
       description={
-        isOwner
-          ? "Owner: post langsung atau save as draft. Reverse via Jurnal tab kalau perlu."
-          : "Manager: save as draft. Owner approve + post via Jurnal tab."
+        isEdit
+          ? "Edit draft entry. Save changes sebagai draft, atau post langsung (Owner) sekalian."
+          : isOwner
+            ? "Owner: post langsung atau save as draft. Reverse via Jurnal tab kalau perlu."
+            : "Manager: save as draft. Owner approve + post via Jurnal tab."
       }
       size="3xl"
       footer={

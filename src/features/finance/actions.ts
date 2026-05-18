@@ -7,7 +7,10 @@ import {
   cashDeposits,
   chartOfAccounts,
   reconciliationNotes,
+  splitPayments,
+  transactions,
 } from "@/db/schema";
+import { sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
@@ -187,6 +190,110 @@ export async function fetchAggregatorSettlements(opts?: {
     ...opts,
   });
   return ok(data);
+}
+
+/**
+ * Sesi AE-63 phase4 — Sales-by-channel reference untuk aggregator settlement
+ * form. Staff finance request: "ketika klik tanggal bisa langsung muncul
+ * total penjualan pada payment methode tsb". Untuk aggregator (monthly
+ * statement), ini reference SUM POS sales channel itu di periode tsb —
+ * staff bisa sanity-check statement vs POS sebelum input gross.
+ *
+ * Channel mapping: AggregatorChannel pakai `edc_bca`/`qris`/aggregator
+ * names, sedangkan transactions.paymentMethod pakai `card_bca` untuk EDC.
+ * Map di sini.
+ *
+ * Range inklusif: [fromDate, toDate] WIB hari penuh.
+ */
+export async function getAggregatorChannelSalesInRange(args: {
+  channel: AggregatorChannel;
+  fromDate: string;
+  toDate: string;
+}): Promise<
+  ApiResult<{
+    grossSales: number;
+    transactionCount: number;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "aggregator_settlement.view")) {
+    return fail("FORBIDDEN", "Tidak punya akses settlement aggregator");
+  }
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(args.fromDate) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(args.toDate)
+  ) {
+    return fail("INVALID_DATE", "Format tanggal harus YYYY-MM-DD");
+  }
+  if (args.toDate < args.fromDate) {
+    return fail("INVALID_DATE", "Tanggal akhir harus >= awal");
+  }
+
+  /* Map aggregator channel → payment_method canonical di transactions.
+   * Aggregator delivery channels (gofood/grabfood/shopeefood) TIDAK tracked
+   * per-transaction di POS — sales-nya bulk via aggregator settlement
+   * statement. Return 0 untuk channel ini biar staff sadar no POS reference. */
+  type PosPaymentMethod =
+    | "qris"
+    | "card_bca"
+    | "card_bni"
+    | "card_mandiri"
+    | "card_bri"
+    | "card_other";
+  let paymentMethod: PosPaymentMethod;
+  if (args.channel === "edc_bca") paymentMethod = "card_bca";
+  else if (args.channel === "qris") paymentMethod = "qris";
+  else {
+    /* gofood/grabfood/shopeefood: no POS reference data. */
+    return ok({ grossSales: 0, transactionCount: 0 });
+  }
+
+  /* WIB inclusive range: from 00:00 WIB to next-day 00:00 WIB. */
+  const dayStartUtc = new Date(`${args.fromDate}T00:00:00+07:00`);
+  const dayEndExclusiveUtc = new Date(`${args.toDate}T00:00:00+07:00`);
+  dayEndExclusiveUtc.setUTCDate(dayEndExclusiveUtc.getUTCDate() + 1);
+
+  /* Single-method transactions (status='paid', exclude split parents). */
+  const trxAgg = await db
+    .select({
+      total: sql<string>`COALESCE(SUM(${transactions.total}), 0)`,
+      count: sql<string>`COUNT(*)`,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.outletId, session.user.outletId),
+        eq(transactions.status, "paid"),
+        eq(transactions.paymentMethod, paymentMethod),
+        gte(transactions.createdAt, dayStartUtc),
+        lte(transactions.createdAt, dayEndExclusiveUtc),
+      ),
+    );
+
+  /* Split legs untuk payment_method ini (parent must be paid). */
+  const splitAgg = await db
+    .select({
+      total: sql<string>`COALESCE(SUM(${splitPayments.amount}), 0)`,
+      count: sql<string>`COUNT(*)`,
+    })
+    .from(splitPayments)
+    .innerJoin(transactions, eq(transactions.id, splitPayments.transactionId))
+    .where(
+      and(
+        eq(splitPayments.outletId, session.user.outletId),
+        eq(splitPayments.paymentMethod, paymentMethod),
+        eq(transactions.status, "paid"),
+        gte(transactions.createdAt, dayStartUtc),
+        lte(transactions.createdAt, dayEndExclusiveUtc),
+      ),
+    );
+
+  const grossSales =
+    Number(trxAgg[0]?.total ?? 0) + Number(splitAgg[0]?.total ?? 0);
+  const transactionCount =
+    Number(trxAgg[0]?.count ?? 0) + Number(splitAgg[0]?.count ?? 0);
+
+  return ok({ grossSales, transactionCount });
 }
 
 export async function fetchHutangOutstanding(): Promise<
