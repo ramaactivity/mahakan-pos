@@ -159,6 +159,19 @@ export const permissions = {
   "payroll.view": ["owner", "manager"],
   "payroll.manage": ["owner"],
 
+  /* Sesi AE-63 — Investor & Pengelola module.
+   * Owner kontrol penuh — manager bisa view + compute draft tapi cuma owner
+   * yang bisa approve+post jurnal (mirror payroll.markPaid pattern). */
+  "investor.view": ["owner", "manager"],
+  "investor.manage": ["owner"],
+  "investor.import": ["owner"],
+  "pengelola.view": ["owner", "manager"],
+  "pengelola.manage": ["owner"],
+  "distribution.view": ["owner", "manager"],
+  "distribution.compute": ["owner", "manager"],
+  "distribution.approve": ["owner"],
+  "investor_statement.resend": ["owner"],
+
   // Promos / Campaigns (Sesi K). View read-only at backoffice; manage =
   // create/update/archive. Apply lives under pos.promo.apply. Supervisor
   // view only — manage promo bisa abuse jadi diskon liar.

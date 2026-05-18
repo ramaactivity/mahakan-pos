@@ -189,6 +189,17 @@ export const journalEntries = pgTable(
          * tidak collide dengan original pos_sale source key — lihat Trap T8). */
         "pos_sale_reversal",
         "pos_sale_correction",
+        /* Sesi AE-63 — Investor / Pengelola modal flows.
+         * capital_injection: Dr 1101/Cash Cr 3101 Modal Owner (saat
+         *   investor/pengelola setor modal awal atau top-up).
+         * capital_withdrawal: Dr 3201 Prive Cr 1101 (saat investor exit
+         *   dan tarik modal — beda dari dividen).
+         * dividend_distribution: Dr 3201 Prive Cr 1101 bulk per period
+         *   (saat profit_distribution status='posted'). 1 header entry
+         *   dengan N lines per holder. */
+        "capital_injection",
+        "capital_withdrawal",
+        "dividend_distribution",
       ],
     }).notNull(),
 

@@ -132,6 +132,24 @@ export const AUDIT_EVENT_TYPES = [
    * jadi userId NULL — context cukup pakai entityId / payload.summary. */
   "attendance_mobile.pin_invalid",
   "attendance_mobile.pin_inactive_employee",
+  /* Sesi AE-63 — Investor + Pengelola + Profit Distribution lifecycle */
+  "investor.create",
+  "investor.update",
+  "investor.delete",
+  "investor.import",
+  "pengelola.create",
+  "pengelola.update",
+  "pengelola.delete",
+  "capital_movement.create",
+  "capital_movement.delete",
+  "distribution.compute",
+  "distribution.approve",
+  "distribution.post",
+  "distribution.cancel",
+  "distribution.recompute",
+  "investor_statement.send",
+  "investor_statement.resend",
+  "investor_statement.failed",
   // HR (Sesi C-8) — Schedule + Payroll.
   "schedule.upsert",
   "schedule.copy_week",
@@ -287,6 +305,13 @@ export type AuditEntityType =
   | "payroll_line"
   | "payroll_payslip_email"
   | "employee_advance"
+  /* Sesi AE-63 — Modal & Dividen */
+  | "investor"
+  | "pengelola"
+  | "capital_movement"
+  | "profit_distribution"
+  | "profit_distribution_line"
+  | "investor_statement_email"
   | "promo"
   | "employee_career_history"
   | "stock_opname_session"

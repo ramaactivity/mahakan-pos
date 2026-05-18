@@ -52,7 +52,11 @@ export type JournalSourceType =
   | "period_reopen"
   /* Sesi AE-62r — per-transaction correction (paymentMethod/total swap). */
   | "pos_sale_reversal"
-  | "pos_sale_correction";
+  | "pos_sale_correction"
+  /* Sesi AE-63 — Investor / Pengelola modal & dividen flows. */
+  | "capital_injection"
+  | "capital_withdrawal"
+  | "dividend_distribution";
 
 export type JournalEntryStatus = "draft" | "posted" | "reversed";
 

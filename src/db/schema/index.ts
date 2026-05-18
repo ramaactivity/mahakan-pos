@@ -32,3 +32,8 @@ export * from "./market_list";
 export * from "./reconciliation_notes";
 export * from "./employee_advances";
 export * from "./historical";
+export * from "./investors";
+export * from "./pengelola";
+export * from "./capital_movements";
+export * from "./profit_distributions";
+export * from "./investor_statement_emails";
