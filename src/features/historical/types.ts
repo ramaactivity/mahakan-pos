@@ -67,6 +67,9 @@ export interface BulkImportResult {
   updated: number;
   total: number;
   dateRange: { from: string; to: string };
+  /** Sesi AE-62z — rows yang di-skip karena duplicate hash match (re-upload).
+   * historical_expense only (summary upsert tetap pakai updated counter). */
+  skipped?: number;
 }
 
 export interface CreateHistoricalExpenseInput {

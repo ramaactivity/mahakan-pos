@@ -540,26 +540,73 @@ export async function fetchSalesRangeReport(
   const averageTicket =
     paid.length > 0 ? Math.round(revenue / paid.length) : 0;
 
-  const byPaymentMethod: PaymentMethodBreakdown[] = (
-    [
-      "cash",
-      "qris",
-      "card_bca",
-      "card_bni",
-      "card_mandiri",
-      "card_bri",
-      "card_other",
-    ] as const
+  /* Sesi AE-62z — split payment fan-out (mirror fetchDailySalesReport AE-62g).
+   * Sebelumnya: split trx (paymentMethod='split') tidak ke-attribute ke cash/
+   * QRIS/card legs → range report under-state per-method by 100% untuk
+   * split trx. Sekarang: fetch splitPayments legs + fan-out per method. */
+  const rangePaidIds = paid.map((p) => p.id);
+  const methodAggregateRange = new Map<
+    string,
+    { method: PaymentMethod; count: number; amount: number }
+  >();
+  // Non-split paid trx — count langsung ke their payment method.
+  for (const t of paid) {
+    if (t.paymentMethod === "split") continue;
+    const cur = methodAggregateRange.get(t.paymentMethod) ?? {
+      method: t.paymentMethod as PaymentMethod,
+      count: 0,
+      amount: 0,
+    };
+    cur.count += 1;
+    cur.amount += netTotal(t);
+    methodAggregateRange.set(t.paymentMethod, cur);
+  }
+  // Split paid trx — fan-out tiap leg ke methodnya. Pro-rate refund proporsional.
+  if (rangePaidIds.length > 0) {
+    const splitRowsRange = await db
+      .select({
+        transactionId: splitPayments.transactionId,
+        paymentMethod: splitPayments.paymentMethod,
+        amount: splitPayments.amount,
+      })
+      .from(splitPayments)
+      .where(inArray(splitPayments.transactionId, rangePaidIds));
+    const legsByTrxRange = new Map<
+      string,
+      Array<{ method: string; amount: number }>
+    >();
+    for (const r of splitRowsRange) {
+      const arr = legsByTrxRange.get(r.transactionId) ?? [];
+      arr.push({ method: r.paymentMethod, amount: r.amount });
+      legsByTrxRange.set(r.transactionId, arr);
+    }
+    for (const t of paid) {
+      const legs = legsByTrxRange.get(t.id);
+      if (!legs || legs.length === 0) continue;
+      const gross = legs.reduce((s, l) => s + l.amount, 0);
+      const refundShare = (legAmt: number) =>
+        gross > 0 ? Math.round((t.refundedAmount * legAmt) / gross) : 0;
+      const seenMethods = new Set<string>();
+      for (const leg of legs) {
+        const cur = methodAggregateRange.get(leg.method) ?? {
+          method: leg.method as PaymentMethod,
+          count: 0,
+          amount: 0,
+        };
+        if (!seenMethods.has(leg.method)) {
+          cur.count += 1;
+          seenMethods.add(leg.method);
+        }
+        cur.amount += leg.amount - refundShare(leg.amount);
+        methodAggregateRange.set(leg.method, cur);
+      }
+    }
+  }
+  const byPaymentMethod: PaymentMethodBreakdown[] = Array.from(
+    methodAggregateRange.values(),
   )
-    .map((method) => {
-      const rows = paid.filter((t) => t.paymentMethod === method);
-      return {
-        method: method as PaymentMethod,
-        count: rows.length,
-        amount: rows.reduce((s, t) => s + netTotal(t), 0),
-      };
-    })
-    .filter((row) => row.count > 0);
+    .filter((row) => row.count > 0)
+    .sort((a, b) => b.amount - a.amount);
 
   // Build daily bucket map (WIB day key)
   const wibDateKey = (d: Date) => {

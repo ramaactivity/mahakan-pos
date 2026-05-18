@@ -1,5 +1,6 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { and, between, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -432,6 +433,9 @@ export async function listHistoricalExpenses(
       amount: historicalExpense.amount,
       description: historicalExpense.description,
       sourceLabel: historicalExpense.sourceLabel,
+      /* Sesi AE-62z — sourceRowHash include supaya inferred type match
+       * HistoricalExpenseRow (which extends auto-inferred HistoricalExpense). */
+      sourceRowHash: historicalExpense.sourceRowHash,
       createdBy: historicalExpense.createdBy,
       createdAt: historicalExpense.createdAt,
       masterCategoryName: expenseCategories.name,
@@ -454,11 +458,41 @@ export async function listHistoricalExpenses(
     amount: r.amount,
     description: r.description,
     sourceLabel: r.sourceLabel,
+    sourceRowHash: r.sourceRowHash,
     createdBy: r.createdBy,
     createdAt: r.createdAt,
     categoryLabel: r.masterCategoryName ?? r.categoryLabelLegacy,
   }));
   return ok(out);
+}
+
+/**
+ * Sesi AE-62z — deterministic row hash untuk idempotent CSV re-upload.
+ *
+ * Canonical input: business_date, category-identity (id atau label trim-lc),
+ * amount, description (trim-lc, null → ""). Output: SHA-256 hex truncated
+ * 32 chars (collision risk negligible di owner scale).
+ *
+ * Berbeda row di owner CSV (mis. 2 expense beda description tapi same
+ * category+date+amount) → hash beda → insert sukses. Re-upload row sama
+ * persis → hash sama → ON CONFLICT DO NOTHING di partial UNIQUE.
+ */
+function computeHistoricalExpenseRowHash(input: {
+  businessDate: string;
+  categoryId: string | null | undefined;
+  categoryLabelLegacy: string | null | undefined;
+  amount: number;
+  description: string | null | undefined;
+}): string {
+  const canonical = [
+    input.businessDate,
+    /* CategoryId menang kalau ada; else fallback ke label-lc untuk match
+     * row dengan category yang tidak ke-link ke master. */
+    input.categoryId ?? `legacy:${(input.categoryLabelLegacy ?? "").trim().toLowerCase()}`,
+    String(input.amount),
+    (input.description ?? "").trim().toLowerCase(),
+  ].join("|");
+  return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }
 
 export async function bulkImportHistoricalExpenses(
@@ -499,8 +533,10 @@ export async function bulkImportHistoricalExpenses(
   const minDate = dates.reduce((a, b) => (a < b ? a : b));
   const maxDate = dates.reduce((a, b) => (a > b ? a : b));
 
-  // Expense tidak punya unique constraint (kalau di-re-upload, akan duplicate).
-  // Owner harus aware. UI wizard akan warn kalau range overlap dengan existing.
+  /* Sesi AE-62z — compute deterministic hash per row. Use ON CONFLICT DO
+   * NOTHING di partial UNIQUE (ux_hist_expense_outlet_row_hash) supaya
+   * re-upload skip duplikat. Returning row ids = newly-inserted, sisa =
+   * skipped (already existed). Owner UI tampil count inserted vs skipped. */
   const values = input.rows.map((r) => ({
     outletId: session.user.outletId,
     businessDate: r.businessDate,
@@ -509,12 +545,23 @@ export async function bulkImportHistoricalExpenses(
     amount: r.amount,
     description: r.description ?? null,
     sourceLabel: r.sourceLabel ?? input.sourceLabel,
+    sourceRowHash: computeHistoricalExpenseRowHash({
+      businessDate: r.businessDate,
+      categoryId: r.categoryId ?? null,
+      categoryLabelLegacy: r.categoryLabelLegacy ?? null,
+      amount: r.amount,
+      description: r.description ?? null,
+    }),
     createdBy: session.user.id,
   }));
   const insertedRows = await db
     .insert(historicalExpense)
     .values(values)
+    .onConflictDoNothing({
+      target: [historicalExpense.outletId, historicalExpense.sourceRowHash],
+    })
     .returning({ id: historicalExpense.id });
+  const skippedCount = input.rows.length - insertedRows.length;
 
   const result: BulkImportResult = {
     inserted: insertedRows.length,
@@ -529,9 +576,13 @@ export async function bulkImportHistoricalExpenses(
     entityType: "historical_expense",
     entityId: null,
     payload: {
-      summary: `Import ${insertedRows.length} expense (${minDate} → ${maxDate})`,
+      summary:
+        skippedCount > 0
+          ? `Import ${insertedRows.length} expense (${minDate} → ${maxDate}) · ${skippedCount} skipped (duplicate)`
+          : `Import ${insertedRows.length} expense (${minDate} → ${maxDate})`,
       context: {
         ...result,
+        skipped: skippedCount,
         sourceLabel: input.sourceLabel,
       },
     },
@@ -541,7 +592,7 @@ export async function bulkImportHistoricalExpenses(
     },
   }).catch((e) => console.error("[audit historical.import_expense]", e));
 
-  return ok(result);
+  return ok({ ...result, skipped: skippedCount });
 }
 
 export async function createHistoricalExpense(
@@ -557,7 +608,17 @@ export async function createHistoricalExpense(
   if (!Number.isFinite(input.amount) || input.amount <= 0) {
     return fail("VALIDATION_ERROR", "Amount harus > 0");
   }
-  const [created] = await db
+  /* Sesi AE-62z — compute hash + ON CONFLICT DO NOTHING. Owner click
+   * "Tambah Expense" 2x dengan nilai sama → second click return existing
+   * (idempotent), no duplicate. */
+  const rowHash = computeHistoricalExpenseRowHash({
+    businessDate: input.businessDate,
+    categoryId: input.categoryId ?? null,
+    categoryLabelLegacy: input.categoryLabelLegacy ?? null,
+    amount: input.amount,
+    description: input.description ?? null,
+  });
+  const insertedRows = await db
     .insert(historicalExpense)
     .values({
       outletId: session.user.outletId,
@@ -567,9 +628,34 @@ export async function createHistoricalExpense(
       amount: input.amount,
       description: input.description ?? null,
       sourceLabel: input.sourceLabel ?? null,
+      sourceRowHash: rowHash,
       createdBy: session.user.id,
     })
+    .onConflictDoNothing({
+      target: [historicalExpense.outletId, historicalExpense.sourceRowHash],
+    })
     .returning();
+  let created: typeof historicalExpense.$inferSelect;
+  if (insertedRows.length > 0) {
+    created = insertedRows[0]!;
+  } else {
+    /* Race / re-submit: row dengan hash sama sudah ada. Return existing
+     * supaya UI tetap sukses + show existing detail. */
+    const [existing] = await db
+      .select()
+      .from(historicalExpense)
+      .where(
+        and(
+          eq(historicalExpense.outletId, session.user.outletId),
+          eq(historicalExpense.sourceRowHash, rowHash),
+        ),
+      )
+      .limit(1);
+    if (!existing) {
+      return fail("DB_ERROR", "Gagal insert historical expense");
+    }
+    created = existing;
+  }
   if (!created) return fail("INTERNAL", "Gagal simpan");
   return ok(created);
 }

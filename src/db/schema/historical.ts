@@ -8,6 +8,7 @@ import {
   integer,
   date,
   index,
+  uniqueIndex,
   check,
   unique,
 } from "drizzle-orm/pg-core";
@@ -127,6 +128,13 @@ export const historicalExpense = pgTable(
 
     sourceLabel: text("source_label"),
 
+    /** Sesi AE-62z — deterministic hash dari canonical
+     * (businessDate, categoryId-or-label, amount, description-trim-lc).
+     * Idempotent re-upload: kalau owner upload CSV 2x, hash match → ON
+     * CONFLICT DO NOTHING, no duplicate. Sebelumnya tidak ada UNIQUE
+     * → P&L over-count kalau re-upload. */
+    sourceRowHash: text("source_row_hash"),
+
     createdBy: uuid("created_by")
       .notNull()
       .references(() => users.id),
@@ -137,6 +145,11 @@ export const historicalExpense = pgTable(
   (t) => [
     index("idx_hist_expense_outlet_date").on(t.outletId, t.businessDate),
     index("idx_hist_expense_category").on(t.categoryId),
+    /** Sesi AE-62z — partial UNIQUE untuk idempotent insert. Legacy rows
+     * (sourceRowHash NULL) tetap valid. */
+    uniqueIndex("ux_hist_expense_outlet_row_hash")
+      .on(t.outletId, t.sourceRowHash)
+      .where(sql`${t.sourceRowHash} IS NOT NULL`),
     check("ck_hist_expense_amount_pos", sql`${t.amount} > 0`),
   ],
 );

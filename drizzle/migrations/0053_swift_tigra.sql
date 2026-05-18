@@ -1,0 +1,2 @@
+ALTER TABLE "historical_expense" ADD COLUMN "source_row_hash" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "ux_hist_expense_outlet_row_hash" ON "historical_expense" USING btree ("outlet_id","source_row_hash") WHERE "historical_expense"."source_row_hash" IS NOT NULL;

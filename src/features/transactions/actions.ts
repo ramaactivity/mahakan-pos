@@ -565,7 +565,38 @@ export async function createTransaction(
       // Sesi K — when discount sourced from a master promo, record the
       // usage + bump currentUses. Both inside the same DB tx so a rollback
       // (e.g. stock failure later) also rolls back the usage row.
+      //
+      // Sesi AE-62z — SELECT FOR UPDATE pada promo + pre-validate
+      // currentUses+1 vs maxTotalUses. Schema CHECK constraint sudah
+      // guard (ck_promos_uses_consistent), tapi tanpa pre-check error
+      // surface ke kasir sebagai "DB_ERROR" generic. Sekarang explicit
+      // PROMO_MAX_USES_EXCEEDED supaya kasir tahu promo udah habis.
       if (v.promoId && validation.recomputedDiscountAmount > 0) {
+        const [promoLocked] = await tx
+          .select({
+            id: promos.id,
+            currentUses: promos.currentUses,
+            maxTotalUses: promos.maxTotalUses,
+            status: promos.status,
+          })
+          .from(promos)
+          .where(eq(promos.id, v.promoId))
+          .for("update")
+          .limit(1);
+        if (!promoLocked) {
+          throw new Error("PROMO_NOT_FOUND");
+        }
+        if (promoLocked.status !== "active") {
+          throw new Error(`PROMO_NOT_ACTIVE:${promoLocked.status}`);
+        }
+        if (
+          promoLocked.maxTotalUses !== null &&
+          promoLocked.currentUses + 1 > promoLocked.maxTotalUses
+        ) {
+          throw new Error(
+            `PROMO_MAX_USES_EXCEEDED:${promoLocked.maxTotalUses}`,
+          );
+        }
         await tx.insert(promoUsages).values({
           promoId: v.promoId,
           transactionId: insertedTrx.id,
@@ -848,6 +879,24 @@ export async function createTransaction(
       return fail(
         "APPROVER_TOKEN_INVALID",
         e.message.replace(/^APPROVER_TOKEN_INVALID:/, "") || "Token gagal",
+      );
+    }
+    /* Sesi AE-62z — promo guard errors. */
+    if (e instanceof Error && e.message === "PROMO_NOT_FOUND") {
+      return fail("PROMO_NOT_FOUND", "Promo tidak ditemukan");
+    }
+    if (e instanceof Error && e.message.startsWith("PROMO_NOT_ACTIVE:")) {
+      const status = e.message.replace(/^PROMO_NOT_ACTIVE:/, "");
+      return fail(
+        "PROMO_NOT_ACTIVE",
+        `Promo tidak aktif (status: ${status}). Pilih promo lain atau hapus promo dari bill.`,
+      );
+    }
+    if (e instanceof Error && e.message.startsWith("PROMO_MAX_USES_EXCEEDED:")) {
+      const max = e.message.replace(/^PROMO_MAX_USES_EXCEEDED:/, "");
+      return fail(
+        "PROMO_MAX_USES_EXCEEDED",
+        `Promo sudah mencapai batas maksimal (${max}). Pilih promo lain atau hapus dari bill.`,
       );
     }
     return fail("DB_ERROR", logAndSanitize(e, "transactions", "Operasi database gagal"));
