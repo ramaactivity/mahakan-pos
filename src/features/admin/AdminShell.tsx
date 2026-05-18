@@ -86,7 +86,7 @@ export function AdminShell() {
         ) : section === "reports" ? (
           <ReportsSection viewerRole={session.user.role} />
         ) : section === "audit" ? (
-          <AuditLogSection />
+          <AuditLogSection viewerRole={session.user.role} />
         ) : section === "settings" ? (
           <SettingsSection />
         ) : null}

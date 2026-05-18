@@ -40,5 +40,10 @@ export async function listAuditLogs(
   if (!canViewAll && !canViewStaff) {
     return fail("FORBIDDEN", "Tidak punya hak lihat audit log");
   }
-  return ok(await fetchAuditLogs(opts));
+  /* Sesi AE-62u — server-enforced scope: owner=all, others=staff_visible
+   * (strip restricted prefixes regardless of input opts.scope). */
+  const enforcedScope: "all" | "staff_visible" = canViewAll
+    ? "all"
+    : "staff_visible";
+  return ok(await fetchAuditLogs({ ...opts, scope: enforcedScope }));
 }

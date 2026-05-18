@@ -18,10 +18,11 @@ import {
 } from "@/components/ui";
 import { listAuditLogs } from "@/features/audit";
 import type { AuditLogRow } from "@/lib/audit";
-import { AUDIT_EVENT_TYPES } from "@/lib/audit";
+import { AUDIT_EVENT_TYPES, isStaffVisibleEvent } from "@/lib/audit";
 import { formatDateTime } from "@/lib/format";
 import { todayWibIso } from "@/features/cash/helpers";
 import { downloadCsv } from "./reports/menu-engineering-csv";
+import type { Role } from "@/lib/auth";
 
 const EXPORT_CAP = 5000;
 
@@ -90,7 +91,15 @@ const EVENT_TONE: Record<
   "user.reset_pin": "warning",
 };
 
-export function AuditLogSection() {
+interface AuditLogSectionProps {
+  /** Sesi AE-62u — viewer role untuk gating filter dropdown + copy badge.
+   * Owner = lihat semua event. Manager/supervisor = aksi staff saja
+   * (server-side enforced, ini UI hint). */
+  viewerRole: Role;
+}
+
+export function AuditLogSection({ viewerRole }: AuditLogSectionProps) {
+  const isOwner = viewerRole === "owner";
   const [eventType, setEventType] = useState<string>("all");
   const today = useMemo(() => todayWibIso(), []);
   const [fromDate, setFromDate] = useState<string>(() => {
@@ -183,9 +192,22 @@ export function AuditLogSection() {
     <div className="space-y-4 p-6">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-mahakan-green-900">Audit Log</h1>
+          <h1 className="text-2xl font-semibold text-mahakan-green-900">
+            Audit Log
+          </h1>
           <p className="text-sm text-neutral-600">
-            Catatan aktivitas sistem (login, void, refund, perubahan harga, dll). Owner-only.
+            {isOwner ? (
+              <>
+                Catatan aktivitas sistem (login, void, refund, perubahan menu,
+                pengaturan, payroll, dll).
+              </>
+            ) : (
+              <>
+                Catatan aktivitas staff (login, void, refund, attendance, opname,
+                purchase request, dll). Aksi sensitive (settings, payroll, user
+                CRUD, akuntansi) hanya tampil untuk Owner.
+              </>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -216,10 +238,14 @@ export function AuditLogSection() {
             ariaLabel="Filter event type"
             options={[{ value: "all", label: "Semua" }]}
             groups={
+              /* Sesi AE-62u — strip restricted event types dari dropdown
+               * untuk non-owner supaya tidak muncul opsi yang return empty. */
               EVENT_GROUPS.map<SelectGroup>((g) => ({
                 label: g.label,
-                options: g.types.map((t) => ({ value: t, label: t })),
-              }))
+                options: g.types
+                  .filter((t) => isOwner || isStaffVisibleEvent(t))
+                  .map((t) => ({ value: t, label: t })),
+              })).filter((g) => g.options.length > 0)
             }
             value={eventType}
             onValueChange={(v) => {

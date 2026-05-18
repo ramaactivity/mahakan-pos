@@ -210,6 +210,45 @@ export const AUDIT_EVENT_TYPES = [
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
 
+/**
+ * Sesi AE-62u — event prefixes yang HIDDEN dari non-owner viewer (manager +
+ * supervisor) di audit log viewer.
+ *
+ * Manager+supervisor punya permission `audit.view.staff_actions` (lihat
+ * aksi staff untuk supervision), tapi tidak `audit.view.all` (kayak
+ * settings change, user CRUD, payroll details). Filter ini implementasi
+ * batas dua tier tersebut.
+ *
+ * Apa yang TETAP visible ke manager+supervisor:
+ *   - transaction.*, attendance.*, customer.*, inventory.*, purchase*.*,
+ *     shift.*, promo.*, supplier.*, expense.*, income.*, cash_deposit.*,
+ *     aggregator_settlement.*, approval_code.*, employee.* (kecuali yg
+ *     sensitive), bank_account.*, reconciliation.*, settlement_log.*,
+ *     menu.*, auth.*, journal.posting_failed
+ */
+export const STAFF_RESTRICTED_EVENT_PREFIXES = [
+  "settings.",
+  "user.",
+  "system.",
+  "historical.",
+  "accounting_period.",
+  "accounting.",
+  "chart_of_accounts.",
+  "journal_entry.",
+  "payroll.",
+  "advance.",
+  "opening_balance.",
+  "report.income_statement.",
+  "report.balance_sheet.",
+  "fixed_asset.",
+] as const;
+
+export function isStaffVisibleEvent(eventType: string): boolean {
+  return !STAFF_RESTRICTED_EVENT_PREFIXES.some((prefix) =>
+    eventType.startsWith(prefix),
+  );
+}
+
 export type AuditEntityType =
   | "transaction"
   | "menu_item"

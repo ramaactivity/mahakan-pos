@@ -13,6 +13,8 @@ export type {
 export type { LogAuditInput } from "./logger";
 export {
   AUDIT_EVENT_TYPES,
+  STAFF_RESTRICTED_EVENT_PREFIXES,
+  isStaffVisibleEvent,
   type AuditEventType,
   type AuditEntityType,
   type AuditPayload,

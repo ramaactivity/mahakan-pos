@@ -133,7 +133,9 @@ const NAV_GROUPS: NavGroup[] = [
     heading: "Sistem",
     items: [
       { key: "settings", label: "Settings", Icon: Settings },
-      { key: "audit", label: "Audit Log", Icon: ScrollText, ownerOnly: true },
+      /* Sesi AE-62u — audit visible juga buat manager+supervisor (filtered
+       * ke staff actions saja). Owner masih lihat full audit log. */
+      { key: "audit", label: "Audit Log", Icon: ScrollText },
     ],
   },
 ];

@@ -4,6 +4,7 @@ import { aliasedTable, and, desc, eq, gte, lte, sql, type SQL } from "drizzle-or
 import { db } from "@/db";
 import { auditLogs, users } from "@/db/schema";
 import type { AuditEventType } from "./types";
+import { STAFF_RESTRICTED_EVENT_PREFIXES } from "./types";
 
 export type AuditLogRow = {
   id: string;
@@ -30,6 +31,10 @@ export type ListAuditLogsOptions = {
   toDate?: string;
   limit?: number;
   offset?: number;
+  /** Sesi AE-62u — owner viewer = 'all' (default), manager/supervisor = 'staff_visible'
+   * yang strip event types sensitive (settings/user/payroll/dst).
+   * Caller (action) yang derive dari role. */
+  scope?: "all" | "staff_visible";
 };
 
 /**
@@ -52,6 +57,15 @@ export async function fetchAuditLogs(opts: ListAuditLogsOptions = {}): Promise<{
   }
   if (opts.toDate) {
     conds.push(lte(auditLogs.createdAt, new Date(`${opts.toDate}T23:59:59.999+07:00`)));
+  }
+  /* Sesi AE-62u — staff-scope filter strip restricted prefixes (settings/user/
+   * payroll/etc) via NOT (eventType LIKE 'prefix%' OR ...). Server-side
+   * enforced; UI sekadar surface info badge. */
+  if (opts.scope === "staff_visible") {
+    const notLikeClauses = STAFF_RESTRICTED_EVENT_PREFIXES.map(
+      (prefix) => sql`${auditLogs.eventType} NOT LIKE ${prefix + "%"}`,
+    );
+    conds.push(and(...notLikeClauses)!);
   }
   const where = conds.length > 0 ? and(...conds) : undefined;
 
