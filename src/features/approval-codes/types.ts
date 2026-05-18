@@ -8,7 +8,10 @@ export type ApprovalActionType =
   | "pos.transaction.refund"
   /* Sesi AE-62o — shift rebalancing dengan owner approval. Target =
    * shift_rebalances.id, bukan transactions.id. */
-  | "shift.rebalance";
+  | "shift.rebalance"
+  /* Sesi AE-62r — per-transaction correction (paymentMethod/total swap).
+   * Target = transaction_corrections.id (kolom targetTransactionCorrectionId). */
+  | "pos.transaction.correction";
 
 export interface RequestApprovalCodeInput {
   /** Untuk pos.transaction.* — transactionId. Untuk shift.rebalance —

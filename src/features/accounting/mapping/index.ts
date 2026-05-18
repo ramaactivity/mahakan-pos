@@ -28,6 +28,14 @@ export {
 } from "./shiftVariance";
 export type { ShiftVarianceInput } from "./shiftVariance";
 export {
+  mapPosSaleReversal,
+  mapPosSaleCorrection,
+} from "./posSaleReversal";
+export type {
+  PosSaleReversalInput,
+  PosSaleCorrectionInput,
+} from "./posSaleReversal";
+export {
   mapCategoryToAccounts,
   aggregateByCategory,
 } from "./categoryMapper";

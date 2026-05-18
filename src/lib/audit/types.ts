@@ -22,6 +22,12 @@ export const AUDIT_EVENT_TYPES = [
   "shift.rebalance.approve",
   "shift.rebalance.reject",
   "shift.rebalance.cancel",
+  /* Sesi AE-62r — per-transaction correction workflow events (paymentMethod/
+   * total swap dari Riwayat POS dengan email approval owner). */
+  "transaction.correction.request",
+  "transaction.correction.approve",
+  "transaction.correction.reject",
+  "transaction.correction.cancel",
   "transaction.reprint",
   "transaction.split_payment.add",
   // Menu
@@ -240,6 +246,7 @@ export type AuditEntityType =
   | "aggregator_settlement"
   | "reconciliation_note"
   | "shift_rebalance"
+  | "transaction_correction"
   | "chart_of_accounts"
   | "accounting_period"
   | "journal_entry"

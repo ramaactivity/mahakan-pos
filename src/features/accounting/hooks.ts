@@ -28,6 +28,8 @@ import {
   mapPosCompliment,
   mapPosRefund,
   mapPosSale,
+  mapPosSaleCorrection,
+  mapPosSaleReversal,
   mapPurchaseCancel,
   mapPurchaseCreate,
   mapPurchasePay,
@@ -740,6 +742,205 @@ export async function postJournalForShiftRebalance(args: {
   }
 
   return { reverseEntryId, correctedEntryId };
+}
+
+// ============================================================
+// POS Transaction Correction (Sesi AE-62r)
+// ============================================================
+
+type CorrectionPaymentMethod =
+  | "cash"
+  | "qris"
+  | "card_bca"
+  | "card_bni"
+  | "card_mandiri"
+  | "card_bri"
+  | "card_other"
+  | "split";
+
+type CorrectionSplitRow = {
+  paymentMethod: Exclude<CorrectionPaymentMethod, "split">;
+  amount: number;
+};
+
+/**
+ * Sesi AE-62r — postJournalForTransactionCorrection: handle reverse + corrected
+ * entry pair saat owner approve koreksi transaksi paid (paymentMethod/total swap).
+ *
+ * Workflow:
+ *   1. Build mapPosSaleReversal dari original snapshot (paymentMethod, total,
+ *      subtotal, discountAmount, splits) → Dr↔Cr swap revenue side, COGS lines
+ *      stripped (items unchanged). sourceType='pos_sale_reversal', sourceId=correctionId.
+ *   2. Mark original pos_sale entry status='reversed' + link reversedByEntryId.
+ *   3. Build mapPosSaleCorrection dari corrected values (paymentMethod, total,
+ *      discountAmount, splits) → revenue-only repost, COGS stripped.
+ *      sourceType='pos_sale_correction', sourceId=correctionId.
+ *   4. Update transaction_corrections row dengan trio journal entry IDs.
+ *
+ * Trap T7: COGS lines stripped supaya inventory tidak di-double-reverse.
+ * Trap T8: sourceId = correctionId (BUKAN trx.id) supaya tidak collide dengan
+ * original pos_sale source key (idempotency check di recordJournal would
+ * return existing pos_sale entry).
+ *
+ * Subtotal items snapshot: items DARI transaction_items table (real-time fetch).
+ * Karena items tidak berubah saat correction, snapshot fresh = snapshot original.
+ *
+ * Returns trio entry IDs supaya caller bisa link ke transaction_corrections row.
+ */
+export async function postJournalForTransactionCorrection(args: {
+  outletId: string;
+  transactionId: string;
+  transactionNumber: string;
+  correctionId: string;
+  /** Snapshot original values (dari transaction_corrections.original*). */
+  original: {
+    paymentMethod: CorrectionPaymentMethod;
+    total: number;
+    subtotal: number;
+    discountAmount: number;
+    splits: CorrectionSplitRow[] | null;
+  };
+  /** Corrected values (dari transaction_corrections.corrected*). */
+  corrected: {
+    paymentMethod: CorrectionPaymentMethod;
+    total: number;
+    subtotal: number;
+    discountAmount: number;
+    splits: CorrectionSplitRow[] | null;
+  };
+  reason: string;
+  /** Date untuk journal entry. Pakai trx.createdAt date (WIB) supaya entry
+   * masuk ke period yang sama dengan original. */
+  entryDate: string;
+  actorId: string;
+}): Promise<{
+  reverseEntryId: string | null;
+  correctedEntryId: string | null;
+  originalEntryId: string | null;
+}> {
+  if (!(await isAutoJournalEnabled(args.outletId))) {
+    return {
+      reverseEntryId: null,
+      correctedEntryId: null,
+      originalEntryId: null,
+    };
+  }
+
+  // 1. Fetch items snapshot — pakai untuk bucket aggregation (revenue per
+  //    kategori). Items TIDAK berubah saat correction; sama untuk reversal
+  //    & repost.
+  const items = await db
+    .select()
+    .from(transactionItems)
+    .where(eq(transactionItems.transactionId, args.transactionId));
+  const aggItems: AggregatedItem[] = items.map((it) => ({
+    itemCategoryName: it.itemCategoryName,
+    amount: Number(it.subtotal),
+    cogs: Number(it.cogs ?? 0),
+  }));
+
+  // 2. Find original pos_sale entry (for status='reversed' linkage).
+  const [originalEntry] = await db
+    .select({ id: journalEntries.id, status: journalEntries.status })
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.outletId, args.outletId),
+        eq(journalEntries.sourceType, "pos_sale"),
+        eq(journalEntries.sourceId, args.transactionId),
+      ),
+    )
+    .limit(1);
+  const originalEntryId = originalEntry?.id ?? null;
+
+  // 3. Post reversal — Dr↔Cr swap revenue side, COGS stripped.
+  const reverseLines = mapPosSaleReversal({
+    transactionId: args.transactionId,
+    transactionNumber: args.transactionNumber,
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    paymentMethod: args.original.paymentMethod,
+    total: args.original.total,
+    subtotal: args.original.subtotal,
+    discountAmount: args.original.discountAmount,
+    items: aggItems,
+    splits: args.original.splits ?? undefined,
+    reason: args.reason,
+  });
+  const reverseResult = await recordJournal({
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    description: `REVERSE penjualan TRX ${args.transactionNumber} (koreksi): ${args.reason}`,
+    sourceType: "pos_sale_reversal",
+    sourceId: args.correctionId,
+    lines: reverseLines,
+    actorId: args.actorId,
+    metadata: {
+      transactionId: args.transactionId,
+      originalPaymentMethod: args.original.paymentMethod,
+      originalTotal: args.original.total,
+    },
+  });
+
+  // 4. Mark original pos_sale entry as reversed + link reversedByEntryId.
+  if (originalEntryId && originalEntry?.status !== "reversed") {
+    await db
+      .update(journalEntries)
+      .set({
+        status: "reversed",
+        reversedByEntryId: reverseResult.entryId,
+        updatedAt: new Date(),
+      })
+      .where(eq(journalEntries.id, originalEntryId));
+  }
+
+  // 5. Post corrected entry — revenue-only with corrected paymentMethod/total.
+  const correctedLines = mapPosSaleCorrection({
+    transactionId: args.transactionId,
+    transactionNumber: args.transactionNumber,
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    paymentMethod: args.corrected.paymentMethod,
+    total: args.corrected.total,
+    subtotal: args.corrected.subtotal,
+    discountAmount: args.corrected.discountAmount,
+    items: aggItems,
+    splits: args.corrected.splits ?? undefined,
+    reason: args.reason,
+  });
+  const correctedResult = await recordJournal({
+    outletId: args.outletId,
+    entryDate: args.entryDate,
+    description: `KOREKSI penjualan TRX ${args.transactionNumber} (${args.corrected.paymentMethod}): ${args.reason}`,
+    sourceType: "pos_sale_correction",
+    sourceId: args.correctionId,
+    lines: correctedLines,
+    actorId: args.actorId,
+    metadata: {
+      transactionId: args.transactionId,
+      correctedPaymentMethod: args.corrected.paymentMethod,
+      correctedTotal: args.corrected.total,
+    },
+  });
+
+  // 6. Update transaction_corrections row dengan trio journal entry IDs.
+  //    Dynamic import supaya hooks.ts tidak hard-depend ke transactions module.
+  const { transactionCorrections } = await import("@/db/schema");
+  await db
+    .update(transactionCorrections)
+    .set({
+      originalJournalEntryId: originalEntryId,
+      reverseJournalEntryId: reverseResult.entryId,
+      correctedJournalEntryId: correctedResult.entryId,
+      updatedAt: new Date(),
+    })
+    .where(eq(transactionCorrections.id, args.correctionId));
+
+  return {
+    reverseEntryId: reverseResult.entryId,
+    correctedEntryId: correctedResult.entryId,
+    originalEntryId,
+  };
 }
 
 // ============================================================

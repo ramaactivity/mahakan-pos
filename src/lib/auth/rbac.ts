@@ -56,6 +56,28 @@ export const permissions = {
   "shift.rebalance.cancel": ["owner", "manager", "supervisor", "staff"],
   "shift.rebalance.view": ["owner", "manager", "supervisor"],
 
+  /* Sesi AE-62r — per-transaction correction dari Riwayat POS.
+   * .request: kasir/manager submit koreksi (email ke owner)
+   * .approve: owner verify kode → apply correction + reverse+repost journal
+   * .reject: owner/manager reject pending
+   * .cancel: requester withdraw before approve
+   * .view: list pending + history */
+  "pos.transaction.correction.request": [
+    "owner",
+    "manager",
+    "supervisor",
+    "staff",
+  ],
+  "pos.transaction.correction.approve": ["owner"],
+  "pos.transaction.correction.reject": ["owner", "manager"],
+  "pos.transaction.correction.cancel": [
+    "owner",
+    "manager",
+    "supervisor",
+    "staff",
+  ],
+  "pos.transaction.correction.view": ["owner", "manager", "supervisor"],
+
   // Menu CRUD — supervisor TIDAK bisa edit master menu (master data scope).
   "menu.item.create": ["owner", "manager"],
   "menu.item.update": ["owner", "manager"],
