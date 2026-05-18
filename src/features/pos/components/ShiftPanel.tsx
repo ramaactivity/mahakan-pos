@@ -5,6 +5,7 @@ import {
   Activity,
   Clock,
   Lock,
+  Pencil,
   Receipt,
   RotateCcw,
   TrendingUp,
@@ -20,12 +21,19 @@ import {
   CardTitle,
   Spinner,
 } from "@/components/ui";
-import type { Shift } from "@/features/shifts";
+import {
+  getLastClosedShiftAtOutlet,
+  type Shift,
+} from "@/features/shifts";
+import { ShiftRebalanceModal } from "@/features/shifts/components/ShiftRebalanceModal";
 import { listTransactions, isOk } from "@/features/transactions";
+import { useSession } from "@/features/auth/SessionProvider";
+import { hasPermission } from "@/lib/auth/rbac";
 import { getDailyCashSummary, isOk as isCashOk } from "@/features/cash";
 import { CashOnHandTile } from "@/features/admin/sections/finance/CashOnHandTile";
 import { formatRupiah } from "@/lib/format";
-import { formatIndonesianTime } from "@/lib/date";
+import { formatIndonesianTime, formatIndonesianDateTime } from "@/lib/date";
+import { cn } from "@/lib/utils";
 
 interface ShiftPanelProps {
   shift: Shift | null;
@@ -89,9 +97,42 @@ export function ShiftPanel({
   onRequestOpenShift,
   onRequestCloseShift,
 }: ShiftPanelProps) {
+  const { session } = useSession();
+  const role = session?.user.role ?? "staff";
+  const canRequestRebalance = hasPermission(role, "shift.rebalance.request");
   const [stats, setStats] = useState<ShiftStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [now, setNow] = useState<Date>(() => new Date());
+  // Sesi AE-62p — last closed shift untuk POS context. Kasir baru tutup
+  // shift, lihat ada selisih, bisa tap "Suggest Correction" tanpa harus
+  // pindah ke backoffice. Hanya tampil kalau ada closed shift dalam 24h.
+  const [lastClosedShift, setLastClosedShift] = useState<Shift | null>(null);
+  const [rebalanceOpen, setRebalanceOpen] = useState(false);
+
+  useEffect(() => {
+    // Re-fetch saat shift state berubah (e.g., baru tutup → tampil).
+    let cancelled = false;
+    void getLastClosedShiftAtOutlet().then((res) => {
+      if (cancelled) return;
+      if (isOk(res) && res.data) {
+        // Hanya tampil kalau closed dalam 24 jam terakhir.
+        const closedAt = res.data.closedAt
+          ? new Date(res.data.closedAt)
+          : null;
+        const ageMs = closedAt ? Date.now() - closedAt.getTime() : Infinity;
+        if (ageMs <= 24 * 60 * 60 * 1000) {
+          setLastClosedShift(res.data);
+        } else {
+          setLastClosedShift(null);
+        }
+      } else {
+        setLastClosedShift(null);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [shift]);
 
   // Live duration ticker — update every 30s
   useEffect(() => {
@@ -189,6 +230,7 @@ export function ShiftPanel({
 
   if (!shift) {
     return (
+      <>
       <div className="flex h-full flex-col gap-4 overflow-y-auto p-4 sm:p-6">
         <header>
           <h2 className="text-lg font-semibold text-neutral-900">Shift</h2>
@@ -214,7 +256,79 @@ export function ShiftPanel({
             </Button>
           </CardContent>
         </Card>
+
+        {/* Sesi AE-62p — Last closed shift card. Tampil kalau ada shift
+            tutup dalam 24 jam. Kasir bisa ajukan rebalancing dari sini
+            tanpa harus pindah ke backoffice. */}
+        {lastClosedShift && canRequestRebalance ? (
+          <Card
+            className={cn(
+              lastClosedShift.variance && Math.abs(lastClosedShift.variance) > 10_000
+                ? "border-warning-500/40 bg-warning-50"
+                : "border-neutral-200",
+            )}
+          >
+            <CardHeader>
+              <CardTitle className="text-sm">
+                Shift Terakhir Ditutup
+              </CardTitle>
+              <CardDescription className="text-xs">
+                {lastClosedShift.closedAt
+                  ? formatIndonesianDateTime(lastClosedShift.closedAt)
+                  : "—"}
+                {" · "}
+                Kas Aktual:{" "}
+                <span className="font-mono">
+                  {formatRupiah(lastClosedShift.actualCash ?? 0)}
+                </span>
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {lastClosedShift.variance != null &&
+              lastClosedShift.variance !== 0 ? (
+                <div
+                  className={cn(
+                    "rounded-md border px-3 py-2 text-xs",
+                    Math.abs(lastClosedShift.variance) > 10_000
+                      ? "border-danger-300 bg-danger-50 text-danger-700"
+                      : "border-warning-300 bg-warning-50 text-warning-700",
+                  )}
+                >
+                  <strong>
+                    Selisih{" "}
+                    {lastClosedShift.variance > 0 ? "+" : ""}
+                    {formatRupiah(lastClosedShift.variance)}
+                  </strong>{" "}
+                  — kalau salah pencet metode pembayaran, ajukan rebalancing
+                  sekarang sebelum data audit.
+                </div>
+              ) : (
+                <p className="text-xs text-neutral-600">
+                  Kas pas. Ajukan koreksi kalau ada salah input metode
+                  pembayaran (mis. QRIS jadi Cash).
+                </p>
+              )}
+              <Button
+                size="md"
+                variant="outline"
+                onClick={() => setRebalanceOpen(true)}
+                className="w-full"
+              >
+                <Pencil className="size-4" /> Ajukan Koreksi Shift
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
+      {/* Sesi AE-62p — kasir-side rebalance modal (source='close_shift'). */}
+      <ShiftRebalanceModal
+        open={rebalanceOpen}
+        shift={lastClosedShift}
+        source="close_shift"
+        onClose={() => setRebalanceOpen(false)}
+        onSubmitted={() => setRebalanceOpen(false)}
+      />
+      </>
     );
   }
 
