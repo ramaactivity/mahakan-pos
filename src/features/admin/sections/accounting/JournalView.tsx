@@ -9,6 +9,7 @@ import {
   Loader2,
   Plus,
   RotateCcw,
+  Trash2,
   X,
   Zap,
 } from "lucide-react";
@@ -21,6 +22,7 @@ import {
   toast,
 } from "@/components/ui";
 import {
+  deleteDraftJournalEntry,
   fetchJournalEntries,
   reverseJournalEntry,
 } from "@/features/accounting/actions";
@@ -174,6 +176,28 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
     const res = await reverseJournalEntry(entry.id, reason.trim());
     if (res.ok) {
       toast.success(`Entry ${entry.entryNumber} ter-reverse`);
+      void load();
+    } else {
+      toast.error(res.error.message);
+    }
+  }
+
+  /* Sesi AE-63 phase4 — staff finance: "kita buat jurnal manual ada
+   * kesalahan pencatatan ada fitur untuk edit/hapus". Posted entries
+   * harus reverse (audit). Draft entries boleh di-hapus langsung. */
+  async function onDeleteDraft(entry: JournalEntryWithLines) {
+    if (
+      !confirm(
+        `Hapus draft ${entry.entryNumber}?\n\n` +
+          `${entry.description}\n\n` +
+          `Aksi ini tidak bisa di-undo. Lines + header akan ke-hapus permanen.`,
+      )
+    ) {
+      return;
+    }
+    const res = await deleteDraftJournalEntry(entry.id);
+    if (res.ok) {
+      toast.success(`Draft ${entry.entryNumber} ter-hapus`);
       void load();
     } else {
       toast.error(res.error.message);
@@ -354,7 +378,9 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
         <RowList
           rows={rows}
           canReverse={canReverse}
+          canDeleteDraft={canPost}
           onReverse={onReverse}
+          onDeleteDraft={onDeleteDraft}
         />
       )}
 
@@ -376,11 +402,15 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
 function RowList({
   rows,
   canReverse,
+  canDeleteDraft,
   onReverse,
+  onDeleteDraft,
 }: {
   rows: JournalEntryWithLines[];
   canReverse: boolean;
+  canDeleteDraft: boolean;
   onReverse: (e: JournalEntryWithLines) => void;
+  onDeleteDraft: (e: JournalEntryWithLines) => void;
 }) {
   return (
     <div className="space-y-2">
@@ -419,9 +449,26 @@ function RowList({
                   }}
                   className="inline-flex items-center gap-1 rounded p-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-danger-500"
                   aria-label={`Reverse ${entry.entryNumber}`}
-                  title="Reverse entry"
+                  title="Reverse entry (posted)"
                 >
                   <RotateCcw className="size-3.5" />
+                </button>
+              ) : null}
+              {/* Sesi AE-63 phase4 — delete draft entry (only draft+manual). */}
+              {canDeleteDraft &&
+              entry.status === "draft" &&
+              entry.sourceType === "manual" ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onDeleteDraft(entry);
+                  }}
+                  className="inline-flex items-center gap-1 rounded p-1 text-xs text-neutral-500 hover:bg-danger-50 hover:text-danger-500"
+                  aria-label={`Hapus draft ${entry.entryNumber}`}
+                  title="Hapus draft"
+                >
+                  <Trash2 className="size-3.5" />
                 </button>
               ) : null}
             </summary>

@@ -420,6 +420,100 @@ describe("buildBalanceSheet", () => {
     expect(bs.totalEquity).toBe(5_000_000);
     expect(bs.balanced).toBe(true);
   });
+
+  /* Sesi AE-63 phase4 — regression test untuk bug "Neraca tidak balance
+   * karena laba rugi berjalan 0". Replicate scenario real production:
+   * period belum di-close, revenue + cogs + expense punya running balance
+   * dari journal entries POS sale + purchase + payroll. 3302 belum
+   * di-bump di ledger (no closing entry).
+   *
+   * Pre-fix: fetchBalanceSheet pass `0` → 3302 hilang dari Neraca →
+   * totalEquity terlalu kecil → assets ≠ liab+equity, balanced=false.
+   * Post-fix: caller compute netIncome via buildIncomeStatement(balances)
+   * lalu pass ke buildBalanceSheet → 3302 ter-supplement → balanced. */
+  it("regression: pre-close running revenue + expense → Neraca tetap balance via netIncome injection", () => {
+    const balances: AccountBalanceRow[] = [
+      /* Asset: cash hasil POS sales. */
+      {
+        accountId: "a1",
+        code: "1101",
+        name: "Kas",
+        type: "asset",
+        normalBalance: "debit",
+        isContra: false,
+        parentCode: null,
+        debitTotal: 10_000_000,
+        creditTotal: 0,
+      },
+      /* Equity awal (modal owner). */
+      {
+        accountId: "e1",
+        code: "3101",
+        name: "Modal Owner",
+        type: "equity",
+        normalBalance: "credit",
+        isContra: false,
+        parentCode: null,
+        debitTotal: 0,
+        creditTotal: 7_000_000,
+      },
+      /* Revenue running (period open). */
+      {
+        accountId: "r1",
+        code: "4101",
+        name: "Pendapatan Penjualan",
+        type: "revenue",
+        normalBalance: "credit",
+        isContra: false,
+        parentCode: null,
+        debitTotal: 0,
+        creditTotal: 5_000_000,
+      },
+      /* COGS running. */
+      {
+        accountId: "c1",
+        code: "5101",
+        name: "HPP Penjualan",
+        type: "cogs",
+        normalBalance: "debit",
+        isContra: false,
+        parentCode: null,
+        debitTotal: 1_500_000,
+        creditTotal: 0,
+      },
+      /* Expense running. */
+      {
+        accountId: "x1",
+        code: "6101",
+        name: "Beban Operasional",
+        type: "expense",
+        normalBalance: "debit",
+        isContra: false,
+        parentCode: null,
+        debitTotal: 500_000,
+        creditTotal: 0,
+      },
+    ];
+    /* Step 1: compute Income Statement netIncome from running balances. */
+    const is = buildIncomeStatement(balances, "current");
+    expect(is.netIncome).toBe(3_000_000); // 5M - 1.5M - 0.5M
+
+    /* Step 2: Build Balance Sheet WITHOUT netIncome injection (pre-fix bug). */
+    const bsBuggy = buildBalanceSheet(balances, "2026-06-30", 0);
+    /* totalEquity = 7M (Modal). Assets = 10M. → tidak balance. */
+    expect(bsBuggy.totalEquity).toBe(7_000_000);
+    expect(bsBuggy.balanced).toBe(false);
+
+    /* Step 3: Build Balance Sheet WITH netIncome injection (post-fix). */
+    const bsFixed = buildBalanceSheet(balances, "2026-06-30", is.netIncome);
+    /* totalEquity = 7M + 3M (3302) = 10M = totalAssets. ✓ balanced. */
+    expect(bsFixed.totalEquity).toBe(10_000_000);
+    expect(bsFixed.balanced).toBe(true);
+    /* 3302 Laba Rugi Berjalan harus muncul di equity section. */
+    const labaRugi = bsFixed.equity.find((e) => e.code === "3302");
+    expect(labaRugi).toBeDefined();
+    expect(labaRugi?.amount).toBe(3_000_000);
+  });
 });
 
 // ============================================================

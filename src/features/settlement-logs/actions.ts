@@ -232,6 +232,30 @@ export async function upsertSettlementLog(
     return fail("INVALID_AMOUNT", "Amount harus angka non-negatif");
   }
 
+  /* Sesi AE-63 phase4 — settled_at validation (kapan uang masuk bank).
+   * Optional — kalau null/undefined, biar staff input nanti. Kalau diisi,
+   * harus YYYY-MM-DD format dan tidak boleh sebelum settlementDate (bank
+   * tidak mungkin credit sebelum sale terjadi). */
+  let settledAt: string | null = null;
+  if (input.settledAt !== undefined && input.settledAt !== null) {
+    const raw = input.settledAt.trim();
+    if (raw.length > 0) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+        return fail(
+          "INVALID_DATE",
+          "Format tanggal settle harus YYYY-MM-DD",
+        );
+      }
+      if (raw < input.settlementDate) {
+        return fail(
+          "INVALID_DATE",
+          "Tanggal settle tidak boleh sebelum tanggal sale",
+        );
+      }
+      settledAt = raw;
+    }
+  }
+
   const expected = Math.floor(input.expectedAmount);
   const actual = Math.floor(input.actualAmount);
   const notes = input.notes?.trim() || null;
@@ -259,6 +283,7 @@ export async function upsertSettlementLog(
     const before = {
       expectedAmount: Number(existing.expectedAmount),
       actualAmount: Number(existing.actualAmount),
+      settledAt: existing.settledAt,
       notes: existing.notes,
     };
     const [updated] = await db
@@ -266,6 +291,7 @@ export async function upsertSettlementLog(
       .set({
         expectedAmount: expected,
         actualAmount: actual,
+        settledAt,
         notes,
         updatedAt: new Date(),
         updatedBy: session.user.id,
@@ -284,6 +310,7 @@ export async function upsertSettlementLog(
         after: {
           expectedAmount: expected,
           actualAmount: actual,
+          settledAt,
           notes,
         },
       },
@@ -305,6 +332,7 @@ export async function upsertSettlementLog(
       channel: input.channel,
       expectedAmount: expected,
       actualAmount: actual,
+      settledAt,
       notes,
       createdBy: session.user.id,
     })
@@ -322,6 +350,7 @@ export async function upsertSettlementLog(
         settlementDate: input.settlementDate,
         expectedAmount: expected,
         actualAmount: actual,
+        settledAt,
         notes,
       },
     },

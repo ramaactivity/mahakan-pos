@@ -1127,6 +1127,89 @@ export async function reverseJournalEntry(
   return ok({ id: entryId, reverseEntryId: reverseResult.entryId });
 }
 
+/**
+ * Sesi AE-63 phase4 — Hapus draft journal entry. Staff finance request:
+ * "kita buat jurnal manual ada kesalahan pencatatan ada fitur untuk
+ * edit/hapus".
+ *
+ * Posted entries TIDAK BISA di-delete (audit trail). Workflow:
+ *  - Draft entry → boleh delete (belum masuk financial reports)
+ *  - Posted entry → harus reverse (existing reverseJournalEntry)
+ *
+ * Guards:
+ *  - Hanya pemilik permission accounting.journal.post (Owner)
+ *  - Hanya entry dengan sourceType='manual' (system entries seperti
+ *    pos_sale tidak boleh di-delete biar konsisten dengan source data)
+ *  - Hanya status='draft'
+ *  - outletId scope match
+ *
+ * Cascading: journal_lines.entry_id punya ON DELETE CASCADE → lines
+ * otomatis ke-hapus saat entry di-delete.
+ */
+export async function deleteDraftJournalEntry(
+  entryId: string,
+): Promise<ApiResult<{ deleted: true; entryNumber: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.journal.post")) {
+    return fail(
+      "FORBIDDEN",
+      "Hanya Owner yang dapat hapus draft journal entry",
+    );
+  }
+
+  const original = await getJournalEntryById(session.user.outletId, entryId);
+  if (!original) return fail("NOT_FOUND", "Entry tidak ditemukan");
+  if (original.status !== "draft") {
+    return fail(
+      "INVALID_STATE",
+      `Entry status ${original.status} — hanya draft yang bisa di-hapus. Posted entry harus di-reverse.`,
+    );
+  }
+  if (original.sourceType !== "manual") {
+    return fail(
+      "INVALID_STATE",
+      "Hanya entry manual yang bisa di-hapus. System entry harus melalui source-nya.",
+    );
+  }
+
+  try {
+    /* journal_lines.entry_id punya ON DELETE CASCADE — lines otomatis
+     * ke-hapus saat entry di-delete. defense-in-depth outletId scope
+     * di .where(). */
+    await db
+      .delete(journalEntries)
+      .where(
+        and(
+          eq(journalEntries.id, entryId),
+          eq(journalEntries.outletId, session.user.outletId),
+          eq(journalEntries.status, "draft"),
+        ),
+      );
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "accounting", "Operasi database gagal"),
+    );
+  }
+
+  await logAudit({
+    eventType: "journal_entry.delete",
+    userId: session.user.id,
+    entityType: "journal_entry",
+    entityId: entryId,
+    payload: {
+      summary: `Hapus draft ${original.entryNumber} — ${original.description}`,
+      before: {
+        entryNumber: original.entryNumber,
+        description: original.description,
+        lineCount: original.lines.length,
+      },
+    },
+  });
+
+  return ok({ deleted: true, entryNumber: original.entryNumber });
+}
+
 // ============================================================
 // Sesi V — Reports
 // ============================================================
@@ -1178,10 +1261,21 @@ export async function fetchBalanceSheet(
     toDate: asOfDate,
   });
 
-  // Compute net income current period (3302 includes only revenue/expense
-  // in periods belum closed). Since 3302 line itself in balances reflects
-  // closing-entry transfers + manual posts, we trust DB. Pass 0 untuk now.
-  return ok(buildBalanceSheet(balances, asOfDate, 0));
+  /* Sesi AE-63 phase4 — Bug fix: pre-fix `buildBalanceSheet(..., 0)` bikin
+   * Neraca tidak balance kalau period belum di-close. Reason: period close
+   * transfer 4xxx/5xxx/6xxx → 3302 → 3301 via closing entry. Sebelum close:
+   * - 3302 di ledger = 0 (no closing entry yet)
+   * - 4xxx/5xxx/6xxx di balances = running profit period berjalan
+   * - L/R compute pakai 4xxx-5xxx-6xxx → ada angka
+   * - Neraca tampil 3302=0 → tidak match L/R, total Equity ≠ (Assets-Liab)
+   *
+   * Fix: compute netIncome dari balances yang SAMA via buildIncomeStatement,
+   * lalu inject ke 3302 di Neraca. Setelah close: revenue/expense balances=0
+   * → netIncome=0 → 3302 stay 0, 3301 sudah punya transferred profit. ✓ */
+  const incomeStatement = buildIncomeStatement(balances, "current");
+  return ok(
+    buildBalanceSheet(balances, asOfDate, incomeStatement.netIncome),
+  );
 }
 
 /**

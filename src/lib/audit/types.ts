@@ -207,6 +207,9 @@ export const AUDIT_EVENT_TYPES = [
   "journal_entry.post",
   "journal_entry.update_draft",
   "journal_entry.reverse",
+  /* Sesi AE-63 phase4 — staff finance request: edit/hapus draft manual.
+   * Posted entries tetap hanya reverse (audit trail). */
+  "journal_entry.delete",
   /* Sesi AE-46 — fire-and-forget journal hook gagal post-commit.
    * Source action sudah committed (sale/refund/expense/purchase/payroll/
    * etc) tapi journal posting throw. Owner liat di Back Office buat

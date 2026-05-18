@@ -498,6 +498,21 @@ function IncomeStatementTab() {
         ? "Tahun sebelumnya"
         : null;
 
+  /* Sesi AE-63 phase4 — build lookup map untuk previous-period amount per
+   * account code. Dipakai oleh ItemRow supaya nominal bulan/tahun lalu
+   * tampil per akun (staff finance request). Memo agar tidak rebuild
+   * tiap render. */
+  const prevByCode = useMemo(() => {
+    if (!prevReport) return null;
+    const m = new Map<string, number>();
+    for (const it of prevReport.revenue.items) m.set(it.code, it.amount);
+    for (const it of prevReport.revenueContra.items)
+      m.set(it.code, -it.amount);
+    for (const it of prevReport.cogs.items) m.set(it.code, -it.amount);
+    for (const it of prevReport.expenses.items) m.set(it.code, -it.amount);
+    return m;
+  }, [prevReport]);
+
   return (
     <div className="space-y-3">
       <div className="flex items-end justify-between gap-3">
@@ -536,9 +551,21 @@ function IncomeStatementTab() {
         <Skeleton className="h-64 w-full" />
       ) : (
         <div className="space-y-3">
-          <Section title={report.revenue.label} subtotal={report.revenue.subtotal} sign="+">
+          <Section
+            title={report.revenue.label}
+            subtotal={report.revenue.subtotal}
+            sign="+"
+            prevSubtotal={prevReport?.revenue.subtotal}
+            prevLabel={compareLabel}
+          >
             {report.revenue.items.map((i) => (
-              <ItemRow key={i.code} code={i.code} name={i.name} amount={i.amount} />
+              <ItemRow
+                key={i.code}
+                code={i.code}
+                name={i.name}
+                amount={i.amount}
+                prevAmount={prevByCode?.get(i.code)}
+              />
             ))}
           </Section>
           {report.revenueContra.items.length > 0 ? (
@@ -546,6 +573,10 @@ function IncomeStatementTab() {
               title={report.revenueContra.label}
               subtotal={-report.revenueContra.subtotal}
               sign="-"
+              prevSubtotal={
+                prevReport ? -prevReport.revenueContra.subtotal : undefined
+              }
+              prevLabel={compareLabel}
             >
               {report.revenueContra.items.map((i) => (
                 <ItemRow
@@ -553,6 +584,7 @@ function IncomeStatementTab() {
                   code={i.code}
                   name={i.name}
                   amount={-i.amount}
+                  prevAmount={prevByCode?.get(i.code)}
                 />
               ))}
             </Section>
@@ -564,13 +596,20 @@ function IncomeStatementTab() {
             prevLabel={compareLabel}
           />
 
-          <Section title={report.cogs.label} subtotal={-report.cogs.subtotal} sign="-">
+          <Section
+            title={report.cogs.label}
+            subtotal={-report.cogs.subtotal}
+            sign="-"
+            prevSubtotal={prevReport ? -prevReport.cogs.subtotal : undefined}
+            prevLabel={compareLabel}
+          >
             {report.cogs.items.map((i) => (
               <ItemRow
                 key={i.code}
                 code={i.code}
                 name={i.name}
                 amount={-i.amount}
+                prevAmount={prevByCode?.get(i.code)}
               />
             ))}
           </Section>
@@ -581,13 +620,22 @@ function IncomeStatementTab() {
             prevLabel={compareLabel}
           />
 
-          <Section title={report.expenses.label} subtotal={-report.expenses.subtotal} sign="-">
+          <Section
+            title={report.expenses.label}
+            subtotal={-report.expenses.subtotal}
+            sign="-"
+            prevSubtotal={
+              prevReport ? -prevReport.expenses.subtotal : undefined
+            }
+            prevLabel={compareLabel}
+          >
             {report.expenses.items.map((i) => (
               <ItemRow
                 key={i.code}
                 code={i.code}
                 name={i.name}
                 amount={-i.amount}
+                prevAmount={prevByCode?.get(i.code)}
               />
             ))}
           </Section>
@@ -1195,12 +1243,21 @@ function Section({
   subtotal,
   sign,
   children,
+  prevSubtotal,
+  prevLabel,
 }: {
   title: string;
   subtotal: number;
   sign: "+" | "-";
   children: React.ReactNode;
+  /* Sesi AE-63 phase4 — staff finance request: tampilkan nominal periode
+   * sebelumnya per akun + subtotal supaya track naik-turunnya kelihatan
+   * jelas tanpa hover tooltip. */
+  prevSubtotal?: number;
+  prevLabel?: string | null;
 }) {
+  const hasCompare = prevSubtotal !== undefined && prevLabel;
+  const prevDelta = hasCompare ? subtotal - prevSubtotal : 0;
   return (
     <div>
       <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-mahakan-green-900">
@@ -1214,9 +1271,27 @@ function Section({
               Subtotal {title}
             </td>
             <td className="py-1.5 pr-2 text-right font-mono font-medium">
-              {sign === "-" ? "(" : ""}
-              {formatRupiah(Math.abs(subtotal))}
-              {sign === "-" ? ")" : ""}
+              <div className="flex flex-col items-end gap-0.5">
+                <span>
+                  {sign === "-" ? "(" : ""}
+                  {formatRupiah(Math.abs(subtotal))}
+                  {sign === "-" ? ")" : ""}
+                </span>
+                {hasCompare ? (
+                  <span
+                    className={cn(
+                      "text-[10px] font-normal",
+                      prevDelta > 0
+                        ? "text-success-500"
+                        : prevDelta < 0
+                          ? "text-danger-500"
+                          : "text-neutral-500",
+                    )}
+                  >
+                    {prevLabel}: {formatRupiah(Math.abs(prevSubtotal))}
+                  </span>
+                ) : null}
+              </div>
             </td>
           </tr>
         </tfoot>
@@ -1229,21 +1304,45 @@ function ItemRow({
   code,
   name,
   amount,
+  prevAmount,
 }: {
   code: string;
   name: string;
   amount: number;
+  /* Sesi AE-63 phase4 — optional prev-period amount untuk inline display.
+   * Kalau provided + non-zero, render di baris kedua dgn label "prev:". */
+  prevAmount?: number;
 }) {
+  const hasPrev = prevAmount !== undefined;
+  const delta = hasPrev ? amount - prevAmount : 0;
   return (
     <tr>
-      <td className="py-1 pl-4 pr-2 font-mono text-xs text-neutral-500">
+      <td className="py-1 pl-4 pr-2 align-top font-mono text-xs text-neutral-500">
         {code}
       </td>
-      <td className="py-1">{name}</td>
+      <td className="py-1 align-top">{name}</td>
       <td className="py-1 pr-2 text-right font-mono">
-        {amount < 0 ? "(" : ""}
-        {formatRupiah(Math.abs(amount))}
-        {amount < 0 ? ")" : ""}
+        <div className="flex flex-col items-end gap-0.5">
+          <span>
+            {amount < 0 ? "(" : ""}
+            {formatRupiah(Math.abs(amount))}
+            {amount < 0 ? ")" : ""}
+          </span>
+          {hasPrev && prevAmount !== 0 ? (
+            <span
+              className={cn(
+                "text-[10px]",
+                delta > 0
+                  ? "text-success-500"
+                  : delta < 0
+                    ? "text-danger-500"
+                    : "text-neutral-400",
+              )}
+            >
+              prev: {formatRupiah(Math.abs(prevAmount))}
+            </span>
+          ) : null}
+        </div>
       </td>
     </tr>
   );
@@ -1287,23 +1386,31 @@ function TotalRow({
       <span>{label}</span>
       <div className="flex items-baseline gap-3">
         {hasCompare ? (
-          <span
-            className={cn(
-              "font-mono text-xs",
-              deltaPositive
-                ? "text-success-500"
-                : deltaNegative
-                  ? "text-danger-500"
-                  : "text-neutral-500",
-            )}
-            title={`${prevLabel}: ${formatRupiah(prevValue)}`}
-          >
-            {deltaPositive ? "↑ +" : deltaNegative ? "↓ " : ""}
-            {pct !== null
-              ? `${pct >= 0 ? "" : ""}${pct.toFixed(1)}%`
-              : "—"}{" "}
-            <span className="text-neutral-500">vs {prevLabel}</span>
-          </span>
+          <div className="flex flex-col items-end gap-0.5 font-mono text-xs">
+            {/* Sesi AE-63 phase4 — staff finance request: tampilkan
+              * nominal periode pembanding inline (sebelumnya cuma tooltip).
+              * Owner mau langsung tracking naik-turunnya tanpa hover. */}
+            <span className="text-neutral-500">
+              {prevLabel}:{" "}
+              <span className="font-semibold tabular-nums text-neutral-700">
+                {prevValue < 0 ? "(" : ""}
+                {formatRupiah(Math.abs(prevValue))}
+                {prevValue < 0 ? ")" : ""}
+              </span>
+            </span>
+            <span
+              className={cn(
+                deltaPositive
+                  ? "text-success-500"
+                  : deltaNegative
+                    ? "text-danger-500"
+                    : "text-neutral-500",
+              )}
+            >
+              {deltaPositive ? "↑ +" : deltaNegative ? "↓ " : ""}
+              {pct !== null ? `${pct.toFixed(1)}%` : "—"}
+            </span>
+          </div>
         ) : null}
         <span className={cn("font-mono", value < 0 && "text-danger-500")}>
           {value < 0 ? "(" : ""}

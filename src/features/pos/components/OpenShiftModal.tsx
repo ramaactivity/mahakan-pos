@@ -254,7 +254,9 @@ export function OpenShiftModal({
                 {greeting}
               </h3>
               <p className="mt-1 text-xs text-neutral-700 touch:text-[11px]">
-                Selamat bertugas. Sebelum mulai jualan, isi kas awal di laci.
+                Selamat bertugas. Sebelum mulai jualan, hitung uang di{" "}
+                <span className="font-semibold">drawer aktif</span> shift ini
+                aja (jangan gabung sama brankas / petty cash di laci).
               </p>
               <dl className="mt-3 grid grid-cols-2 gap-2 text-xs touch:text-[11px]">
                 <div className="flex items-center gap-1.5 text-neutral-700">
@@ -318,8 +320,9 @@ export function OpenShiftModal({
                 Checklist sebelum jualan
               </h4>
               <ul className="space-y-2 text-xs text-neutral-700 touch:text-[11px]">
-                <ChecklistItem text="Hitung uang di laci, masukkan jumlahnya" />
-                <ChecklistItem text="Cek pesan dari shift sebelumnya di atas" />
+                <ChecklistItem text="Hitung uang di drawer aktif (yang dipakai shift ini)" />
+                <ChecklistItem text="Brankas / petty cash dipisah — jangan dijumlah" />
+                <ChecklistItem text="Cek pesan dari shift sebelumnya di kiri" />
                 <ChecklistItem text="Setelah Buka Shift, lanjut tandai menu yang habis" />
               </ul>
             </section>
@@ -338,11 +341,11 @@ export function OpenShiftModal({
                       className="size-4 text-mahakan-green-800"
                       aria-hidden
                     />
-                    Kas Awal di Laci
+                    Kas Awal Drawer Aktif
                   </span>
                 </h3>
                 <span className="text-[11px] text-neutral-500">
-                  Geser angka kalau salah
+                  Drawer saja · bukan brankas
                 </span>
               </div>
 

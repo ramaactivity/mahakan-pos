@@ -1,0 +1,1 @@
+ALTER TABLE "settlement_logs" ADD COLUMN "settled_at" date;

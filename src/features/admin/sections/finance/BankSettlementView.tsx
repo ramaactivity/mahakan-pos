@@ -69,6 +69,8 @@ export function BankSettlementView({ viewerRole }: BankSettlementViewProps) {
 
   const [editTarget, setEditTarget] = useState<ChannelSettlementRow | null>(null);
   const [actualInput, setActualInput] = useState("0");
+  /* Sesi AE-63 phase4 — tanggal bank credited (T+1 typical). Optional. */
+  const [settledAtInput, setSettledAtInput] = useState("");
   const [notesInput, setNotesInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -109,6 +111,7 @@ export function BankSettlementView({ viewerRole }: BankSettlementViewProps) {
   function openEdit(row: ChannelSettlementRow) {
     setEditTarget(row);
     setActualInput(String(row.log?.actualAmount ?? row.expected));
+    setSettledAtInput(row.log?.settledAt ?? "");
     setNotesInput(row.log?.notes ?? "");
   }
 
@@ -125,6 +128,7 @@ export function BankSettlementView({ viewerRole }: BankSettlementViewProps) {
       channel: editTarget.channel,
       expectedAmount: editTarget.expected,
       actualAmount: actual,
+      settledAt: settledAtInput.trim() || null,
       notes: notesInput.trim() || null,
     });
     setSubmitting(false);
@@ -370,6 +374,24 @@ export function BankSettlementView({ viewerRole }: BankSettlementViewProps) {
                 allowDecimal={false}
                 prefix="Rp"
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 mb-1">
+                Tanggal settle ke bank{" "}
+                <span className="text-xs font-normal text-neutral-500">
+                  (opsional · biasanya T+1)
+                </span>
+              </label>
+              <Input
+                type="date"
+                value={settledAtInput}
+                min={date}
+                onChange={(e) => setSettledAtInput(e.target.value)}
+              />
+              <p className="mt-1 text-xs text-neutral-500">
+                Tanggal saat uang actually masuk rekening. Tanggal sale (POS):{" "}
+                <span className="font-mono">{date}</span>
+              </p>
             </div>
             <div>
               <label className="block text-sm font-medium text-neutral-700 mb-1">

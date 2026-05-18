@@ -31,10 +31,13 @@ export const CHANNEL_LABEL: Record<SettlementChannel, string> = {
 };
 
 export interface UpsertSettlementLogInput {
-  settlementDate: string; // YYYY-MM-DD
+  settlementDate: string; // YYYY-MM-DD — POS sale date
   channel: SettlementChannel;
   expectedAmount: number;
   actualAmount: number;
+  /** Sesi AE-63 phase4 — tanggal mutasi uang masuk ke rekening bank.
+   * YYYY-MM-DD format. Nullable. */
+  settledAt?: string | null;
   notes?: string | null;
 }
 

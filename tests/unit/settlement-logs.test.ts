@@ -19,6 +19,7 @@ function row(
     channel: "cash",
     expectedAmount: expected,
     actualAmount: actual,
+    settledAt: null,
     notes: null,
     createdAt: new Date(),
     updatedAt: new Date(),

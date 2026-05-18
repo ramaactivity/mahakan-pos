@@ -69,6 +69,13 @@ export const settlementLogs = pgTable(
       .notNull()
       .default(0),
 
+    /** Sesi AE-63 phase4 — staff finance request: tambah field untuk
+     * tanggal settle (kapan uang actually credited ke rekening bank).
+     * `settlementDate` = POS sale date (T+0). `settledAt` = bank credit
+     * date (T+1 atau lebih sesuai provider). Nullable supaya kompatibel
+     * dengan data lama yang belum diisi field ini. */
+    settledAt: date("settled_at"),
+
     notes: text("notes"),
 
     createdAt: timestamp("created_at", { withTimezone: true })
