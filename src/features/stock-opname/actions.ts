@@ -569,6 +569,15 @@ export async function submitOpname(
 
         const stats = computeDiffStats(finalLines);
 
+        /* Sesi AE-63 phase5 — P0 BUG FIX: totalDiffQty/totalDiffCost adalah
+         * bigint column tapi computeDiffStats accumulate float (decimal qty ×
+         * bigint cost). 127 lines × non-integer diff → accumulated float not
+         * safely convert ke bigint → Postgres "invalid input syntax for type
+         * bigint" → submit gagal dengan "Operasi database gagal".
+         *
+         * Fix: Math.round di boundary write. UI tetap dapat float dari
+         * computeDiffStats untuk display precision; DB hanya simpan integer
+         * rollup snapshot (display ulang dari lines kalau butuh exact). */
         await tx
           .update(stockOpnameSessions)
           .set({
@@ -576,8 +585,8 @@ export async function submitOpname(
             submittedAt: new Date(),
             submittedBy: session.user.id,
             countedLines: stats.countedLines,
-            totalDiffQty: stats.totalAbsDiffQty,
-            totalDiffCost: stats.totalAbsDiffCost,
+            totalDiffQty: Math.round(stats.totalAbsDiffQty),
+            totalDiffCost: Math.round(stats.totalAbsDiffCost),
             updatedAt: new Date(),
           })
           .where(eq(stockOpnameSessions.id, v.sessionId));
@@ -801,14 +810,17 @@ export async function finalizeOpname(
         }
       }
 
+      /* Sesi AE-63 phase5 — same bigint cast fix as submit (see comment di
+       * atas). totalAbsDiffQty/Cost di-accumulate sebagai float, harus
+       * Math.round sebelum tulis ke bigint column. */
       await tx
         .update(stockOpnameSessions)
         .set({
           status: "completed",
           finalizedAt: new Date(),
           finalizedBy: session.user.id,
-          totalDiffQty: totalAbsDiffQty,
-          totalDiffCost: totalAbsDiffCost,
+          totalDiffQty: Math.round(totalAbsDiffQty),
+          totalDiffCost: Math.round(totalAbsDiffCost),
           updatedAt: new Date(),
         })
         .where(eq(stockOpnameSessions.id, v.sessionId));

@@ -25,6 +25,7 @@ import {
 } from "@/features/inventory";
 import type { MenuItem } from "@/features/menu";
 import { formatRupiah } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 type Variant = "hot" | "iced" | null;
 
@@ -410,9 +411,14 @@ export function RecipeEditorModal({
                     </div>
 
                     <div className="overflow-hidden rounded-lg border border-neutral-200">
-                      <div className="hidden grid-cols-[1fr_8rem_8rem_2.5rem] items-center gap-3 border-b border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-medium uppercase tracking-wide text-neutral-500 md:grid">
+                      {/* Sesi AE-63 phase5 — header sekarang punya kolom "Unit"
+                        * eksplisit (gantinya pelebaran Qty). Staff gudang
+                        * request: tampilkan satuan (ml/gram/pcs) supaya jelas
+                        * 275 itu apa. */}
+                      <div className="hidden grid-cols-[1fr_7rem_3.5rem_7rem_2.5rem] items-center gap-3 border-b border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-medium uppercase tracking-wide text-neutral-500 md:grid">
                         <span>Bahan</span>
                         <span>Qty</span>
+                        <span>Unit</span>
                         <span className="text-right">Subtotal</span>
                         <span />
                       </div>
@@ -428,7 +434,7 @@ export function RecipeEditorModal({
                           return (
                             <li
                               key={line.key}
-                              className="grid grid-cols-1 gap-2 px-3 py-2.5 md:grid-cols-[1fr_8rem_8rem_2.5rem] md:items-center md:gap-3"
+                              className="grid grid-cols-1 gap-2 px-3 py-2.5 md:grid-cols-[1fr_7rem_3.5rem_7rem_2.5rem] md:items-center md:gap-3"
                             >
                               <Combobox
                                 ariaLabel="Pilih bahan"
@@ -442,9 +448,14 @@ export function RecipeEditorModal({
                                 size="sm"
                                 hideLabel
                               />
-                              <div className="grid grid-cols-[1fr_8rem_2.5rem] items-center gap-2 md:contents">
+                              {/* Sesi AE-63 phase5 — mobile fallback: tampilkan
+                                * Qty + Unit side-by-side dalam 1 row. Desktop
+                                * pakai md:contents supaya jadi grid children. */}
+                              <div className="grid grid-cols-[1fr_3.5rem_7rem_2.5rem] items-center gap-2 md:contents">
                                 <Input
-                                  aria-label="Qty"
+                                  aria-label={
+                                    ing ? `Qty (${ing.unit})` : "Qty"
+                                  }
                                   value={line.qty}
                                   onChange={(e) =>
                                     setLine(idx, line.key, {
@@ -453,9 +464,26 @@ export function RecipeEditorModal({
                                   }
                                   type="text"
                                   inputMode="numeric"
-                                  placeholder={ing ? `(${ing.unit})` : "18"}
+                                  placeholder={ing ? `dalam ${ing.unit}` : "18"}
                                   className="h-9"
                                 />
+                                {/* Unit pill — visible label sebelah Qty */}
+                                <span
+                                  className={cn(
+                                    "inline-flex h-9 items-center justify-center rounded-md border px-2 text-xs font-semibold tabular-nums",
+                                    ing
+                                      ? "border-mahakan-green-700/30 bg-mahakan-green-50 text-mahakan-green-900"
+                                      : "border-dashed border-neutral-200 bg-neutral-50 text-neutral-400",
+                                  )}
+                                  aria-hidden={!ing}
+                                  title={
+                                    ing
+                                      ? `Satuan: ${ing.unit}`
+                                      : "Pilih bahan dulu"
+                                  }
+                                >
+                                  {ing ? ing.unit : "—"}
+                                </span>
                                 <div className="text-right">
                                   <p className="text-[10px] uppercase tracking-wide text-neutral-500 md:hidden">
                                     Subtotal

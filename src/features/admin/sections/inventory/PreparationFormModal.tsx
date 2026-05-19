@@ -524,7 +524,7 @@ export function PreparationFormModal({
                 return (
                   <div
                     key={line.key}
-                    className="grid grid-cols-1 gap-2 rounded-md bg-neutral-50 p-2 md:grid-cols-[1fr_8rem_2.5rem] md:items-end"
+                    className="grid grid-cols-1 gap-2 rounded-md bg-neutral-50 p-2 md:grid-cols-[1fr_6rem_3.5rem_2.5rem] md:items-end"
                   >
                     <Combobox
                       ariaLabel="Pilih bahan"
@@ -540,7 +540,7 @@ export function PreparationFormModal({
                     />
                     <Input
                       aria-label={`Qty${ing ? ` (${ing.unit})` : ""}`}
-                      placeholder={ing ? ing.unit : "16"}
+                      placeholder={ing ? `dalam ${ing.unit}` : "16"}
                       value={line.qty}
                       onChange={(e) =>
                         setLine(line.key, { qty: e.target.value })
@@ -549,6 +549,17 @@ export function PreparationFormModal({
                       inputMode="numeric"
                       className="h-9"
                     />
+                    {/* Sesi AE-63 phase5 — visible unit badge sebelah Qty */}
+                    <span
+                      className={`inline-flex h-9 items-center justify-center rounded-md border px-2 text-xs font-semibold ${
+                        ing
+                          ? "border-mahakan-green-700/30 bg-mahakan-green-50 text-mahakan-green-900"
+                          : "border-dashed border-neutral-200 bg-white text-neutral-400"
+                      }`}
+                      title={ing ? `Satuan: ${ing.unit}` : "Pilih bahan dulu"}
+                    >
+                      {ing ? ing.unit : "—"}
+                    </span>
                     <Button
                       size="sm"
                       variant="ghost"

@@ -132,4 +132,49 @@ describe("computeDiffStats", () => {
     expect(s.matchingLines).toBe(1);
     expect(s.totalAbsDiffCost).toBe(500); // 10 × 50
   });
+
+  /* Sesi AE-63 phase5 — regression untuk bug "Submit opname error: Operasi
+   * database gagal". Pre-fix: 127 line dengan decimal qty diff (mis. 2.5 kg)
+   * × bigint unitCost → totalAbsDiffCost terkumpul sebagai float
+   * (e.g. 123456.789), saat di-tulis ke bigint column Postgres reject.
+   *
+   * compute-pure SENGAJA returns float (UI butuh precision untuk display).
+   * DB write boundary di actions.ts (submit + finalize) yang harus
+   * Math.round. Test ini memastikan compute helper masih return decimal
+   * sebagaimana mestinya (jangan ke-fix di tempat salah). */
+  describe("decimal precision preservation (UI accuracy)", () => {
+    it("preserves fractional totalAbsDiffCost untuk display UI", () => {
+      const s = computeDiffStats([
+        {
+          expectedQty: 0,
+          expectedQtyDecimal: "100.0000",
+          actualQty: 0,
+          actualQtyDecimal: "97.5000",
+          unitCostAtSnapshot: 333,
+        },
+      ]);
+      /* 2.5 × 333 = 832.5 (float). Compute keep precision; action layer
+       * yang round saat tulis ke bigint column. */
+      expect(s.totalAbsDiffCost).toBe(832.5);
+      expect(s.totalAbsDiffQty).toBe(2.5);
+    });
+
+    it("simulates 127-line submit scale: sum harus tetap finite (not NaN)", () => {
+      const lines = Array.from({ length: 127 }, (_, i) => ({
+        expectedQty: 100,
+        expectedQtyDecimal: "100.0000",
+        actualQty: 99,
+        actualQtyDecimal: "99.3500", // 0.65 diff
+        unitCostAtSnapshot: 1000 + i, // varying cost
+      }));
+      const s = computeDiffStats(lines);
+      expect(Number.isFinite(s.totalAbsDiffCost)).toBe(true);
+      expect(Number.isFinite(s.totalAbsDiffQty)).toBe(true);
+      expect(s.countedLines).toBe(127);
+      expect(s.shortageLines).toBe(127);
+      /* Math.round( accumulated float ) harus integer (caller responsibility). */
+      expect(Number.isInteger(Math.round(s.totalAbsDiffCost))).toBe(true);
+      expect(Number.isInteger(Math.round(s.totalAbsDiffQty))).toBe(true);
+    });
+  });
 });
