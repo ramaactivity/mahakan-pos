@@ -30,8 +30,18 @@ describe("format.ts", () => {
       expect(formatPercent(100)).toBe("100%");
     });
 
-    it("rejects non-integer", () => {
-      expect(() => formatPercent(1.5)).toThrow(/expected integer/);
+    /* Sesi AE-63 phase7 — formatPercent dulu THROW on non-integer.
+     * Same fix as formatRupiah: display function should not throw,
+     * round defensively. Strict belongs di storage boundary. */
+    it("rounds non-integer instead of throwing", () => {
+      expect(formatPercent(1.5)).toBe("2%");
+      expect(formatPercent(12.4)).toBe("12%");
+      expect(formatPercent(-3.7)).toBe("-4%");
+    });
+
+    it("returns '0%' for NaN / Infinity (defensive)", () => {
+      expect(formatPercent(NaN)).toBe("0%");
+      expect(formatPercent(Infinity)).toBe("0%");
     });
   });
 

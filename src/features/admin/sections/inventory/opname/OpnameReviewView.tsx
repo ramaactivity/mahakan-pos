@@ -60,15 +60,25 @@ export function OpnameReviewView({
   // pass check constraint, real value disimpan di decimal. Tanpa decimal
   // preference, review preview shows "0 diff" walau finalize bakal create
   // +X adjust movement.
-  const effectiveExpected = (l: (typeof detail.lines)[number]): number =>
-    l.expectedQtyDecimal !== null
-      ? parseFloat(l.expectedQtyDecimal)
-      : l.expectedQty;
+  //
+  // Sesi AE-63 phase7 — defensive parseFloat: kalau decimal string corrupt
+  // (rare neon driver edge case), fallback bigint dan finite-guard.
+  const effectiveExpected = (l: (typeof detail.lines)[number]): number => {
+    if (l.expectedQtyDecimal !== null) {
+      const p = parseFloat(l.expectedQtyDecimal);
+      if (Number.isFinite(p)) return p;
+    }
+    return Number.isFinite(l.expectedQty) ? l.expectedQty : 0;
+  };
   const effectiveActual = (
     l: (typeof detail.lines)[number],
   ): number | null => {
-    if (l.actualQtyDecimal !== null) return parseFloat(l.actualQtyDecimal);
-    return l.actualQty;
+    if (l.actualQtyDecimal !== null) {
+      const p = parseFloat(l.actualQtyDecimal);
+      if (Number.isFinite(p)) return p;
+    }
+    if (l.actualQty === null) return null;
+    return Number.isFinite(l.actualQty) ? l.actualQty : null;
   };
 
   const stats = useMemo(

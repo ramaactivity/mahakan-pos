@@ -697,17 +697,21 @@ export async function finalizeOpname(
 
       // Sesi AE-15 — diff dihitung pakai decimal kalau ada (precise),
       // fallback bigint untuk legacy lines pre-AE-15.
+      //
+      // Sesi AE-63 phase7 — defensive parseFloat: kalau decimal corrupt,
+      // fallback bigint + finite-guard. Tanpa ini, NaN propagate ke diff
+      // → NaN movement delta → DB cast fail.
+      const safeParseDec = (s: string | null, fb: number): number => {
+        if (s === null) return Number.isFinite(fb) ? fb : 0;
+        const p = parseFloat(s);
+        return Number.isFinite(p) ? p : Number.isFinite(fb) ? fb : 0;
+      };
       const computeDiff = (l: (typeof lines)[number]): number => {
         if (l.actualQty === null) return 0;
-        const expected =
-          l.expectedQtyDecimal !== null
-            ? parseFloat(l.expectedQtyDecimal)
-            : l.expectedQty;
-        const actual =
-          l.actualQtyDecimal !== null
-            ? parseFloat(l.actualQtyDecimal)
-            : l.actualQty;
-        return actual - expected;
+        const expected = safeParseDec(l.expectedQtyDecimal, l.expectedQty);
+        const actual = safeParseDec(l.actualQtyDecimal, l.actualQty);
+        const d = actual - expected;
+        return Number.isFinite(d) ? d : 0;
       };
 
       // Lock all impacted ingredients up front for atomicity.

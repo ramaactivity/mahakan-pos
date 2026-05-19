@@ -249,8 +249,22 @@ describe("formatRupiah", () => {
     expect(formatRupiah(999_999_999)).toBe("Rp 999.999.999");
   });
 
-  it("throws on non-integer", () => {
-    expect(() => formatRupiah(123.45)).toThrow();
+  /* Sesi AE-63 phase7 — formatRupiah dulu THROW on non-integer (strict
+   * data integrity guard). Tapi UI caller pass computed total dari decimal
+   * arithmetic (mis. opname preview accumulate qty × cost) → throw crash
+   * UI → error boundary "Back office bermasalah". Sekarang display
+   * function ROUND defensively; strict integer assertion belong di
+   * storage boundary (Zod, DB write), bukan di display. */
+  it("rounds non-integer instead of throwing", () => {
+    expect(formatRupiah(123.45)).toBe("Rp 123");
+    expect(formatRupiah(6801792.6)).toBe("Rp 6.801.793");
+    expect(formatRupiah(-10000.7)).toBe("Rp -10.001");
+  });
+
+  it("returns 'Rp 0' for NaN / Infinity (defensive)", () => {
+    expect(formatRupiah(NaN)).toBe("Rp 0");
+    expect(formatRupiah(Infinity)).toBe("Rp 0");
+    expect(formatRupiah(-Infinity)).toBe("Rp 0");
   });
 });
 

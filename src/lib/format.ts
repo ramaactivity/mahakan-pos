@@ -18,12 +18,20 @@ export {
   formatIndonesianTime as formatTime,
 } from "./date";
 
-/** Format integer percent (0-100) as "10%". */
+/** Format percent (0-100) as "10%".
+ *
+ * Sesi AE-63 phase7 — DEFENSIVE: same fix as formatRupiah. Display
+ * function should not throw on non-integer (caller may pass computed
+ * value). Round to integer instead. NaN/Infinity → "0%" + warn. */
 export function formatPercent(n: number): string {
-  if (!Number.isInteger(n)) {
-    throw new Error(`formatPercent: expected integer, got ${n}`);
+  if (!Number.isFinite(n)) {
+    if (typeof window !== "undefined") {
+      console.warn("[formatPercent] non-finite input, fallback 0%", n);
+    }
+    return "0%";
   }
-  return `${n}%`;
+  const rounded = Number.isInteger(n) ? n : Math.round(n);
+  return `${rounded}%`;
 }
 
 /** Truncate text with ellipsis for UI fit. */

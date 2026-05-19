@@ -10,14 +10,30 @@ interface LineLike {
   actualQtyDecimal?: string | null;
 }
 
+/* Sesi AE-63 phase7 — defensive parseFloat: kalau decimal string corrupt
+ * (NaN/Infinity dari Drizzle string → number cast), fallback ke bigint.
+ * Tanpa guard ini, NaN propagate ke arithmetic → totalDiffQty=NaN → submit
+ * gagal cast ke bigint OR UI render NaN. */
+function safeParseDecimal(s: string): number | null {
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 function effectiveExpected(l: LineLike): number {
-  if (l.expectedQtyDecimal != null) return parseFloat(l.expectedQtyDecimal);
-  return l.expectedQty;
+  if (l.expectedQtyDecimal != null) {
+    const p = safeParseDecimal(l.expectedQtyDecimal);
+    if (p !== null) return p;
+  }
+  return Number.isFinite(l.expectedQty) ? l.expectedQty : 0;
 }
 
 function effectiveActual(l: LineLike): number | null {
-  if (l.actualQtyDecimal != null) return parseFloat(l.actualQtyDecimal);
-  return l.actualQty;
+  if (l.actualQtyDecimal != null) {
+    const p = safeParseDecimal(l.actualQtyDecimal);
+    if (p !== null) return p;
+  }
+  if (l.actualQty === null) return null;
+  return Number.isFinite(l.actualQty) ? l.actualQty : null;
 }
 
 /**
@@ -46,12 +62,20 @@ export function computeDiffStats(lines: LineLike[]): OpnameDiffStats {
     counted++;
     const expected = effectiveExpected(l);
     const diff = actual - expected;
+    /* Defensive: kalau diff somehow NaN (mis. unit_cost corrupt), skip
+     * line dari accumulation supaya total stays finite. */
+    if (!Number.isFinite(diff)) continue;
     if (diff === 0) matching++;
     else if (diff > 0) surplus++;
     else shortage++;
     totalDiffQty += diff;
     totalAbsDiffQty += Math.abs(diff);
-    const costImpact = diff * l.unitCostAtSnapshot;
+    /* unit_cost_at_snapshot bigint, but defensive cast supaya kalau
+     * Drizzle return string (edge case neon driver), Number() coerce. */
+    const cost = Number(l.unitCostAtSnapshot);
+    const safeCost = Number.isFinite(cost) ? cost : 0;
+    const costImpact = diff * safeCost;
+    if (!Number.isFinite(costImpact)) continue;
     totalDiffCost += costImpact;
     totalAbsDiffCost += Math.abs(costImpact);
   }

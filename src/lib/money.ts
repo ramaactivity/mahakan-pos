@@ -100,13 +100,31 @@ export function computeItemSubtotal(
 }
 
 /**
- * Format integer rupiah as Indonesian-style string: "Rp 1.250.000".
+ * Format rupiah as Indonesian-style string: "Rp 1.250.000".
  * Negative values: "Rp -10.000".
+ *
+ * Sesi AE-63 phase7 — DEFENSIVE: round non-integer + handle NaN/Infinity.
+ * Pre-fix throw "amount must be an integer, got X.Y" → crashes UI when
+ * caller passes computed total dari decimal arithmetic (mis. opname
+ * preview accumulate decimal qty × bigint cost). Strict integer
+ * assertion belong di STORAGE boundary (Zod refine, bigint write),
+ * BUKAN di display function — display function should be forgiving.
+ *
+ * Behavior:
+ *  - integer → format as-is
+ *  - decimal → round-half-to-even
+ *  - NaN / Infinity → "Rp 0" (defensive, log to console)
  */
 export function formatRupiah(amount: number): string {
-  assertIntegerAmount(amount, "amount", { allowNegative: true });
-  const sign = amount < 0 ? "-" : "";
-  const abs = Math.abs(amount);
+  if (!Number.isFinite(amount)) {
+    if (typeof window !== "undefined") {
+      console.warn("[formatRupiah] non-finite input, fallback Rp 0", amount);
+    }
+    return "Rp 0";
+  }
+  const rounded = Number.isInteger(amount) ? amount : Math.round(amount);
+  const sign = rounded < 0 ? "-" : "";
+  const abs = Math.abs(rounded);
   // Insert thousand separators (period per Indonesian convention)
   const grouped = abs.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   return `Rp ${sign}${grouped}`;
