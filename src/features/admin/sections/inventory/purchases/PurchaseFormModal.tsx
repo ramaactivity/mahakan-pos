@@ -31,7 +31,9 @@ import { lookupMarketPriceForPurchase } from "@/features/market-list";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import {
   convertPurchaseQty,
+  convertQty,
   resolveUnit,
+  scaleCostOnUnitChange,
   type IngredientPackConversion,
   type PackInfo,
 } from "@/lib/unit-conversion";
@@ -255,6 +257,34 @@ export function PurchaseFormModal({
   function updateRow(id: string, patch: Partial<ItemRow>) {
     setItems((prev) =>
       prev.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+    );
+  }
+
+  /* Sesi AE-63 phase6 — staff gudang request: "input timbangan 250gr +
+   * harga per kg" pattern (kayak Sheets). Saat user ganti dropdown unit,
+   * kalau unit baru beda dimensi (Kg↔gr, L↔ml), auto-scale harga supaya
+   * tetap match harga per unit baru.
+   *
+   * Contoh: Rp 10.000 dengan unit "Kg" → ganti ke "gr" → auto jadi Rp 10
+   * (per gr, equivalent dgn 10rb/Kg). User boleh override kalau salah.
+   *
+   * Catatan: hanya scale untuk same-dimension (mass/volume/count). Discrete
+   * units (Btl, Pack, Pcs) tidak di-scale karena tidak ada conversion factor.
+   * convertQty returns null kalau dimensi beda atau unit unknown. */
+  function onUnitChange(rowId: string, newUnit: string) {
+    setItems((prev) =>
+      prev.map((r) => {
+        if (r.id !== rowId) return r;
+        const scaledRaw = scaleCostOnUnitChange({
+          oldUnit: r.unit,
+          newUnit,
+          oldCost: parseRupiahSafe(r.unitCost),
+        });
+        if (scaledRaw === null) {
+          return { ...r, unit: newUnit };
+        }
+        return { ...r, unit: newUnit, unitCost: String(Math.round(scaledRaw)) };
+      }),
     );
   }
 
@@ -615,7 +645,11 @@ export function PurchaseFormModal({
             <p className="text-xs text-neutral-600">
               Mirror Google Sheet — pilih bahan, isi QTY (boleh
               <strong> 0.5</strong> kalau setengah), pilih satuan, isi harga
-              per unit. Total per baris hidup-update otomatis.
+              per satuan tersebut. Total per baris hidup-update otomatis.{" "}
+              <span className="text-mahakan-green-900">
+                Ganti satuan Kg ↔ gr (atau L ↔ ml) → harga otomatis
+                ter-scale.
+              </span>
             </p>
             <div className="space-y-3 rounded-md border border-neutral-200 p-2">
               {items.map((row, idx) => {
@@ -651,12 +685,39 @@ export function PurchaseFormModal({
                   : "";
                 const unitChanged =
                   ing && unit && unit !== ing.unit && unit !== masterLabel;
+                /* Sesi AE-63 phase6 — equivalent harga per master unit
+                 * untuk transparency. Mis. user input Rp 10/gr → tampil
+                 * "≈ Rp 10.000 per Kg". Helps owner verify mental math. */
+                const equivCostPerMaster =
+                  ing && unitChanged && costN > 0
+                    ? (() => {
+                        const factor = convertQty(1, masterLabel, unit);
+                        if (factor === null || factor <= 0) return null;
+                        return Math.round(costN * factor);
+                      })()
+                    : null;
+                /* Sesi AE-63 phase6 — sanity check warning untuk price-per-unit
+                 * yang terlalu tinggi. Threshold konservatif:
+                 *  - gr/ml: > Rp 1.000 (= Rp 1jt/Kg/L — sangat mahal)
+                 *  - Pcs: > Rp 1jt (kemungkinan typo, mis. lupa /1000)
+                 * Tidak hard-block, cuma soft warning. */
+                const suspiciousPrice = (() => {
+                  if (!ing || costN <= 0) return null;
+                  const u = unit.toLowerCase();
+                  if ((u === "gr" || u === "g") && costN > 1000) {
+                    return `Rp ${costN.toLocaleString("id-ID")}/gr setara Rp ${(costN * 1000).toLocaleString("id-ID")}/Kg — cek lagi?`;
+                  }
+                  if (u === "ml" && costN > 1000) {
+                    return `Rp ${costN.toLocaleString("id-ID")}/ml setara Rp ${(costN * 1000).toLocaleString("id-ID")}/L — cek lagi?`;
+                  }
+                  return null;
+                })();
                 return (
                   <div
                     key={row.id}
                     className="rounded-md bg-neutral-50 p-2"
                   >
-                    <div className="grid gap-2 md:grid-cols-[1.5fr_90px_100px_140px_36px]">
+                    <div className="grid gap-2 md:grid-cols-[1.5fr_90px_100px_180px_36px]">
                       <Combobox
                         ariaLabel={`Bahan ${idx + 1}`}
                         placeholder="Pilih bahan…"
@@ -690,21 +751,38 @@ export function PurchaseFormModal({
                         ariaLabel={`Satuan baris ${idx + 1}`}
                         options={unitOptions}
                         value={unit}
-                        onValueChange={(v) =>
-                          updateRow(row.id, { unit: v })
-                        }
+                        onValueChange={(v) => onUnitChange(row.id, v)}
                         disabled={!ing}
                       />
-                      <Input
-                        aria-label={`Harga per ${unit || "unit"} baris ${idx + 1}`}
-                        placeholder="Harga per unit (Rp)"
-                        type="text"
-                        inputMode="numeric"
-                        value={row.unitCost}
-                        onChange={(e) =>
-                          updateRow(row.id, { unitCost: e.target.value })
-                        }
-                      />
+                      {/* Sesi AE-63 phase6 — harga input dengan dynamic
+                        * "per {unit}" suffix yang jelas. Pre-fix:
+                        * placeholder generic "Harga per unit". Sekarang
+                        * jelas "per Kg" / "per gr" / "per Pcs" — staff
+                        * tidak salah interpret. */}
+                      <div className="relative">
+                        <Input
+                          aria-label={`Harga per ${unit || "unit"} baris ${idx + 1}`}
+                          placeholder="0"
+                          type="text"
+                          inputMode="numeric"
+                          value={row.unitCost}
+                          onChange={(e) =>
+                            updateRow(row.id, { unitCost: e.target.value })
+                          }
+                          className="pr-16"
+                        />
+                        <span
+                          className={cn(
+                            "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                            unit
+                              ? "bg-mahakan-green-100 text-mahakan-green-900"
+                              : "bg-neutral-200 text-neutral-500",
+                          )}
+                          aria-hidden
+                        >
+                          per {unit || "—"}
+                        </span>
+                      </div>
                       <Button
                         size="sm"
                         variant="ghost"
@@ -718,7 +796,7 @@ export function PurchaseFormModal({
                       </Button>
                     </div>
                     {hasQty && costN > 0 ? (
-                      <div className="mt-1.5 flex justify-end pr-12 text-xs text-neutral-700">
+                      <div className="mt-1.5 flex flex-wrap items-center justify-end gap-x-3 gap-y-0.5 pr-12 text-xs text-neutral-700">
                         <span className="font-mono">
                           {formatQtyForDisplay(qtyN)} {unit || "unit"} ×{" "}
                           {formatRupiah(costN)} ={" "}
@@ -726,6 +804,14 @@ export function PurchaseFormModal({
                             {formatRupiah(lineTotal)}
                           </strong>
                         </span>
+                        {/* Sesi AE-63 phase6 — show per-master equivalent
+                          * supaya owner bisa cross-check harga vs ingatannya
+                          * ("harga bawang Rp 10rb/Kg"). */}
+                        {equivCostPerMaster !== null ? (
+                          <span className="font-mono text-[11px] text-neutral-500">
+                            ≈ {formatRupiah(equivCostPerMaster)}/{masterLabel}
+                          </span>
+                        ) : null}
                       </div>
                     ) : ing ? (
                       <div className="mt-1.5 flex justify-end pr-12 text-xs text-neutral-500">
@@ -755,6 +841,13 @@ export function PurchaseFormModal({
                           ⛔ {conv.message}
                         </div>
                       )
+                    ) : null}
+                    {/* Sesi AE-63 phase6 — sanity warning kalau price-per-unit
+                      * sangat tinggi (kemungkinan staff lupa scale). */}
+                    {suspiciousPrice ? (
+                      <div className="mt-1 rounded-md bg-amber-100 px-2 py-1 text-[11px] text-amber-900">
+                        ⚠ {suspiciousPrice}
+                      </div>
                     ) : null}
                   </div>
                 );

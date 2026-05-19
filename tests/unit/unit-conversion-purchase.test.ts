@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { convertPurchaseQty } from "@/lib/unit-conversion";
+import {
+  convertPurchaseQty,
+  scaleCostOnUnitChange,
+} from "@/lib/unit-conversion";
 
 /**
  * Sesi AE-43 — unit conversion fix di Catat Pembelian.
@@ -256,5 +259,101 @@ describe("convertPurchaseQty", () => {
       expect(res.ok).toBe(false);
       if (!res.ok) expect(res.error).toBe("PACK_UNKNOWN");
     });
+  });
+});
+
+/**
+ * Sesi AE-63 phase6 — staff gudang request: input belanja kayak Sheets,
+ * timbangan 250gr + harga Rp 10rb/Kg → otomatis hitung perkilo. Form
+ * Catat Pembelian sekarang auto-scale harga saat user ganti dropdown unit.
+ * scaleCostOnUnitChange = pure helper untuk logic ini.
+ */
+describe("scaleCostOnUnitChange", () => {
+  it("scale Rp 10.000/Kg → Rp 10/gr saat user ganti Kg ke gr", () => {
+    const r = scaleCostOnUnitChange({
+      oldUnit: "Kg",
+      newUnit: "gr",
+      oldCost: 10000,
+    });
+    expect(r).toBe(10);
+  });
+
+  it("scale Rp 10/gr → Rp 10.000/Kg saat user ganti gr ke Kg", () => {
+    const r = scaleCostOnUnitChange({
+      oldUnit: "gr",
+      newUnit: "Kg",
+      oldCost: 10,
+    });
+    expect(r).toBe(10000);
+  });
+
+  it("scale Rp 50.000/L → Rp 50/ml saat ganti L ke ml", () => {
+    const r = scaleCostOnUnitChange({
+      oldUnit: "L",
+      newUnit: "ml",
+      oldCost: 50000,
+    });
+    expect(r).toBe(50);
+  });
+
+  it("scale Rp 12.000/Lusin → Rp 1.000/Pcs saat ganti Lusin ke Pcs", () => {
+    const r = scaleCostOnUnitChange({
+      oldUnit: "Lusin",
+      newUnit: "Pcs",
+      oldCost: 12000,
+    });
+    expect(r).toBe(1000);
+  });
+
+  it("null kalau unit sama (no change)", () => {
+    expect(
+      scaleCostOnUnitChange({ oldUnit: "Kg", newUnit: "Kg", oldCost: 10000 }),
+    ).toBeNull();
+  });
+
+  it("null kalau oldUnit kosong (first selection)", () => {
+    expect(
+      scaleCostOnUnitChange({ oldUnit: "", newUnit: "Kg", oldCost: 10000 }),
+    ).toBeNull();
+  });
+
+  it("null kalau cross-dimension (gr ↔ ml)", () => {
+    expect(
+      scaleCostOnUnitChange({ oldUnit: "gr", newUnit: "ml", oldCost: 50 }),
+    ).toBeNull();
+  });
+
+  it("null kalau discrete unit (Pack ↔ Btl)", () => {
+    expect(
+      scaleCostOnUnitChange({ oldUnit: "Pack", newUnit: "Btl", oldCost: 5000 }),
+    ).toBeNull();
+  });
+
+  it("null kalau cost 0 atau negative (nothing to scale)", () => {
+    expect(
+      scaleCostOnUnitChange({ oldUnit: "Kg", newUnit: "gr", oldCost: 0 }),
+    ).toBeNull();
+    expect(
+      scaleCostOnUnitChange({ oldUnit: "Kg", newUnit: "gr", oldCost: -100 }),
+    ).toBeNull();
+  });
+
+  it("case-insensitive unit names (KG ↔ kg)", () => {
+    const r = scaleCostOnUnitChange({
+      oldUnit: "KG",
+      newUnit: "gr",
+      oldCost: 8000,
+    });
+    expect(r).toBe(8);
+  });
+
+  it("fractional result tetap return (caller decide Math.round)", () => {
+    /* 333 Rp/Kg ÷ 1000 = 0.333 Rp/gr. Caller responsibility round. */
+    const r = scaleCostOnUnitChange({
+      oldUnit: "Kg",
+      newUnit: "gr",
+      oldCost: 333,
+    });
+    expect(r).toBeCloseTo(0.333, 5);
   });
 });

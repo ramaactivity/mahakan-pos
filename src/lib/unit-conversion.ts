@@ -85,6 +85,38 @@ export function convertQty(
   return base / to.toBase;
 }
 
+/**
+ * Sesi AE-63 phase6 — pure helper untuk auto-scale harga saat user ganti
+ * unit dropdown di Catat Pembelian form.
+ *
+ * Use case: user input Rp 10.000 dengan unit "Kg", lalu ganti ke "gr".
+ * Equivalent: Rp 10/gr (10.000 / 1000). Atau sebaliknya: Rp 10/gr → Rp
+ * 10.000/Kg saat user ganti ke Kg.
+ *
+ * Rule: kalau 1 newUnit = X oldUnit (mis. 1 Kg = 1000 gr), maka harga
+ * per newUnit = harga per oldUnit × X.
+ *
+ * Returns null kalau:
+ *  - unit lama atau baru kosong
+ *  - sama unit (no change)
+ *  - convertQty fails (cross-dimension atau discrete unit)
+ *  - cost ≤ 0
+ *
+ * Caller responsibility: round result kalau perlu integer storage.
+ */
+export function scaleCostOnUnitChange(args: {
+  oldUnit: string;
+  newUnit: string;
+  oldCost: number;
+}): number | null {
+  if (!args.oldUnit || !args.newUnit) return null;
+  if (args.oldUnit === args.newUnit) return null;
+  if (!Number.isFinite(args.oldCost) || args.oldCost <= 0) return null;
+  const xPerNewInOld = convertQty(1, args.newUnit, args.oldUnit);
+  if (xPerNewInOld === null || xPerNewInOld <= 0) return null;
+  return args.oldCost * xPerNewInOld;
+}
+
 /** List unit options yang compatible dengan master unit (sama dimensi).
  *  Dipakai di Stock Opname picker biar staff cuma lihat unit relevan.
  *
