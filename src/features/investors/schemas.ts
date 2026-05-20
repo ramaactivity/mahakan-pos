@@ -106,6 +106,11 @@ export const bulkImportInvestorsSchema = z.object({
     .array(bulkImportInvestorRowSchema)
     .min(1, "Minimal 1 baris")
     .max(500, "Maksimal 500 baris per import"),
+  /* Sesi AE-68 — Mode dedup behavior:
+   *  - insert_only (default, backward-compat): skip kalau name/NIK match existing
+   *  - upsert: kalau name/NIK match existing → UPDATE field-nya pakai nilai baru
+   *    dari CSV. Untuk re-upload CSV dari Sheets dengan data yang sudah di-koreksi. */
+  mode: z.enum(["insert_only", "upsert"]).default("insert_only"),
 });
 
 export const listInvestorsSchema = z.object({

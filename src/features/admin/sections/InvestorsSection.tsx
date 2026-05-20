@@ -154,6 +154,8 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
     "active",
   );
   const [editing, setEditing] = useState<Investor | null>(null);
+  /* Sesi AE-68 — Highlight row di list setelah save sukses (3 detik fade). */
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -336,17 +338,28 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
           canManage={canManage}
           onEdit={setEditing}
           onDelete={handleDelete}
+          highlightedId={highlightedId}
         />
       )}
 
+      {/* Sesi AE-68 — key={editing?.id ?? "new"} force-remount modal saat
+       * row yang di-edit berubah (atau switch create↔edit). Tanpa key,
+       * React reuse modal instance dengan stale form state — pre-fill
+       * dari useEffect deps [open, initial] kadang race dengan parent
+       * re-render setelah refresh(), bikin field show old value. */}
       <InvestorFormModal
+        key={editing?.id ?? "new"}
         open={createOpen || editing !== null}
         initial={editing}
         onClose={() => {
           setCreateOpen(false);
           setEditing(null);
         }}
-        onSaved={refresh}
+        onSaved={(updatedId) => {
+          refresh();
+          setHighlightedId(updatedId ?? editing?.id ?? null);
+          setTimeout(() => setHighlightedId(null), 3000);
+        }}
       />
       <InvestorImportWizard
         open={importOpen}
@@ -778,18 +791,24 @@ const InvestorRow = memo(function InvestorRow({
   canManage,
   onEdit,
   onDelete,
+  highlighted,
 }: {
   inv: InvestorRowView;
   canManage: boolean;
   onEdit: (inv: InvestorWithStats) => void;
   onDelete: (inv: InvestorWithStats) => void;
+  /** Sesi AE-68 — kalau true, row di-highlight 3 detik setelah save. */
+  highlighted?: boolean;
 }) {
   return (
     <div
       role="row"
       className={cn(
-        "grid items-center border-b border-neutral-100 text-sm transition-colors hover:bg-neutral-50",
+        "grid items-center border-b border-neutral-100 text-sm transition-colors",
         INVESTOR_COLS,
+        highlighted
+          ? "bg-mahakan-green-50 ring-2 ring-mahakan-green-500/40"
+          : "hover:bg-neutral-50",
       )}
     >
       <div role="cell" className="px-3 py-2">
@@ -877,11 +896,13 @@ function VirtualInvestorList({
   canManage,
   onEdit,
   onDelete,
+  highlightedId,
 }: {
   investors: InvestorRowView[];
   canManage: boolean;
   onEdit: (inv: InvestorWithStats) => void;
   onDelete: (inv: InvestorWithStats) => void;
+  highlightedId?: string | null;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -957,6 +978,7 @@ function VirtualInvestorList({
                   canManage={canManage}
                   onEdit={onEdit}
                   onDelete={onDelete}
+                  highlighted={highlightedId === inv.id}
                 />
               </div>
             );

@@ -308,7 +308,7 @@ export async function bulkImportInvestors(
       parsed.error.issues[0]?.message ?? "Input tidak valid",
     );
   }
-  const { rows } = parsed.data;
+  const { rows, mode } = parsed.data;
 
   /* Pre-fetch existing untuk dedup di app-side (no FK conflicts).
    * Pakai partial unique index sebagai final guard kalau ada race. */
@@ -325,44 +325,77 @@ export async function bulkImportInvestors(
         isNull(investors.deletedAt),
       ),
     );
-  const existingByNik = new Set(
-    existing.filter((r) => r.nik).map((r) => r.nik as string),
-  );
-  const existingByName = new Set(
-    existing.map((r) => r.fullName.trim().toLowerCase()),
-  );
+  const existingByNik = new Map<string, string>();
+  const existingByName = new Map<string, string>();
+  for (const r of existing) {
+    if (r.nik) existingByNik.set(r.nik, r.id);
+    existingByName.set(r.fullName.trim().toLowerCase(), r.id);
+  }
 
   const result: BulkImportInvestorsResult = {
     totalRows: rows.length,
     inserted: 0,
+    updated: 0,
     skippedDuplicate: 0,
     errors: [],
   };
 
   /* Sesi AE-63 audit P1.5 — batch insert. Pre-fix: 1 INSERT per row =
    * 500 round-trips ke DB (jaringan Vercel↔Neon Singapore). Sekarang:
-   * 1. Filter dup di app-side (dari pre-fetch existing set).
+   * 1. Filter dup di app-side (dari pre-fetch existing map).
    * 2. INSERT batch all non-dup rows dengan onConflictDoNothing.
-   * 3. Kalau ada row yang silently skipped (race with unique index), retry
-   *    per row individu untuk capture error message yang jelas. */
+   * 3. Kalau mode='upsert', update existing rows untuk dup detected.
+   *
+   * Sesi AE-68 — mode='upsert' bikin re-upload CSV dengan koreksi data
+   * (mis. fix nominal Pocut yang awalnya 0) jadi UPDATE field-nya, bukan
+   * silent skip. */
   const dedupedRows: Array<{
     rowIdx: number;
     values: typeof investors.$inferInsert;
   }> = [];
+  const upsertTargets: Array<{
+    rowIdx: number;
+    existingId: string;
+    values: Partial<typeof investors.$inferInsert>;
+  }> = [];
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
-    const isDup =
-      (r.nik && existingByNik.has(r.nik)) ||
-      existingByName.has(r.fullName.trim().toLowerCase());
-    if (isDup) {
-      result.skippedDuplicate += 1;
+    const nikMatchId = r.nik ? existingByNik.get(r.nik) : null;
+    const nameMatchId = existingByName.get(r.fullName.trim().toLowerCase());
+    const matchedId = nikMatchId ?? nameMatchId;
+
+    if (matchedId) {
+      if (mode === "upsert") {
+        upsertTargets.push({
+          rowIdx: i + 1,
+          existingId: matchedId,
+          values: {
+            fullName: r.fullName,
+            nik: r.nik ?? null,
+            email: r.email ?? null,
+            phone: r.phone ?? null,
+            address: r.address ?? null,
+            dateOfBirth: r.dateOfBirth ?? null,
+            occupation: r.occupation ?? null,
+            igHandle: r.igHandle ?? null,
+            bankName: r.bankName ?? null,
+            bankAccountNumber: r.bankAccountNumber ?? null,
+            bankAccountHolderName: r.bankAccountHolderName ?? null,
+            modalDisetor: r.modalDisetor,
+            updatedBy: session.user.id,
+            updatedAt: new Date(),
+          },
+        });
+      } else {
+        result.skippedDuplicate += 1;
+      }
       continue;
     }
-    /* Track di seen-sets supaya kalau import file punya dup internally
-     * (mis. 2 row dengan NIK sama), row ke-2 di-skip. */
-    if (r.nik) existingByNik.add(r.nik);
-    existingByName.add(r.fullName.trim().toLowerCase());
+    /* Track di seen-maps supaya kalau import file punya dup internally
+     * (mis. 2 row dengan NIK sama), row ke-2 di-skip atau collapsed. */
+    if (r.nik) existingByNik.set(r.nik, "PENDING_INSERT");
+    existingByName.set(r.fullName.trim().toLowerCase(), "PENDING_INSERT");
     dedupedRows.push({
       rowIdx: i + 1,
       values: {
@@ -384,6 +417,28 @@ export async function bulkImportInvestors(
         updatedBy: session.user.id,
       },
     });
+  }
+
+  /* Sesi AE-68 — Apply upsert updates per existing investor (single UPDATE
+   * per row supaya partial unique index tetap respect outletId scope). */
+  if (upsertTargets.length > 0) {
+    for (const u of upsertTargets) {
+      try {
+        await db
+          .update(investors)
+          .set(u.values)
+          .where(
+            and(
+              eq(investors.id, u.existingId),
+              eq(investors.outletId, session.user.outletId),
+            ),
+          );
+        result.updated += 1;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "DB error";
+        result.errors.push({ row: u.rowIdx, reason: `Update gagal: ${msg}` });
+      }
+    }
   }
 
   if (dedupedRows.length > 0) {

@@ -94,11 +94,17 @@ export interface BulkImportInvestorRow {
 
 export interface BulkImportInvestorsInput {
   rows: BulkImportInvestorRow[];
+  /** Sesi AE-68 — 'insert_only' (default): skip duplicates. 'upsert':
+   * update existing kalau match. */
+  mode?: "insert_only" | "upsert";
 }
 
 export interface BulkImportInvestorsResult {
   totalRows: number;
   inserted: number;
+  /** Sesi AE-68 — di mode upsert, count berapa row di-update karena match
+   * existing investor (bukan skip). */
+  updated: number;
   skippedDuplicate: number;
   errors: Array<{ row: number; reason: string }>;
 }

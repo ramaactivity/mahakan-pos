@@ -40,9 +40,12 @@ interface ParsedRow extends BulkImportInvestorRow {
 interface ImportResult {
   totalRows: number;
   inserted: number;
+  updated: number;
   skippedDuplicate: number;
   errors: Array<{ row: number; reason: string }>;
 }
+
+type ImportMode = "insert_only" | "upsert";
 
 /* Parse CSV manual — minimal, support quoted field dengan koma + Rp prefix. */
 function parseCsv(text: string): { headers: string[]; rows: string[][] } {
@@ -161,6 +164,10 @@ export function InvestorImportWizard({
   const [csvText, setCsvText] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
+  /* Sesi AE-68 — mode default 'insert_only' (backward-compat: first migration
+   * dari Sheets pakai ini). User pilih 'upsert' kalau re-upload CSV dengan
+   * koreksi data (nominal/email berubah, name match → update). */
+  const [mode, setMode] = useState<ImportMode>("insert_only");
 
   const parsed = useMemo(() => {
     if (!csvText) return { parsedRows: [] as ParsedRow[], parseErrors: [] as { row: number; reason: string }[] };
@@ -213,6 +220,7 @@ export function InvestorImportWizard({
     }
     setSubmitting(true);
     const res = await bulkImportInvestors({
+      mode,
       rows: parsed.parsedRows.map((r) => ({
         fullName: r.fullName,
         nik: r.nik ?? null,
@@ -415,6 +423,69 @@ export function InvestorImportWizard({
             </span>
           </div>
 
+          {/* Sesi AE-68 — Mode selector (insert_only vs upsert).
+           * Default 'insert_only' = first-time migration (skip kalau nama
+           * sudah ada). 'upsert' = re-upload CSV dengan koreksi (kalau nama
+           * sudah ada, update field nominal/email/dll). */}
+          <fieldset className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+            <legend className="px-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+              Mode Import
+            </legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label
+                className={`flex cursor-pointer items-start gap-2 rounded-md border-2 p-3 text-xs transition ${
+                  mode === "insert_only"
+                    ? "border-mahakan-green-500 bg-white"
+                    : "border-neutral-200 bg-white/50 hover:border-neutral-300"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="import-mode"
+                  value="insert_only"
+                  checked={mode === "insert_only"}
+                  onChange={() => setMode("insert_only")}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block font-semibold text-neutral-900">
+                    Tambah Saja (Skip Duplikat)
+                  </span>
+                  <span className="mt-0.5 block text-[11px] text-neutral-600">
+                    Kalau nama / NIK sudah ada di sistem, baris itu di-skip.
+                    Cocok untuk import pertama kali dari Sheets.
+                  </span>
+                </span>
+              </label>
+              <label
+                className={`flex cursor-pointer items-start gap-2 rounded-md border-2 p-3 text-xs transition ${
+                  mode === "upsert"
+                    ? "border-mahakan-green-500 bg-white"
+                    : "border-neutral-200 bg-white/50 hover:border-neutral-300"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="import-mode"
+                  value="upsert"
+                  checked={mode === "upsert"}
+                  onChange={() => setMode("upsert")}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block font-semibold text-neutral-900">
+                    Tambah / Update (Upsert)
+                  </span>
+                  <span className="mt-0.5 block text-[11px] text-neutral-600">
+                    Kalau nama / NIK sudah ada, <strong>update</strong> field-nya
+                    pakai nilai baru dari CSV (nominal, email, dll). Cocok
+                    untuk re-upload setelah koreksi data.
+                  </span>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+
           {parsed.parseErrors.length > 0 ? (
             <div className="max-h-32 overflow-y-auto rounded-md border border-amber-200 bg-amber-50 p-3">
               <p className="mb-1 text-xs font-semibold text-amber-900">
@@ -479,25 +550,47 @@ export function InvestorImportWizard({
                 Import selesai
               </p>
               <p className="text-xs text-emerald-800">
-                {result.inserted} investor baru ditambahkan
+                {result.inserted} baru ditambahkan
+                {result.updated > 0
+                  ? ` · ${result.updated} di-update`
+                  : ""}
+                {result.skippedDuplicate > 0
+                  ? ` · ${result.skippedDuplicate} di-skip (sudah ada)`
+                  : ""}
               </p>
             </div>
-            <dl className="grid grid-cols-2 gap-2 text-sm">
+            <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
               <Stat label="Total Baris" value={result.totalRows} />
-              <Stat label="Inserted" value={result.inserted} tone="success" />
+              <Stat label="Baru" value={result.inserted} tone="success" />
               <Stat
-                label="Duplikat dilewati"
-                value={result.skippedDuplicate}
-                tone="warning"
+                label="Di-update"
+                value={result.updated}
+                tone={result.updated > 0 ? "success" : "neutral"}
               />
               <Stat
-                label="Error"
-                value={result.errors.length}
-                tone={result.errors.length > 0 ? "danger" : "neutral"}
+                label="Di-skip"
+                value={result.skippedDuplicate}
+                tone={result.skippedDuplicate > 0 ? "warning" : "neutral"}
               />
             </dl>
+            {result.skippedDuplicate > 0 ? (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                <p className="font-semibold">
+                  💡 {result.skippedDuplicate} baris di-skip karena nama / NIK
+                  sudah ada di sistem.
+                </p>
+                <p className="mt-1">
+                  Kalau lo mau <strong>update</strong> data investor yang sudah
+                  ada (mis. koreksi nominal/email), upload ulang dengan mode
+                  <strong> Tambah / Update (Upsert)</strong> di step preview.
+                </p>
+              </div>
+            ) : null}
             {result.errors.length > 0 ? (
               <div className="max-h-40 overflow-y-auto rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+                <p className="mb-1 font-semibold">
+                  {result.errors.length} baris error:
+                </p>
                 {result.errors.map((e) => (
                   <p key={e.row}>
                     Baris {e.row}: {e.reason}

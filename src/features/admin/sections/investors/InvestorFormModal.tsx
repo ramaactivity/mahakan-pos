@@ -33,7 +33,8 @@ interface InvestorFormModalProps {
   open: boolean;
   initial: Investor | null;
   onClose: () => void;
-  onSaved: () => void;
+  /** Sesi AE-68 — saved investor id supaya parent bisa highlight row. */
+  onSaved: (savedId?: string) => void;
 }
 
 const STATUS_OPTIONS: SelectOption[] = [
@@ -152,7 +153,7 @@ export function InvestorFormModal({
         ? `Investor ${res.data.fullName} di-update`
         : `Investor ${res.data.fullName} ditambahkan`,
     );
-    onSaved();
+    onSaved(res.data.id);
     onClose();
   }
 
