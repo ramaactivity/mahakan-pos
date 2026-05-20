@@ -146,6 +146,10 @@ export const permissions = {
   // attendance via the kiosk; the device's logged-in user is the actor.
   "attendance.view": ["owner", "manager", "supervisor"],
   "attendance.record": ["owner", "manager", "supervisor", "staff"],
+  /* Sesi AE-63 phase8 — HR Bayu request: edit status/lateMinutes per
+   * record untuk handle special cases (konfirmasi karyawan, izin, dll).
+   * Owner + Manager (HR-level) only. */
+  "attendance.manual_edit": ["owner", "manager"],
   /** Phase 4 (sesi AB) — set/reset attendance PIN per karyawan via
    * Admin → Karyawan. Owner+Manager. */
   "employee.attendance_pin.manage": ["owner", "manager"],

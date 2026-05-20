@@ -32,6 +32,9 @@ import {
   upsertSchedule,
   type ScheduleWithEmployee,
 } from "@/features/schedules";
+import { editAttendanceManual } from "@/features/attendance/actions";
+import { useSession } from "@/features/auth/SessionProvider";
+import { hasPermission } from "@/lib/auth/rbac";
 import {
   getAttendanceCalendar,
   isOk as hrIsOk,
@@ -755,6 +758,14 @@ export function SchedulesSection() {
       <AttendanceDetailModal
         detail={attendanceDetail}
         onClose={() => setAttendanceDetail(null)}
+        onSaved={() => {
+          /* Sesi AE-63 phase8 — refresh calendar setelah HR manual edit
+           * attendance. Modal close-nya tetap manual oleh user supaya
+           * bisa lihat updated state sebelum tutup. */
+          void queryClient.invalidateQueries({
+            queryKey: ["admin", "attendance-calendar"],
+          });
+        }}
       />
     </div>
   );
@@ -814,6 +825,7 @@ function AttendanceCell({
 function AttendanceDetailModal({
   detail,
   onClose,
+  onSaved,
 }: {
   detail: {
     employeeName: string;
@@ -821,7 +833,37 @@ function AttendanceDetailModal({
     cell: AttendanceCalendarCell;
   } | null;
   onClose: () => void;
+  /* Sesi AE-63 phase8 — callback dari HR manual edit attendance. */
+  onSaved?: () => void;
 }) {
+  /* Sesi AE-63 phase8 — HR Bayu request: edit status + late/OT manual. */
+  const { session } = useSession();
+  const canEdit =
+    !!session && hasPermission(session.user.role, "attendance.manual_edit");
+  const [editMode, setEditMode] = useState(false);
+  const [editIsLate, setEditIsLate] = useState<"yes" | "no" | "unknown">(
+    "unknown",
+  );
+  const [editLate, setEditLate] = useState("");
+  const [editOT, setEditOT] = useState("");
+  const [editReason, setEditReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  /* Reset edit state when detail changes. */
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setEditMode(false);
+    if (detail) {
+      setEditIsLate(
+        (detail.cell.isLate ?? "unknown") as "yes" | "no" | "unknown",
+      );
+      setEditLate(String(detail.cell.lateMinutes ?? 0));
+      setEditOT(String(detail.cell.overtimeMinutes ?? 0));
+      setEditReason("");
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [detail?.cell.recordId, detail?.date]);
+
   if (!detail) return null;
   const meta = ATTENDANCE_STYLE[detail.cell.status];
   const dateLabel = new Date(`${detail.date}T00:00:00Z`).toLocaleDateString(
@@ -836,6 +878,45 @@ function AttendanceDetailModal({
   const clockOutTime = detail.cell.clockOutAt
     ? formatClockTime(detail.cell.clockOutAt)
     : null;
+
+  /* Sesi AE-63 phase8 — edit only available kalau ada attendance record
+   * (status hadir/telat). Off/alpa/kosong tidak ada record untuk di-edit. */
+  const hasRecord = !!detail.cell.recordId;
+
+  async function onSubmitEdit() {
+    if (!detail?.cell.recordId || submitting) return;
+    const lateN = parseInt(editLate, 10);
+    const otN = parseInt(editOT, 10);
+    if (!Number.isFinite(lateN) || lateN < 0) {
+      toast.error("Telat minutes harus angka non-negatif");
+      return;
+    }
+    if (!Number.isFinite(otN) || otN < 0) {
+      toast.error("Overtime minutes harus angka non-negatif");
+      return;
+    }
+    if (editReason.trim().length < 3) {
+      toast.error("Alasan minimal 3 karakter");
+      return;
+    }
+    setSubmitting(true);
+    const res = await editAttendanceManual({
+      recordId: detail.cell.recordId,
+      isLate: editIsLate,
+      lateMinutes: lateN,
+      overtimeMinutes: otN,
+      reason: editReason.trim(),
+    });
+    setSubmitting(false);
+    if (res.success) {
+      toast.success("Status absen ter-update");
+      setEditMode(false);
+      onSaved?.();
+    } else {
+      toast.error(res.error.message);
+    }
+  }
+
   return (
     <Modal
       open
@@ -844,9 +925,31 @@ function AttendanceDetailModal({
       description={dateLabel}
       size="md"
       footer={
-        <Button variant="ghost" onClick={onClose}>
-          Tutup
-        </Button>
+        editMode ? (
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setEditMode(false)}
+              disabled={submitting}
+            >
+              Batal Edit
+            </Button>
+            <Button onClick={onSubmitEdit} loading={submitting}>
+              Simpan
+            </Button>
+          </>
+        ) : (
+          <>
+            {canEdit && hasRecord ? (
+              <Button variant="outline" onClick={() => setEditMode(true)}>
+                <Pencil className="size-4" aria-hidden /> Edit Status
+              </Button>
+            ) : null}
+            <Button variant="ghost" onClick={onClose}>
+              Tutup
+            </Button>
+          </>
+        )
       }
     >
       <div className="space-y-3 text-sm">
@@ -861,6 +964,92 @@ function AttendanceDetailModal({
           </div>
           <div className="mt-0.5 text-base font-bold">{meta.legend}</div>
         </div>
+
+        {/* Sesi AE-63 phase8 — manual edit badge supaya HR tahu record ini
+          * sudah pernah di-override (e.g. konfirmasi izin, sakit). */}
+        {!editMode && detail.cell.manualEditAt ? (
+          <div className="rounded-md border border-mahakan-green-700/30 bg-mahakan-green-50/40 p-2.5 text-xs">
+            <div className="font-semibold text-mahakan-green-900">
+              ✎ Status sudah di-edit manual oleh HR
+            </div>
+            {detail.cell.manualEditReason ? (
+              <div className="mt-0.5 text-neutral-700">
+                Alasan: <em>{detail.cell.manualEditReason}</em>
+              </div>
+            ) : null}
+            <div className="mt-0.5 text-[10px] text-neutral-500">
+              {new Date(detail.cell.manualEditAt).toLocaleString("id-ID", {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        {/* Sesi AE-63 phase8 — inline edit form (HR manual override).
+          * Force-set isLate/lateMinutes/overtimeMinutes + reason. */}
+        {editMode ? (
+          <div className="space-y-2 rounded-md border border-mahakan-green-700/40 bg-mahakan-green-50/40 p-3">
+            <div className="text-xs font-semibold uppercase tracking-wider text-mahakan-green-900">
+              Edit Status Manual
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-neutral-700 mb-1">
+                Status Telat
+              </label>
+              <div className="flex gap-1.5">
+                {(
+                  [
+                    { v: "no", label: "Tidak Telat" },
+                    { v: "yes", label: "Telat" },
+                    { v: "unknown", label: "Tidak diketahui" },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.v}
+                    type="button"
+                    onClick={() => setEditIsLate(opt.v)}
+                    className={cn(
+                      "flex-1 rounded-md border px-3 py-2 text-xs font-medium transition-colors",
+                      editIsLate === opt.v
+                        ? "border-mahakan-green-700 bg-mahakan-green-700 text-white"
+                        : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                label="Telat (menit)"
+                type="text"
+                inputMode="numeric"
+                value={editLate}
+                onChange={(e) => setEditLate(e.target.value)}
+              />
+              <Input
+                label="Overtime (menit)"
+                type="text"
+                inputMode="numeric"
+                value={editOT}
+                onChange={(e) => setEditOT(e.target.value)}
+              />
+            </div>
+            <Input
+              label="Alasan (wajib, min 3 karakter)"
+              placeholder="mis. konfirmasi izin via WA, sakit, lupa absen"
+              value={editReason}
+              onChange={(e) => setEditReason(e.target.value)}
+              maxLength={500}
+            />
+            <p className="text-[10px] text-neutral-500">
+              Override ini akan ter-audit ke audit log dengan nama kamu +
+              waktu + alasan. Payroll akan re-compute pakai nilai baru ini.
+            </p>
+          </div>
+        ) : null}
 
         {/* Sesi AE-50 — Clock In/Out times */}
         {(clockInTime || clockOutTime) && (

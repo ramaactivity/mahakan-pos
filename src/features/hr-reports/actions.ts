@@ -224,6 +224,7 @@ export async function getAttendanceCalendar(input: {
   // untuk modal detail absen di Back Office (HR request).
   const records = await db
     .select({
+      id: attendanceRecords.id,
       employeeId: attendanceRecords.employeeId,
       shiftDate: attendanceRecords.shiftDate,
       workMinutes: attendanceRecords.workMinutes,
@@ -235,6 +236,8 @@ export async function getAttendanceCalendar(input: {
       selfieDriveUrl: attendanceRecords.selfieDriveUrl,
       selfieDriveFolderUrl: attendanceRecords.selfieDriveFolderUrl,
       gpsDistanceMeters: attendanceRecords.gpsDistanceMeters,
+      manualEditAt: attendanceRecords.manualEditAt,
+      manualEditReason: attendanceRecords.manualEditReason,
     })
     .from(attendanceRecords)
     .where(
@@ -297,6 +300,13 @@ export async function getAttendanceCalendar(input: {
         cell.selfieDriveUrl = rec.selfieDriveUrl;
         cell.selfieDriveFolderUrl = rec.selfieDriveFolderUrl;
         cell.gpsDistanceMeters = rec.gpsDistanceMeters;
+        // Sesi AE-63 phase8 — needed by HR manual-edit modal
+        cell.recordId = rec.id;
+        cell.isLate = rec.isLate;
+        cell.manualEditAt = rec.manualEditAt
+          ? new Date(rec.manualEditAt).toISOString()
+          : null;
+        cell.manualEditReason = rec.manualEditReason;
       } else if (sched && sched.dayOff) {
         status = "off";
       } else if (sched && !sched.dayOff) {

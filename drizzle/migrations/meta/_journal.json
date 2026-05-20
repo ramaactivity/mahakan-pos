@@ -407,6 +407,13 @@
       "when": 1779128216337,
       "tag": "0057_add_settled_at_to_settlement_logs",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1779265642480,
+      "tag": "0058_add_attendance_manual_edit_fields",
+      "breakpoints": true
     }
   ]
 }

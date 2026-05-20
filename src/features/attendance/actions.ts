@@ -49,7 +49,9 @@ import {
 import {
   clockInSchema,
   clockOutSchema,
+  editAttendanceManualSchema,
   listAttendanceSchema,
+  type EditAttendanceManualInput,
 } from "./schemas";
 import {
   fail,
@@ -318,4 +320,104 @@ export async function clockOut(
   }).catch((e) => console.error("[audit attendance.clock_out]", e));
 
   return ok(row);
+}
+
+/**
+ * Sesi AE-63 phase8 — HR Bayu request: manual edit attendance status +
+ * late/overtime minutes per record. Use case: karyawan konfirmasi izin,
+ * sakit, mendadak kerja shift overlap, force majeure → HR adjust isLate
+ * + lateMinutes supaya payroll calc benar.
+ *
+ * Guards:
+ *  - RBAC attendance.manual_edit (owner + manager)
+ *  - outletId scope (defense-in-depth)
+ *  - Record must exist + same outlet
+ *  - reason wajib min 3 char (audit trail)
+ *
+ * Behavior:
+ *  - Force-set isLate, lateMinutes, overtimeMinutes ke nilai input
+ *  - Stamp manualEditAt, manualEditBy, manualEditReason
+ *  - Subsequent schedule recompute belum aware manual-edit (future enhancement)
+ */
+export async function editAttendanceManual(
+  input: EditAttendanceManualInput,
+): Promise<ApiResult<AttendanceRecord>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "attendance.manual_edit")) {
+    return fail(
+      "FORBIDDEN",
+      "Hanya Owner / Manager yang dapat edit attendance manual",
+    );
+  }
+
+  const parsed = editAttendanceManualSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  /* Fetch current state untuk audit before/after. */
+  const [current] = await db
+    .select()
+    .from(attendanceRecords)
+    .where(eq(attendanceRecords.id, v.recordId))
+    .limit(1);
+  if (!current) return fail("NOT_FOUND", "Record tidak ditemukan");
+  if (current.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Record dari outlet lain");
+  }
+
+  const now = new Date();
+  try {
+    const [row] = await db
+      .update(attendanceRecords)
+      .set({
+        isLate: v.isLate,
+        lateMinutes: v.lateMinutes,
+        overtimeMinutes: v.overtimeMinutes,
+        manualEditAt: now,
+        manualEditBy: session.user.id,
+        manualEditReason: v.reason,
+        updatedAt: now,
+      })
+      .where(eq(attendanceRecords.id, v.recordId))
+      .returning();
+
+    logAudit({
+      eventType: "attendance.manual_edit",
+      userId: session.user.id,
+      entityType: "attendance",
+      entityId: v.recordId,
+      payload: {
+        summary: `Manual edit attendance ${current.employeeId} (${current.shiftDate}): ${current.isLate} → ${v.isLate}, late ${current.lateMinutes ?? "-"}m → ${v.lateMinutes ?? "-"}m`,
+        before: {
+          isLate: current.isLate,
+          lateMinutes: current.lateMinutes,
+          overtimeMinutes: current.overtimeMinutes,
+        },
+        after: {
+          isLate: v.isLate,
+          lateMinutes: v.lateMinutes,
+          overtimeMinutes: v.overtimeMinutes,
+        },
+        context: { reason: v.reason },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }).catch((e) =>
+      console.error("[audit attendance.manual_edit]", e),
+    );
+
+    return ok(row);
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "attendance", "Operasi database gagal"),
+    );
+  }
 }

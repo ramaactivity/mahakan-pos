@@ -96,6 +96,15 @@ export const attendanceRecords = pgTable(
       .references(() => users.id),
     clockedOutBy: uuid("clocked_out_by").references(() => users.id),
 
+    /** Sesi AE-63 phase8 — HR manual override metadata. Saat HR edit
+     * isLate/lateMinutes/overtimeMinutes manual (untuk handle konfirmasi
+     * izin, sakit, force majeure), kita stamp siapa + kapan + alasan.
+     * Trail audit: subsequent schedule recompute akan inspect kolom ini
+     * supaya tidak overwrite manual decision. */
+    manualEditAt: timestamp("manual_edit_at", { withTimezone: true }),
+    manualEditBy: uuid("manual_edit_by").references(() => users.id),
+    manualEditReason: text("manual_edit_reason"),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

@@ -80,6 +80,13 @@ export interface AttendanceCalendarCell {
    * semua selfie hari itu (clock-in + clock-out). */
   selfieDriveFolderUrl?: string | null;
   gpsDistanceMeters?: number | null;
+  /** Sesi AE-63 phase8 — needed by HR manual-edit dialog. NULL kalau
+   * cell ga punya attendance record (status=off/alpa/kosong). */
+  recordId?: string | null;
+  isLate?: "yes" | "no" | "unknown" | null;
+  /** Indicator HR sudah edit manual record ini. UI tampilkan badge "edited". */
+  manualEditAt?: string | null;
+  manualEditReason?: string | null;
 }
 
 export interface AttendanceCalendarRow {
