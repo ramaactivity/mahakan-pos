@@ -421,6 +421,13 @@
       "when": 1779269203357,
       "tag": "0059_shift_active_per_outlet",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1779275033295,
+      "tag": "0060_jittery_hobgoblin",
+      "breakpoints": true
     }
   ]
 }

@@ -10,7 +10,9 @@ import {
 import {
   ArrowDownCircle,
   ArrowUpCircle,
+  Calendar,
   Camera,
+  CheckCircle2,
   Coins,
   Delete,
   ExternalLink,
@@ -23,9 +25,11 @@ import {
   ListTree,
   Loader2,
   PartyPopper,
+  Pencil,
   RefreshCw,
   Scissors,
   Snowflake,
+  Trash2,
   TrendingUp,
   Wallet,
   X,
@@ -51,10 +55,13 @@ import {
   listExpenseCategories,
   listExpenses,
   listIncomes,
+  listPendingEntryChanges,
   type Expense,
   type ExpenseCategory,
   type Income,
+  type PendingEntryChangeWithMeta,
 } from "@/features/cash";
+import { ProposeEntryChangeModal } from "@/features/cash/components/ProposeEntryChangeModal";
 import { formatRupiah } from "@/lib/format";
 import { todayWibIso } from "@/features/cash/helpers";
 import { formatIndonesianTime } from "@/lib/date";
@@ -201,6 +208,24 @@ export function PettyCashCard() {
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /* Sesi AE-67 Phase 1 — retroactive date picker.
+   * Default = today (Jakarta). Boleh up to 3 hari ke belakang untuk handle
+   * "staff lupa input kemarin / 2 hari lalu". Lebih jauh dari itu = harus
+   * propose via approval (mencegah backdate abuse). */
+  const [entryDate, setEntryDate] = useState<string>(() => todayWibIso());
+  const isRetro = entryDate !== todayWibIso();
+
+  // Sesi AE-67 Phase 2 — propose entry change modal state.
+  const [proposeModal, setProposeModal] = useState<{
+    open: boolean;
+    mode: "edit" | "delete";
+    entityType: "expense" | "income";
+    entity: Expense | Income | null;
+  }>({ open: false, mode: "edit", entityType: "expense", entity: null });
+
+  // Sesi AE-67 — pending changes per entityId (map untuk fast lookup).
+  const [pendingByEntityId, setPendingByEntityId] = useState<Map<string, PendingEntryChangeWithMeta>>(new Map());
+
   // Load categories once on mount + init categoryId ke "Lain-lain" (atau
   // first non-system) supaya staff gak perlu pilih manual buat case umum.
   useEffect(() => {
@@ -223,34 +248,30 @@ export function PettyCashCard() {
     };
   }, []);
 
-  // Load today's recent entries.
+  // Load recent entries untuk entryDate yang dipilih.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       if (!hasLoadedOnce.current) setLoadingRecent(true);
-      const today = todayWibIso();
-      /* Sesi AE-63 phase9 — bug fix: pre-fix listExpenses tanpa filter →
-       * payroll/purchase/refund auto-generated expenses LEAK ke Petty Cash
-       * POS yang dipakai kasir. Padahal petty cash khusus pengeluaran
-       * kecil shift di kas drawer (gas, ice, galon, tip, dll).
-       *
-       * Filter: sourceType='manual' (created via UI, not auto) +
-       * paymentMethod='cash' (cash drawer impact only). Transfer manual
-       * masih masuk Kas Back Office untuk audit owner. */
-      const [expRes, incRes] = await Promise.all([
+      /* Sesi AE-63 phase9 — filter sourceType='manual' + paymentMethod='cash'
+       * supaya petty cash drawer view tidak ke-leak entries auto-generated
+       * (payroll/purchase/refund) yang sumbernya bukan kas drawer.
+       * Sesi AE-67 — date pakai entryDate (default today, bisa retro). */
+      const [expRes, incRes, pecRes] = await Promise.all([
         listExpenses({
-          from: today,
-          to: today,
+          from: entryDate,
+          to: entryDate,
           limit: 50,
           sourceType: "manual",
           paymentMethod: "cash",
         }),
         listIncomes({
-          from: today,
-          to: today,
+          from: entryDate,
+          to: entryDate,
           limit: 50,
           paymentMethod: "cash",
         }),
+        listPendingEntryChanges({ status: "pending_approval", limit: 100 }),
       ]);
       if (cancelled) return;
       const merged: Array<{
@@ -278,13 +299,20 @@ export function PettyCashCard() {
       }
       merged.sort((a, b) => b.ts - a.ts);
       setRecent(merged);
+      if (isOk(pecRes)) {
+        const map = new Map<string, PendingEntryChangeWithMeta>();
+        for (const pec of pecRes.data) {
+          map.set(pec.entityId, pec);
+        }
+        setPendingByEntityId(map);
+      }
       setLoadingRecent(false);
       hasLoadedOnce.current = true;
     })();
     return () => {
       cancelled = true;
     };
-  }, [refreshKey]);
+  }, [refreshKey, entryDate]);
 
   const parsedAmount = amountDigits.length === 0 ? 0 : Number(amountDigits);
 
@@ -386,7 +414,7 @@ export function PettyCashCard() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("expenseDate", todayWibIso());
+      fd.append("expenseDate", entryDate);
       const res = await fetch("/api/v1/expense-receipts/upload", {
         method: "POST",
         body: fd,
@@ -441,11 +469,9 @@ export function PettyCashCard() {
       return;
     }
 
-    const today = todayWibIso();
-
     if (mode === "expense") {
       const res = await createExpense({
-        expenseDate: today,
+        expenseDate: entryDate,
         categoryId,
         description: description.trim(),
         amount: parsedAmount,
@@ -457,10 +483,14 @@ export function PettyCashCard() {
         setError(res.error.message);
         return;
       }
-      toast.success(`Pengeluaran ${formatRupiah(parsedAmount)} dicatat`);
+      toast.success(
+        isRetro
+          ? `Pengeluaran ${formatRupiah(parsedAmount)} dicatat ke ${entryDate}`
+          : `Pengeluaran ${formatRupiah(parsedAmount)} dicatat`,
+      );
     } else {
       const res = await createIncome({
-        incomeDate: today,
+        incomeDate: entryDate,
         description: description.trim(),
         amount: parsedAmount,
         paymentMethod: "cash",
@@ -470,12 +500,24 @@ export function PettyCashCard() {
         setError(res.error.message);
         return;
       }
-      toast.success(`Pemasukan ${formatRupiah(parsedAmount)} dicatat`);
+      toast.success(
+        isRetro
+          ? `Pemasukan ${formatRupiah(parsedAmount)} dicatat ke ${entryDate}`
+          : `Pemasukan ${formatRupiah(parsedAmount)} dicatat`,
+      );
     }
 
     resetForm();
     setRefreshKey((k) => k + 1);
   }
+
+  /** Min date selectable: 3 hari sebelum hari ini (mencegah backdate abuse). */
+  const minDate = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 3);
+    return d.toISOString().slice(0, 10);
+  })();
+  const maxDate = todayWibIso();
 
   const quickPicks = mode === "expense" ? EXPENSE_QUICK_PICKS : INCOME_QUICK_PICKS;
   const quickAmounts =
@@ -585,6 +627,40 @@ export function PettyCashCard() {
               {opt.label}
             </button>
           ))}
+        </div>
+
+        {/* Sesi AE-67 Phase 1 — Date picker untuk retroactive entry.
+         * Default = today. Allow up to 3 hari ke belakang (mencegah backdate
+         * abuse, sekaligus solusi "lupa input kemarin"). Highlight banner
+         * kalau date != today. */}
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
+          <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-neutral-600">
+            <Calendar className="size-4" aria-hidden />
+            Tanggal Entri
+          </label>
+          <input
+            type="date"
+            value={entryDate}
+            min={minDate}
+            max={maxDate}
+            onChange={(e) => setEntryDate(e.target.value)}
+            disabled={submitting}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-mono text-neutral-900 focus:border-mahakan-green-500 focus:outline-none focus:ring-2 focus:ring-mahakan-green-200"
+          />
+          {isRetro ? (
+            <span className="inline-flex items-center gap-1 rounded-md border border-warning-300 bg-warning-100 px-2 py-0.5 text-[11px] font-medium text-warning-700">
+              ⚠ Retro · catat ke tanggal lampau
+            </span>
+          ) : null}
+          {entryDate !== todayWibIso() ? (
+            <button
+              type="button"
+              onClick={() => setEntryDate(todayWibIso())}
+              className="ml-auto text-[11px] font-medium text-neutral-500 hover:text-mahakan-green-700"
+            >
+              Reset ke hari ini
+            </button>
+          ) : null}
         </div>
 
         {/* 2-col layout: KIRI = form, KANAN = numpad + amount */}
@@ -955,13 +1031,15 @@ export function PettyCashCard() {
                       : null
                     : null;
                 const expRow = kind === "expense" ? (row as Expense) : null;
+                const pending = pendingByEntityId.get(row.id);
                 return (
                   <li
                     key={row.id}
                     className={cn(
-                      "flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2",
-                      kind === "expense" && "border-l-4 border-l-danger-300",
-                      kind === "income" && "border-l-4 border-l-success-500/40",
+                      "flex items-center gap-2 rounded-lg border bg-white px-3 py-2",
+                      pending ? "border-warning-300 bg-warning-50/40" : "border-neutral-200",
+                      !pending && kind === "expense" && "border-l-4 border-l-danger-300",
+                      !pending && kind === "income" && "border-l-4 border-l-success-500/40",
                     )}
                   >
                     <Badge
@@ -979,6 +1057,11 @@ export function PettyCashCard() {
                         {cat ? ` · ${cat.name}` : ""}
                         {expRow?.receiptImageUrl ? " · 📎 ada bukti" : ""}
                       </p>
+                      {pending ? (
+                        <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning-700">
+                          ⏳ Pending {pending.operation === "delete" ? "hapus" : "edit"} — tunggu Owner approve
+                        </p>
+                      ) : null}
                     </div>
                     {expRow?.receiptImageUrl ? (
                       <a
@@ -1003,6 +1086,44 @@ export function PettyCashCard() {
                       {kind === "expense" ? "−" : "+"}
                       {formatRupiah(row.amount)}
                     </span>
+                    {/* Sesi AE-67 — Edit/Delete buttons (route via propose
+                     * workflow). Disable kalau sudah ada pending change. */}
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setProposeModal({
+                            open: true,
+                            mode: "edit",
+                            entityType: kind,
+                            entity: row,
+                          })
+                        }
+                        disabled={!!pending}
+                        className="rounded-md p-1.5 text-neutral-500 transition hover:bg-warning-100 hover:text-warning-700 disabled:cursor-not-allowed disabled:opacity-30"
+                        title={pending ? "Sudah ada pending koreksi" : "Ajukan edit"}
+                        aria-label="Ajukan edit"
+                      >
+                        <Pencil className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setProposeModal({
+                            open: true,
+                            mode: "delete",
+                            entityType: kind,
+                            entity: row,
+                          })
+                        }
+                        disabled={!!pending}
+                        className="rounded-md p-1.5 text-neutral-500 transition hover:bg-danger-100 hover:text-danger-500 disabled:cursor-not-allowed disabled:opacity-30"
+                        title={pending ? "Sudah ada pending koreksi" : "Ajukan hapus"}
+                        aria-label="Ajukan hapus"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
                   </li>
                 );
               })}
@@ -1010,6 +1131,18 @@ export function PettyCashCard() {
           )}
         </div>
       </CardContent>
+      {/* Sesi AE-67 — Propose entry change modal (Edit/Hapus dengan owner approval) */}
+      <ProposeEntryChangeModal
+        open={proposeModal.open}
+        mode={proposeModal.mode}
+        entityType={proposeModal.entityType}
+        entity={proposeModal.entity}
+        onClose={() => setProposeModal((p) => ({ ...p, open: false }))}
+        onSubmitted={() => {
+          setProposeModal((p) => ({ ...p, open: false }));
+          setRefreshKey((k) => k + 1);
+        }}
+      />
     </Card>
   );
 }

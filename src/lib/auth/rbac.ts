@@ -106,6 +106,11 @@ export const permissions = {
   "income.update_anytime": ["owner"],
   "income.delete": ["owner"],
   "cash.daily_summary.view": ["owner", "manager", "supervisor", "staff"],
+  /* Sesi AE-67 — Entry change suggest workflow. Semua role bisa propose
+   * (staff yang sadar duluan kalau salah input), hanya owner yang bisa
+   * approve via 6-digit code (mirror shift.rebalance). */
+  "entry_change.propose": ["owner", "manager", "supervisor", "staff"],
+  "entry_change.approve": ["owner"],
 
   // Reports — supervisor lihat operational, NOT P&L / cost / financial export.
   "report.sales.view": ["owner", "manager", "supervisor"],

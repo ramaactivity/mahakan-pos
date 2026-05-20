@@ -26,3 +26,14 @@ export {
   updateExpenseCategory,
   type UpdateExpenseInput,
 } from "./actions";
+
+export {
+  approveEntryChange,
+  cancelEntryChange,
+  listPendingEntryChanges,
+  proposeEntryChange,
+  rejectEntryChange,
+  type PendingEntryChange,
+  type PendingEntryChangeWithMeta,
+  type ProposeEntryChangeInput,
+} from "./entry-change-actions";

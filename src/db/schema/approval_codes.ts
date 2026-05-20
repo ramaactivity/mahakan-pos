@@ -52,6 +52,9 @@ export const approvalCodes = pgTable(
          * when a trx happens to have both a pending void code and a pending
          * correction code). */
         "pos.transaction.correction",
+        /* Sesi AE-67 — pengeluaran / pemasukan entry change (edit/delete).
+         * Target = pending_entry_changes.id. Pattern mirror shift.rebalance. */
+        "entry_change",
       ],
     }).notNull(),
 
@@ -71,6 +74,10 @@ export const approvalCodes = pgTable(
      * (yang index targetTransactionId) tidak collide saat trx punya pending
      * void code DAN pending correction code bersamaan. */
     targetTransactionCorrectionId: uuid("target_transaction_correction_id"),
+
+    /** Sesi AE-67 — target untuk action_type='entry_change'. Refer ke
+     * pending_entry_changes.id. */
+    targetEntryChangeId: uuid("target_entry_change_id"),
 
     outletId: uuid("outlet_id")
       .notNull()
@@ -134,26 +141,41 @@ export const approvalCodes = pgTable(
       "ck_approval_codes_revoked_pair",
       sql`(${t.revokedAt} IS NULL AND ${t.revokedByUserId} IS NULL) OR (${t.revokedAt} IS NOT NULL AND ${t.revokedByUserId} IS NOT NULL)`,
     ),
-    /** Sesi AE-62r — exactly one target set per action_type (3-way XOR).
-     * Extends AE-62o 2-way (rebalance vs trx) with 3rd path (correction). */
+    /** Sesi AE-67 — exactly one target set per action_type (4-way XOR).
+     * Extends AE-62r 3-way (void/refund/rebalance/correction) with 4th path
+     * (entry_change). */
     check(
       "ck_approval_codes_target_xor",
       sql`(${t.actionType} IN ('pos.transaction.void','pos.transaction.refund')
             AND ${t.targetTransactionId} IS NOT NULL
             AND ${t.targetShiftRebalanceId} IS NULL
-            AND ${t.targetTransactionCorrectionId} IS NULL)
+            AND ${t.targetTransactionCorrectionId} IS NULL
+            AND ${t.targetEntryChangeId} IS NULL)
        OR (${t.actionType} = 'shift.rebalance'
             AND ${t.targetShiftRebalanceId} IS NOT NULL
             AND ${t.targetTransactionId} IS NULL
-            AND ${t.targetTransactionCorrectionId} IS NULL)
+            AND ${t.targetTransactionCorrectionId} IS NULL
+            AND ${t.targetEntryChangeId} IS NULL)
        OR (${t.actionType} = 'pos.transaction.correction'
             AND ${t.targetTransactionCorrectionId} IS NOT NULL
             AND ${t.targetTransactionId} IS NULL
-            AND ${t.targetShiftRebalanceId} IS NULL)`,
+            AND ${t.targetShiftRebalanceId} IS NULL
+            AND ${t.targetEntryChangeId} IS NULL)
+       OR (${t.actionType} = 'entry_change'
+            AND ${t.targetEntryChangeId} IS NOT NULL
+            AND ${t.targetTransactionId} IS NULL
+            AND ${t.targetShiftRebalanceId} IS NULL
+            AND ${t.targetTransactionCorrectionId} IS NULL)`,
     ),
     /** Sesi AE-62r — fast lookup of active correction codes. */
     index("idx_approval_codes_correction_lookup").on(
       t.targetTransactionCorrectionId,
+      t.actionType,
+      t.consumedAt,
+    ),
+    /** Sesi AE-67 — fast lookup of active entry_change codes. */
+    index("idx_approval_codes_entry_change_lookup").on(
+      t.targetEntryChangeId,
       t.actionType,
       t.consumedAt,
     ),

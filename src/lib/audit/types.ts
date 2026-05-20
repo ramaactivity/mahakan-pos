@@ -28,6 +28,12 @@ export const AUDIT_EVENT_TYPES = [
   "transaction.correction.approve",
   "transaction.correction.reject",
   "transaction.correction.cancel",
+  /* Sesi AE-67 — Entry change (pengeluaran/pemasukan edit/delete) dengan
+   * suggest staff → approve owner via 6-digit code. */
+  "entry_change.propose",
+  "entry_change.approve",
+  "entry_change.reject",
+  "entry_change.cancel",
   "transaction.reprint",
   "transaction.split_payment.add",
   // Menu
@@ -332,6 +338,7 @@ export type AuditEntityType =
   | "reconciliation_note"
   | "shift_rebalance"
   | "transaction_correction"
+  | "pending_entry_change"
   | "chart_of_accounts"
   | "accounting_period"
   | "journal_entry"

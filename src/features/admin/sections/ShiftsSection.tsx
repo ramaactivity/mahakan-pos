@@ -14,6 +14,7 @@ import {
 } from "@/components/ui";
 import { ShiftDetailModal } from "./shifts/ShiftDetailModal";
 import { PendingRebalancesPanel } from "./shifts/PendingRebalancesPanel";
+import { PendingEntryChangesPanel } from "./shifts/PendingEntryChangesPanel";
 import { isOk, listShifts, type Shift } from "@/features/shifts";
 import { getOwnOutlet } from "@/features/outlets";
 import { listUsers, type PublicUser } from "@/features/users";
@@ -159,7 +160,12 @@ export function ShiftsSection() {
         </button>
       </div>
 
-      {tab === "rebalance" ? <PendingRebalancesPanel /> : null}
+      {tab === "rebalance" ? (
+        <div className="space-y-4">
+          <PendingRebalancesPanel />
+          <PendingEntryChangesPanel />
+        </div>
+      ) : null}
 
       {tab === "history" ? (
       <Card>

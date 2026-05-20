@@ -11,6 +11,7 @@ export * from "./approver-tokens";
 export * from "./inventory";
 export * from "./customers";
 export * from "./approval_codes";
+export * from "./pending_entry_changes";
 export * from "./refund_events";
 export * from "./split_payments";
 export * from "./employees";
