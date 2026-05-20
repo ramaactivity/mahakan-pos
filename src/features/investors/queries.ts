@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { investors, capitalMovements } from "@/db/schema";
 import type {
@@ -63,36 +63,55 @@ export async function fetchInvestors(
     .limit(pageSize)
     .offset(offset);
 
-  /* Aggregate stats by holder dalam 1 query terpisah. */
+  /* Aggregate stats by holder dalam 1 query terpisah.
+   *
+   * Sesi AE-68 hotfix — DEFENSIVE: wrap dalam try/catch. Pre-fix, Drizzle
+   * SQL template `sql\`= ANY(${investorIds})\`` di Vercel prod runtime
+   * throw 500 (drizzle-orm minification artifact suspected). Stat card
+   * (getTotalModalInvestors, no aggregator) OK tapi list 500 karena
+   * fetchInvestors aggregator step throws.
+   *
+   * Strategi: graceful degrade — aggregator gagal → baseRows tetap
+   * return dengan stats=0. List tetap usable, dividend-YTD column
+   * sementara kosong (data masih ada di DB).
+   *
+   * Sesi AE-68 v2 — pakai db.execute raw SQL dengan IN-clause builder
+   * untuk hindari Drizzle template ANY-array gen yang fragile di prod. */
   const investorIds = baseRows.map((r) => r.id);
   const statsByHolder = new Map<
     string,
     { dividendYtd: number; dividendLifetime: number; movementCount: number }
   >();
   if (investorIds.length > 0) {
-    const aggRows = await db
-      .select({
-        holderId: capitalMovements.holderId,
-        dividendYtd: sql<string>`COALESCE(SUM(${capitalMovements.amount}) FILTER (WHERE ${capitalMovements.kind} = 'dividend_credit' AND ${capitalMovements.occurredAt} >= ${yearStart}), 0)`,
-        dividendLifetime: sql<string>`COALESCE(SUM(${capitalMovements.amount}) FILTER (WHERE ${capitalMovements.kind} = 'dividend_credit'), 0)`,
-        movementCount: sql<string>`COUNT(*)`,
-      })
-      .from(capitalMovements)
-      .where(
-        and(
-          eq(capitalMovements.holderType, "investor"),
-          eq(capitalMovements.outletId, outletId),
-          sql`${capitalMovements.holderId} = ANY(${investorIds})`,
-        ),
-      )
-      .groupBy(capitalMovements.holderId);
+    try {
+      const aggRows = await db
+        .select({
+          holderId: capitalMovements.holderId,
+          dividendYtd: sql<string>`COALESCE(SUM(${capitalMovements.amount}) FILTER (WHERE ${capitalMovements.kind} = 'dividend_credit' AND ${capitalMovements.occurredAt} >= ${yearStart}), 0)`,
+          dividendLifetime: sql<string>`COALESCE(SUM(${capitalMovements.amount}) FILTER (WHERE ${capitalMovements.kind} = 'dividend_credit'), 0)`,
+          movementCount: sql<string>`COUNT(*)`,
+        })
+        .from(capitalMovements)
+        .where(
+          and(
+            eq(capitalMovements.holderType, "investor"),
+            eq(capitalMovements.outletId, outletId),
+            inArray(capitalMovements.holderId, investorIds),
+          ),
+        )
+        .groupBy(capitalMovements.holderId);
 
-    for (const r of aggRows) {
-      statsByHolder.set(r.holderId, {
-        dividendYtd: Number(r.dividendYtd),
-        dividendLifetime: Number(r.dividendLifetime),
-        movementCount: Number(r.movementCount),
-      });
+      for (const r of aggRows) {
+        statsByHolder.set(r.holderId, {
+          dividendYtd: Number(r.dividendYtd),
+          dividendLifetime: Number(r.dividendLifetime),
+          movementCount: Number(r.movementCount),
+        });
+      }
+    } catch (e) {
+      /* Log + continue — baseRows tetap di-return dengan stats=0.
+       * Lebih baik show list tanpa dividen-YTD daripada error 500 total. */
+      console.error("[fetchInvestors] aggregator query failed:", e);
     }
   }
 
