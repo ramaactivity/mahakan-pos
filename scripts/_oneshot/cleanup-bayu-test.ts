@@ -30,8 +30,11 @@ config({ path: ".env.local" });
 import { Pool, type PoolClient } from "@neondatabase/serverless";
 
 const BAYU_EMAIL = "bayukurnia95@gmail.com";
-const TEST_WINDOW_START = "2026-05-11 00:00:00+07"; // WIB
-const TEST_WINDOW_END = "2026-05-19 23:59:59+07";
+/* Sesi AE-63 phase8 — Owner Rama clarify: test besar HANYA 19-20 Mei.
+ * Data 11-18 Mei adalah real production (schedule + attendance asli).
+ * Window narrowed supaya tidak corrupt real data. */
+const TEST_WINDOW_START = "2026-05-19 00:00:00+07"; // WIB
+const TEST_WINDOW_END = "2026-05-20 23:59:59+07";
 
 interface Plan {
   category: string;
@@ -45,6 +48,8 @@ const plans: Plan[] = [];
 function add(p: Plan) {
   plans.push(p);
 }
+
+const CONSERVATIVE = process.argv.includes("--conservative");
 
 async function buildPlan(c: PoolClient): Promise<{
   bayuId: string;
@@ -125,66 +130,45 @@ async function buildPlan(c: PoolClient): Promise<{
     }
     add({
       category: "Payroll (delete)",
-      description: `Hapus payroll period "${period.label}" + cascade delete payroll_lines (FK cascade)`,
+      description: `Hapus payroll period "${period.label}" + cascade delete payroll_lines + payroll_payslip_emails (FK on-delete-cascade)`,
       sql: `DELETE FROM payroll_periods WHERE id = $1`,
       params: [period.id],
     });
-
-    /* Also delete payslip emails for this period */
-    add({
-      category: "Payslip emails (delete log)",
-      description: `Hapus log payslip emails untuk period`,
-      sql: `DELETE FROM payroll_payslip_emails WHERE payroll_period_id = $1`,
-      params: [period.id],
-    });
+    /* NOTE: payroll_payslip_emails.period_id FK punya ON DELETE CASCADE,
+     * jadi delete payroll_period otomatis cascade ke email logs.
+     * Same untuk payroll_lines.period_id. No need for explicit DELETE. */
   }
 
-  /* 5. Schedules by Bayu in test window — delete all */
-  const schedRows = (
-    await c.query(
-      `SELECT COUNT(*)::int AS n FROM employee_schedules
-       WHERE created_by = $1 AND created_at BETWEEN $2 AND $3`,
-      [bayuId, TEST_WINDOW_START, TEST_WINDOW_END],
-    )
-  ).rows;
-  const schedCount = schedRows[0].n;
-  if (schedCount > 0) {
-    add({
-      category: "Schedules (delete)",
-      description: `Hapus ${schedCount} schedule yang dibuat Bayu di test window`,
-      sql: `DELETE FROM employee_schedules
-            WHERE created_by = $1 AND created_at BETWEEN $2 AND $3`,
-      params: [bayuId, TEST_WINDOW_START, TEST_WINDOW_END],
-    });
-  }
+  /* Sesi AE-63 phase8 — Owner Rama clarify (after diag-attendance-1920):
+   * Schedules + Attendance pada 19-20 Mei dibuat oleh ramaactivity (mobile
+   * clock-in dari device owner-session), BUKAN dari Bayu's testing. Semua
+   * 6 attendance records di window ini punya selfie + GPS = staff real
+   * clock-in. Sama pattern dengan 11-18 Mei.
+   *
+   * Bayu's testing ACTUAL surface:
+   *  1. Payroll period "Mei 2026" (draft, 0 employees) — created 14 Mei
+   *  2. Employee edits — 4 employees on 19 Mei evening
+   *  3. Career history deletes — 5 rows on 19 Mei evening
+   *
+   * Bayu's earlier schedule.upsert events (11-16 Mei) adalah real schedule
+   * prep. Bayu's clock-out (16 Mei) adalah real action. PRESERVE.
+   *
+   * SKIP delete attendance + schedules. Cleanup only payroll + employee
+   * edits + career_history. */
 
-  /* 6. Attendance records — yang ke-create di test window
-   *    (clock-in/out by Bayu atau related ke deleted schedules) */
-  const attRows = (
-    await c.query(
-      `SELECT a.id, a.shift_date, e.full_name, a.clock_in_at, a.clock_out_at
-       FROM attendance_records a
-       LEFT JOIN employees e ON e.id = a.employee_id
-       WHERE a.created_at BETWEEN $1 AND $2
-       ORDER BY a.shift_date DESC`,
-      [TEST_WINDOW_START, TEST_WINDOW_END],
-    )
-  ).rows;
-  if (attRows.length > 0) {
-    console.log(`📋 Attendance to delete (${attRows.length}):`);
-    for (const r of attRows) {
-      console.log(
-        `   ${r.shift_date} | ${r.full_name ?? "?"} | in=${r.clock_in_at?.toISOString().slice(11, 16) ?? "-"} out=${r.clock_out_at?.toISOString().slice(11, 16) ?? "-"}`,
-      );
-    }
-    console.log();
-    add({
-      category: "Attendance (delete)",
-      description: `Hapus ${attRows.length} attendance record yang dibuat di test window`,
-      sql: `DELETE FROM attendance_records
-            WHERE created_at BETWEEN $1 AND $2`,
-      params: [TEST_WINDOW_START, TEST_WINDOW_END],
-    });
+  /* Sesi AE-63 phase8 — Owner Rama pilih CONSERVATIVE: cuma delete payroll
+   * + payslip emails. SKIP employee revert + career_history restore karena
+   * beberapa edit Bayu mungkin valid HR adjustment (lihat
+   * diag-bayu-edits-detail.ts). Owner manual review later kalau perlu. */
+  if (CONSERVATIVE) {
+    return {
+      bayuId,
+      outletId,
+      payrollPeriodId,
+      payrollExpenseId: plans
+        .find((p) => p.category === "Expense (soft-delete)")
+        ?.params[1] as string | null,
+    };
   }
 
   /* 7. Revert employee edits dari audit log "before" payload.
@@ -330,7 +314,7 @@ async function main() {
   try {
     console.log("=".repeat(70));
     console.log(
-      `MODE: ${apply ? "APPLY 🚨 (changes will be persisted)" : "DRY-RUN (no changes)"}`,
+      `MODE: ${apply ? "APPLY 🚨 (changes will be persisted)" : "DRY-RUN (no changes)"}${CONSERVATIVE ? " · CONSERVATIVE (payroll only, skip employee+career revert)" : ""}`,
     );
     console.log("=".repeat(70));
     console.log();
