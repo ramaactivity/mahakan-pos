@@ -1,10 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Mail } from "lucide-react";
+import {
+  AlertTriangle,
+  Calculator,
+  CheckCircle2,
+  Mail,
+  Wallet,
+} from "lucide-react";
 import {
   Button,
-  Input,
   Modal,
   NumericInput,
   toast,
@@ -12,6 +17,7 @@ import {
 import { requestShiftRebalance } from "@/features/shifts/rebalance-actions";
 import { isOk, type Shift } from "@/features/shifts/types";
 import { formatRupiah } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 interface ShiftRebalanceModalProps {
   open: boolean;
@@ -142,6 +148,19 @@ export function ShiftRebalanceModal({
   const qrisDiff = qrisNum !== null ? qrisNum - originalQris : null;
   const edcDiff = edcNum !== null ? edcNum - originalEdc : null;
 
+  /* Sesi AE-66 — Live variance projection.
+   * Sebelum koreksi: variance lama (Aktual lama − Harusnya).
+   * Sesudah koreksi: Aktual baru − Harusnya (kalau staff input baru).
+   * Owner langsung lihat dampak koreksi terhadap selisih.
+   */
+  const varianceBefore =
+    expectedCash != null ? originalCash - expectedCash : null;
+  const projectedActualCash = cashNum !== null ? cashNum : originalCash;
+  const varianceAfter =
+    expectedCash != null ? projectedActualCash - expectedCash : null;
+  const hasAnyCorrection =
+    cashNum !== null || qrisNum !== null || edcNum !== null;
+
   return (
     <Modal
       open={open}
@@ -157,9 +176,9 @@ export function ShiftRebalanceModal({
       description={
         success
           ? "Kode terkirim ke Owner. Tunggu approve."
-          : "Owner akan terima email berisi kode 6-digit untuk approve correction."
+          : "Koreksi shift fields dengan persetujuan Owner via kode 6-digit di email."
       }
-      size="lg"
+      size="3xl"
       footer={
         success ? (
           <Button
@@ -216,97 +235,245 @@ export function ShiftRebalanceModal({
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {/* Sesi AE-64 — Breakdown formula Kas Harusnya supaya staff
-           * langsung lihat asal-usul variance + bisa auto-fill kas aktual
-           * sesuai formula. */}
-          {expectedCash != null ? (
-            <div className="rounded-md border border-mahakan-green-200 bg-mahakan-green-50 p-3 text-xs">
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-mahakan-green-900">
-                Komponen Kas Harusnya
-              </p>
-              <div className="space-y-1 font-mono text-neutral-800">
-                <BreakdownRow label="Kas Awal" value={shift.openingCash} sign="+" />
-                <BreakdownRow label="Penjualan Tunai" value={paidCash} sign="+" />
-                {refundedCash > 0 ? (
-                  <BreakdownRow label="Refund Tunai" value={refundedCash} sign="-" />
-                ) : null}
-                {pettyExpenseCash > 0 ? (
+        <div className="space-y-4">
+          {/* Sesi AE-66 — Two-column grid: Komponen Kas Harusnya (kiri) +
+           * Live Dampak Koreksi (kanan). Pada mobile/sempit, stack vertical. */}
+          <div className="grid gap-3 md:grid-cols-2">
+            {/* Komponen Kas Harusnya */}
+            {expectedCash != null ? (
+              <section className="rounded-lg border border-mahakan-green-200 bg-mahakan-green-50 p-3">
+                <header className="mb-2 flex items-center gap-2">
+                  <Calculator className="size-4 text-mahakan-green-900" aria-hidden />
+                  <h3 className="text-[11px] font-semibold uppercase tracking-wider text-mahakan-green-900">
+                    Komponen Kas Harusnya
+                  </h3>
+                </header>
+                <div className="space-y-1 font-mono text-xs text-neutral-800">
                   <BreakdownRow
-                    label="Pengeluaran Tunai"
-                    value={pettyExpenseCash}
-                    sign="-"
-                  />
-                ) : null}
-                {pettyIncomeCash > 0 ? (
-                  <BreakdownRow
-                    label="Pemasukan Tunai"
-                    value={pettyIncomeCash}
+                    label="Kas Awal"
+                    value={shift.openingCash}
                     sign="+"
                   />
+                  <BreakdownRow
+                    label="Penjualan Tunai"
+                    value={paidCash}
+                    sign="+"
+                  />
+                  {refundedCash > 0 ? (
+                    <BreakdownRow
+                      label="Refund Tunai"
+                      value={refundedCash}
+                      sign="-"
+                    />
+                  ) : null}
+                  {pettyExpenseCash > 0 ? (
+                    <BreakdownRow
+                      label="Pengeluaran Tunai"
+                      value={pettyExpenseCash}
+                      sign="-"
+                    />
+                  ) : null}
+                  {pettyIncomeCash > 0 ? (
+                    <BreakdownRow
+                      label="Pemasukan Tunai"
+                      value={pettyIncomeCash}
+                      sign="+"
+                    />
+                  ) : null}
+                  <div className="my-1 border-t border-mahakan-green-200" />
+                  <BreakdownRow
+                    label="Kas Harusnya"
+                    value={expectedCash}
+                    bold
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCorrectedCash(String(expectedCash))}
+                  className="mt-3 w-full rounded-md border border-mahakan-green-300 bg-white px-3 py-2 text-xs font-medium text-mahakan-green-700 transition hover:bg-mahakan-green-100 active:scale-[0.99]"
+                >
+                  Pakai nilai ini sebagai Kas Aktual
+                </button>
+              </section>
+            ) : null}
+
+            {/* Live Dampak Koreksi (kanan) */}
+            <section
+              className={cn(
+                "rounded-lg border p-3",
+                varianceAfter === 0
+                  ? "border-mahakan-green-300 bg-mahakan-green-50"
+                  : varianceBefore != null &&
+                      varianceAfter != null &&
+                      Math.abs(varianceAfter) < Math.abs(varianceBefore)
+                    ? "border-warning-300 bg-warning-50"
+                    : "border-neutral-200 bg-neutral-50",
+              )}
+            >
+              <header className="mb-2 flex items-center gap-2">
+                {varianceAfter === 0 ? (
+                  <CheckCircle2
+                    className="size-4 text-mahakan-green-700"
+                    aria-hidden
+                  />
+                ) : (
+                  <Wallet
+                    className="size-4 text-neutral-600"
+                    aria-hidden
+                  />
+                )}
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-700">
+                  Dampak Koreksi (Live)
+                </h3>
+              </header>
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center justify-between text-neutral-600">
+                  <span>Selisih sekarang</span>
+                  <span
+                    className={cn(
+                      "font-mono font-semibold",
+                      varianceBefore != null && varianceBefore !== 0
+                        ? Math.abs(varianceBefore) > 10_000
+                          ? "text-danger-500"
+                          : "text-warning-500"
+                        : "text-mahakan-green-700",
+                    )}
+                  >
+                    {varianceBefore != null
+                      ? `${varianceBefore >= 0 ? "+" : ""}${formatRupiah(varianceBefore)}`
+                      : "—"}
+                  </span>
+                </div>
+                <div className="border-t border-current opacity-20" />
+                <div className="flex items-center justify-between text-neutral-900">
+                  <span className="font-medium">Selisih setelah koreksi</span>
+                  <span
+                    className={cn(
+                      "font-mono text-base font-bold",
+                      varianceAfter === 0
+                        ? "text-mahakan-green-700"
+                        : varianceAfter != null && Math.abs(varianceAfter) > 10_000
+                          ? "text-danger-500"
+                          : "text-warning-500",
+                    )}
+                  >
+                    {varianceAfter != null
+                      ? `${varianceAfter >= 0 ? "+" : ""}${formatRupiah(varianceAfter)}`
+                      : "—"}
+                  </span>
+                </div>
+                {varianceAfter === 0 ? (
+                  <p className="rounded-md bg-mahakan-green-100 px-2 py-1.5 text-[11px] font-medium text-mahakan-green-900">
+                    Kas akan pas setelah koreksi disetujui ✓
+                  </p>
+                ) : hasAnyCorrection &&
+                  varianceBefore != null &&
+                  varianceAfter != null &&
+                  Math.abs(varianceAfter) < Math.abs(varianceBefore) ? (
+                  <p className="rounded-md bg-warning-100 px-2 py-1.5 text-[11px] text-warning-700">
+                    Selisih turun{" "}
+                    {formatRupiah(
+                      Math.abs(varianceBefore) - Math.abs(varianceAfter),
+                    )}{" "}
+                    setelah koreksi.
+                  </p>
+                ) : !hasAnyCorrection ? (
+                  <p className="text-[11px] text-neutral-500">
+                    Isi koreksi di bawah untuk lihat dampak ke selisih.
+                  </p>
                 ) : null}
-                <div className="my-1 border-t border-mahakan-green-200" />
-                <BreakdownRow
-                  label="Kas Harusnya (laci seharusnya)"
-                  value={expectedCash}
-                  bold
-                />
               </div>
-              <button
-                type="button"
-                onClick={() => setCorrectedCash(String(expectedCash))}
-                className="mt-2 w-full rounded-md border border-mahakan-green-300 bg-white px-3 py-1.5 text-xs font-medium text-mahakan-green-700 hover:bg-mahakan-green-50"
+            </section>
+          </div>
+
+          {/* Koreksi per Channel section */}
+          <section className="space-y-2">
+            <header className="flex items-center justify-between">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-700">
+                Koreksi per Channel
+              </h3>
+              <p className="text-[10px] text-neutral-500">
+                Isi yang perlu di-koreksi — biarkan kosong kalau tidak berubah
+              </p>
+            </header>
+
+            <ChannelRow
+              label="Kas Fisik (laci)"
+              original={originalCash}
+              correctedRaw={correctedCash}
+              correctedNum={cashNum}
+              diff={cashDiff}
+              onChange={setCorrectedCash}
+              required
+            />
+            <ChannelRow
+              label="QRIS (cek HP / app)"
+              original={originalQris}
+              posActual={posActualQris}
+              correctedRaw={correctedQris}
+              correctedNum={qrisNum}
+              diff={qrisDiff}
+              onChange={setCorrectedQris}
+              hint="Kosongkan kalau tidak ada koreksi"
+            />
+            <ChannelRow
+              label="EDC BCA (cek mesin)"
+              original={originalEdc}
+              posActual={posActualCardBca}
+              correctedRaw={correctedEdc}
+              correctedNum={edcNum}
+              diff={edcDiff}
+              onChange={setCorrectedEdc}
+              hint="Kosongkan kalau tidak ada koreksi"
+            />
+          </section>
+
+          {/* Reason input — textarea biar bisa multi-line */}
+          <section className="space-y-1.5">
+            <label
+              htmlFor="rebalance-reason"
+              className="flex items-baseline justify-between"
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-700">
+                Alasan Koreksi
+                <span className="ml-1 text-danger-500" aria-hidden>
+                  *
+                </span>
+              </span>
+              <span
+                className={cn(
+                  "text-[10px]",
+                  reason.trim().length < 3
+                    ? "text-neutral-400"
+                    : "text-mahakan-green-700",
+                )}
               >
-                Pakai nilai ini sebagai Kas Aktual (auto-fill)
-              </button>
-            </div>
-          ) : null}
+                {reason.trim().length} / min 3 karakter
+              </span>
+            </label>
+            <textarea
+              id="rebalance-reason"
+              rows={2}
+              placeholder="mis. transaksi 100k harusnya QRIS, kasir keliru ketik Cash"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="w-full resize-none rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-mahakan-green-500 focus:outline-none focus:ring-2 focus:ring-mahakan-green-200"
+              required
+            />
+          </section>
 
-          <ChannelRow
-            label="Kas Fisik (laci)"
-            original={originalCash}
-            correctedRaw={correctedCash}
-            correctedNum={cashNum}
-            diff={cashDiff}
-            onChange={setCorrectedCash}
-            required
-          />
-          <ChannelRow
-            label="QRIS (cek HP/app)"
-            original={originalQris}
-            posActual={posActualQris}
-            correctedRaw={correctedQris}
-            correctedNum={qrisNum}
-            diff={qrisDiff}
-            onChange={setCorrectedQris}
-            hint="Kosongkan kalau tidak ada koreksi"
-          />
-          <ChannelRow
-            label="EDC BCA (cek mesin)"
-            original={originalEdc}
-            posActual={posActualCardBca}
-            correctedRaw={correctedEdc}
-            correctedNum={edcNum}
-            diff={edcDiff}
-            onChange={setCorrectedEdc}
-            hint="Kosongkan kalau tidak ada koreksi"
-          />
-
-          <Input
-            label="Alasan correction (wajib, min 3 karakter)"
-            placeholder="mis. transaksi 100k harusnya QRIS, kasir keliru ketik Cash"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            required
-          />
-
-          <div className="rounded-md border border-warning-300 bg-warning-100 p-3 text-xs text-warning-700">
+          {/* Warning callout */}
+          <div className="rounded-md border border-warning-300 bg-warning-100/70 p-3 text-xs text-warning-700">
             <p className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <AlertTriangle
+                className="mt-0.5 size-4 shrink-0"
+                aria-hidden
+              />
               <span>
-                <strong>Setelah Owner approve:</strong> shift fields akan
-                di-update + journal variance lama di-reverse + journal baru
-                di-post. Tercatat lengkap di audit log dengan reason + approver.
+                <strong>Setelah Owner approve:</strong> shift fields
+                ter-update + journal variance lama di-reverse + journal baru
+                di-post. Tercatat lengkap di audit log dengan alasan +
+                approver.
               </span>
             </p>
           </div>
@@ -314,7 +481,7 @@ export function ShiftRebalanceModal({
           {error ? (
             <p
               role="alert"
-              className="rounded-md border border-danger-300 bg-danger-100 p-2 text-sm font-medium text-danger-700"
+              className="rounded-md border border-danger-300 bg-danger-100 p-2.5 text-sm font-medium text-danger-700"
             >
               {error}
             </p>
@@ -372,9 +539,17 @@ function ChannelRow({
   required?: boolean;
   hint?: string;
 }) {
+  const hasEdit = correctedNum !== null;
   return (
-    <div className="rounded-md border border-neutral-200 bg-white p-3">
-      <div className="mb-2 flex items-baseline justify-between gap-2">
+    <div
+      className={cn(
+        "rounded-lg border p-3 transition",
+        hasEdit
+          ? "border-mahakan-green-300 bg-mahakan-green-50/40 shadow-sm"
+          : "border-neutral-200 bg-white",
+      )}
+    >
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-sm font-semibold text-neutral-900">
           {label}
           {required ? (
@@ -395,7 +570,7 @@ function ChannelRow({
           </span>
         ) : null}
       </div>
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+      <div className="grid grid-cols-[1fr_auto_1.4fr] items-center gap-2 sm:grid-cols-[1fr_auto_1fr]">
         <div>
           <p className="text-[10px] uppercase tracking-wide text-neutral-500">
             Lama
@@ -404,7 +579,9 @@ function ChannelRow({
             {formatRupiah(original)}
           </p>
         </div>
-        <span className="text-neutral-400">→</span>
+        <span className="text-neutral-400" aria-hidden>
+          →
+        </span>
         <NumericInput
           aria-label={`${label} corrected`}
           placeholder={hint ?? "Input baru"}
@@ -415,18 +592,22 @@ function ChannelRow({
         />
       </div>
       {diff !== null && correctedNum !== null ? (
-        <p
-          className={`mt-1 text-right text-xs font-medium ${
-            diff === 0
-              ? "text-success-500"
-              : diff > 0
+        <div className="mt-1.5 flex items-center justify-end gap-1.5 text-xs">
+          <span className="text-neutral-500">Selisih koreksi:</span>
+          <span
+            className={cn(
+              "font-mono font-semibold",
+              diff === 0
                 ? "text-mahakan-green-700"
-                : "text-danger-500"
-          }`}
-        >
-          Selisih: {diff >= 0 ? "+" : ""}
-          {formatRupiah(diff)}
-        </p>
+                : diff > 0
+                  ? "text-mahakan-green-700"
+                  : "text-danger-500",
+            )}
+          >
+            {diff >= 0 ? "+" : ""}
+            {formatRupiah(diff)}
+          </span>
+        </div>
       ) : null}
     </div>
   );
