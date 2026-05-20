@@ -4,6 +4,14 @@ import type { shifts } from "@/db/schema";
 export type Shift = InferSelectModel<typeof shifts>;
 export type ShiftStatus = "open" | "closed";
 
+/* Sesi AE-63 phase10 — shift dengan opener name + role untuk UI cross-device
+ * (owner di laptop perlu tau "shift dibuka oleh siapa"). Returned by
+ * fetchActiveShiftForOutlet + getActiveShift. */
+export type ShiftWithOpener = Shift & {
+  openedByName: string | null;
+  openedByRole: string | null;
+};
+
 export type ApiResult<T> =
   | { success: true; data: T }
   | {

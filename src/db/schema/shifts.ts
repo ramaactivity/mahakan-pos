@@ -71,8 +71,15 @@ export const shifts = pgTable(
   (t) => [
     index("idx_shifts_user_status").on(t.userId, t.status),
     index("idx_shifts_outlet_opened").on(t.outletId, t.openedAt),
-    uniqueIndex("ux_shifts_user_active")
-      .on(t.userId)
+    /* Sesi AE-63 phase10 — 1 active shift per OUTLET (bukan per-user).
+     * Workflow Mahakan: 1 outlet, multi-user (kasir + owner + manager).
+     * Staff buka shift pagi → all transactions di shift itu → tutup sore.
+     * Owner + manager harus VISIBLE shift staff (lihat live drawer, transaksi).
+     * Pre-fix: ux_shifts_user_active (per-user) bikin owner kira shift kosong
+     * walau staff sudah buka — query ShiftPanel `WHERE userId=ownerId` miss
+     * staff's shift. Plus risk: 2+ paralel shifts kalau owner buka juga. */
+    uniqueIndex("ux_shifts_outlet_active")
+      .on(t.outletId)
       .where(sql`${t.status} = 'open'`),
     check("ck_shifts_opening_nonneg", sql`${t.openingCash} >= 0`),
     check(

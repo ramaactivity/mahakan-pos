@@ -24,6 +24,7 @@ import {
 import {
   getLastClosedShiftAtOutlet,
   type Shift,
+  type ShiftWithOpener,
 } from "@/features/shifts";
 import { ShiftRebalanceModal } from "@/features/shifts/components/ShiftRebalanceModal";
 import { listTransactions, isOk } from "@/features/transactions";
@@ -36,7 +37,10 @@ import { formatIndonesianTime, formatIndonesianDateTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
 interface ShiftPanelProps {
-  shift: Shift | null;
+  /* Sesi AE-63 phase10 — type loose `Shift | ShiftWithOpener` supaya
+   * caller bisa pass nilai dari getActiveShift baru (with opener name).
+   * Pre-existing callers tetap kompatibel (Shift subset). */
+  shift: Shift | ShiftWithOpener | null;
   loading: boolean;
   onRequestOpenShift: () => void;
   onRequestCloseShift: () => void;
@@ -334,22 +338,45 @@ export function ShiftPanel({
 
   const duration = formatDuration(new Date(shift.openedAt), now);
 
+  /* Sesi AE-63 phase10 — cross-device shift identity. Owner di laptop
+   * lihat shift staff (sama outlet) → tampilkan SIAPA buka. */
+  const opener =
+    "openedByName" in shift ? (shift as ShiftWithOpener) : null;
+  const isOwnShift = shift.userId === session?.user.id;
+  /* canCloseAny = owner/manager can supervise-close staff shift. */
+  const canCloseAny =
+    session && hasPermission(session.user.role, "shift.close_any");
+  const canCloseThis = isOwnShift || canCloseAny;
+
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4 sm:p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-neutral-900">Shift Aktif</h2>
+          <h2 className="text-lg font-semibold text-neutral-900">
+            {isOwnShift ? "Shift Aktif" : "Shift Aktif (dibuka kolega)"}
+          </h2>
           <p className="text-sm text-neutral-700">
-            Snapshot shift kamu — pantau penjualan + kas sebelum tutup.
+            {isOwnShift
+              ? "Snapshot shift kamu — pantau penjualan + kas sebelum tutup."
+              : opener?.openedByName
+                ? `Dibuka oleh ${opener.openedByName} (${opener.openedByRole ?? "user"}). Kamu bisa lanjut transaksi di shift ini.`
+                : "Shift outlet sedang berjalan — kamu bisa lanjut transaksi."}
           </p>
         </div>
-        <Button
-          size="lg"
-          variant="destructive"
-          onClick={onRequestCloseShift}
-        >
-          <Lock className="size-4" aria-hidden /> Tutup Shift
-        </Button>
+        {canCloseThis ? (
+          <Button
+            size="lg"
+            variant="destructive"
+            onClick={onRequestCloseShift}
+            title={
+              !isOwnShift
+                ? "Tutup shift kolega (supervisor)"
+                : "Tutup shift kamu"
+            }
+          >
+            <Lock className="size-4" aria-hidden /> Tutup Shift
+          </Button>
+        ) : null}
       </header>
 
       <CashOnHandTile />

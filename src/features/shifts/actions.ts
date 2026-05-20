@@ -9,6 +9,7 @@ import { hasPermission } from "@/lib/auth";
 import { logAndSanitize } from "@/lib/server-error";
 import { todayWibRangeUtc, toJakartaDateOnly } from "@/lib/date";
 import {
+  fetchActiveShiftForOutlet,
   fetchActiveShiftForUser,
   fetchLastClosedShiftForOutlet,
   fetchShiftById,
@@ -28,6 +29,7 @@ import {
   type OpenShiftInput,
   type Paginated,
   type Shift,
+  type ShiftWithOpener,
 } from "./types";
 
 const openShiftSchema = z.object({
@@ -89,9 +91,21 @@ async function requireSession() {
   return session;
 }
 
-export async function getActiveShift(): Promise<ApiResult<Shift | null>> {
+/**
+ * Sesi AE-63 phase10 — Return active shift di OUTLET (bukan per-user).
+ * Workflow Mahakan: 1 shift per outlet, multi-user share. Owner di laptop
+ * akan SEE shift yang staff buka di tablet (kasir-shift jadi single source
+ * of truth untuk POS transactions).
+ *
+ * Pre-fix `fetchActiveShiftForUser(session.user.id)` bikin owner ga lihat
+ * shift staff → ShiftPanel render "Buka Shift" walau shift sudah jalan
+ * (contradict dengan CashOnHandTile yang udah outlet-scoped).
+ */
+export async function getActiveShift(): Promise<
+  ApiResult<ShiftWithOpener | null>
+> {
   const session = await requireSession();
-  const row = await fetchActiveShiftForUser(session.user.id);
+  const row = await fetchActiveShiftForOutlet(session.user.outletId);
   return ok(row);
 }
 
@@ -139,10 +153,21 @@ export async function openShift(
     );
   }
 
-  // Pre-check active shift; the partial unique index ux_shifts_user_active
-  // is the hard guarantee, but pre-check gives nicer error than 23505.
-  const existing = await fetchActiveShiftForUser(session.user.id);
+  /* Sesi AE-63 phase10 — Pre-check OUTLET active shift (any user). Schema
+   * partial unique index ux_shifts_outlet_active is hard guarantee, but
+   * pre-check gives friendly error daripada 23505 (duplicate key).
+   *
+   * Workflow Mahakan: 1 shift per outlet. Kalau staff sudah buka, owner/
+   * manager TIDAK perlu buka shift sendiri — share shift yang sama. */
+  const existing = await fetchActiveShiftForOutlet(session.user.outletId);
   if (existing) {
+    /* Different user opened? Show info. Same user? Standard already-open msg. */
+    if (existing.userId !== session.user.id) {
+      return fail(
+        "ALREADY_OPEN_BY_OTHER",
+        "Shift outlet sudah dibuka oleh user lain. Lanjut transaksi pakai shift itu, atau tutup dulu kalau perlu reset.",
+      );
+    }
     return fail("ALREADY_OPEN", "Kamu masih punya shift aktif");
   }
 
@@ -183,8 +208,8 @@ export async function openShift(
     return ok(row);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "DB error";
-    if (/ux_shifts_user_active|unique/i.test(msg)) {
-      return fail("ALREADY_OPEN", "Kamu masih punya shift aktif");
+    if (/ux_shifts_outlet_active|ux_shifts_user_active|unique/i.test(msg)) {
+      return fail("ALREADY_OPEN", "Shift outlet sudah aktif");
     }
     return fail("DB_ERROR", logAndSanitize(e, "shifts", "Operasi database gagal"));
   }
@@ -210,8 +235,19 @@ export async function closeShift(
 
   const current = await fetchShiftById(v.shiftId);
   if (!current) return fail("NOT_FOUND", "Shift tidak ditemukan");
-  if (current.userId !== session.user.id) {
-    return fail("NOT_OWNER_OF_SHIFT", "Kamu tidak bisa tutup shift orang lain");
+  /* Sesi AE-63 phase10 — outlet scope check + supervisor close.
+   * Workflow Mahakan: 1 shift per outlet, shared. Staff close shift sendiri
+   * normal; tapi owner/manager juga boleh close (supervise/handle edge case
+   * staff lupa close, urgensi handover, dll). */
+  if (current.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Shift dari outlet lain");
+  }
+  const canCloseAny = hasPermission(session.user.role, "shift.close_any");
+  if (current.userId !== session.user.id && !canCloseAny) {
+    return fail(
+      "NOT_OWNER_OF_SHIFT",
+      "Kamu tidak bisa tutup shift orang lain. Hubungi owner/manager.",
+    );
   }
   if (current.status === "closed") {
     return fail("ALREADY_CLOSED", "Shift sudah tutup");

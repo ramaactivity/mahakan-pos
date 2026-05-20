@@ -7,6 +7,7 @@ export type {
   Shift,
   ShiftStatus,
   ShiftSummary,
+  ShiftWithOpener,
 } from "./types";
 export { isOk } from "./types";
 

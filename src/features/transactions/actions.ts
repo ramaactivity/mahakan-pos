@@ -385,8 +385,13 @@ export async function createTransaction(
   if (shift.status !== "open") {
     return fail("SHIFT_CLOSED", "Shift sudah ditutup");
   }
-  if (shift.userId !== session.user.id) {
-    return fail("SHIFT_OWNERSHIP", "Shift bukan milik kamu");
+  /* Sesi AE-63 phase10 — shift OUTLET scope (bukan per-user). Workflow
+   * Mahakan: 1 shift per outlet, shared antara kasir + owner + manager.
+   * Pre-fix `shift.userId !== session.user.id` BLOCK owner/manager dari
+   * buat transaksi pakai shift staff yang sudah buka shift duluan.
+   * transaction.createdBy tetap capture session.user.id untuk audit. */
+  if (shift.outletId !== session.user.outletId) {
+    return fail("SHIFT_OUTLET_MISMATCH", "Shift dari outlet lain");
   }
 
   // Approver token consumption — if discount applied AND user is staff.

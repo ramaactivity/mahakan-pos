@@ -414,6 +414,13 @@
       "when": 1779265642480,
       "tag": "0058_add_attendance_manual_edit_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1779269203357,
+      "tag": "0059_shift_active_per_outlet",
+      "breakpoints": true
     }
   ]
 }

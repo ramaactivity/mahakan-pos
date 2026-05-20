@@ -1,9 +1,42 @@
 import "server-only";
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { shifts, transactions } from "@/db/schema";
-import type { Paginated, Shift, ShiftStatus } from "./types";
+import { shifts, transactions, users } from "@/db/schema";
+import type {
+  Paginated,
+  Shift,
+  ShiftStatus,
+  ShiftWithOpener,
+} from "./types";
 
+/**
+ * Sesi AE-63 phase10 — Active shift di-resolve OUTLET-SCOPED (bukan
+ * per-user). Workflow Mahakan: 1 shift active per outlet, multi-user
+ * (kasir + owner + manager) sharing. Pre-fix `fetchActiveShiftForUser`
+ * filter userId → owner di laptop ga lihat shift staff yang buka di
+ * tablet. Migration 0059 added partial unique `(outletId) WHERE
+ * status='open'` → DB sekarang juga enforce 1-per-outlet.
+ *
+ * Caller `getActiveShift` action pakai session.user.outletId.
+ */
+export async function fetchActiveShiftForOutlet(
+  outletId: string,
+): Promise<ShiftWithOpener | null> {
+  const [row] = await db
+    .select({
+      ...getTableColumns(shifts),
+      openedByName: users.name,
+      openedByRole: users.role,
+    })
+    .from(shifts)
+    .leftJoin(users, eq(users.id, shifts.userId))
+    .where(and(eq(shifts.outletId, outletId), eq(shifts.status, "open")))
+    .limit(1);
+  return row ?? null;
+}
+
+/** @deprecated Use fetchActiveShiftForOutlet. Kept for tests yang specifically
+ * test per-user scoping (rare). */
 export async function fetchActiveShiftForUser(
   userId: string,
 ): Promise<Shift | null> {

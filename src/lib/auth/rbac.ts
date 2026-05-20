@@ -41,6 +41,10 @@ export const permissions = {
   // Shift
   "shift.open_own": ["owner", "manager", "supervisor", "staff"],
   "shift.close_own": ["owner", "manager", "supervisor", "staff"],
+  /* Sesi AE-63 phase10 — owner/manager bisa close shift staff (supervise).
+   * Schema 1-shift-per-outlet sekarang multi-user share — handover edge
+   * cases (staff lupa close, urgensi tutup) butuh supervisor close. */
+  "shift.close_any": ["owner", "manager"],
   "shift.view_own": ["owner", "manager", "supervisor", "staff"],
   "shift.view_all": ["owner", "manager", "supervisor"],
   "shift.force_close": ["owner"],
