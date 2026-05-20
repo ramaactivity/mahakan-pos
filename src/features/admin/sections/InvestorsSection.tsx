@@ -159,8 +159,10 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
-  /* Sesi AE-63 audit P1.3 — staleTime 2min. Investor data jarang berubah
-   * (manual edit), refetch boros saat tab switch / search debounce ulang. */
+  /* Sesi AE-63 audit P1.3 — staleTime 2min default supaya refetch ga boros
+   * saat search debounce ulang. Sesi AE-68 — refetchOnMount: 'always' supaya
+   * tab switch / window focus pasti cek fresh data (mencegah scenario owner
+   * import 73 investor di wizard, lalu tab switch, lihat 0 ditampilkan). */
   const investorsQuery = useQuery({
     queryKey: ["investors", { search, statusFilter }],
     queryFn: async () => {
@@ -173,6 +175,7 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
       return res.data;
     },
     staleTime: 2 * 60 * 1000,
+    refetchOnMount: "always",
   });
 
   const totalQuery = useQuery({
@@ -205,9 +208,15 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
     [qc],
   );
 
+  /* Sesi AE-68 — Pakai removeQueries + refetchQueries untuk hard-invalidate
+   * supaya cache stale (mis. owner barusan import 73 investor tapi UI masih
+   * show 0 dari cache) langsung di-replace. invalidateQueries solo cuma mark
+   * stale, kalau ada race antara observer mount + cache pop bisa miss. */
   const refresh = useCallback(() => {
-    qc.invalidateQueries({ queryKey: ["investors"] });
-    qc.invalidateQueries({ queryKey: ["investors-total"] });
+    qc.removeQueries({ queryKey: ["investors"] });
+    qc.removeQueries({ queryKey: ["investors-total"] });
+    qc.refetchQueries({ queryKey: ["investors"] });
+    qc.refetchQueries({ queryKey: ["investors-total"] });
   }, [qc]);
 
   const statusOptions: SelectOption[] = [
@@ -385,6 +394,7 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
       return res.data;
     },
     staleTime: 2 * 60 * 1000, // AE-63 audit P1.3
+    refetchOnMount: "always", // AE-68 — mencegah stale cache after import
   });
 
   const totalQuery = useQuery({
@@ -395,6 +405,7 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
       return res.data;
     },
     staleTime: 2 * 60 * 1000,
+    refetchOnMount: "always",
   });
 
   const pengelolaList = pengelolaQuery.data ?? [];
@@ -416,8 +427,12 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
   );
 
   const refresh = useCallback(() => {
-    qc.invalidateQueries({ queryKey: ["pengelola"] });
-    qc.invalidateQueries({ queryKey: ["pengelola-total"] });
+    /* Sesi AE-68 — Hard refresh (remove + refetch) supaya cache stale
+     * langsung di-replace, mirror investor pattern. */
+    qc.removeQueries({ queryKey: ["pengelola"] });
+    qc.removeQueries({ queryKey: ["pengelola-total"] });
+    qc.refetchQueries({ queryKey: ["pengelola"] });
+    qc.refetchQueries({ queryKey: ["pengelola-total"] });
   }, [qc]);
 
   const totalDividendYtd = useMemo(
