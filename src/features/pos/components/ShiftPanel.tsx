@@ -23,7 +23,9 @@ import {
 } from "@/components/ui";
 import {
   getLastClosedShiftAtOutlet,
+  getShiftPettyBreakdown,
   type Shift,
+  type ShiftPettyBreakdown,
   type ShiftWithOpener,
 } from "@/features/shifts";
 import { ShiftRebalanceModal } from "@/features/shifts/components/ShiftRebalanceModal";
@@ -111,12 +113,19 @@ export function ShiftPanel({
   // shift, lihat ada selisih, bisa tap "Suggest Correction" tanpa harus
   // pindah ke backoffice. Hanya tampil kalau ada closed shift dalam 24h.
   const [lastClosedShift, setLastClosedShift] = useState<Shift | null>(null);
+  const [lastClosedBreakdown, setLastClosedBreakdown] = useState<{
+    petty: ShiftPettyBreakdown;
+    paidCash: number;
+    refundedCash: number;
+    posActualQris: number;
+    posActualCardBca: number;
+  } | null>(null);
   const [rebalanceOpen, setRebalanceOpen] = useState(false);
 
   useEffect(() => {
     // Re-fetch saat shift state berubah (e.g., baru tutup → tampil).
     let cancelled = false;
-    void getLastClosedShiftAtOutlet().then((res) => {
+    void getLastClosedShiftAtOutlet().then(async (res) => {
       if (cancelled) return;
       if (isOk(res) && res.data) {
         // Hanya tampil kalau closed dalam 24 jam terakhir.
@@ -126,11 +135,58 @@ export function ShiftPanel({
         const ageMs = closedAt ? Date.now() - closedAt.getTime() : Infinity;
         if (ageMs <= 24 * 60 * 60 * 1000) {
           setLastClosedShift(res.data);
+          /* Sesi AE-64 — fetch petty + transaction breakdown supaya
+           * rebalance modal bisa tampilkan komponen formula + auto-fill
+           * kas aktual. */
+          const shiftId = res.data.id;
+          const [pettyRes, trxRes] = await Promise.all([
+            getShiftPettyBreakdown(shiftId),
+            listTransactions({ shiftId, limit: 1000 }),
+          ]);
+          if (cancelled) return;
+          if (isOk(pettyRes) && isOk(trxRes)) {
+            const items = trxRes.data.items;
+            const paid = items.filter(
+              (t) => t.status === "paid" || t.status === "partially_refunded",
+            );
+            const refunded = items.filter(
+              (t) =>
+                t.status === "refunded" ||
+                (t.status === "partially_refunded" && t.refundedAmount > 0),
+            );
+            const netTotal = (
+              t: (typeof items)[number],
+            ) => t.total - t.refundedAmount;
+            const paidCash = paid
+              .filter((t) => t.paymentMethod === "cash")
+              .reduce((s, t) => s + netTotal(t), 0);
+            const refundedCash = refunded
+              .filter((t) => t.paymentMethod === "cash")
+              .reduce((s, t) => s + t.refundedAmount, 0);
+            const posActualQris = paid
+              .filter((t) => t.paymentMethod === "qris")
+              .reduce((s, t) => s + netTotal(t), 0);
+            const posActualCardBca = paid
+              .filter((t) =>
+                ["card_bca", "card_bni", "card_mandiri", "card_bri", "card_other"]
+                  .includes(t.paymentMethod),
+              )
+              .reduce((s, t) => s + netTotal(t), 0);
+            setLastClosedBreakdown({
+              petty: pettyRes.data,
+              paidCash,
+              refundedCash,
+              posActualQris,
+              posActualCardBca,
+            });
+          }
         } else {
           setLastClosedShift(null);
+          setLastClosedBreakdown(null);
         }
       } else {
         setLastClosedShift(null);
+        setLastClosedBreakdown(null);
       }
     });
     return () => {
@@ -324,11 +380,28 @@ export function ShiftPanel({
           </Card>
         ) : null}
       </div>
-      {/* Sesi AE-62p — kasir-side rebalance modal (source='close_shift'). */}
+      {/* Sesi AE-62p — kasir-side rebalance modal (source='close_shift').
+       * Sesi AE-64 — pass petty + cash flow breakdown supaya formula
+       * variance + auto-fill kas aktual muncul di modal. */}
       <ShiftRebalanceModal
         open={rebalanceOpen}
         shift={lastClosedShift}
         source="close_shift"
+        expectedCash={
+          lastClosedShift && lastClosedBreakdown
+            ? lastClosedShift.openingCash +
+              lastClosedBreakdown.paidCash -
+              lastClosedBreakdown.refundedCash -
+              lastClosedBreakdown.petty.pettyExpenseCash +
+              lastClosedBreakdown.petty.pettyIncomeCash
+            : null
+        }
+        paidCash={lastClosedBreakdown?.paidCash ?? 0}
+        refundedCash={lastClosedBreakdown?.refundedCash ?? 0}
+        pettyExpenseCash={lastClosedBreakdown?.petty.pettyExpenseCash ?? 0}
+        pettyIncomeCash={lastClosedBreakdown?.petty.pettyIncomeCash ?? 0}
+        posActualQris={lastClosedBreakdown?.posActualQris ?? 0}
+        posActualCardBca={lastClosedBreakdown?.posActualCardBca ?? 0}
         onClose={() => setRebalanceOpen(false)}
         onSubmitted={() => setRebalanceOpen(false)}
       />

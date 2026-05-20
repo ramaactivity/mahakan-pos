@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, Pencil, Wallet } from "lucide-react";
 import { Badge, Button, Modal, Skeleton } from "@/components/ui";
 import { isOk, listTransactions, type Transaction } from "@/features/transactions";
-import type { Shift } from "@/features/shifts";
+import {
+  getShiftPettyBreakdown,
+  type Shift,
+  type ShiftPettyBreakdown,
+} from "@/features/shifts";
 import { ShiftRebalanceModal } from "@/features/shifts/components/ShiftRebalanceModal";
 import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
@@ -32,6 +36,7 @@ export function ShiftDetailModal({
   const canRequestRebalance = hasPermission(role, "shift.rebalance.request");
   const [rebalanceOpen, setRebalanceOpen] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [petty, setPetty] = useState<ShiftPettyBreakdown | null>(null);
   const [loading, setLoading] = useState(true);
   const [showVoidRefund, setShowVoidRefund] = useState(false);
 
@@ -41,13 +46,16 @@ export function ShiftDetailModal({
     // Sync from prop change (modal re-opened with new shift)
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPetty(null);
     async function load() {
-      const res = await listTransactions({
-        shiftId: shift!.id,
-        limit: 1000,
-      });
+      const [trxRes, pettyRes] = await Promise.all([
+        listTransactions({ shiftId: shift!.id, limit: 1000 }),
+        getShiftPettyBreakdown(shift!.id),
+      ]);
       if (cancelled) return;
-      if (isOk(res)) setTransactions(res.data.items);
+      if (isOk(trxRes)) setTransactions(trxRes.data.items);
+      if (isOk(pettyRes)) setPetty(pettyRes.data);
       setLoading(false);
     }
     void load();
@@ -87,18 +95,20 @@ export function ShiftDetailModal({
     .filter((t) => t.paymentMethod === "cash")
     .reduce((s, t) => s + t.refundedAmount, 0);
 
-  // Sesi AE-56 — variance breakdown formula (mirror computeExpectedCash AE-49):
+  // Sesi AE-64 — variance breakdown formula lengkap (mirror computeExpectedCash):
   //   expectedCash = openingCash + paidCash - refundedCash
   //                  - pettyExpenseCash + pettyIncomeCash
-  // Petty cash details not fetched here (defer to drill-down or POS modal).
+  // Pre-AE64, formula display di sini SKIP petty cash sehingga Kas Harusnya
+  // tampak salah (cuma openingCash + paidCash) — staff bingung lihat
+  // "Kas Harusnya = Kas Aktual tapi Variance != 0". Sekarang fetch petty
+  // dari server (sumber tunggal: sama dengan closeShift).
   const openingCash = shift.openingCash;
+  const pettyExpenseCash = petty?.pettyExpenseCash ?? 0;
+  const pettyIncomeCash = petty?.pettyIncomeCash ?? 0;
   const expectedCashEstimate =
-    openingCash + paidCash - refundedCashSum;
+    openingCash + paidCash - refundedCashSum - pettyExpenseCash + pettyIncomeCash;
   const actualCash = shift.actualCash ?? 0;
   const variance = shift.variance ?? actualCash - expectedCashEstimate;
-  // Component yang dihitung dari transactions, dipakai untuk kasih hint.
-  // Variance "tidak teridentifikasi" = variance - components yang explicit.
-  const unexplainedVariance = (shift.variance ?? 0) - 0; // placeholder for future petty breakdown
 
   const edcSettlement = (shift as { edcSettlement?: number | null }).edcSettlement ?? null;
   const gofoodSettlement = (shift as { gofoodSettlement?: number | null }).gofoodSettlement ?? null;
@@ -170,7 +180,7 @@ export function ShiftDetailModal({
           </div>
         ) : null}
 
-        {/* Sesi AE-56 — Variance breakdown formula */}
+        {/* Sesi AE-64 — Variance breakdown formula lengkap (with petty cash) */}
         {shift.status === "closed" ? (
           <section className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
@@ -186,13 +196,27 @@ export function ShiftDetailModal({
                   sign="-"
                 />
               ) : null}
+              {pettyExpenseCash > 0 ? (
+                <FormulaRow
+                  label={`Pengeluaran Tunai${petty && petty.pettyExpenseCashCount > 0 ? ` (${petty.pettyExpenseCashCount}×)` : ""}`}
+                  value={pettyExpenseCash}
+                  sign="-"
+                />
+              ) : null}
+              {pettyIncomeCash > 0 ? (
+                <FormulaRow
+                  label={`Pemasukan Tunai${petty && petty.pettyIncomeCashCount > 0 ? ` (${petty.pettyIncomeCashCount}×)` : ""}`}
+                  value={pettyIncomeCash}
+                  sign="+"
+                />
+              ) : null}
               <div className="my-1 border-t border-neutral-200" />
               <FormulaRow
                 label="Kas Harusnya (perkiraan)"
                 value={expectedCashEstimate}
                 bold
               />
-              <FormulaRow label="Kas Aktual" value={actualCash} bold />
+              <FormulaRow label="Kas Aktual (lapor kasir)" value={actualCash} bold />
               <div className="my-1 border-t border-neutral-200" />
               <div
                 className={cn(
@@ -204,18 +228,19 @@ export function ShiftDetailModal({
                       : "text-warning-500",
                 )}
               >
-                <span>Variance</span>
+                <span>Selisih (Aktual − Harusnya)</span>
                 <span>
                   {variance >= 0 ? "+" : ""}
                   {formatRupiah(variance)}
                 </span>
               </div>
-              {Math.abs(unexplainedVariance) > 1000 ? (
-                <p className="mt-1 text-[10px] text-neutral-500">
-                  Untuk audit lengkap (petty cash + refund detail), buka
-                  Audit Log atau Petty Cash di POS.
-                </p>
-              ) : null}
+              <p className="mt-1 text-[10px] text-neutral-500">
+                {variance > 0
+                  ? "Laci kelebihan — bisa jadi pengeluaran tunai belum dicatat, atau ada uang masuk yang belum tercatat."
+                  : variance < 0
+                    ? "Laci kurang — bisa jadi penjualan tunai belum diketuk, atau ada uang keluar belum dicatat."
+                    : "Kas pas — semua arus tunai sudah tercatat ✓"}
+              </p>
             </div>
           </section>
         ) : null}
@@ -440,7 +465,9 @@ export function ShiftDetailModal({
         </div>
       </div>
     </Modal>
-    {/* Sesi AE-62o — Rebalance request modal. Reuse for kasir + manager. */}
+    {/* Sesi AE-62o — Rebalance request modal. Reuse for kasir + manager.
+     * Sesi AE-64 — Pass petty cash + cash flow breakdown supaya rebalance
+     * modal bisa auto-suggest Kas Aktual sesuai formula. */}
     <ShiftRebalanceModal
       open={rebalanceOpen}
       shift={shift}
@@ -448,6 +475,10 @@ export function ShiftDetailModal({
       expectedCash={expectedCashEstimate}
       posActualQris={paidQris}
       posActualCardBca={paidCard}
+      paidCash={paidCash}
+      refundedCash={refundedCashSum}
+      pettyExpenseCash={pettyExpenseCash}
+      pettyIncomeCash={pettyIncomeCash}
       onClose={() => setRebalanceOpen(false)}
       onSubmitted={() => {
         setRebalanceOpen(false);

@@ -16,6 +16,8 @@ export {
   getActiveShift,
   getLastClosedShiftAtOutlet,
   getShift,
+  getShiftPettyBreakdown,
   listShifts,
   openShift,
 } from "./actions";
+export type { ShiftPettyBreakdown } from "./queries";

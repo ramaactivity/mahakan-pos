@@ -1,7 +1,8 @@
 import "server-only";
-import { and, desc, eq, getTableColumns, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { shifts, transactions, users } from "@/db/schema";
+import { expenses, incomes, shifts, transactions, users } from "@/db/schema";
+import { toJakartaDateOnly } from "@/lib/date";
 import type {
   Paginated,
   Shift,
@@ -119,6 +120,64 @@ export async function fetchShifts(
 export async function fetchShiftById(id: string): Promise<Shift | null> {
   const [row] = await db.select().from(shifts).where(eq(shifts.id, id)).limit(1);
   return row ?? null;
+}
+
+/**
+ * Sesi AE-64 — Petty cash breakdown per-shift untuk display formula
+ * variance lengkap di UI. Mirror filter logic di `closeShift`:
+ *   - outletId scope
+ *   - paymentMethod='cash' (transfer/other tidak affect laci)
+ *   - range = WIB date dari shift.openedAt sampai shift.closedAt (atau today
+ *     kalau still open)
+ *   - deletedAt IS NULL
+ *
+ * Hasil sum konsisten dengan computeExpectedCash di server, sehingga
+ * UI display formula sama dengan variance yang sudah ke-persist di DB.
+ */
+export interface ShiftPettyBreakdown {
+  pettyExpenseCash: number;
+  pettyExpenseCashCount: number;
+  pettyIncomeCash: number;
+  pettyIncomeCashCount: number;
+}
+
+export async function fetchShiftPettyBreakdown(
+  shift: Pick<Shift, "id" | "outletId" | "openedAt" | "closedAt">,
+): Promise<ShiftPettyBreakdown> {
+  const fromDate = toJakartaDateOnly(shift.openedAt);
+  const toDate = toJakartaDateOnly(shift.closedAt ?? new Date());
+
+  const expenseRows = await db
+    .select({ amount: expenses.amount })
+    .from(expenses)
+    .where(
+      and(
+        eq(expenses.outletId, shift.outletId),
+        eq(expenses.paymentMethod, "cash"),
+        gte(expenses.expenseDate, fromDate),
+        lte(expenses.expenseDate, toDate),
+        isNull(expenses.deletedAt),
+      ),
+    );
+  const incomeRows = await db
+    .select({ amount: incomes.amount })
+    .from(incomes)
+    .where(
+      and(
+        eq(incomes.outletId, shift.outletId),
+        eq(incomes.paymentMethod, "cash"),
+        gte(incomes.incomeDate, fromDate),
+        lte(incomes.incomeDate, toDate),
+        isNull(incomes.deletedAt),
+      ),
+    );
+
+  return {
+    pettyExpenseCash: expenseRows.reduce((s, r) => s + Number(r.amount), 0),
+    pettyExpenseCashCount: expenseRows.length,
+    pettyIncomeCash: incomeRows.reduce((s, r) => s + Number(r.amount), 0),
+    pettyIncomeCashCount: incomeRows.length,
+  };
 }
 
 /** Most recently closed shift at this outlet — surfaced to the next

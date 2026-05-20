@@ -23,6 +23,13 @@ interface ShiftRebalanceModalProps {
   /** POS Actual amounts untuk display reference. */
   posActualQris?: number;
   posActualCardBca?: number;
+  /** Sesi AE-64 — komponen formula expectedCash. Dipakai untuk breakdown
+   * read-only + auto-suggest Kas Aktual: openingCash + paidCash - refund
+   * - pettyExpense + pettyIncome. */
+  paidCash?: number;
+  refundedCash?: number;
+  pettyExpenseCash?: number;
+  pettyIncomeCash?: number;
   onClose: () => void;
   onSubmitted: () => void;
 }
@@ -43,6 +50,10 @@ export function ShiftRebalanceModal({
   expectedCash,
   posActualQris = 0,
   posActualCardBca = 0,
+  paidCash = 0,
+  refundedCash = 0,
+  pettyExpenseCash = 0,
+  pettyIncomeCash = 0,
   onClose,
   onSubmitted,
 }: ShiftRebalanceModalProps) {
@@ -206,12 +217,48 @@ export function ShiftRebalanceModal({
         </div>
       ) : (
         <div className="space-y-3">
+          {/* Sesi AE-64 — Breakdown formula Kas Harusnya supaya staff
+           * langsung lihat asal-usul variance + bisa auto-fill kas aktual
+           * sesuai formula. */}
           {expectedCash != null ? (
-            <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-700">
-              <strong>Kas Harusnya (sistem):</strong>{" "}
-              <span className="font-mono">{formatRupiah(expectedCash)}</span>{" "}
-              — selisih dihitung dari (corrected − Kas Harusnya untuk Cash,
-              corrected − POS Actual untuk QRIS/EDC).
+            <div className="rounded-md border border-mahakan-green-200 bg-mahakan-green-50 p-3 text-xs">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-mahakan-green-900">
+                Komponen Kas Harusnya
+              </p>
+              <div className="space-y-1 font-mono text-neutral-800">
+                <BreakdownRow label="Kas Awal" value={shift.openingCash} sign="+" />
+                <BreakdownRow label="Penjualan Tunai" value={paidCash} sign="+" />
+                {refundedCash > 0 ? (
+                  <BreakdownRow label="Refund Tunai" value={refundedCash} sign="-" />
+                ) : null}
+                {pettyExpenseCash > 0 ? (
+                  <BreakdownRow
+                    label="Pengeluaran Tunai"
+                    value={pettyExpenseCash}
+                    sign="-"
+                  />
+                ) : null}
+                {pettyIncomeCash > 0 ? (
+                  <BreakdownRow
+                    label="Pemasukan Tunai"
+                    value={pettyIncomeCash}
+                    sign="+"
+                  />
+                ) : null}
+                <div className="my-1 border-t border-mahakan-green-200" />
+                <BreakdownRow
+                  label="Kas Harusnya (laci seharusnya)"
+                  value={expectedCash}
+                  bold
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setCorrectedCash(String(expectedCash))}
+                className="mt-2 w-full rounded-md border border-mahakan-green-300 bg-white px-3 py-1.5 text-xs font-medium text-mahakan-green-700 hover:bg-mahakan-green-50"
+              >
+                Pakai nilai ini sebagai Kas Aktual (auto-fill)
+              </button>
             </div>
           ) : null}
 
@@ -275,6 +322,32 @@ export function ShiftRebalanceModal({
         </div>
       )}
     </Modal>
+  );
+}
+
+function BreakdownRow({
+  label,
+  value,
+  sign,
+  bold,
+}: {
+  label: string;
+  value: number;
+  sign?: "+" | "-";
+  bold?: boolean;
+}) {
+  return (
+    <div
+      className={`flex items-center justify-between text-xs ${
+        bold ? "font-semibold text-neutral-900" : "text-neutral-700"
+      }`}
+    >
+      <span>{label}</span>
+      <span>
+        {sign === "-" ? "−" : sign === "+" ? "+" : ""}
+        {formatRupiah(value)}
+      </span>
+    </div>
   );
 }
 

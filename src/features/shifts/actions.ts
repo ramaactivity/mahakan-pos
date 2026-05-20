@@ -13,8 +13,10 @@ import {
   fetchActiveShiftForUser,
   fetchLastClosedShiftForOutlet,
   fetchShiftById,
+  fetchShiftPettyBreakdown,
   fetchShifts,
   type ListShiftsOptions,
+  type ShiftPettyBreakdown,
 } from "./queries";
 import {
   computeExpectedCash,
@@ -124,6 +126,26 @@ export async function getShift(id: string): Promise<ApiResult<Shift>> {
   const row = await fetchShiftById(id);
   if (!row) return fail("NOT_FOUND", "Shift tidak ditemukan");
   return ok(row);
+}
+
+/**
+ * Sesi AE-64 — Petty cash breakdown per-shift, dipakai UI ShiftDetailModal
+ * + ShiftRebalanceModal untuk display formula variance lengkap (Kas
+ * Awal + Penjualan Tunai - Pengeluaran Tunai + Pemasukan Tunai).
+ *
+ * Server side single source of truth — mirror filter di closeShift
+ * (paymentMethod='cash' + WIB date range shift open→close).
+ */
+export async function getShiftPettyBreakdown(
+  shiftId: string,
+): Promise<ApiResult<ShiftPettyBreakdown>> {
+  const session = await requireSession();
+  const row = await fetchShiftById(shiftId);
+  if (!row) return fail("NOT_FOUND", "Shift tidak ditemukan");
+  if (row.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Shift bukan outlet kamu");
+  }
+  return ok(await fetchShiftPettyBreakdown(row));
 }
 
 export async function listShifts(
