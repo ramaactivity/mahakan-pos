@@ -883,6 +883,19 @@ export async function reopenAccountingPeriod(
             updatedAt: new Date(),
           })
           .where(eq(journalEntries.id, closingEntry.id));
+
+        /* Pair-void: mark counter as 'reversed' + link reversesEntryId.
+         * Tanpa ini, counter status='posted' tetap masuk ledger sum
+         * sementara original excluded → net = -original. Pair-void
+         * exclude keduanya → net = 0 (lihat reverseJournalEntry). */
+        await db
+          .update(journalEntries)
+          .set({
+            status: "reversed",
+            reversesEntryId: closingEntry.id,
+            updatedAt: new Date(),
+          })
+          .where(eq(journalEntries.id, reverseResult.entryId));
       } catch (e) {
         return fail("DB_ERROR", logAndSanitize(e, "accounting", "Operasi database gagal"));
       }
@@ -1107,10 +1120,17 @@ export async function reverseJournalEntry(
     })
     .where(eq(journalEntries.id, entryId));
 
-  // Mark reverse entry as a reversal pointer
+  /* Mark counter-entry sebagai 'reversed' juga (pair void). Tanpa ini,
+   * counter status='posted' tetap masuk getAccountBalances sum sementara
+   * original di-exclude → net = -original (ledger salah arah). Dengan
+   * pair-void, kedua sisi excluded → net = 0 (akuntansi benar). */
   await db
     .update(journalEntries)
-    .set({ reversesEntryId: entryId })
+    .set({
+      reversesEntryId: entryId,
+      status: "reversed",
+      updatedAt: new Date(),
+    })
     .where(eq(journalEntries.id, reverseResult.entryId));
 
   await logAudit({

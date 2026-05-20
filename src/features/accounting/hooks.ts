@@ -542,7 +542,9 @@ export async function postJournalForCashDepositUnverified(args: {
   //     (kalau status='posted' tetap, re-verify silent return cached entry
   //      yang sudah tidak valid)
   // (2) audit trail link unverify ↔ original via reversedByEntryId
-  await db
+  // (3) pair-void: counter ikut di-mark reversed di bawah supaya net 0
+  //     di ledger sum (lihat reverseJournalEntry comment)
+  const updated = await db
     .update(journalEntries)
     .set({
       status: "reversed",
@@ -556,7 +558,19 @@ export async function postJournalForCashDepositUnverified(args: {
         eq(journalEntries.sourceId, args.cashDepositId),
         sql`${journalEntries.status} = 'posted'`,
       ),
-    );
+    )
+    .returning({ id: journalEntries.id });
+
+  if (updated.length > 0) {
+    await db
+      .update(journalEntries)
+      .set({
+        status: "reversed",
+        reversesEntryId: updated[0].id,
+        updatedAt: new Date(),
+      })
+      .where(eq(journalEntries.id, result.entryId));
+  }
 }
 
 // ============================================================
@@ -698,8 +712,9 @@ export async function postJournalForShiftRebalance(args: {
       });
       reverseEntryId = result.entryId;
 
-      // Mark original entry as reversed.
-      await db
+      // Mark original entry as reversed + pair-void counter (lihat
+      // reverseJournalEntry comment — kedua sisi excluded → net 0).
+      const updated = await db
         .update(journalEntries)
         .set({
           status: "reversed",
@@ -713,7 +728,19 @@ export async function postJournalForShiftRebalance(args: {
             eq(journalEntries.sourceId, args.shiftId),
             sql`${journalEntries.status} = 'posted'`,
           ),
-        );
+        )
+        .returning({ id: journalEntries.id });
+
+      if (updated.length > 0) {
+        await db
+          .update(journalEntries)
+          .set({
+            status: "reversed",
+            reversesEntryId: updated[0].id,
+            updatedAt: new Date(),
+          })
+          .where(eq(journalEntries.id, result.entryId));
+      }
     }
   }
 
@@ -883,6 +910,8 @@ export async function postJournalForTransactionCorrection(args: {
   });
 
   // 4. Mark original pos_sale entry as reversed + link reversedByEntryId.
+  //    Pair-void: counter ikut di-mark reversed supaya net 0 di ledger
+  //    sum (lihat reverseJournalEntry comment).
   if (originalEntryId && originalEntry?.status !== "reversed") {
     await db
       .update(journalEntries)
@@ -892,6 +921,15 @@ export async function postJournalForTransactionCorrection(args: {
         updatedAt: new Date(),
       })
       .where(eq(journalEntries.id, originalEntryId));
+
+    await db
+      .update(journalEntries)
+      .set({
+        status: "reversed",
+        reversesEntryId: originalEntryId,
+        updatedAt: new Date(),
+      })
+      .where(eq(journalEntries.id, reverseResult.entryId));
   }
 
   // 5. Post corrected entry — revenue-only with corrected paymentMethod/total.
