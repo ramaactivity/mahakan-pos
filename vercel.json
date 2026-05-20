@@ -5,7 +5,7 @@
   "git": {
     "deploymentEnabled": {
       "main": false,
-      "release/phase-1": false
+      "release/phase-1": true
     }
   }
 }
