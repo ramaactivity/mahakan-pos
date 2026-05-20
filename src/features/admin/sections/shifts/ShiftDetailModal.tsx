@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, Pencil, Wallet } from "lucide-react";
+import {
+  ArrowDownCircle,
+  ArrowUpCircle,
+  ChevronDown,
+  ChevronUp,
+  Pencil,
+  Wallet,
+} from "lucide-react";
 import { Badge, Button, Modal, Skeleton } from "@/components/ui";
 import { isOk, listTransactions, type Transaction } from "@/features/transactions";
 import {
@@ -10,6 +17,16 @@ import {
   type ShiftPettyBreakdown,
 } from "@/features/shifts";
 import { ShiftRebalanceModal } from "@/features/shifts/components/ShiftRebalanceModal";
+import {
+  isOk as isCashOk,
+  listExpenseCategories,
+  listExpenses,
+  listIncomes,
+  type Expense,
+  type ExpenseCategory,
+  type Income,
+} from "@/features/cash";
+import { toJakartaDateOnly } from "@/lib/date";
 import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
 import type { PublicUser } from "@/features/users";
@@ -37,8 +54,17 @@ export function ShiftDetailModal({
   const [rebalanceOpen, setRebalanceOpen] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [petty, setPetty] = useState<ShiftPettyBreakdown | null>(null);
+  /* Sesi AE-65 — petty cash transaction-level detail (per shift date range).
+   * Owner pakai untuk trace selisih variance ke entry spesifik yang
+   * mungkin missing/extra. */
+  const [shiftExpenses, setShiftExpenses] = useState<Expense[]>([]);
+  const [shiftIncomes, setShiftIncomes] = useState<Income[]>([]);
+  const [categoriesById, setCategoriesById] = useState<Map<string, ExpenseCategory>>(
+    new Map(),
+  );
   const [loading, setLoading] = useState(true);
   const [showVoidRefund, setShowVoidRefund] = useState(false);
+  const [showPettyCash, setShowPettyCash] = useState(true);
 
   useEffect(() => {
     if (!shift) return;
@@ -48,14 +74,40 @@ export function ShiftDetailModal({
     setLoading(true);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPetty(null);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShiftExpenses([]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShiftIncomes([]);
     async function load() {
-      const [trxRes, pettyRes] = await Promise.all([
+      const fromDate = toJakartaDateOnly(shift!.openedAt);
+      const toDate = toJakartaDateOnly(shift!.closedAt ?? new Date());
+      const [trxRes, pettyRes, expRes, incRes, catRes] = await Promise.all([
         listTransactions({ shiftId: shift!.id, limit: 1000 }),
         getShiftPettyBreakdown(shift!.id),
+        listExpenses({
+          from: fromDate,
+          to: toDate,
+          paymentMethod: "cash",
+          limit: 200,
+        }),
+        listIncomes({
+          from: fromDate,
+          to: toDate,
+          paymentMethod: "cash",
+          limit: 200,
+        }),
+        listExpenseCategories(),
       ]);
       if (cancelled) return;
       if (isOk(trxRes)) setTransactions(trxRes.data.items);
       if (isOk(pettyRes)) setPetty(pettyRes.data);
+      if (isCashOk(expRes)) setShiftExpenses(expRes.data.items);
+      if (isCashOk(incRes)) setShiftIncomes(incRes.data.items);
+      if (isCashOk(catRes)) {
+        const map = new Map<string, ExpenseCategory>();
+        for (const c of catRes.data.items) map.set(c.id, c);
+        setCategoriesById(map);
+      }
       setLoading(false);
     }
     void load();
@@ -131,7 +183,7 @@ export function ShiftDetailModal({
       description={`Mulai ${formatIndonesianDateTime(shift.openedAt)}${
         shift.closedAt ? ` · Tutup ${formatIndonesianDateTime(shift.closedAt)}` : ""
       }`}
-      size="xl"
+      size="3xl"
     >
       <div className="space-y-4">
         {/* Status + variance badge + Rebalance button */}
@@ -236,9 +288,9 @@ export function ShiftDetailModal({
               </div>
               <p className="mt-1 text-[10px] text-neutral-500">
                 {variance > 0
-                  ? "Laci kelebihan — bisa jadi pengeluaran tunai belum dicatat, atau ada uang masuk yang belum tercatat."
+                  ? "Laci kelebihan — bisa jadi pengeluaran tunai belum dicatat, atau ada uang masuk yang belum tercatat. Cek daftar Pengeluaran/Pemasukan Tunai di bawah."
                   : variance < 0
-                    ? "Laci kurang — bisa jadi penjualan tunai belum diketuk, atau ada uang keluar belum dicatat."
+                    ? "Laci kurang — bisa jadi penjualan tunai belum diketuk, atau ada uang keluar belum dicatat. Cek daftar Pengeluaran/Pemasukan Tunai di bawah."
                     : "Kas pas — semua arus tunai sudah tercatat ✓"}
               </p>
             </div>
@@ -373,6 +425,83 @@ export function ShiftDetailModal({
                       ))}
                     </ul>
                   </div>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        {/* Sesi AE-65 — Petty Cash transaction-level detail (Pengeluaran + Pemasukan Tunai).
+         * Tujuan: owner trace selisih variance ke entry spesifik yang mungkin
+         * missing/extra. Collapsible default-open kalau ada selisih > 10k,
+         * default-collapsed kalau kas pas (declutter). */}
+        {shift.status === "closed" && (shiftExpenses.length > 0 || shiftIncomes.length > 0) ? (
+          <section className="rounded-md border border-neutral-200 bg-white">
+            <button
+              type="button"
+              onClick={() => setShowPettyCash((v) => !v)}
+              className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500 hover:bg-neutral-50"
+            >
+              <span className="flex items-center gap-2">
+                <Wallet className="size-4" aria-hidden />
+                Pengeluaran & Pemasukan Tunai (
+                {shiftExpenses.length + shiftIncomes.length})
+              </span>
+              {showPettyCash ? (
+                <ChevronUp className="size-4" />
+              ) : (
+                <ChevronDown className="size-4" />
+              )}
+            </button>
+            {showPettyCash ? (
+              <div className="border-t border-neutral-200">
+                <p className="px-3 py-2 text-[11px] text-neutral-600">
+                  Daftar arus tunai non-POS dalam range shift{" "}
+                  <span className="font-mono">
+                    {toJakartaDateOnly(shift.openedAt)}
+                  </span>{" "}
+                  →{" "}
+                  <span className="font-mono">
+                    {toJakartaDateOnly(shift.closedAt ?? new Date())}
+                  </span>
+                  . Kalau ada entry yang missing / kelebihan, di sinilah
+                  variance datang.
+                </p>
+                {shiftExpenses.length > 0 ? (
+                  <PettyTable
+                    title={`Pengeluaran Tunai (${shiftExpenses.length})`}
+                    titleIcon={<ArrowUpCircle className="size-3.5 text-danger-500" aria-hidden />}
+                    rows={shiftExpenses.map((e) => ({
+                      id: e.id,
+                      date: e.expenseDate,
+                      time: formatIndonesianTime(e.createdAt),
+                      categoryLabel:
+                        categoriesById.get(e.categoryId)?.name ?? "—",
+                      isSystemCategory:
+                        categoriesById.get(e.categoryId)?.isSystem ?? false,
+                      description: e.description,
+                      amount: Number(e.amount),
+                      sourceType: e.sourceType,
+                    }))}
+                    direction="out"
+                  />
+                ) : null}
+                {shiftIncomes.length > 0 ? (
+                  <PettyTable
+                    title={`Pemasukan Tunai (${shiftIncomes.length})`}
+                    titleIcon={<ArrowDownCircle className="size-3.5 text-mahakan-green-700" aria-hidden />}
+                    rows={shiftIncomes.map((i) => ({
+                      id: i.id,
+                      date: i.incomeDate,
+                      time: formatIndonesianTime(i.createdAt),
+                      categoryLabel: null,
+                      isSystemCategory: false,
+                      description: i.description,
+                      amount: Number(i.amount),
+                      sourceType: null,
+                    }))}
+                    direction="in"
+                  />
                 ) : null}
               </div>
             ) : null}
@@ -580,6 +709,109 @@ function SummaryCard({
         {value}
       </p>
       {sub ? <p className="text-xs text-neutral-500">{sub}</p> : null}
+    </div>
+  );
+}
+
+interface PettyRow {
+  id: string;
+  date: string;
+  time: string;
+  categoryLabel: string | null;
+  isSystemCategory: boolean;
+  description: string;
+  amount: number;
+  /** Sumber entry (manual/purchase/payroll/refund) — null untuk income. */
+  sourceType: string | null;
+}
+
+function PettyTable({
+  title,
+  titleIcon,
+  rows,
+  direction,
+}: {
+  title: string;
+  titleIcon?: React.ReactNode;
+  rows: PettyRow[];
+  /** out = expense (kurangi laci), in = income (tambah laci). */
+  direction: "out" | "in";
+}) {
+  const total = rows.reduce((s, r) => s + r.amount, 0);
+  const amountColor = direction === "out" ? "text-danger-500" : "text-mahakan-green-700";
+  return (
+    <div className="border-t border-neutral-200">
+      <div className="flex items-center justify-between px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+        <span className="flex items-center gap-1.5">
+          {titleIcon}
+          {title}
+        </span>
+        <span className={cn("font-mono normal-case tracking-normal", amountColor)}>
+          {direction === "out" ? "−" : "+"}
+          {formatRupiah(total)}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="border-y border-neutral-100 bg-neutral-50 text-[10px] uppercase tracking-wider text-neutral-500">
+            <tr>
+              <th className="px-3 py-1.5 text-left font-medium">Waktu</th>
+              {direction === "out" ? (
+                <th className="px-3 py-1.5 text-left font-medium">Kategori</th>
+              ) : null}
+              <th className="px-3 py-1.5 text-left font-medium">Deskripsi</th>
+              {direction === "out" ? (
+                <th className="px-3 py-1.5 text-left font-medium">Sumber</th>
+              ) : null}
+              <th className="px-3 py-1.5 text-right font-medium">Nominal</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-neutral-100">
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td className="px-3 py-1.5 text-xs">
+                  <span className="font-mono text-neutral-600">{r.date}</span>
+                  <span className="ml-1 text-neutral-400">·</span>
+                  <span className="ml-1 text-neutral-600">{r.time}</span>
+                </td>
+                {direction === "out" ? (
+                  <td className="px-3 py-1.5 text-xs">
+                    {r.categoryLabel ? (
+                      <Badge
+                        variant={r.isSystemCategory ? "warning" : "neutral"}
+                        className="!text-[10px]"
+                      >
+                        {r.categoryLabel}
+                      </Badge>
+                    ) : (
+                      <span className="text-neutral-400">—</span>
+                    )}
+                  </td>
+                ) : null}
+                <td className="px-3 py-1.5 text-xs text-neutral-700">
+                  {r.description || (
+                    <span className="text-neutral-400">(tanpa deskripsi)</span>
+                  )}
+                </td>
+                {direction === "out" ? (
+                  <td className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-neutral-500">
+                    {r.sourceType ?? "manual"}
+                  </td>
+                ) : null}
+                <td
+                  className={cn(
+                    "px-3 py-1.5 text-right font-mono text-xs font-medium",
+                    amountColor,
+                  )}
+                >
+                  {direction === "out" ? "−" : "+"}
+                  {formatRupiah(r.amount)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
