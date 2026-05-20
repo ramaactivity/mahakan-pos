@@ -229,9 +229,28 @@ export function PettyCashCard() {
     void (async () => {
       if (!hasLoadedOnce.current) setLoadingRecent(true);
       const today = todayWibIso();
+      /* Sesi AE-63 phase9 — bug fix: pre-fix listExpenses tanpa filter →
+       * payroll/purchase/refund auto-generated expenses LEAK ke Petty Cash
+       * POS yang dipakai kasir. Padahal petty cash khusus pengeluaran
+       * kecil shift di kas drawer (gas, ice, galon, tip, dll).
+       *
+       * Filter: sourceType='manual' (created via UI, not auto) +
+       * paymentMethod='cash' (cash drawer impact only). Transfer manual
+       * masih masuk Kas Back Office untuk audit owner. */
       const [expRes, incRes] = await Promise.all([
-        listExpenses({ from: today, to: today, limit: 50 }),
-        listIncomes({ from: today, to: today, limit: 50 }),
+        listExpenses({
+          from: today,
+          to: today,
+          limit: 50,
+          sourceType: "manual",
+          paymentMethod: "cash",
+        }),
+        listIncomes({
+          from: today,
+          to: today,
+          limit: 50,
+          paymentMethod: "cash",
+        }),
       ]);
       if (cancelled) return;
       const merged: Array<{

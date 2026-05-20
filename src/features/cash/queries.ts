@@ -21,6 +21,15 @@ export interface ListExpensesOptions {
   to?: string;
   categoryId?: string;
   limit?: number;
+  /* Sesi AE-63 phase9 — filter by sourceType supaya Petty Cash POS
+   * hanya tampilkan entry MANUAL (gas, ice, galon, tip). Auto-generated
+   * expenses dari payroll/purchase/refund di-isolate ke Admin Kas /
+   * Akuntansi. Default undefined = semua source (admin behavior). */
+  sourceType?: "manual" | "purchase" | "payroll" | "refund";
+  /* Sesi AE-63 phase9 — filter by paymentMethod. Petty Cash kasir
+   * dirancang spesifik untuk CASH DRAWER (laci kasir). Transfer/other
+   * tidak affect drawer fisik → exclude dari POS view. */
+  paymentMethod?: "cash" | "transfer" | "other";
 }
 
 export async function fetchExpenses(
@@ -35,6 +44,9 @@ export async function fetchExpenses(
   if (opts.from) conds.push(gte(expenses.expenseDate, opts.from));
   if (opts.to) conds.push(lte(expenses.expenseDate, opts.to));
   if (opts.categoryId) conds.push(eq(expenses.categoryId, opts.categoryId));
+  if (opts.sourceType) conds.push(eq(expenses.sourceType, opts.sourceType));
+  if (opts.paymentMethod)
+    conds.push(eq(expenses.paymentMethod, opts.paymentMethod));
 
   const rows = await db
     .select()
@@ -70,6 +82,10 @@ export interface ListIncomesOptions {
   from?: string;
   to?: string;
   limit?: number;
+  /* Sesi AE-63 phase9 — parity dengan ListExpensesOptions. Incomes
+   * tidak punya sourceType field (selalu manual), tapi paymentMethod
+   * relevant: petty cash hanya cash drawer. */
+  paymentMethod?: "cash" | "transfer" | "other";
 }
 
 export async function fetchIncomes(
@@ -80,6 +96,8 @@ export async function fetchIncomes(
   const conds = [eq(incomes.outletId, outletId), isNull(incomes.deletedAt)];
   if (opts.from) conds.push(gte(incomes.incomeDate, opts.from));
   if (opts.to) conds.push(lte(incomes.incomeDate, opts.to));
+  if (opts.paymentMethod)
+    conds.push(eq(incomes.paymentMethod, opts.paymentMethod));
 
   const rows = await db
     .select()
