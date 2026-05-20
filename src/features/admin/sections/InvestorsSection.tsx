@@ -331,6 +331,30 @@ function InvestorsTab({ canManage }: { canManage: boolean }) {
       {/* List */}
       {investorsQuery.isLoading ? (
         <Skeleton className="h-64 w-full" />
+      ) : investorsQuery.isError ? (
+        /* Sesi AE-68 hotfix — display error supaya tidak silent saat
+         * server action throw. Plus tombol Retry untuk manual refetch. */
+        <div className="rounded-lg border border-danger-300 bg-danger-50 p-6 text-center">
+          <p className="text-sm font-semibold text-danger-700">
+            Gagal load data investor
+          </p>
+          <p className="mt-1 text-xs text-danger-600">
+            {investorsQuery.error instanceof Error
+              ? investorsQuery.error.message
+              : "Unknown error"}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() => {
+              qc.removeQueries({ queryKey: ["investors"] });
+              void investorsQuery.refetch();
+            }}
+          >
+            Coba Lagi
+          </Button>
+        </div>
       ) : investors.length === 0 ? (
         <EmptyCard
           icon={Users}
