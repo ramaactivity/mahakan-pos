@@ -42,6 +42,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DatePicker,
   Input,
   Select,
   Skeleton,
@@ -632,21 +633,23 @@ export function PettyCashCard() {
         {/* Sesi AE-67 Phase 1 — Date picker untuk retroactive entry.
          * Default = today. Allow up to 3 hari ke belakang (mencegah backdate
          * abuse, sekaligus solusi "lupa input kemarin"). Highlight banner
-         * kalau date != today. */}
+         * kalau date != today. Pakai DatePicker dedicated (NO native input). */}
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
           <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-neutral-600">
             <Calendar className="size-4" aria-hidden />
             Tanggal Entri
           </label>
-          <input
-            type="date"
-            value={entryDate}
-            min={minDate}
-            max={maxDate}
-            onChange={(e) => setEntryDate(e.target.value)}
-            disabled={submitting}
-            className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-mono text-neutral-900 focus:border-mahakan-green-500 focus:outline-none focus:ring-2 focus:ring-mahakan-green-200"
-          />
+          <div className="min-w-[160px]">
+            <DatePicker
+              ariaLabel="Tanggal Entri"
+              value={entryDate}
+              minDate={minDate}
+              maxDate={maxDate}
+              onChange={(v) => v && setEntryDate(v)}
+              disabled={submitting}
+              size="sm"
+            />
+          </div>
           {isRetro ? (
             <span className="inline-flex items-center gap-1 rounded-md border border-warning-300 bg-warning-100 px-2 py-0.5 text-[11px] font-medium text-warning-700">
               ⚠ Retro · catat ke tanggal lampau

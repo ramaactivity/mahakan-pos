@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Mail, Pencil, Trash2 } from "lucide-react";
 import {
   Button,
+  DatePicker,
   Input,
   Modal,
   NumericInput,
@@ -348,14 +349,11 @@ export function ProposeEntryChangeModal({
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="text-[11px] font-medium text-neutral-700">
-                    Tanggal
-                  </label>
-                  <input
-                    type="date"
+                  <DatePicker
+                    label="Tanggal"
                     value={dateValue}
-                    onChange={(e) => setDateValue(e.target.value)}
-                    className="mt-0.5 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-mahakan-green-500 focus:outline-none focus:ring-2 focus:ring-mahakan-green-200"
+                    onChange={(v) => v && setDateValue(v)}
+                    size="md"
                   />
                 </div>
                 <div>
