@@ -46,12 +46,30 @@ export function parseRupiahCell(s: string): number {
 
 export function parseDateCell(s: string): string | null {
   /* Accept variants: "7/1/1996", "02 June 1999", "20 March 2001",
-   *  "1999-06-02". Output YYYY-MM-DD atau null kalau gagal. */
+   *  "1999-06-02". Output YYYY-MM-DD atau null kalau gagal.
+   *
+   * Untuk text dates ("02 June 1999"), JS Date pakai LOCAL timezone.
+   * Kalau di-format UTC, di TZ Asia/Jakarta (+07:00) jadi "1999-06-01".
+   * Untuk stability cross-TZ, append "T00:00:00Z" supaya pasti UTC. */
   if (!s || s.trim().length === 0) return null;
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
+  if (iso) {
+    const yyyy = parseInt(iso[1], 10);
+    if (yyyy < 1900 || yyyy > 2100) return null;
+    return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  }
+  /* Try parsing dengan UTC anchor untuk hindari TZ shift. */
+  const d = new Date(`${s} UTC`);
+  if (Number.isNaN(d.getTime())) {
+    /* Fallback ke local parse kalau "X UTC" gagal. */
+    const fallback = new Date(s);
+    if (Number.isNaN(fallback.getTime())) return null;
+    const fy = fallback.getUTCFullYear();
+    if (fy < 1900 || fy > 2100) return null;
+    const fmm = String(fallback.getUTCMonth() + 1).padStart(2, "0");
+    const fdd = String(fallback.getUTCDate()).padStart(2, "0");
+    return `${fy}-${fmm}-${fdd}`;
+  }
   const yyyy = d.getUTCFullYear();
   if (yyyy < 1900 || yyyy > 2100) return null;
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
