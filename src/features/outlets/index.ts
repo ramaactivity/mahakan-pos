@@ -1,6 +1,7 @@
 export type { Outlet, ApiResult } from "./types";
 export { isOk } from "./types";
 export {
+  getOpeningBalanceAutoStatus,
   getOwnOutlet,
   updateApproval,
   updateAttendanceSettings,
@@ -13,5 +14,6 @@ export {
   updateThresholds,
   updateFeatures,
   updateRevenueTargets,
+  type OpeningBalanceAutoStatus,
   type UpdateBusinessInfoInput,
 } from "./actions";

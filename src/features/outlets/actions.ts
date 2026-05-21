@@ -1,9 +1,17 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, count, eq, gt, ilike, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { outlets } from "@/db/schema";
+import {
+  employeeAdvances,
+  fixedAssets,
+  incomes,
+  outlets,
+  purchases,
+  shifts,
+  stockOpnameSessions,
+} from "@/db/schema";
 import type { OperationalHours, OutletSettings } from "@/db/schema/outlets";
 import { auth } from "@/lib/auth";
 import { hasPermission, type Permission } from "@/lib/auth";
@@ -474,6 +482,104 @@ export async function updateOpeningBalance(
     "openingBalance",
     { ...parsed.data, updatedAt: new Date().toISOString() },
   );
+}
+
+/* Sesi AE-74 — Auto-detect status per checklist item Rekonsiliasi.
+ * Tujuan: owner tidak perlu manual klik "Tandai Selesai" untuk step
+ * yang datanya sudah eksis di sistem. Cek programmatically apakah ada:
+ *   - opname session
+ *   - shift dengan openingCash > 0
+ *   - kasbon outstanding
+ *   - purchase TOP outstanding
+ *   - fixed assets
+ *   - income dengan deskripsi "Saldo Awal" (proxy bank balance setup)
+ *
+ * Read-only — tidak update settings. UI yang decide apakah auto-mark
+ * checkbox berdasarkan hasil ini. Owner masih bisa override manual. */
+export interface OpeningBalanceAutoStatus {
+  stockOpnameCount: number;
+  shiftWithOpeningCashCount: number;
+  outstandingKasbonCount: number;
+  outstandingTopPurchaseCount: number;
+  fixedAssetsCount: number;
+  saldoAwalIncomeCount: number;
+}
+
+export async function getOpeningBalanceAutoStatus(): Promise<
+  ApiResult<OpeningBalanceAutoStatus>
+> {
+  let session;
+  try {
+    session = await requirePerm("settings.business.update");
+  } catch (e) {
+    return err("FORBIDDEN", e instanceof Error ? e.message : "FORBIDDEN");
+  }
+  const outletId = session.user.outletId;
+
+  /* 6 parallel COUNT queries — each fast (indexed). */
+  const [opname, shiftOpen, kasbon, topPurchase, assets, saldoAwalInc] =
+    await Promise.all([
+      db
+        .select({ n: count() })
+        .from(stockOpnameSessions)
+        .where(eq(stockOpnameSessions.outletId, outletId)),
+      db
+        .select({ n: count() })
+        .from(shifts)
+        .where(
+          and(
+            eq(shifts.outletId, outletId),
+            gt(shifts.openingCash, 0),
+          ),
+        ),
+      db
+        .select({ n: count() })
+        .from(employeeAdvances)
+        .where(
+          and(
+            eq(employeeAdvances.outletId, outletId),
+            eq(employeeAdvances.status, "pending"),
+          ),
+        ),
+      db
+        .select({ n: count() })
+        .from(purchases)
+        .where(
+          and(
+            eq(purchases.outletId, outletId),
+            eq(purchases.paymentMethod, "top"),
+            eq(purchases.status, "pending_payment"),
+          ),
+        ),
+      db
+        .select({ n: count() })
+        .from(fixedAssets)
+        .where(
+          and(eq(fixedAssets.outletId, outletId), isNull(fixedAssets.deletedAt)),
+        ),
+      db
+        .select({ n: count() })
+        .from(incomes)
+        .where(
+          and(
+            eq(incomes.outletId, outletId),
+            isNull(incomes.deletedAt),
+            ilike(incomes.description, "%saldo awal%"),
+          ),
+        ),
+    ]);
+
+  return {
+    success: true,
+    data: {
+      stockOpnameCount: Number(opname[0]?.n ?? 0),
+      shiftWithOpeningCashCount: Number(shiftOpen[0]?.n ?? 0),
+      outstandingKasbonCount: Number(kasbon[0]?.n ?? 0),
+      outstandingTopPurchaseCount: Number(topPurchase[0]?.n ?? 0),
+      fixedAssetsCount: Number(assets[0]?.n ?? 0),
+      saldoAwalIncomeCount: Number(saldoAwalInc[0]?.n ?? 0),
+    },
+  };
 }
 
 /* Sesi AE-55 — revenue targets harian/mingguan/bulanan/tahunan.

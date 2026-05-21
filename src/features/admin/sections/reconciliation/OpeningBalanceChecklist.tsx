@@ -6,6 +6,7 @@ import {
   Check,
   CheckCircle2,
   Circle,
+  ExternalLink,
   Info,
   Banknote,
   Briefcase,
@@ -17,9 +18,11 @@ import {
 } from "lucide-react";
 import { Card, CardContent, DatePicker, toast } from "@/components/ui";
 import {
+  getOpeningBalanceAutoStatus,
   getOwnOutlet,
   isOk,
   updateOpeningBalance,
+  type OpeningBalanceAutoStatus,
   type Outlet,
 } from "@/features/outlets";
 import { cn } from "@/lib/utils";
@@ -52,6 +55,12 @@ interface StepDef {
   hint: string;
   /** Optional sub-bullets untuk multi-step instruction. */
   steps?: string[];
+  /** Sesi AE-74 — Target admin section hash untuk deep-link button.
+   * Klik "Buka" akan set window.location.hash → AdminShell navigate. */
+  targetSection?: string;
+  /** Sesi AE-74 — Function untuk auto-detect berdasarkan
+   * OpeningBalanceAutoStatus. Return count > 0 = data terdeteksi. */
+  autoDetectCount?: (status: OpeningBalanceAutoStatus) => number;
 }
 
 const STEPS: StepDef[] = [
@@ -72,6 +81,8 @@ const STEPS: StepDef[] = [
     Icon: Package,
     menuLabel: "Inventory → Stok Opname",
     hint: "Buka tab Inventory di sidebar, masuk ke Stok Opname, klik 'Buat Opname Baru'. Hitung fisik semua bahan utama, input qty, simpan.",
+    targetSection: "inventory",
+    autoDetectCount: (s) => s.stockOpnameCount,
   },
   {
     key: "opening_cash",
@@ -83,6 +94,8 @@ const STEPS: StepDef[] = [
     hint:
       "Di shift pertama, kasir input openingCash sesuai uang fisik di laci. " +
       "KALAU sudah buka shift dengan angka salah, koreksi via Kas → tab Pengeluaran (kalau drawer terlalu banyak, tarik) atau tab Pemasukan (kalau drawer kurang, tambah) dengan kategori 'Penyesuaian Saldo Awal' (sudah pre-seeded sistem).",
+    targetSection: "shifts",
+    autoDetectCount: (s) => s.shiftWithOpeningCashCount,
   },
   {
     key: "outstanding_kasbon",
@@ -92,6 +105,8 @@ const STEPS: StepDef[] = [
     Icon: Briefcase,
     menuLabel: "HR Operations → Kasbon",
     hint: "Untuk tiap kasbon outstanding: nama karyawan, jumlah Rp, tanggal asli kasbon, alasan. Buat row dengan status 'pending'.",
+    targetSection: "hr-operations",
+    autoDetectCount: (s) => s.outstandingKasbonCount,
   },
   {
     key: "outstanding_top",
@@ -101,6 +116,8 @@ const STEPS: StepDef[] = [
     Icon: Truck,
     menuLabel: "Inventory → Pembelian",
     hint: "Buka Pembelian → Catat Pembelian. Set tanggal pembelian asli, pilih supplier, isi items dan harga, set 'TOP / Bayar Nanti'. Total jadi utang.",
+    targetSection: "purchases",
+    autoDetectCount: (s) => s.outstandingTopPurchaseCount,
   },
   {
     key: "fixed_assets",
@@ -110,6 +127,8 @@ const STEPS: StepDef[] = [
     Icon: Building2,
     menuLabel: "Akuntansi → Aktiva Tetap",
     hint: "Pakai CSV bulk import. Format: nama, tanggal beli, harga beli, kategori, masa pakai (bulan). Sistem auto-hitung depresiasi.",
+    targetSection: "accounting",
+    autoDetectCount: (s) => s.fixedAssetsCount,
   },
   {
     key: "bank_balance",
@@ -118,6 +137,8 @@ const STEPS: StepDef[] = [
       "Catat saldo bank per tanggal trial start untuk SETIAP rekening yang dipakai (BCA Anisa ...2515, BCA Owner, BRI, dll).",
     Icon: Banknote,
     menuLabel: "Kas → Pemasukan",
+    targetSection: "cash",
+    autoDetectCount: (s) => s.saldoAwalIncomeCount,
     hint:
       "PASTIKAN dulu master rekening sudah ke-set di Pengaturan → Rekening Bank. " +
       "Lalu buka Kas → tab Pemasukan → Tambah. Tanggal = tanggal trial start. Nominal = saldo bank awal. " +
@@ -141,21 +162,29 @@ export function OpeningBalanceChecklist() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [autoStatus, setAutoStatus] =
+    useState<OpeningBalanceAutoStatus | null>(null);
 
   // Load from server on mount
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const res = await getOwnOutlet();
+      const [outletRes, autoRes] = await Promise.all([
+        getOwnOutlet(),
+        getOpeningBalanceAutoStatus(),
+      ]);
       if (cancelled) return;
-      if (isOk(res)) {
-        const ob = (res.data as Outlet).settings?.openingBalance;
+      if (isOk(outletRes)) {
+        const ob = (outletRes.data as Outlet).settings?.openingBalance;
         setState({
           trialStartDate: ob?.trialStartDate ?? "",
           steps: ob?.steps ?? {},
         });
       } else {
-        setError(res.error.message);
+        setError(outletRes.error.message);
+      }
+      if (isOk(autoRes)) {
+        setAutoStatus(autoRes.data);
       }
       setLoading(false);
     })();
@@ -263,6 +292,11 @@ export function OpeningBalanceChecklist() {
             idx > 0 ? state.steps[STEPS[idx - 1].key] ?? "pending" : "done";
           const prevComplete = prevStatus === "done" || prevStatus === "skip";
           const Icon = step.Icon;
+          const detectedCount =
+            autoStatus && step.autoDetectCount
+              ? step.autoDetectCount(autoStatus)
+              : null;
+          const hasDetected = detectedCount != null && detectedCount > 0;
           return (
             <Card
               key={step.key}
@@ -328,6 +362,21 @@ export function OpeningBalanceChecklist() {
                       </p>
                     ) : null}
 
+                    {detectedCount != null ? (
+                      <p
+                        className={cn(
+                          "mt-2 rounded-md border px-2 py-1 text-[11px]",
+                          hasDetected
+                            ? "border-success-300 bg-success-50 text-success-700"
+                            : "border-neutral-200 bg-neutral-50 text-neutral-500",
+                        )}
+                      >
+                        {hasDetected
+                          ? `✓ Sistem mendeteksi ${detectedCount} data terkait`
+                          : "Belum ada data terdeteksi"}
+                      </p>
+                    ) : null}
+
                     {isFirst ? (
                       <div className="mt-3 max-w-xs">
                         <DatePicker
@@ -365,6 +414,22 @@ export function OpeningBalanceChecklist() {
                                   </li>
                                 ))}
                               </ol>
+                            ) : null}
+                            {step.targetSection ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  window.location.hash =
+                                    "#" + step.targetSection;
+                                }}
+                                className="mt-2 inline-flex items-center gap-1 rounded-md border border-mahakan-green-500/60 bg-mahakan-green-50 px-2.5 py-1 text-[11px] font-semibold text-mahakan-green-700 hover:bg-mahakan-green-100"
+                              >
+                                <ExternalLink
+                                  className="size-3"
+                                  aria-hidden
+                                />{" "}
+                                Buka {step.menuLabel.split("→")[0].trim()}
+                              </button>
                             ) : null}
                           </div>
                         </div>

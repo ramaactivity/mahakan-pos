@@ -557,6 +557,23 @@ export function JournalEntryModal({
                  * highlight Dr/Cr cell sesuai normalBalance. */
                 const acc = line.accountId ? accountById.get(line.accountId) : null;
                 const normalBalance: NormalBalance | null = acc?.normalBalance ?? null;
+                /* Sesi AE-73 hotfix — hard lock HANYA untuk akun yang
+                 * unidirectional secara natural (revenue/expense/cogs).
+                 * Asset/liability/equity bolak-balik valid (mis. Bank Dr
+                 * untuk inflow, Cr untuk outflow). Untuk akun bolak-balik,
+                 * tetap soft highlight tapi tidak disable field.
+                 *
+                 * Plus: kontra account (akun yang flip normal balance,
+                 * mis. Diskon Penjualan 4110) skip hard lock juga karena
+                 * sengaja inverted. */
+                const isUnidirectional =
+                  acc != null &&
+                  !acc.isContra &&
+                  (acc.type === "revenue" ||
+                    acc.type === "expense" ||
+                    acc.type === "cogs");
+                const lockDebit = isUnidirectional && normalBalance === "credit";
+                const lockCredit = isUnidirectional && normalBalance === "debit";
                 return (
                   <tr key={line.id}>
                     <td className="px-2 py-1.5 align-top">
@@ -587,16 +604,16 @@ export function JournalEntryModal({
                         </div>
                       ) : null}
                     </td>
-                    {/* Sesi AE-73 — Hard lock: kalau akun selected, disable
-                     * sisi opposite of normalBalance. Mencegah accidental
-                     * mis-post + visual cue tegas mana sisi yang benar.
-                     * Owner pemula tidak perlu hafal Dr/Cr rule. */}
+                    {/* Sesi AE-73 — Hard lock untuk akun unidirectional
+                     * (revenue/expense/cogs non-contra). Asset/Liability/
+                     * Equity tetap free karena bolak-balik valid (mis.
+                     * Bank Dr inflow, Cr outflow). */}
                     <td
                       className={cn(
                         "px-2 py-1.5 align-top",
                         normalBalance === "debit" &&
                           "bg-mahakan-green-50/40",
-                        normalBalance === "credit" && "bg-neutral-100/60",
+                        lockDebit && "bg-neutral-100/60",
                       )}
                     >
                       <NumericInput
@@ -604,9 +621,9 @@ export function JournalEntryModal({
                         value={line.debit}
                         onChange={(v) => updateLine(line.id, { debit: v })}
                         prefix="Rp"
-                        disabled={normalBalance === "credit"}
+                        disabled={lockDebit}
                       />
-                      {normalBalance === "credit" ? (
+                      {lockDebit ? (
                         <p className="mt-0.5 text-[10px] italic text-neutral-400">
                           Akun ini normal CR — isi di kolom Credit
                         </p>
@@ -617,7 +634,7 @@ export function JournalEntryModal({
                         "px-2 py-1.5 align-top",
                         normalBalance === "credit" &&
                           "bg-mahakan-green-50/40",
-                        normalBalance === "debit" && "bg-neutral-100/60",
+                        lockCredit && "bg-neutral-100/60",
                       )}
                     >
                       <NumericInput
@@ -625,9 +642,9 @@ export function JournalEntryModal({
                         value={line.credit}
                         onChange={(v) => updateLine(line.id, { credit: v })}
                         prefix="Rp"
-                        disabled={normalBalance === "debit"}
+                        disabled={lockCredit}
                       />
-                      {normalBalance === "debit" ? (
+                      {lockCredit ? (
                         <p className="mt-0.5 text-[10px] italic text-neutral-400">
                           Akun ini normal DR — isi di kolom Debit
                         </p>
