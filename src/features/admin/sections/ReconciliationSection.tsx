@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ClipboardCheck, History, Table } from "lucide-react";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { HistoricalImportWizard } from "./reconciliation/HistoricalImportWizard";
 import { HistoricalSummaryList } from "./reconciliation/HistoricalSummaryList";
-import { OpeningBalanceChecklist } from "./reconciliation/OpeningBalanceChecklist";
+import { OpeningBalanceWizard } from "./reconciliation/OpeningBalanceWizard";
 
 type ReconciliationTab = "checklist" | "import" | "list";
 
@@ -20,7 +20,7 @@ const TABS: Array<{
     key: "checklist",
     label: "Saldo Awal",
     Icon: ClipboardCheck,
-    hint: "Checklist setup awal trial",
+    hint: "Wizard setup awal trial",
   },
   {
     key: "import",
@@ -44,6 +44,18 @@ export function ReconciliationSection({
   viewerRole,
 }: ReconciliationSectionProps) {
   const [tab, setTab] = useState<ReconciliationTab>("checklist");
+
+  /* Sesi AE-75 — Listen ke event dari OpeningBalanceWizard "Selesai" screen,
+   * supaya CTA "Lanjut ke Import Histori" bisa switch tab di parent. */
+  useEffect(() => {
+    function onSwitch(e: Event) {
+      const ce = e as CustomEvent<{ tab: ReconciliationTab }>;
+      if (ce.detail?.tab) setTab(ce.detail.tab);
+    }
+    window.addEventListener("reconciliation:switch-tab", onSwitch);
+    return () =>
+      window.removeEventListener("reconciliation:switch-tab", onSwitch);
+  }, []);
 
   return (
     <div>
@@ -92,7 +104,7 @@ export function ReconciliationSection({
       </div>
 
       {tab === "checklist" ? (
-        <OpeningBalanceChecklist />
+        <OpeningBalanceWizard />
       ) : tab === "import" ? (
         <HistoricalImportWizard />
       ) : (
