@@ -1088,8 +1088,12 @@ export async function markPurchasePaid(
   return ok({ id: v.id, expenseId });
 }
 
-// Re-export query type so action callers don't need to know the queries layer.
-export type { Purchase };
+/* Sesi AE-87 — sebelumnya ada `export type { Purchase }` di sini, tapi
+ * Turbopack dev-mode 'use server' file punya bug: type-only re-export
+ * trigger runtime ReferenceError "Purchase is not defined" saat module
+ * evaluated → semua server action di file ini broken. Type re-export
+ * dihapus karena Purchase sudah di-export dari src/features/purchases/
+ * index.ts. Consumer import dari `@/features/purchases` (idiomatic). */
 
 // Untyped re-export for fetchPurchaseById helper (used internally).
 export async function getPurchaseRaw(
