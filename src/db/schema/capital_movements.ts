@@ -55,6 +55,13 @@ export const capitalMovements = pgTable(
         "dividend_credit",
         "withdrawal",
         "adjustment",
+        /* Sesi AE-80 — kinds baru untuk ledger / mutasi dinamis. */
+        "reversal", // movement balik dari operation yang di-reverse (parent_movement_id link)
+        "share_transfer_in", // share % bertambah karena p2p_transfer (FROM another investor)
+        "share_transfer_out", // share % berkurang karena p2p_transfer (TO another investor)
+        "company_buyback", // share % di-beli kembali oleh outlet (kas keluar)
+        "creditor_repayment_principal", // cicilan pokok hutang kreditur (trail, kreditur beda holder type)
+        "dividend_withdrawal", // explicit: penarikan saldo dividen (distinct dari 'withdrawal' modal)
       ],
     }).notNull(),
 
@@ -81,6 +88,16 @@ export const capitalMovements = pgTable(
      *  Soft FK — populated saat distribution status='posted'. */
     distributionId: uuid("distribution_id"),
 
+    /* Sesi AE-80 — Reversal chain: kalau movement ini reverses movement
+     * sebelumnya (kind='reversal'), parent_movement_id link ke original.
+     * Untuk audit trail "X di-reverse jadi Y". Reversal of reversal
+     * (re-do) → parent point ke reversal, bukan ke original. */
+    parentMovementId: uuid("parent_movement_id"),
+    /* Sesi AE-80 — Marker untuk movement yang sudah ke-reverse (status
+     * effective="void" tapi tidak di-delete). UI filter out by default. */
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
+    reversedBy: uuid("reversed_by").references(() => users.id),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -105,6 +122,8 @@ export const capitalMovements = pgTable(
       t.holderType,
       t.holderId,
     ),
+    /* Sesi AE-80 — reversal chain lookup. */
+    index("idx_cm_parent").on(t.parentMovementId),
     check("ck_capital_movements_amount_nonzero", sql`${t.amount} != 0`),
   ],
 );

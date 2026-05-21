@@ -128,7 +128,8 @@ export type OutletSettings = {
     } | null;
   };
   /** Sesi AE-63 — Profit distribution config (Modal & Dividen). Default
-   *  per Sheets owner Mahakan. Editable di Settings → Modal & Dividen. */
+   *  per Sheets owner Mahakan. Editable di Settings → Modal & Dividen.
+   *  Dipakai oleh waterfall v1 (legacy). */
   dividendConfig?: {
     /** % dari Net Profit. Default 10.00. */
     bagiHasilPct: number;
@@ -142,6 +143,39 @@ export type OutletSettings = {
     /** Pool split investor vs pengelola dalam Bagi Hasil. Total 100. */
     investorPoolPct: number;
     pengelolaPoolPct: number;
+  };
+  /** Sesi AE-80 — Waterfall v2 config + feature flag.
+   *
+   * useWaterfallV2 = false (default): compute pakai v1 legacy formula
+   * (bagi_hasil = net × bagiHasilPct, dengan 4 bucket alokasi).
+   *
+   * useWaterfallV2 = true: compute pakai waterfall baru:
+   *   loss = round(net × defaultLossPct)
+   *   capex = round(net × defaultCapexPct)
+   *   dasar = net − loss − capex
+   *   bagi_hasil = round(dasar × payoutRatio)
+   *   retained = sisa otomatis
+   *   investor_pool = round(bagi_hasil × investorPoolPct)
+   *   pengelola_pool = bagi_hasil − investor_pool (serap rounding)
+   *
+   * payoutRatio bisa di-override per distribution lewat UI. Default
+   * value dari `defaultPayoutRatioPct` di config ini.
+   *
+   * Toggle off = rollback ke v1 (no DDL needed, compute dispatch
+   * conditional di actions). */
+  dividen?: {
+    /** Master switch waterfall v2. Default false. */
+    useWaterfallV2?: boolean;
+    /** Default payout ratio % (manual editable per distribution).
+     *  Default 10. Range 0..100. */
+    defaultPayoutRatioPct?: number;
+    /** Default loss bracket rate % dari net. Default 3. */
+    defaultLossPct?: number;
+    /** Default capex reserve rate % dari net. Default 0.7. */
+    defaultCapexPct?: number;
+    /** Pool split investor%, pengelola% = 100 − investorPoolPct.
+     *  Default 35. */
+    investorPoolPct?: number;
   };
   /** Sesi AE-55 — Revenue targets untuk indikator progress di Laporan.
    * Semua nilai dalam Rupiah, optional. Null/undefined = belum ada target. */

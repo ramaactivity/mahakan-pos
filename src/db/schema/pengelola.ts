@@ -61,6 +61,13 @@ export const pengelola = pgTable(
       .notNull()
       .default(0),
 
+    /* Sesi AE-80 — Saldo dividen pengelola yang belum dicairkan (mirror
+     * pattern investors.dividend_balance). Pengelola pool dialokasikan
+     * ke akun ini saat distribusi posted, decrement saat withdrawal. */
+    dividendBalance: bigint("dividend_balance", { mode: "number" })
+      .notNull()
+      .default(0),
+
     /** Sesi AE-63a — opsional link ke users.id kalau pengelola juga
      *  jadi POS staff login (most are). Bukan FK ke employees karena
      *  per owner directive pengelola = entity terpisah. */
@@ -95,5 +102,10 @@ export const pengelola = pgTable(
       .on(t.outletId, t.fullName)
       .where(sql`${t.deletedAt} IS NULL`),
     check("ck_pengelola_modal_nonneg", sql`${t.modalDisetor} >= 0`),
+    /* Sesi AE-80 — dividen balance invariant (cannot go negative). */
+    check(
+      "ck_pengelola_dividend_balance_nonneg",
+      sql`${t.dividendBalance} >= 0`,
+    ),
   ],
 );

@@ -200,6 +200,30 @@ export const journalEntries = pgTable(
         "capital_injection",
         "capital_withdrawal",
         "dividend_distribution",
+        /* Sesi AE-80 — Modal & Dividen v2 (ledger / mutasi dinamis).
+         *
+         * dividend_distribution_reversal: jurnal pembalik dari
+         *   dividend_distribution yang di-reverse. sourceId = distribution.id
+         *   (sama dengan original — partial unique allow karena status berbeda).
+         *
+         * dividend_withdrawal: pencairan saldo dividen investor (Dr 3202
+         *   Hutang Dividen / Cr Bank). sourceId = withdrawal_request.id.
+         * dividend_withdrawal_reversal: jurnal pembalik.
+         *
+         * creditor_repayment: cicilan hutang kreditur (Dr 2150 Hutang
+         *   Kreditur + Dr 5301 Beban Bunga / Cr Kas). sourceId = creditor_repayment.id.
+         * creditor_repayment_reversal: jurnal pembalik.
+         *
+         * share_buyback: outlet beli kembali share investor (Dr 3301
+         *   Buyback Saham / Cr Kas). sourceId = share_transaction.id.
+         * share_buyback_reversal: jurnal pembalik. */
+        "dividend_distribution_reversal",
+        "dividend_withdrawal",
+        "dividend_withdrawal_reversal",
+        "creditor_repayment",
+        "creditor_repayment_reversal",
+        "share_buyback",
+        "share_buyback_reversal",
       ],
     }).notNull(),
 

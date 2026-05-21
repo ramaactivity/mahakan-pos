@@ -84,7 +84,7 @@ export const profitDistributions = pgTable(
     }).notNull(),
 
     status: text("status", {
-      enum: ["draft", "approved", "posted", "cancelled"],
+      enum: ["draft", "approved", "posted", "cancelled", "reversed"],
     })
       .notNull()
       .default("draft"),
@@ -103,6 +103,32 @@ export const profitDistributions = pgTable(
       () => journalEntries.id,
     ),
 
+    /* Sesi AE-80 — Waterfall v2 (calculation_model='v2') addition.
+     * Default 'v1' = legacy formula (bagi_hasil = net × bagiHasilPct).
+     * 'v2' = waterfall: bagi_hasil = (net − loss − capex) × payoutRatio. */
+    calculationModel: text("calculation_model", {
+      enum: ["v1", "v2"],
+    })
+      .notNull()
+      .default("v1"),
+    /** Manual payout ratio per distribution (v2 only). Range 0..100. */
+    payoutRatioPct: decimal("payout_ratio_pct", { precision: 5, scale: 2 }),
+    /** Snapshot rate v2 — supaya kalau owner ubah default di settings,
+     *  distribusi historical tetap render dengan rate yang dipakai. */
+    lossRateSnapshot: decimal("loss_rate_snapshot", { precision: 5, scale: 2 }),
+    capexRateSnapshot: decimal("capex_rate_snapshot", {
+      precision: 5,
+      scale: 2,
+    }),
+
+    /* Sesi AE-80 — Reversal trail. status='reversed' → distribusi
+     * dibatalkan; jurnal pembalik di-post; capital_movements parent_chain
+     * di-mark. Soft FK self ke distribusi reversal (kalau ada follow-up). */
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
+    reversedBy: uuid("reversed_by").references(() => users.id),
+    reversalReason: text("reversal_reason"),
+    reversedDistributionId: uuid("reversed_distribution_id"),
+
     notes: text("notes"),
 
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -119,7 +145,9 @@ export const profitDistributions = pgTable(
       t.periodMonth,
     ),
     /* Partial unique: hanya 1 distribution approved/posted per period
-     * per outlet. Draft boleh banyak (preview iteration). */
+     * per outlet. Draft boleh banyak (preview iteration). Reversed
+     * tidak masuk constraint supaya period bisa di-distribute ulang
+     * setelah reversal. */
     uniqueIndex("ux_distributions_active_per_period")
       .on(t.outletId, t.periodYear, t.periodMonth)
       .where(sql`status IN ('approved', 'posted')`),
@@ -128,6 +156,15 @@ export const profitDistributions = pgTable(
     check(
       "ck_distribution_pools_consistent",
       sql`${t.investorPoolPct}::numeric + ${t.pengelolaPoolPct}::numeric = 100.00`,
+    ),
+    /* Sesi AE-80 — v2 wajib punya payoutRatio + snapshot rates. */
+    check(
+      "ck_distribution_v2_fields_consistent",
+      sql`${t.calculationModel} = 'v1' OR (${t.payoutRatioPct} IS NOT NULL AND ${t.lossRateSnapshot} IS NOT NULL AND ${t.capexRateSnapshot} IS NOT NULL)`,
+    ),
+    check(
+      "ck_distribution_payout_ratio_range",
+      sql`${t.payoutRatioPct} IS NULL OR ${t.payoutRatioPct}::numeric BETWEEN 0 AND 100`,
     ),
   ],
 );

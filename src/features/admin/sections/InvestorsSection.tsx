@@ -744,6 +744,7 @@ function DistributionRow({
     approved: "Approved",
     posted: "Posted ✓",
     cancelled: "Cancelled",
+    reversed: "Reversed ↺",
   };
   return (
     <tr
@@ -814,11 +815,24 @@ function ReportTab() {
  * dari ~110 ke ~20 visible rows di Galaxy A7 Lite (60-70% reduction).
  *
  * View type extends InvestorWithStats dengan precomputed sharePct + nikMasked
- * (lihat investorsView useMemo di InvestorsTab). */
-type InvestorRowView = InvestorWithStats & {
+ * (lihat investorsView useMemo di InvestorsTab).
+ *
+ * Sesi AE-80 — schema sharePct sekarang decimal(7,4) → Drizzle map ke string.
+ * View override jadi number (live-computed). Pakai Omit supaya intersection
+ * tidak konflik string vs number. */
+type InvestorRowView = Omit<InvestorWithStats, "sharePct"> & {
   sharePct: number;
   nikMasked: string | null;
 };
+
+/* Sesi AE-80 — Bridge balik dari InvestorRowView ke InvestorWithStats
+ * untuk handler edit/delete yang expect schema sharePct (string). */
+function toInvestorWithStats(view: InvestorRowView): InvestorWithStats {
+  return {
+    ...view,
+    sharePct: view.sharePct.toFixed(4),
+  };
+}
 
 /* Grid column template: align header + body rows. Tailwind arbitrary value
  * supaya className stable (memo-friendly), tidak via style object. */
@@ -898,7 +912,7 @@ const InvestorRow = memo(function InvestorRow({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onEdit(inv)}
+              onClick={() => onEdit(toInvestorWithStats(inv))}
               title="Edit"
             >
               <Pencil className="size-3.5" />
@@ -906,7 +920,7 @@ const InvestorRow = memo(function InvestorRow({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onDelete(inv)}
+              onClick={() => onDelete(toInvestorWithStats(inv))}
               className="text-red-600 hover:bg-red-50"
               title="Hapus"
             >
