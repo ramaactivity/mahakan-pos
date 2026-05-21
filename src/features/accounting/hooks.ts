@@ -898,8 +898,49 @@ export async function postJournalForTransactionCorrection(args: {
     cogs: Number(it.cogs ?? 0),
   }));
 
-  // 2. Find original pos_sale entry (for status='reversed' linkage).
-  const [originalEntry] = await db
+  // 2. Find the entry that should be reversed.
+  //
+  // Sesi AE-83 — multi-koreksi support: round-1 reverses original pos_sale.
+  // Round-2+ reverses the PREVIOUS pos_sale_correction entry (which is
+  // the currently-active revenue entry for this trx).
+  //
+  // Algorithm:
+  //  (a) Look for prior approved corrections for this transaction (exclude
+  //      current). Latest one's correctedJournalEntryId = "active entry".
+  //  (b) Fall back to original pos_sale entry kalau ini round 1.
+  //
+  // Original pos_sale entry juga di-fetch supaya kita selalu bisa attribute
+  // `originalEntryId` ke transaction_corrections row (audit trail untuk
+  // step 6) — pointing ke entry pertama dari trx history.
+  const { transactionCorrections } = await import("@/db/schema");
+  const priorCorrections = await db
+    .select({
+      id: transactionCorrections.id,
+      correctedJournalEntryId: transactionCorrections.correctedJournalEntryId,
+      approvedAt: transactionCorrections.approvedAt,
+    })
+    .from(transactionCorrections)
+    .where(
+      and(
+        eq(transactionCorrections.transactionId, args.transactionId),
+        eq(transactionCorrections.outletId, args.outletId),
+        eq(transactionCorrections.status, "approved"),
+      ),
+    );
+  const priorActive = priorCorrections
+    .filter(
+      (c) =>
+        c.id !== args.correctionId &&
+        c.correctedJournalEntryId !== null &&
+        c.approvedAt !== null,
+    )
+    .sort((a, b) => {
+      const at = a.approvedAt!.getTime();
+      const bt = b.approvedAt!.getTime();
+      return bt - at;
+    })[0];
+
+  const [originalPosSaleEntry] = await db
     .select({ id: journalEntries.id, status: journalEntries.status })
     .from(journalEntries)
     .where(
@@ -910,7 +951,26 @@ export async function postJournalForTransactionCorrection(args: {
       ),
     )
     .limit(1);
-  const originalEntryId = originalEntry?.id ?? null;
+  const originalEntryId = originalPosSaleEntry?.id ?? null;
+
+  /* Round 2+: target = previous correction's correctedJournalEntryId.
+   * Round 1: target = original pos_sale entry. */
+  let entryToReverseId: string | null = null;
+  let entryToReverseStatus: string | null = null;
+  if (priorActive?.correctedJournalEntryId) {
+    const [priorEntry] = await db
+      .select({ id: journalEntries.id, status: journalEntries.status })
+      .from(journalEntries)
+      .where(eq(journalEntries.id, priorActive.correctedJournalEntryId))
+      .limit(1);
+    if (priorEntry) {
+      entryToReverseId = priorEntry.id;
+      entryToReverseStatus = priorEntry.status;
+    }
+  } else {
+    entryToReverseId = originalPosSaleEntry?.id ?? null;
+    entryToReverseStatus = originalPosSaleEntry?.status ?? null;
+  }
 
   // 3. Post reversal — Dr↔Cr swap revenue side, COGS stripped.
   const reverseLines = mapPosSaleReversal({
@@ -941,10 +1001,15 @@ export async function postJournalForTransactionCorrection(args: {
     },
   });
 
-  // 4. Mark original pos_sale entry as reversed + link reversedByEntryId.
+  // 4. Mark target entry as reversed + link reversedByEntryId.
   //    Pair-void: counter ikut di-mark reversed supaya net 0 di ledger
   //    sum (lihat reverseJournalEntry comment).
-  if (originalEntryId && originalEntry?.status !== "reversed") {
+  //
+  // Sesi AE-83 — target entry = previous correction (round 2+) ATAU
+  // original pos_sale (round 1). Sebelumnya hardcoded ke original pos_sale,
+  // jadi round-2+ correction punya floating posted reverse (no counter
+  // linkage, double-count di ledger).
+  if (entryToReverseId && entryToReverseStatus !== "reversed") {
     await db
       .update(journalEntries)
       .set({
@@ -952,13 +1017,13 @@ export async function postJournalForTransactionCorrection(args: {
         reversedByEntryId: reverseResult.entryId,
         updatedAt: new Date(),
       })
-      .where(eq(journalEntries.id, originalEntryId));
+      .where(eq(journalEntries.id, entryToReverseId));
 
     await db
       .update(journalEntries)
       .set({
         status: "reversed",
-        reversesEntryId: originalEntryId,
+        reversesEntryId: entryToReverseId,
         updatedAt: new Date(),
       })
       .where(eq(journalEntries.id, reverseResult.entryId));
@@ -994,8 +1059,8 @@ export async function postJournalForTransactionCorrection(args: {
   });
 
   // 6. Update transaction_corrections row dengan trio journal entry IDs.
-  //    Dynamic import supaya hooks.ts tidak hard-depend ke transactions module.
-  const { transactionCorrections } = await import("@/db/schema");
+  //    (transactionCorrections sudah di-import di step 2 untuk multi-koreksi
+  //    chain lookup; reuse referensi yang sama.)
   await db
     .update(transactionCorrections)
     .set({
