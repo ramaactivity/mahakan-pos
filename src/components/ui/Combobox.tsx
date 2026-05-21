@@ -206,7 +206,10 @@ export function Combobox({
           <Popover.Content
             align="start"
             sideOffset={4}
-            className="z-[60] w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-md border border-neutral-200 bg-white shadow-lg"
+            /* Sesi AE-78 polish — dropdown bisa expand di luar trigger
+             * width supaya item label panjang tidak ke-truncate. min-width
+             * tetap match trigger; max-width relatif viewport. */
+            className="z-[60] min-w-[var(--radix-popover-trigger-width)] max-w-[min(640px,90vw)] w-max overflow-hidden rounded-md border border-neutral-200 bg-white shadow-lg"
           >
             <Command className="flex flex-col" shouldFilter={true}>
               <div className="flex items-center gap-2 border-b border-neutral-200 px-2.5">

@@ -635,7 +635,7 @@ export function PurchaseFormModal({
       onClose={onClose}
       title="Catat Pembelian"
       description="Catat semua belanja bahan / supply hari ini. Kalau cash, langsung masuk laporan kas. Untuk belanja sekali ke warung / Alfamart / pasar, toggle ke 'Pembelian langsung'."
-      size="2xl"
+      size="full"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
@@ -802,7 +802,7 @@ export function PurchaseFormModal({
             </p>
             <div className="space-y-3 rounded-md border border-neutral-200 p-2">
               {/* Sesi AE-78 — column header (sub-grid, hanya tampil di md+). */}
-              <div className="hidden gap-2 px-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 md:grid md:grid-cols-[1.4fr_80px_90px_160px_160px_36px]">
+              <div className="hidden gap-2 px-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 md:grid md:grid-cols-[minmax(280px,2.2fr)_90px_120px_180px_180px_44px]">
                 <span>Bahan</span>
                 <span>QTY</span>
                 <span>Satuan</span>
@@ -878,7 +878,7 @@ export function PurchaseFormModal({
                     {/* Sesi AE-78 — Layout 6-col: Bahan / QTY / Satuan /
                      * Harga per Satuan / Total Bayar / Hapus. Plus visual
                      * indikator field mana yang user-typed vs derived. */}
-                    <div className="grid gap-2 md:grid-cols-[1.4fr_80px_90px_160px_160px_36px]">
+                    <div className="grid gap-2 md:grid-cols-[minmax(280px,2.2fr)_90px_120px_180px_180px_44px]">
                       <Combobox
                         ariaLabel={`Bahan ${idx + 1}`}
                         placeholder="Pilih bahan…"
