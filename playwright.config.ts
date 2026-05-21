@@ -32,6 +32,25 @@ export default defineConfig({
   /* Tier 2 (mutation) — explicit folder, default test command skip. */
   testIgnore: process.env.E2E_INCLUDE_TIER2 ? undefined : ["**/tier2/**"],
 
+  /* Sesi AE-85 — Global setup hanya untuk Tier 2 (membutuhkan .env.test).
+   * Tier 1 smoke tidak butuh setup. */
+  globalSetup: process.env.E2E_INCLUDE_TIER2
+    ? "./e2e/tier2/_fixtures/global-setup.ts"
+    : undefined,
+
+  /* Auto-spawn next dev di port 3001 dengan .env.test loaded, hanya untuk
+   * Tier 2. Tier 1 target prod URL langsung jadi tidak butuh webServer. */
+  webServer: process.env.E2E_INCLUDE_TIER2
+    ? {
+        command: "npm run dev:e2e",
+        url: "http://localhost:3001",
+        timeout: 120_000,
+        reuseExistingServer: !process.env.CI,
+        stdout: "pipe",
+        stderr: "pipe",
+      }
+    : undefined,
+
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
