@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
@@ -18,6 +18,7 @@ import {
   Badge,
   Button,
   DateRangePicker,
+  Input,
   Select,
   Skeleton,
   toast,
@@ -94,6 +95,9 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
   );
 
   // Filters
+  /* Sesi AE-72 — Search query untuk filter client-side (deskripsi /
+   * entry number). Lighter dari debounce-server karena rows max 100. */
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const [filterSourceType, setFilterSourceType] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<"all" | JournalEntryStatus>(
     "all",
@@ -159,16 +163,44 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
   }, [filterSourceType, filterStatus, filterRange.from, filterRange.to]);
 
   const hasActiveFilter =
+    searchQuery.trim().length > 0 ||
     filterSourceType !== "all" ||
     filterStatus !== "all" ||
     filterRange.from !== null ||
     filterRange.to !== null;
 
   function clearFilters() {
+    setSearchQuery("");
     setFilterSourceType("all");
     setFilterStatus("all");
     setFilterRange({ from: null, to: null });
   }
+
+  /* Sesi AE-72 — Quick date filter helpers (preset chips). */
+  function setQuickDateRange(days: number) {
+    const today = new Date();
+    const from = new Date(today);
+    from.setDate(from.getDate() - days + 1);
+    const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+    setFilterRange({ from: isoDate(from), to: isoDate(today) });
+  }
+  function setThisMonth() {
+    const today = new Date();
+    const first = new Date(today.getFullYear(), today.getMonth(), 1);
+    const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+    setFilterRange({ from: isoDate(first), to: isoDate(today) });
+  }
+
+  /* Sesi AE-72 — Client-side search filter (deskripsi / entry number). */
+  const filteredRows = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (e) =>
+        e.entryNumber.toLowerCase().includes(q) ||
+        e.description.toLowerCase().includes(q),
+    );
+  }, [rows, searchQuery]);
 
   async function onReverse(entry: JournalEntryWithLines) {
     const reason = prompt(
@@ -240,6 +272,16 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
             </button>
           ) : null}
         </div>
+
+        {/* Sesi AE-72 — Search input untuk filter cepat deskripsi/entry number */}
+        <div className="mb-2">
+          <Input
+            placeholder="🔍 Cari deskripsi / nomor entry (JE-...) ..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+
         <div className="grid gap-2 sm:grid-cols-3">
           <Select
             label="Sumber"
@@ -276,9 +318,31 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
             onChange={(r) => setFilterRange({ from: r.from, to: r.to })}
           />
         </div>
+
+        {/* Sesi AE-72 — Quick date filter chips */}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-neutral-500">Cepat:</span>
+          {[
+            { label: "Hari Ini", action: () => setQuickDateRange(1) },
+            { label: "7 Hari", action: () => setQuickDateRange(7) },
+            { label: "30 Hari", action: () => setQuickDateRange(30) },
+            { label: "Bulan Ini", action: setThisMonth },
+          ].map((q) => (
+            <button
+              key={q.label}
+              type="button"
+              onClick={q.action}
+              className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 text-[11px] font-medium text-neutral-700 hover:border-mahakan-green-500 hover:bg-mahakan-green-50 hover:text-mahakan-green-900"
+            >
+              {q.label}
+            </button>
+          ))}
+        </div>
+
         {hasActiveFilter ? (
           <p className="mt-2 text-xs text-neutral-500">
-            Menampilkan {rows.length} entri dengan filter aktif
+            Menampilkan {filteredRows.length} dari {rows.length} entri dengan
+            filter aktif
           </p>
         ) : null}
       </div>
@@ -381,7 +445,7 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
         )
       ) : (
         <RowList
-          rows={rows}
+          rows={filteredRows}
           canReverse={canReverse}
           canDeleteDraft={canDraft}
           canEditDraft={canDraft}

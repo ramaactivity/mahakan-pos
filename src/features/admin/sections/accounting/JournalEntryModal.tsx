@@ -1,8 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, CheckCircle2, AlertCircle } from "lucide-react";
 import {
+  Plus,
+  Trash2,
+  CheckCircle2,
+  AlertCircle,
+  Sparkles,
+} from "lucide-react";
+import {
+  Badge,
   Button,
   Combobox,
   DatePicker,
@@ -19,10 +26,52 @@ import {
 } from "@/features/accounting/actions";
 import type {
   AccountListRow,
+  AccountType,
   JournalEntryWithLines,
+  NormalBalance,
 } from "@/features/accounting/types";
 import { formatRupiah } from "@/lib/money";
 import { cn } from "@/lib/utils";
+
+/* Sesi AE-72 — UX helper: format akun type untuk badge label. */
+function formatAccountTypeLabel(type: AccountType): string {
+  switch (type) {
+    case "asset":
+      return "Aset";
+    case "liability":
+      return "Liabilitas";
+    case "equity":
+      return "Ekuitas";
+    case "revenue":
+      return "Pendapatan";
+    case "cogs":
+      return "HPP";
+    case "expense":
+      return "Beban";
+    default:
+      return type;
+  }
+}
+
+function accountTypeBadgeVariant(
+  type: AccountType,
+): "neutral" | "success" | "warning" | "danger" | "info" {
+  switch (type) {
+    case "asset":
+      return "success";
+    case "liability":
+      return "warning";
+    case "equity":
+      return "info";
+    case "revenue":
+      return "success";
+    case "cogs":
+    case "expense":
+      return "danger";
+    default:
+      return "neutral";
+  }
+}
 
 interface Props {
   open: boolean;
@@ -114,11 +163,20 @@ export function JournalEntryModal({
     () =>
       accounts.map((a) => ({
         value: a.id,
-        label: `${a.code} ${a.name}`,
-        hint: a.type,
+        label: `${a.code} — ${a.name}`,
+        hint: `${formatAccountTypeLabel(a.type as AccountType)} · Normal ${a.normalBalance === "debit" ? "DR" : "CR"}`,
+        keywords: [a.code, a.name, a.type],
       })),
     [accounts],
   );
+
+  /* Sesi AE-72 — Lookup map untuk fetch metadata akun saat user pilih.
+   * Dipakai render per-row badge + auto-clear opposite Dr/Cr field. */
+  const accountById = useMemo(() => {
+    const m = new Map<string, AccountListRow>();
+    for (const a of accounts) m.set(a.id, a);
+    return m;
+  }, [accounts]);
 
   const totals = useMemo(() => {
     let dr = 0;
@@ -133,8 +191,76 @@ export function JournalEntryModal({
 
   function updateLine(id: string, patch: Partial<LineDraft>) {
     setLines((prev) =>
-      prev.map((l) => (l.id === id ? { ...l, ...patch } : l)),
+      prev.map((l) => {
+        if (l.id !== id) return l;
+        const next = { ...l, ...patch };
+        /* Sesi AE-72 — Smart Dr/Cr exclusivity:
+         * Setiap baris hanya boleh Dr ATAU Cr, tidak keduanya. Saat user
+         * isi salah satu > 0, otomatis clear yang sebaliknya supaya
+         * tidak accidentally double-input + tidak perlu manual reset. */
+        if (patch.debit !== undefined && Number(patch.debit) > 0) {
+          next.credit = "0";
+        }
+        if (patch.credit !== undefined && Number(patch.credit) > 0) {
+          next.debit = "0";
+        }
+        return next;
+      }),
     );
+  }
+
+  /* Sesi AE-72 — Quick templates: preset 1-tap untuk pola umum.
+   * Setelah dipick, modal pre-fill description + 2 lines dengan akun yang
+   * masuk akal. Owner masih harus isi nominal + edit akhir sebelum post. */
+  type Template = {
+    key: string;
+    label: string;
+    description: string;
+    lineDebitCode: string;
+    lineCreditCode: string;
+  };
+  const TEMPLATES: Template[] = [
+    {
+      key: "saldo-bank",
+      label: "Saldo Awal Bank",
+      description: "Penyesuaian Saldo Awal Bank ",
+      lineDebitCode: "1110",
+      lineCreditCode: "3101",
+    },
+    {
+      key: "saldo-kas",
+      label: "Saldo Awal Kas",
+      description: "Penyesuaian Saldo Awal Kas",
+      lineDebitCode: "1101",
+      lineCreditCode: "3101",
+    },
+    {
+      key: "owner-suntik",
+      label: "Suntik Modal Owner",
+      description: "Setoran modal owner ",
+      lineDebitCode: "1110",
+      lineCreditCode: "3101",
+    },
+  ];
+  function applyTemplate(t: Template) {
+    const findId = (code: string) => accounts.find((a) => a.code === code)?.id ?? null;
+    setDescription(t.description);
+    setLines([
+      {
+        id: crypto.randomUUID(),
+        accountId: findId(t.lineDebitCode),
+        debit: "0",
+        credit: "0",
+        description: "",
+      },
+      {
+        id: crypto.randomUUID(),
+        accountId: findId(t.lineCreditCode),
+        debit: "0",
+        credit: "0",
+        description: "",
+      },
+    ]);
   }
 
   function addLine() {
@@ -277,6 +403,27 @@ export function JournalEntryModal({
       }
     >
       <div className="space-y-3">
+        {/* Sesi AE-72 — Quick templates. Hanya tampil di mode CREATE, bukan
+         * edit (edit pre-fill dari existing entry). */}
+        {!isEdit ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-neutral-200 bg-neutral-50/50 px-3 py-2 text-xs">
+            <Sparkles className="size-3.5 text-mahakan-green-700" aria-hidden />
+            <span className="font-medium text-neutral-700">
+              Quick Template:
+            </span>
+            {TEMPLATES.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => applyTemplate(t)}
+                className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 text-[11px] font-medium text-neutral-700 hover:border-mahakan-green-500 hover:bg-mahakan-green-50 hover:text-mahakan-green-900"
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
         <div className="grid gap-3 sm:grid-cols-2">
           <DatePicker
             label="Tanggal Entry"
@@ -312,62 +459,114 @@ export function JournalEntryModal({
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
-              {lines.map((line) => (
-                <tr key={line.id}>
-                  <td className="px-2 py-1.5 align-top">
-                    <Combobox
-                      hideLabel
-                      ariaLabel="Pilih akun"
-                      options={accountOptions}
-                      value={line.accountId}
-                      onChange={(v) => updateLine(line.id, { accountId: v })}
-                      placeholder="— pilih akun —"
-                      loading={loading}
-                      size="sm"
-                    />
-                  </td>
-                  <td className="px-2 py-1.5 align-top">
-                    <NumericInput
-                      ariaLabel="Debit"
-                      value={line.debit}
-                      onChange={(v) => updateLine(line.id, { debit: v })}
-                      prefix="Rp"
-                    />
-                  </td>
-                  <td className="px-2 py-1.5 align-top">
-                    <NumericInput
-                      ariaLabel="Credit"
-                      value={line.credit}
-                      onChange={(v) => updateLine(line.id, { credit: v })}
-                      prefix="Rp"
-                    />
-                  </td>
-                  <td className="px-2 py-1.5 align-top">
-                    <Input
-                      placeholder="opsional"
-                      value={line.description}
-                      onChange={(e) =>
-                        updateLine(line.id, { description: e.target.value })
-                      }
-                      maxLength={200}
-                    />
-                  </td>
-                  <td className="px-2 py-1.5 align-top">
-                    <button
-                      type="button"
-                      onClick={() => removeLine(line.id)}
-                      disabled={lines.length <= 2}
+              {lines.map((line) => {
+                /* Sesi AE-72 — pre-resolve account untuk badge + smart
+                 * highlight Dr/Cr cell sesuai normalBalance. */
+                const acc = line.accountId ? accountById.get(line.accountId) : null;
+                const normalBalance: NormalBalance | null = acc?.normalBalance ?? null;
+                const dr = Number(line.debit) || 0;
+                const cr = Number(line.credit) || 0;
+                /* Detect "abnormal posting" warning: kalau owner isi sisi
+                 * yang tidak sesuai normal balance akun. Bukan blocker
+                 * (kadang valid: contra entry), cuma soft warning. */
+                const abnormal =
+                  acc &&
+                  ((normalBalance === "debit" && cr > 0 && dr === 0) ||
+                    (normalBalance === "credit" && dr > 0 && cr === 0));
+                return (
+                  <tr key={line.id}>
+                    <td className="px-2 py-1.5 align-top">
+                      <Combobox
+                        hideLabel
+                        ariaLabel="Pilih akun"
+                        options={accountOptions}
+                        value={line.accountId}
+                        onChange={(v) => updateLine(line.id, { accountId: v })}
+                        placeholder="— pilih akun —"
+                        loading={loading}
+                        size="sm"
+                      />
+                      {acc ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          <Badge
+                            variant={accountTypeBadgeVariant(acc.type as AccountType)}
+                            className="!text-[9px]"
+                          >
+                            {formatAccountTypeLabel(acc.type as AccountType)}
+                          </Badge>
+                          <span className="text-[9px] uppercase tracking-wide text-neutral-500">
+                            Normal{" "}
+                            <span className="font-semibold text-neutral-700">
+                              {normalBalance === "debit" ? "DR" : "CR"}
+                            </span>
+                          </span>
+                        </div>
+                      ) : null}
+                    </td>
+                    <td
                       className={cn(
-                        "rounded p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-danger-500",
-                        lines.length <= 2 && "cursor-not-allowed opacity-30",
+                        "px-2 py-1.5 align-top",
+                        normalBalance === "debit" &&
+                          "bg-mahakan-green-50/40",
                       )}
-                      aria-label="Hapus baris"
                     >
-                      <Trash2 className="size-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                      <NumericInput
+                        ariaLabel="Debit"
+                        value={line.debit}
+                        onChange={(v) => updateLine(line.id, { debit: v })}
+                        prefix="Rp"
+                      />
+                    </td>
+                    <td
+                      className={cn(
+                        "px-2 py-1.5 align-top",
+                        normalBalance === "credit" &&
+                          "bg-mahakan-green-50/40",
+                      )}
+                    >
+                      <NumericInput
+                        ariaLabel="Credit"
+                        value={line.credit}
+                        onChange={(v) => updateLine(line.id, { credit: v })}
+                        prefix="Rp"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 align-top">
+                      <Input
+                        placeholder="opsional"
+                        value={line.description}
+                        onChange={(e) =>
+                          updateLine(line.id, { description: e.target.value })
+                        }
+                        maxLength={200}
+                      />
+                      {abnormal ? (
+                        <p className="mt-1 text-[10px] text-warning-700">
+                          ⚠ Posisi tidak biasa untuk akun{" "}
+                          {formatAccountTypeLabel(acc!.type as AccountType)}
+                          {" "}(normal {normalBalance === "debit" ? "DR" : "CR"}).
+                          Pastikan benar — biasanya valid hanya untuk contra
+                          entry / koreksi.
+                        </p>
+                      ) : null}
+                    </td>
+                    <td className="px-2 py-1.5 align-top">
+                      <button
+                        type="button"
+                        onClick={() => removeLine(line.id)}
+                        disabled={lines.length <= 2}
+                        className={cn(
+                          "rounded p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-danger-500",
+                          lines.length <= 2 && "cursor-not-allowed opacity-30",
+                        )}
+                        aria-label="Hapus baris"
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           <div className="border-t border-neutral-100 p-2">
