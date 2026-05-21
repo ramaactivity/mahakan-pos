@@ -59,6 +59,8 @@ const createExpenseSchema = z.object({
   amount: z.number().int().min(1).max(999_999_999),
   paymentMethod: z.enum(["cash", "transfer", "other"]),
   receiptImageUrl: z.string().url().nullable().optional(),
+  /* Sesi AE-69 — optional bank account FK. */
+  bankAccountId: z.uuid().nullable().optional(),
 });
 
 const createIncomeSchema = z.object({
@@ -68,6 +70,7 @@ const createIncomeSchema = z.object({
   description: z.string().trim().min(1).max(200),
   amount: z.number().int().min(1).max(999_999_999),
   paymentMethod: z.enum(["cash", "transfer", "other"]),
+  bankAccountId: z.uuid().nullable().optional(),
 });
 
 async function requireSession() {
@@ -234,6 +237,7 @@ export async function createExpense(
       amount: v.amount,
       paymentMethod: v.paymentMethod,
       receiptImageUrl: v.receiptImageUrl ?? null,
+      bankAccountId: v.bankAccountId ?? null,
       createdBy: session.user.id,
     })
     .returning();
@@ -307,6 +311,7 @@ export async function createIncome(
       description: v.description,
       amount: v.amount,
       paymentMethod: v.paymentMethod,
+      bankAccountId: v.bankAccountId ?? null,
       createdBy: session.user.id,
     })
     .returning();
@@ -366,6 +371,8 @@ const updateExpenseSchema = z.object({
   amount: z.number().int().min(1).max(999_999_999).optional(),
   paymentMethod: z.enum(["cash", "transfer", "other"]).optional(),
   receiptImageUrl: z.string().url().nullable().optional(),
+  /* Sesi AE-69 — optional bank account FK. */
+  bankAccountId: z.uuid().nullable().optional(),
 });
 
 export type UpdateExpenseInput = z.input<typeof updateExpenseSchema>;
@@ -474,6 +481,8 @@ export async function updateExpense(
   if (v.description) updates.description = v.description;
   if (v.amount) updates.amount = v.amount;
   if (v.paymentMethod) updates.paymentMethod = v.paymentMethod;
+  /* Sesi AE-69 — bankAccountId boleh di-set ke uuid atau di-clear ke null. */
+  if (v.bankAccountId !== undefined) updates.bankAccountId = v.bankAccountId;
 
   const [row] = await db
     .update(expenses)

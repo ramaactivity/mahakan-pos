@@ -30,6 +30,11 @@ export type ExpenseCreateInput = {
   paymentMethod: ExpensePaymentMethod;
   /** Pre-resolved expense account code (caller priority logic). */
   expenseAccountCode: string;
+  /** Sesi AE-69 — kalau staff pilih bank account specific, caller resolve
+   * via resolveBankCodeFromDestination(bank.bankName) → pass sebagai
+   * override untuk Cr side. Kalau null/undefined, fallback ke hardcoded
+   * mapping (cash→1101, transfer→1110, other→1112). */
+  cashBankCodeOverride?: string | null;
 };
 
 export function expenseCashBankCode(method: ExpensePaymentMethod): string {
@@ -50,6 +55,9 @@ export function mapExpenseCreate(
     throw new Error("MAP_EXPENSE_NONPOSITIVE");
   }
 
+  const cashBankCode =
+    input.cashBankCodeOverride ?? expenseCashBankCode(input.paymentMethod);
+
   return [
     {
       accountCode: input.expenseAccountCode,
@@ -57,7 +65,7 @@ export function mapExpenseCreate(
       description: input.description,
     },
     {
-      accountCode: expenseCashBankCode(input.paymentMethod),
+      accountCode: cashBankCode,
       credit: input.amount,
       description: `Bayar ${input.paymentMethod}: ${input.description}`,
     },

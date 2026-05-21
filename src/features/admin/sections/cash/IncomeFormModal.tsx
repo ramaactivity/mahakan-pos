@@ -7,6 +7,11 @@ import {
   isOk,
   type CashPaymentMethod,
 } from "@/features/cash";
+import {
+  formatBankAccountDisplay,
+  listBankAccounts,
+  type BankAccount,
+} from "@/features/bank-accounts";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +33,9 @@ export function IncomeFormModal({
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<CashPaymentMethod>("transfer");
+  /* Sesi AE-69 — bank account selector untuk transfer/other */
+  const [bankAccountId, setBankAccountId] = useState<string>("");
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,9 +46,23 @@ export function IncomeFormModal({
     setDescription("");
     setAmount("");
     setMethod("transfer");
+    setBankAccountId("");
     setError(null);
     setSubmitting(false);
   }, [open, today]);
+
+  /* Load bank accounts list saat modal terbuka */
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void listBankAccounts().then((res) => {
+      if (cancelled) return;
+      if (res.ok) setBankAccounts(res.data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   let parsedAmount = 0;
   try {
@@ -66,6 +88,10 @@ export function IncomeFormModal({
       description: description.trim(),
       amount: parsedAmount,
       paymentMethod: method,
+      /* Sesi AE-69 — bankAccountId hanya relevan untuk transfer/other.
+       * Tunai = cash drawer (1101), tidak butuh pilih bank account. */
+      bankAccountId:
+        method === "cash" || !bankAccountId ? null : bankAccountId,
     });
     if (!isOk(res)) {
       setError(res.error.message);
@@ -170,6 +196,42 @@ export function IncomeFormModal({
             metode bank-nya — saldo akun akan langsung bertambah di Buku Besar.
           </p>
         </div>
+
+        {/* Sesi AE-69 — Bank account selector (hanya kalau metode != cash) */}
+        {method !== "cash" ? (
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-neutral-900">
+              Rekening Bank{" "}
+              <span className="text-xs font-normal text-neutral-500">
+                (opsional — pilih kalau spesifik)
+              </span>
+            </label>
+            {bankAccounts.length === 0 ? (
+              <p className="rounded-md border border-warning-300 bg-warning-100/40 px-3 py-2 text-xs text-warning-700">
+                Belum ada master rekening bank. Set di Pengaturan → Rekening
+                Bank. Sementara akan pakai default mapping per metode.
+              </p>
+            ) : (
+              <select
+                value={bankAccountId}
+                onChange={(e) => setBankAccountId(e.target.value)}
+                className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-mahakan-green-500 focus:outline-none focus:ring-2 focus:ring-mahakan-green-200"
+              >
+                <option value="">— Pilih rekening (opsional) —</option>
+                {bankAccounts.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {formatBankAccountDisplay(b)}
+                  </option>
+                ))}
+              </select>
+            )}
+            <p className="text-[11px] text-neutral-500">
+              Pemasukan terkait dengan rekening yang dipilih. Resolver pakai
+              nama bank (BCA / BRI / dll) untuk derive akun GL yang sesuai di
+              jurnal — kalau kosong, fallback ke mapping default.
+            </p>
+          </div>
+        ) : null}
         {error ? (
           <p role="alert" className="text-sm font-medium text-danger-500">
             {error}

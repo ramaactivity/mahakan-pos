@@ -91,6 +91,13 @@ export const expenses = pgTable(
      * → 6901 Lain-lain ultimate fallback. */
     accountId: uuid("account_id"),
 
+    /** Sesi AE-69 — Bank account specific (soft FK bank_accounts).
+     * Diisi kalau paymentMethod='transfer' or 'other' dan staff pilih
+     * rekening tertentu (BCA Anisa 2515, BRI Owner, dll). Resolver di
+     * mapping hook pakai bank_account.bankName untuk derive GL code.
+     * NULL untuk method='cash' atau staff skip pilih. */
+    bankAccountId: uuid("bank_account_id"),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -126,6 +133,10 @@ export const incomes = pgTable(
     paymentMethod: text("payment_method", {
       enum: ["cash", "transfer", "other"],
     }).notNull(),
+
+    /** Sesi AE-69 — Bank account specific (soft FK bank_accounts). Sama
+     * pattern dengan expenses.bankAccountId. */
+    bankAccountId: uuid("bank_account_id"),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

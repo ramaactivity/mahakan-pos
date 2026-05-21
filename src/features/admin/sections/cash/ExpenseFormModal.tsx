@@ -11,6 +11,11 @@ import {
   type Expense,
   type ExpenseCategory,
 } from "@/features/cash";
+import {
+  formatBankAccountDisplay,
+  listBankAccounts,
+  type BankAccount,
+} from "@/features/bank-accounts";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +43,9 @@ export function ExpenseFormModal({
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<CashPaymentMethod>("cash");
+  /* Sesi AE-69 — bank account selector untuk transfer/other */
+  const [bankAccountId, setBankAccountId] = useState<string>("");
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [receiptImageUrl, setReceiptImageUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -53,6 +61,7 @@ export function ExpenseFormModal({
       setDescription(edit.description);
       setAmount(String(edit.amount));
       setMethod(edit.paymentMethod);
+      setBankAccountId(edit.bankAccountId ?? "");
       setReceiptImageUrl(edit.receiptImageUrl ?? null);
     } else {
       setDate(today);
@@ -61,12 +70,26 @@ export function ExpenseFormModal({
       setDescription("");
       setAmount("");
       setMethod("cash");
+      setBankAccountId("");
       setReceiptImageUrl(null);
     }
     setError(null);
     setSubmitting(false);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open, categories, today, edit]);
+
+  /* Load bank accounts */
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void listBankAccounts().then((res) => {
+      if (cancelled) return;
+      if (res.ok) setBankAccounts(res.data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   let parsedAmount = 0;
   try {
@@ -87,6 +110,10 @@ export function ExpenseFormModal({
     }
     setSubmitting(true);
     setError(null);
+    /* Sesi AE-69 — bankAccountId hanya relevan untuk transfer/other.
+     * Tunai = cash drawer (1101), tidak butuh pilih bank account. */
+    const resolvedBankAccountId =
+      method === "cash" || !bankAccountId ? null : bankAccountId;
     const res = edit
       ? await updateExpense(edit.id, {
           expenseDate: date,
@@ -95,6 +122,7 @@ export function ExpenseFormModal({
           amount: parsedAmount,
           paymentMethod: method,
           receiptImageUrl,
+          bankAccountId: resolvedBankAccountId,
         })
       : await createExpense({
           expenseDate: date,
@@ -103,6 +131,7 @@ export function ExpenseFormModal({
           amount: parsedAmount,
           paymentMethod: method,
           receiptImageUrl,
+          bankAccountId: resolvedBankAccountId,
         });
     if (!isOk(res)) {
       setError(res.error.message);
@@ -178,13 +207,24 @@ export function ExpenseFormModal({
         <div className="space-y-1.5">
           <label className="block text-sm font-medium text-neutral-900">
             Metode Bayar
+            <span className="ml-2 text-xs font-normal text-neutral-500">
+              (akun GL sumber dana)
+            </span>
           </label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {(
               [
-                { v: "cash" as const, label: "Tunai" },
-                { v: "transfer" as const, label: "Transfer" },
-                { v: "other" as const, label: "Lainnya" },
+                { v: "cash" as const, label: "Tunai", sub: "1101 Kas Tunai" },
+                {
+                  v: "transfer" as const,
+                  label: "Transfer BCA",
+                  sub: "1110 Bank BCA",
+                },
+                {
+                  v: "other" as const,
+                  label: "Bank Lain-lain",
+                  sub: "1112 Bank Lain-lain",
+                },
               ]
             ).map((opt) => (
               <button
@@ -192,17 +232,56 @@ export function ExpenseFormModal({
                 type="button"
                 onClick={() => setMethod(opt.v)}
                 className={cn(
-                  "rounded-md border py-2 text-sm font-medium transition-all",
+                  "rounded-md border px-3 py-2 text-left text-sm font-medium transition-all",
                   method === opt.v
                     ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
                     : "border-neutral-300 bg-white hover:bg-neutral-100",
                 )}
               >
-                {opt.label}
+                <div className="font-semibold">{opt.label}</div>
+                <div className="text-[10px] font-normal text-neutral-500">
+                  → {opt.sub}
+                </div>
               </button>
             ))}
           </div>
         </div>
+
+        {/* Sesi AE-69 — Bank account selector (hanya kalau metode != cash) */}
+        {method !== "cash" ? (
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-neutral-900">
+              Rekening Bank{" "}
+              <span className="text-xs font-normal text-neutral-500">
+                (opsional — pilih kalau spesifik)
+              </span>
+            </label>
+            {bankAccounts.length === 0 ? (
+              <p className="rounded-md border border-warning-300 bg-warning-100/40 px-3 py-2 text-xs text-warning-700">
+                Belum ada master rekening bank. Set di Pengaturan → Rekening
+                Bank. Sementara akan pakai default mapping per metode.
+              </p>
+            ) : (
+              <select
+                value={bankAccountId}
+                onChange={(e) => setBankAccountId(e.target.value)}
+                className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-mahakan-green-500 focus:outline-none focus:ring-2 focus:ring-mahakan-green-200"
+              >
+                <option value="">— Pilih rekening (opsional) —</option>
+                {bankAccounts.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {formatBankAccountDisplay(b)}
+                  </option>
+                ))}
+              </select>
+            )}
+            <p className="text-[11px] text-neutral-500">
+              Pengeluaran dari rekening yang dipilih. Resolver pakai nama bank
+              (BCA / BRI / dll) untuk derive akun GL yang sesuai di jurnal —
+              kalau kosong, fallback ke mapping default.
+            </p>
+          </div>
+        ) : null}
 
         {/* Receipt photo upload (sesi V deferred — now live) */}
         <div className="space-y-1.5">

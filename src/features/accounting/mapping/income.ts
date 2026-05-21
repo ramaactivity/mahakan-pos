@@ -20,6 +20,9 @@ export type IncomeCreateInput = {
   amount: number;
   description: string;
   paymentMethod: IncomePaymentMethod;
+  /** Sesi AE-69 — kalau staff pilih bank account specific, override Dr
+   * side code. Caller resolve dari bank_accounts.bankName. */
+  cashBankCodeOverride?: string | null;
 };
 
 export function incomeCashBankCode(method: IncomePaymentMethod): string {
@@ -38,9 +41,12 @@ export function mapIncomeCreate(input: IncomeCreateInput): JournalLineInput[] {
     throw new Error("MAP_INCOME_NONPOSITIVE");
   }
 
+  const cashBankCode =
+    input.cashBankCodeOverride ?? incomeCashBankCode(input.paymentMethod);
+
   return [
     {
-      accountCode: incomeCashBankCode(input.paymentMethod),
+      accountCode: cashBankCode,
       debit: input.amount,
       description: `Pemasukan ${input.paymentMethod}: ${input.description}`,
     },

@@ -3,9 +3,11 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  bankAccounts,
   chartOfAccounts,
   expenseCategories,
   expenses,
+  incomes,
   journalEntries,
   transactionItems,
   transactions,
@@ -1184,6 +1186,21 @@ export async function postJournalForExpenseCreate(args: {
     exp.categoryId,
   );
 
+  /* Sesi AE-69 — resolve bank account specific kalau staff pilih.
+   * Override Cr side dari hardcoded mapping (cash→1101, transfer→1110, etc)
+   * ke GL code yang sesuai bank account.bankName (BCA→1110, BRI→1111, etc). */
+  let cashBankCodeOverride: string | null = null;
+  if (exp.bankAccountId) {
+    const [ba] = await db
+      .select({ bankName: bankAccounts.bankName, isActive: bankAccounts.isActive })
+      .from(bankAccounts)
+      .where(eq(bankAccounts.id, exp.bankAccountId))
+      .limit(1);
+    if (ba) {
+      cashBankCodeOverride = resolveBankCodeFromDestination(ba.bankName);
+    }
+  }
+
   const lines = mapExpenseCreate({
     expenseId: exp.id,
     outletId: args.outletId,
@@ -1192,6 +1209,7 @@ export async function postJournalForExpenseCreate(args: {
     description: exp.description,
     paymentMethod: exp.paymentMethod as ExpensePaymentMethod,
     expenseAccountCode,
+    cashBankCodeOverride,
   });
 
   await recordJournal({
@@ -1225,6 +1243,26 @@ export async function postJournalForIncomeCreate(args: {
 }): Promise<void> {
   if (!(await isAutoJournalEnabled(args.outletId))) return;
 
+  /* Sesi AE-69 — fetch incomes row untuk lookup bankAccountId override
+   * (parity dengan postJournalForExpenseCreate pattern). */
+  const [inc] = await db
+    .select({ bankAccountId: incomes.bankAccountId })
+    .from(incomes)
+    .where(eq(incomes.id, args.incomeId))
+    .limit(1);
+
+  let cashBankCodeOverride: string | null = null;
+  if (inc?.bankAccountId) {
+    const [ba] = await db
+      .select({ bankName: bankAccounts.bankName })
+      .from(bankAccounts)
+      .where(eq(bankAccounts.id, inc.bankAccountId))
+      .limit(1);
+    if (ba) {
+      cashBankCodeOverride = resolveBankCodeFromDestination(ba.bankName);
+    }
+  }
+
   const lines = mapIncomeCreate({
     incomeId: args.incomeId,
     outletId: args.outletId,
@@ -1232,6 +1270,7 @@ export async function postJournalForIncomeCreate(args: {
     amount: args.amount,
     description: args.description,
     paymentMethod: args.paymentMethod,
+    cashBankCodeOverride,
   });
 
   await recordJournal({

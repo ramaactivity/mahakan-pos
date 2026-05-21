@@ -46,6 +46,9 @@ export interface CreateExpenseInput {
   paymentMethod: CashPaymentMethod;
   /** Phase 1: skipped — receipt photo upload deferred per C3=C. */
   receiptImageUrl?: string | null;
+  /** Sesi AE-69 — optional bank account FK (untuk transfer/other). NULL
+   * = fallback ke hardcoded mapping (transfer→1110, other→1112). */
+  bankAccountId?: string | null;
 }
 
 export interface CreateIncomeInput {
@@ -53,6 +56,8 @@ export interface CreateIncomeInput {
   description: string;
   amount: number;
   paymentMethod: CashPaymentMethod;
+  /** Sesi AE-69 — optional bank account FK. */
+  bankAccountId?: string | null;
 }
 
 export interface DailyCashSummary {
