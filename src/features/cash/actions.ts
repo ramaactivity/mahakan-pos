@@ -71,6 +71,8 @@ const createIncomeSchema = z.object({
   amount: z.number().int().min(1).max(999_999_999),
   paymentMethod: z.enum(["cash", "transfer", "other"]),
   bankAccountId: z.uuid().nullable().optional(),
+  /* Sesi AE-71 — optional revenue account FK. */
+  accountId: z.uuid().nullable().optional(),
 });
 
 async function requireSession() {
@@ -312,6 +314,7 @@ export async function createIncome(
       amount: v.amount,
       paymentMethod: v.paymentMethod,
       bankAccountId: v.bankAccountId ?? null,
+      accountId: v.accountId ?? null,
       createdBy: session.user.id,
     })
     .returning();

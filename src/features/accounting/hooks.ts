@@ -1244,9 +1244,13 @@ export async function postJournalForIncomeCreate(args: {
   if (!(await isAutoJournalEnabled(args.outletId))) return;
 
   /* Sesi AE-69 — fetch incomes row untuk lookup bankAccountId override
-   * (parity dengan postJournalForExpenseCreate pattern). */
+   * (parity dengan postJournalForExpenseCreate pattern).
+   * Sesi AE-71 — fetch accountId juga untuk resolve revenue account code. */
   const [inc] = await db
-    .select({ bankAccountId: incomes.bankAccountId })
+    .select({
+      bankAccountId: incomes.bankAccountId,
+      accountId: incomes.accountId,
+    })
     .from(incomes)
     .where(eq(incomes.id, args.incomeId))
     .limit(1);
@@ -1263,6 +1267,20 @@ export async function postJournalForIncomeCreate(args: {
     }
   }
 
+  /* Sesi AE-71 — resolve revenue account code. Validate type=revenue
+   * supaya tidak miss-route ke expense/asset by accident. */
+  let revenueAccountCodeOverride: string | null = null;
+  if (inc?.accountId) {
+    const [acc] = await db
+      .select({ code: chartOfAccounts.code, type: chartOfAccounts.type })
+      .from(chartOfAccounts)
+      .where(eq(chartOfAccounts.id, inc.accountId))
+      .limit(1);
+    if (acc && acc.type === "revenue") {
+      revenueAccountCodeOverride = acc.code;
+    }
+  }
+
   const lines = mapIncomeCreate({
     incomeId: args.incomeId,
     outletId: args.outletId,
@@ -1271,6 +1289,7 @@ export async function postJournalForIncomeCreate(args: {
     description: args.description,
     paymentMethod: args.paymentMethod,
     cashBankCodeOverride,
+    revenueAccountCodeOverride,
   });
 
   await recordJournal({

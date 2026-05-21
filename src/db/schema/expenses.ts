@@ -138,6 +138,12 @@ export const incomes = pgTable(
      * pattern dengan expenses.bankAccountId. */
     bankAccountId: uuid("bank_account_id"),
 
+    /** Sesi AE-71 — Account GL revenue tujuan (soft FK chart_of_accounts).
+     * Default fallback ke 4201 Pendapatan Lain-lain kalau NULL. Owner
+     * pick di IncomeFormModal untuk pisahkan Sewa Ruang vs Titip Jual
+     * vs Lain di Laporan Laba Rugi. */
+    accountId: uuid("account_id"),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

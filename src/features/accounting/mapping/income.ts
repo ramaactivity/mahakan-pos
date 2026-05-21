@@ -23,6 +23,10 @@ export type IncomeCreateInput = {
   /** Sesi AE-69 — kalau staff pilih bank account specific, override Dr
    * side code. Caller resolve dari bank_accounts.bankName. */
   cashBankCodeOverride?: string | null;
+  /** Sesi AE-71 — kalau owner pilih akun pendapatan specific, override
+   * Cr side code. Caller resolve dari chart_of_accounts.code. NULL =
+   * default 4201 Pendapatan Lain-lain. */
+  revenueAccountCodeOverride?: string | null;
 };
 
 export function incomeCashBankCode(method: IncomePaymentMethod): string {
@@ -43,6 +47,7 @@ export function mapIncomeCreate(input: IncomeCreateInput): JournalLineInput[] {
 
   const cashBankCode =
     input.cashBankCodeOverride ?? incomeCashBankCode(input.paymentMethod);
+  const revenueCode = input.revenueAccountCodeOverride ?? "4201";
 
   return [
     {
@@ -51,7 +56,7 @@ export function mapIncomeCreate(input: IncomeCreateInput): JournalLineInput[] {
       description: `Pemasukan ${input.paymentMethod}: ${input.description}`,
     },
     {
-      accountCode: "4201",
+      accountCode: revenueCode,
       credit: input.amount,
       description: input.description,
     },

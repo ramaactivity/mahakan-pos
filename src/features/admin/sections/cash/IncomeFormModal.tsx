@@ -12,6 +12,8 @@ import {
   listBankAccounts,
   type BankAccount,
 } from "@/features/bank-accounts";
+import { fetchAccounts } from "@/features/accounting/actions";
+import type { AccountListRow } from "@/features/accounting";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +38,9 @@ export function IncomeFormModal({
   /* Sesi AE-69 — bank account selector untuk transfer/other */
   const [bankAccountId, setBankAccountId] = useState<string>("");
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  /* Sesi AE-71 — revenue account selector untuk granular P&L */
+  const [accountId, setAccountId] = useState<string>("");
+  const [revenueAccounts, setRevenueAccounts] = useState<AccountListRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,6 +52,7 @@ export function IncomeFormModal({
     setAmount("");
     setMethod("transfer");
     setBankAccountId("");
+    setAccountId("");
     setError(null);
     setSubmitting(false);
   }, [open, today]);
@@ -58,6 +64,27 @@ export function IncomeFormModal({
     void listBankAccounts().then((res) => {
       if (cancelled) return;
       if (res.ok) setBankAccounts(res.data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  /* Sesi AE-71 — Load revenue accounts (untuk dropdown Akun Pendapatan).
+   * Accounting ApiResult pakai shape {ok, data} (beda dengan cash {success,
+   * data}), jadi cek `res.ok` langsung. */
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void fetchAccounts({ type: "revenue", isActive: true }).then((res) => {
+      if (cancelled) return;
+      if (res.ok) {
+        /* Filter out kontra-revenue (Diskon, Refund) — incomes shouldn't
+         * post to those. */
+        setRevenueAccounts(
+          res.data.filter((a: AccountListRow) => !a.isContra),
+        );
+      }
     });
     return () => {
       cancelled = true;
@@ -92,6 +119,8 @@ export function IncomeFormModal({
        * Tunai = cash drawer (1101), tidak butuh pilih bank account. */
       bankAccountId:
         method === "cash" || !bankAccountId ? null : bankAccountId,
+      /* Sesi AE-71 — revenue account override. Empty = default 4201. */
+      accountId: accountId || null,
     });
     if (!isOk(res)) {
       setError(res.error.message);
@@ -232,6 +261,44 @@ export function IncomeFormModal({
             </p>
           </div>
         ) : null}
+
+        {/* Sesi AE-71 — Akun Pendapatan selector (Cr side override) */}
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-neutral-900">
+            Akun Pendapatan{" "}
+            <span className="text-xs font-normal text-neutral-500">
+              (untuk breakdown di Laporan Laba Rugi)
+            </span>
+          </label>
+          {revenueAccounts.length === 0 ? (
+            <p className="rounded-md border border-warning-300 bg-warning-100/40 px-3 py-2 text-xs text-warning-700">
+              Memuat akun pendapatan…
+            </p>
+          ) : (
+            <select
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-mahakan-green-500 focus:outline-none focus:ring-2 focus:ring-mahakan-green-200"
+            >
+              <option value="">
+                Default (4201 Pendapatan Lain-lain)
+              </option>
+              {revenueAccounts
+                .filter((a) => a.code !== "4201")
+                .map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.code} — {a.name}
+                  </option>
+                ))}
+            </select>
+          )}
+          <p className="text-[11px] text-neutral-500">
+            Pilih akun pendapatan specific (mis. 4202 Sewa Ruang, 4203 Titip
+            Jual) untuk breakdown lebih granular di Laporan Laba Rugi.
+            Default → 4201 Pendapatan Lain-lain (generic).
+          </p>
+        </div>
+
         {error ? (
           <p role="alert" className="text-sm font-medium text-danger-500">
             {error}

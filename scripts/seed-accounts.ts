@@ -88,7 +88,9 @@ const DEFAULTS: DefaultAccount[] = [
   { code: "4104", name: "Penjualan via Aggregator", type: "revenue", normalBalance: "credit", parentCode: "4100", isSystem: true, displayOrder: 4, notes: "Sesi T: revenue dari GoFood/GrabFood/ShopeeFood — auto-credit saat aggregator settlement masuk (no per-order POS, no COGS attribution; P&L footnote)" },
   { code: "4110", name: "Diskon Penjualan", type: "revenue", normalBalance: "debit", parentCode: "4100", isContra: true, isSystem: true, displayOrder: 10, notes: "Kontra-revenue. Dr saat discount applied (manual + promo + redeem points)" },
   { code: "4111", name: "Refund Penjualan", type: "revenue", normalBalance: "debit", parentCode: "4100", isContra: true, isSystem: true, displayOrder: 11, notes: "Kontra-revenue. Dr saat transaction refunded" },
-  { code: "4201", name: "Pendapatan Lain-lain", type: "revenue", normalBalance: "credit", parentCode: "4200", isSystem: true, displayOrder: 20, notes: "Sumber dari incomes table (event rental, titip jual, dll)" },
+  { code: "4201", name: "Pendapatan Lain-lain", type: "revenue", normalBalance: "credit", parentCode: "4200", isSystem: true, displayOrder: 20, notes: "Default fallback untuk incomes table kalau accountId tidak diset" },
+  { code: "4202", name: "Pendapatan Sewa Ruang", type: "revenue", normalBalance: "credit", parentCode: "4200", isSystem: false, displayOrder: 21, notes: "Sesi AE-71 — customer sewa Mahakan untuk event (komunitas, fotografi, dll). Beda dengan 6201 Sewa Tempat (expense, Mahakan bayar landlord)." },
+  { code: "4203", name: "Pendapatan Titip Jual", type: "revenue", normalBalance: "credit", parentCode: "4200", isSystem: false, displayOrder: 22, notes: "Sesi AE-71 — komisi/markup dari titip jual produk pihak ketiga (UMKM, dll)" },
   { code: "4301", name: "Pendapatan Bunga Bank", type: "revenue", normalBalance: "credit", parentCode: "4300", isSystem: false, displayOrder: 30, notes: "Manual entry akhir bulan" },
 
   // ============ 5xxx HARGA POKOK PENJUALAN ============

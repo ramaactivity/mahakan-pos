@@ -58,6 +58,10 @@ export interface CreateIncomeInput {
   paymentMethod: CashPaymentMethod;
   /** Sesi AE-69 — optional bank account FK. */
   bankAccountId?: string | null;
+  /** Sesi AE-71 — optional revenue account FK. NULL = default 4201
+   * Pendapatan Lain-lain. Owner pilih per entry untuk granular reporting
+   * (Sewa Ruang vs Titip Jual vs Lain di P&L). */
+  accountId?: string | null;
 }
 
 export interface DailyCashSummary {
