@@ -27,6 +27,12 @@
 /coverage
 .nyc_output/
 
+# Playwright (sesi AE-85)
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/blob-report/
+
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
