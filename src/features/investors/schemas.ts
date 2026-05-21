@@ -84,22 +84,37 @@ export const updateInvestorSchema = investorBaseSchema
   );
 export type UpdateInvestorParsed = z.infer<typeof updateInvestorSchema>;
 
-/* CSV import — sama dengan create base tapi tanpa `status` (default active)
- * dan `notes`. nik + email tidak wajib (sebagian data Sheets kosong). */
-export const bulkImportInvestorRowSchema = investorBaseSchema.pick({
-  fullName: true,
-  nik: true,
-  email: true,
-  phone: true,
-  address: true,
-  dateOfBirth: true,
-  occupation: true,
-  igHandle: true,
-  bankName: true,
-  bankAccountNumber: true,
-  bankAccountHolderName: true,
-  modalDisetor: true,
-});
+/* CSV import — base fields + sesi AE-80 follow-up optional kolom:
+ *  - sharePct (truth source v2)
+ *  - dividendBalance (saldo dividen, replace-mode)
+ *  - status (override default 'active'; allow 'exited' untuk seed historical)
+ * nik + email tidak wajib (sebagian data Sheets kosong). */
+export const bulkImportInvestorRowSchema = investorBaseSchema
+  .pick({
+    fullName: true,
+    nik: true,
+    email: true,
+    phone: true,
+    address: true,
+    dateOfBirth: true,
+    occupation: true,
+    igHandle: true,
+    bankName: true,
+    bankAccountNumber: true,
+    bankAccountHolderName: true,
+    modalDisetor: true,
+  })
+  .extend({
+    sharePct: z.number().min(0).max(100).optional().nullable(),
+    dividendBalance: z
+      .number()
+      .int()
+      .min(0)
+      .max(99_999_999_999)
+      .optional()
+      .nullable(),
+    status: z.enum(["active", "inactive", "exited"]).optional(),
+  });
 
 export const bulkImportInvestorsSchema = z.object({
   rows: z

@@ -80,6 +80,42 @@ export interface ReverseRepaymentInput {
   reason: string;
 }
 
+/* Sesi AE-80 follow-up — CSV bulk import. */
+export interface BulkImportCreditorRow {
+  fullName: string;
+  nickname?: string | null;
+  nik?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountHolderName?: string | null;
+  /** Pokok awal pinjaman (Rp). */
+  principalOriginal: number;
+  /** Sisa pokok berjalan. Default = principalOriginal kalau kosong. */
+  principalOutstanding?: number | null;
+  interestRatePct?: number;
+  interestPeriod?: InterestPeriod;
+  startDate: string;
+  dueDate?: string | null;
+  status?: CreditorStatus;
+  notes?: string | null;
+}
+
+export interface BulkImportCreditorsInput {
+  rows: BulkImportCreditorRow[];
+  mode?: "insert_only" | "upsert";
+}
+
+export interface BulkImportCreditorsResult {
+  totalRows: number;
+  inserted: number;
+  updated: number;
+  skippedDuplicate: number;
+  errors: Array<{ row: number; reason: string }>;
+}
+
 /* Sesi AE-80 follow-up — convert investor → kreditur input. */
 export interface ConvertInvestorToCreditorInput {
   investorId: string;

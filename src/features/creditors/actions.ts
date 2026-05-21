@@ -31,6 +31,7 @@ import {
   fetchCreditorById,
 } from "./queries";
 import {
+  bulkImportCreditorsSchema,
   convertInvestorToCreditorSchema,
   createCreditorSchema,
   postRepaymentSchema,
@@ -41,6 +42,8 @@ import {
   fail,
   ok,
   type ApiResult,
+  type BulkImportCreditorsInput,
+  type BulkImportCreditorsResult,
   type ConvertInvestorToCreditorInput,
   type CreateCreditorInput,
   type Creditor,
@@ -1029,6 +1032,218 @@ export async function convertInvestorToCreditor(
       ),
     );
   }
+}
+
+// ============================================================================
+// Bulk Import (Sesi AE-80 follow-up)
+// ============================================================================
+
+/**
+ * CSV bulk import untuk creditors. Mirror pattern bulkImportInvestors.
+ *
+ * Dedup key: (outletId, fullName + start_date) — kalau owner upload 2 row
+ * dengan nama sama tapi tanggal mulai beda, treated as different loans.
+ * Kalau nama + start_date sama → match existing.
+ *
+ * mode 'insert_only': skip duplikat. mode 'upsert': update fields kalau match.
+ *
+ * Status='settled' tetap di-honor (untuk seed historical kreditur yang sudah
+ * lunas pre-system).
+ */
+export async function bulkImportCreditors(
+  input: BulkImportCreditorsInput,
+): Promise<ApiResult<BulkImportCreditorsResult>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "distribution.approve")) {
+    return fail("FORBIDDEN", "Tidak punya hak import kreditur");
+  }
+  const parsed = bulkImportCreditorsSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const { rows, mode } = parsed.data;
+
+  const existing = await db
+    .select({
+      id: creditors.id,
+      fullName: creditors.fullName,
+      startDate: creditors.startDate,
+    })
+    .from(creditors)
+    .where(
+      and(
+        eq(creditors.outletId, session.user.outletId),
+        isNull(creditors.deletedAt),
+      ),
+    );
+  const existingByKey = new Map<string, string>();
+  for (const r of existing) {
+    existingByKey.set(
+      `${r.fullName.trim().toLowerCase()}|${r.startDate}`,
+      r.id,
+    );
+  }
+
+  const result: BulkImportCreditorsResult = {
+    totalRows: rows.length,
+    inserted: 0,
+    updated: 0,
+    skippedDuplicate: 0,
+    errors: [],
+  };
+
+  const dedupedRows: Array<{
+    rowIdx: number;
+    values: typeof creditors.$inferInsert;
+  }> = [];
+  const upsertTargets: Array<{
+    rowIdx: number;
+    existingId: string;
+    values: Partial<typeof creditors.$inferInsert>;
+  }> = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const dedupKey = `${r.fullName.trim().toLowerCase()}|${r.startDate}`;
+    const matchedId = existingByKey.get(dedupKey);
+    const outstanding = r.principalOutstanding ?? r.principalOriginal;
+
+    if (matchedId) {
+      if (mode === "upsert") {
+        const vals: Partial<typeof creditors.$inferInsert> = {
+          fullName: r.fullName,
+          nickname: r.nickname ?? null,
+          nik: r.nik ?? null,
+          email: r.email ?? null,
+          phone: r.phone ?? null,
+          address: r.address ?? null,
+          bankName: r.bankName ?? null,
+          bankAccountNumber: r.bankAccountNumber ?? null,
+          bankAccountHolderName: r.bankAccountHolderName ?? null,
+          principalOriginal: r.principalOriginal,
+          principalOutstanding: outstanding,
+          interestRatePct: String(r.interestRatePct ?? 0),
+          interestPeriod: r.interestPeriod ?? "monthly",
+          startDate: r.startDate,
+          dueDate: r.dueDate ?? null,
+          notes: r.notes ?? null,
+          updatedBy: session.user.id,
+          updatedAt: new Date(),
+        };
+        if (r.status) vals.status = r.status;
+        upsertTargets.push({
+          rowIdx: i + 1,
+          existingId: matchedId,
+          values: vals,
+        });
+      } else {
+        result.skippedDuplicate += 1;
+      }
+      continue;
+    }
+    existingByKey.set(dedupKey, "PENDING");
+    dedupedRows.push({
+      rowIdx: i + 1,
+      values: {
+        outletId: session.user.outletId,
+        fullName: r.fullName,
+        nickname: r.nickname ?? null,
+        nik: r.nik ?? null,
+        email: r.email ?? null,
+        phone: r.phone ?? null,
+        address: r.address ?? null,
+        bankName: r.bankName ?? null,
+        bankAccountNumber: r.bankAccountNumber ?? null,
+        bankAccountHolderName: r.bankAccountHolderName ?? null,
+        principalOriginal: r.principalOriginal,
+        principalOutstanding: outstanding,
+        interestRatePct: String(r.interestRatePct ?? 0),
+        interestPeriod: r.interestPeriod ?? "monthly",
+        startDate: r.startDate,
+        dueDate: r.dueDate ?? null,
+        notes: r.notes ?? null,
+        status: r.status ?? (outstanding === 0 ? "settled" : "active"),
+        createdBy: session.user.id,
+        updatedBy: session.user.id,
+      },
+    });
+  }
+
+  for (const u of upsertTargets) {
+    try {
+      await db
+        .update(creditors)
+        .set(u.values)
+        .where(
+          and(
+            eq(creditors.id, u.existingId),
+            eq(creditors.outletId, session.user.outletId),
+          ),
+        );
+      result.updated += 1;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "DB error";
+      result.errors.push({ row: u.rowIdx, reason: `Update gagal: ${msg}` });
+    }
+  }
+
+  if (dedupedRows.length > 0) {
+    try {
+      const insertedIds = await db
+        .insert(creditors)
+        .values(dedupedRows.map((d) => d.values))
+        .onConflictDoNothing()
+        .returning({ id: creditors.id });
+      result.inserted = insertedIds.length;
+      const raced = dedupedRows.length - insertedIds.length;
+      if (raced > 0) result.skippedDuplicate += raced;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Batch insert error";
+      console.error("[creditor bulk import batch failed]", msg);
+      for (const d of dedupedRows) {
+        try {
+          await db.insert(creditors).values(d.values);
+          result.inserted += 1;
+        } catch (rowErr) {
+          const rmsg = rowErr instanceof Error ? rowErr.message : "DB error";
+          if (/ux_creditors_outlet_nik/.test(rmsg)) {
+            result.skippedDuplicate += 1;
+          } else {
+            result.errors.push({
+              row: d.rowIdx,
+              reason: logAndSanitize(rowErr, "creditor.import", "DB error"),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  logAudit({
+    eventType: "creditor.import",
+    userId: session.user.id,
+    entityType: "creditor",
+    entityId: null,
+    payload: {
+      summary: `Import kreditur: ${result.inserted} baru, ${result.updated} di-update, ${result.skippedDuplicate} duplikat, ${result.errors.length} error`,
+      context: {
+        totalRows: result.totalRows,
+        inserted: result.inserted,
+        updated: result.updated,
+        skippedDuplicate: result.skippedDuplicate,
+        errorCount: result.errors.length,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  }).catch((e) => console.error("[audit creditor.import]", e));
+
+  return ok(result);
 }
 
 /* Suppress unused-import warnings. */

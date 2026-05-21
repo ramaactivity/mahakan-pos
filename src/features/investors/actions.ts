@@ -2,7 +2,7 @@
 
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { investors } from "@/db/schema";
+import { capitalMovements, investors } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { logAndSanitize } from "@/lib/server-error";
@@ -311,12 +311,16 @@ export async function bulkImportInvestors(
   const { rows, mode } = parsed.data;
 
   /* Pre-fetch existing untuk dedup di app-side (no FK conflicts).
-   * Pakai partial unique index sebagai final guard kalau ada race. */
+   * Pakai partial unique index sebagai final guard kalau ada race.
+   *
+   * Sesi AE-80 follow-up — fetch dividendBalance juga supaya kita bisa
+   * compute delta untuk capital_movement adjustment trail saat upsert. */
   const existing = await db
     .select({
       id: investors.id,
       fullName: investors.fullName,
       nik: investors.nik,
+      dividendBalance: investors.dividendBalance,
     })
     .from(investors)
     .where(
@@ -327,9 +331,11 @@ export async function bulkImportInvestors(
     );
   const existingByNik = new Map<string, string>();
   const existingByName = new Map<string, string>();
+  const existingById = new Map<string, { dividendBalance: number }>();
   for (const r of existing) {
     if (r.nik) existingByNik.set(r.nik, r.id);
     existingByName.set(r.fullName.trim().toLowerCase(), r.id);
+    existingById.set(r.id, { dividendBalance: r.dividendBalance });
   }
 
   const result: BulkImportInvestorsResult = {
@@ -367,25 +373,40 @@ export async function bulkImportInvestors(
 
     if (matchedId) {
       if (mode === "upsert") {
+        const updateVals: Partial<typeof investors.$inferInsert> = {
+          fullName: r.fullName,
+          nik: r.nik ?? null,
+          email: r.email ?? null,
+          phone: r.phone ?? null,
+          address: r.address ?? null,
+          dateOfBirth: r.dateOfBirth ?? null,
+          occupation: r.occupation ?? null,
+          igHandle: r.igHandle ?? null,
+          bankName: r.bankName ?? null,
+          bankAccountNumber: r.bankAccountNumber ?? null,
+          bankAccountHolderName: r.bankAccountHolderName ?? null,
+          modalDisetor: r.modalDisetor,
+          updatedBy: session.user.id,
+          updatedAt: new Date(),
+        };
+        /* Sesi AE-80 follow-up — apply optional v2 fields kalau di-CSV. */
+        if (r.sharePct != null) {
+          updateVals.sharePct = r.sharePct.toFixed(4);
+        }
+        if (r.dividendBalance != null) {
+          updateVals.dividendBalance = r.dividendBalance;
+        }
+        if (r.status) {
+          updateVals.status = r.status;
+          if (r.status === "exited") {
+            /* Auto-stamp exitedAt kalau owner mark exited via CSV. */
+            updateVals.exitedAt = new Date();
+          }
+        }
         upsertTargets.push({
           rowIdx: i + 1,
           existingId: matchedId,
-          values: {
-            fullName: r.fullName,
-            nik: r.nik ?? null,
-            email: r.email ?? null,
-            phone: r.phone ?? null,
-            address: r.address ?? null,
-            dateOfBirth: r.dateOfBirth ?? null,
-            occupation: r.occupation ?? null,
-            igHandle: r.igHandle ?? null,
-            bankName: r.bankName ?? null,
-            bankAccountNumber: r.bankAccountNumber ?? null,
-            bankAccountHolderName: r.bankAccountHolderName ?? null,
-            modalDisetor: r.modalDisetor,
-            updatedBy: session.user.id,
-            updatedAt: new Date(),
-          },
+          values: updateVals,
         });
       } else {
         result.skippedDuplicate += 1;
@@ -396,31 +417,44 @@ export async function bulkImportInvestors(
      * (mis. 2 row dengan NIK sama), row ke-2 di-skip atau collapsed. */
     if (r.nik) existingByNik.set(r.nik, "PENDING_INSERT");
     existingByName.set(r.fullName.trim().toLowerCase(), "PENDING_INSERT");
-    dedupedRows.push({
-      rowIdx: i + 1,
-      values: {
-        outletId: session.user.outletId,
-        fullName: r.fullName,
-        nik: r.nik ?? null,
-        email: r.email ?? null,
-        phone: r.phone ?? null,
-        address: r.address ?? null,
-        dateOfBirth: r.dateOfBirth ?? null,
-        occupation: r.occupation ?? null,
-        igHandle: r.igHandle ?? null,
-        bankName: r.bankName ?? null,
-        bankAccountNumber: r.bankAccountNumber ?? null,
-        bankAccountHolderName: r.bankAccountHolderName ?? null,
-        modalDisetor: r.modalDisetor,
-        status: "active",
-        createdBy: session.user.id,
-        updatedBy: session.user.id,
-      },
-    });
+    const insertVals: typeof investors.$inferInsert = {
+      outletId: session.user.outletId,
+      fullName: r.fullName,
+      nik: r.nik ?? null,
+      email: r.email ?? null,
+      phone: r.phone ?? null,
+      address: r.address ?? null,
+      dateOfBirth: r.dateOfBirth ?? null,
+      occupation: r.occupation ?? null,
+      igHandle: r.igHandle ?? null,
+      bankName: r.bankName ?? null,
+      bankAccountNumber: r.bankAccountNumber ?? null,
+      bankAccountHolderName: r.bankAccountHolderName ?? null,
+      modalDisetor: r.modalDisetor,
+      status: r.status ?? "active",
+      createdBy: session.user.id,
+      updatedBy: session.user.id,
+    };
+    if (r.sharePct != null) insertVals.sharePct = r.sharePct.toFixed(4);
+    if (r.dividendBalance != null) insertVals.dividendBalance = r.dividendBalance;
+    if (r.status === "exited") {
+      insertVals.exitedAt = new Date();
+    }
+    dedupedRows.push({ rowIdx: i + 1, values: insertVals });
   }
 
   /* Sesi AE-68 — Apply upsert updates per existing investor (single UPDATE
-   * per row supaya partial unique index tetap respect outletId scope). */
+   * per row supaya partial unique index tetap respect outletId scope).
+   *
+   * Sesi AE-80 follow-up — kalau dividendBalance berubah, insert
+   * capital_movements kind='adjustment' dengan delta (signed) sebagai trail
+   * audit. Server tidak post journal — owner perlu post opening balance
+   * journal terpisah untuk reflect ke akuntansi (Dr 3201 / Cr 3202). */
+  const balanceAdjustments: Array<{
+    investorId: string;
+    delta: number;
+    newBalance: number;
+  }> = [];
   if (upsertTargets.length > 0) {
     for (const u of upsertTargets) {
       try {
@@ -434,10 +468,43 @@ export async function bulkImportInvestors(
             ),
           );
         result.updated += 1;
+        const newBal = u.values.dividendBalance;
+        if (typeof newBal === "number") {
+          const oldBal = existingById.get(u.existingId)?.dividendBalance ?? 0;
+          const delta = newBal - oldBal;
+          if (delta !== 0) {
+            balanceAdjustments.push({
+              investorId: u.existingId,
+              delta,
+              newBalance: newBal,
+            });
+          }
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "DB error";
         result.errors.push({ row: u.rowIdx, reason: `Update gagal: ${msg}` });
       }
+    }
+  }
+
+  /* Insert capital_movements untuk setiap balance adjustment. Best-effort —
+   * kalau gagal, log tapi jangan fail seluruh import (data investor sudah
+   * ke-update). */
+  if (balanceAdjustments.length > 0) {
+    try {
+      await db.insert(capitalMovements).values(
+        balanceAdjustments.map((b) => ({
+          outletId: session.user.outletId,
+          holderType: "investor" as const,
+          holderId: b.investorId,
+          kind: "adjustment" as const,
+          amount: b.delta,
+          description: `CSV import — saldo dividen di-set ke Rp ${b.newBalance.toLocaleString("id-ID")} (delta ${b.delta >= 0 ? "+" : ""}${b.delta.toLocaleString("id-ID")})`,
+          createdBy: session.user.id,
+        })),
+      );
+    } catch (e) {
+      console.error("[bulkImportInvestors] capital_movement trail insert failed:", e);
     }
   }
 
@@ -450,8 +517,44 @@ export async function bulkImportInvestors(
         .insert(investors)
         .values(dedupedRows.map((d) => d.values))
         .onConflictDoNothing()
-        .returning({ id: investors.id });
+        .returning({ id: investors.id, fullName: investors.fullName });
       result.inserted = insertedIds.length;
+
+      /* Sesi AE-80 follow-up — capital_movement trail untuk insert dengan
+       * dividendBalance > 0. Match by fullName (order preserved by Drizzle
+       * returning). */
+      const dividendSeedRows: Array<{
+        id: string;
+        amount: number;
+      }> = [];
+      for (const d of dedupedRows) {
+        const seedBalance = d.values.dividendBalance;
+        if (typeof seedBalance === "number" && seedBalance > 0) {
+          const inserted = insertedIds.find(
+            (x) => x.fullName === d.values.fullName,
+          );
+          if (inserted) {
+            dividendSeedRows.push({ id: inserted.id, amount: seedBalance });
+          }
+        }
+      }
+      if (dividendSeedRows.length > 0) {
+        try {
+          await db.insert(capitalMovements).values(
+            dividendSeedRows.map((s) => ({
+              outletId: session.user.outletId,
+              holderType: "investor" as const,
+              holderId: s.id,
+              kind: "adjustment" as const,
+              amount: s.amount,
+              description: `CSV import — seed saldo dividen Rp ${s.amount.toLocaleString("id-ID")}`,
+              createdBy: session.user.id,
+            })),
+          );
+        } catch (e) {
+          console.error("[bulkImportInvestors] insert seed capital_movement failed:", e);
+        }
+      }
       /* Beda antara dedupedRows.length dan insertedIds.length = race-conflict
        * baris (insert skipped diam-diam oleh onConflictDoNothing). Hitung
        * sebagai duplikat — owner sudah tahu Mahakan duplikat tidak di-insert. */

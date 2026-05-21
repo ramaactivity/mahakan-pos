@@ -57,3 +57,33 @@ export interface CreatePengelolaInput {
 export interface UpdatePengelolaInput extends Partial<CreatePengelolaInput> {
   exitReason?: string | null;
 }
+
+/* Sesi AE-80 follow-up — CSV bulk import. */
+export interface BulkImportPengelolaRow {
+  fullName: string;
+  nickname?: string | null;
+  nik?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  dateOfBirth?: string | null;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountHolderName?: string | null;
+  modalDisetor: number;
+  dividendBalance?: number | null;
+  status?: PengelolaStatus;
+}
+
+export interface BulkImportPengelolaInput {
+  rows: BulkImportPengelolaRow[];
+  mode?: "insert_only" | "upsert";
+}
+
+export interface BulkImportPengelolaResult {
+  totalRows: number;
+  inserted: number;
+  updated: number;
+  skippedDuplicate: number;
+  errors: Array<{ row: number; reason: string }>;
+}

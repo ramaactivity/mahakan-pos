@@ -1,14 +1,21 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Download, FileText, Upload } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+  FileText,
+  Upload,
+} from "lucide-react";
 import { Button, Modal, toast } from "@/components/ui";
 import {
-  bulkImportInvestors,
+  bulkImportCreditors,
   isOk,
-  type BulkImportInvestorRow,
-  type InvestorStatus,
-} from "@/features/investors";
+  type BulkImportCreditorRow,
+  type CreditorStatus,
+  type InterestPeriod,
+} from "@/features/creditors";
 import { formatRupiah } from "@/lib/format";
 import {
   downloadCsv,
@@ -20,30 +27,23 @@ import {
   rowsToCsv,
 } from "./_csv-utils";
 
-interface InvestorImportWizardProps {
+/**
+ * Sesi AE-80 follow-up — CSV import wizard untuk kreditur.
+ *
+ * Dedup key: (fullName + start_date) — owner bisa upload beberapa pinjaman
+ * dari orang yang sama dengan start_date berbeda (treated sebagai kontrak
+ * berbeda).
+ */
+
+interface Props {
   open: boolean;
   onClose: () => void;
   onImported: () => void;
 }
 
-/**
- * Sesi AE-63d — Import wizard untuk bulk insert 110+ investor dari CSV.
- *
- * Format CSV expected (mirror "UPDATE DB_INVESTOR_AWAL" Sheets):
- *   Nama Lengkap | Tanggal Lahir | Alamat | Besaran Investasi (Rp ...)
- *   | Bank | No Rekening | Atas Nama | Nomor Telefon | Akun Instagram |
- *   Email | pekerjaan
- *
- * 4 step:
- *  1. Upload — pilih file CSV
- *  2. Preview — parse + tampilkan 5 baris pertama + warning
- *  3. Confirm — kirim ke server
- *  4. Result — summary inserted/duplicate/error
- */
-
 type Step = "upload" | "preview" | "result";
 
-interface ParsedRow extends BulkImportInvestorRow {
+interface ParsedRow extends BulkImportCreditorRow {
   rawRowNum: number;
 }
 
@@ -57,33 +57,45 @@ interface ImportResult {
 
 type ImportMode = "insert_only" | "upsert";
 
-function parseStatusCell(s: string): InvestorStatus | undefined {
+function parseStatus(s: string): CreditorStatus | undefined {
   const v = s.trim().toLowerCase();
   if (!v) return undefined;
   if (v === "active" || v === "aktif") return "active";
-  if (v === "inactive" || v === "non-aktif" || v === "tidak aktif")
-    return "inactive";
-  if (v === "exited" || v === "exit" || v === "keluar") return "exited";
+  if (v === "settled" || v === "lunas") return "settled";
+  if (v === "defaulted" || v === "default" || v === "macet") return "defaulted";
   return undefined;
 }
+
+function parsePeriod(s: string): InterestPeriod | undefined {
+  const v = s.trim().toLowerCase();
+  if (!v) return undefined;
+  if (v === "monthly" || v === "bulanan" || v === "month") return "monthly";
+  if (v === "yearly" || v === "tahunan" || v === "year") return "yearly";
+  if (v === "flat") return "flat";
+  return undefined;
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
 
 function mapRow(
   row: string[],
   idx: {
     name: number;
-    dob: number;
+    nik: number;
+    email: number;
+    phone: number;
     address: number;
-    investment: number;
     bank: number;
     accountNumber: number;
     accountHolder: number;
-    phone: number;
-    ig: number;
-    email: number;
-    occupation: number;
-    sharePct: number;
-    dividendBalance: number;
+    principalOriginal: number;
+    principalOutstanding: number;
+    interestRatePct: number;
+    interestPeriod: number;
+    startDate: number;
+    dueDate: number;
     status: number;
+    notes: number;
   },
   rowNum: number,
 ): { ok: true; row: ParsedRow } | { ok: false; reason: string } {
@@ -92,95 +104,118 @@ function mapRow(
   if (!fullName || fullName.length < 2) {
     return { ok: false, reason: "Nama kosong / terlalu pendek" };
   }
-  const modal = parseRupiahCell(get(idx.investment));
-  if (modal < 0) {
-    return { ok: false, reason: "Modal invalid" };
+  const principal = parseRupiahCell(get(idx.principalOriginal));
+  if (principal <= 0) {
+    return { ok: false, reason: "Pokok awal harus > 0" };
   }
-  const sharePctRaw = idx.sharePct >= 0 ? parseDecimalCell(get(idx.sharePct)) : null;
-  if (sharePctRaw != null && (sharePctRaw < 0 || sharePctRaw > 100)) {
-    return { ok: false, reason: "Share % di luar range 0..100" };
-  }
-  const balanceRaw =
-    idx.dividendBalance >= 0 ? parseRupiahCell(get(idx.dividendBalance)) : 0;
-  const balance = idx.dividendBalance >= 0 ? balanceRaw : null;
-  const status = idx.status >= 0 ? parseStatusCell(get(idx.status)) : undefined;
-  if (idx.status >= 0 && get(idx.status).trim() && !status) {
+  const outstandingRaw =
+    idx.principalOutstanding >= 0
+      ? parseRupiahCell(get(idx.principalOutstanding))
+      : null;
+  const outstanding =
+    idx.principalOutstanding >= 0 && get(idx.principalOutstanding).trim()
+      ? outstandingRaw
+      : null;
+  if (outstanding != null && outstanding > principal) {
     return {
       ok: false,
-      reason: `Status tidak dikenal: "${get(idx.status)}" (pakai active/inactive/exited)`,
+      reason: "Sisa hutang > pokok awal",
     };
+  }
+  const startDate = parseDateCell(get(idx.startDate)) ?? today();
+  const dueDate = idx.dueDate >= 0 ? parseDateCell(get(idx.dueDate)) : null;
+  if (dueDate && dueDate < startDate) {
+    return { ok: false, reason: "Jatuh tempo < tanggal mulai" };
+  }
+  const rateRaw =
+    idx.interestRatePct >= 0
+      ? parseDecimalCell(get(idx.interestRatePct))
+      : null;
+  const rate = rateRaw != null ? rateRaw : undefined;
+  if (rate != null && (rate < 0 || rate > 100)) {
+    return { ok: false, reason: "Bunga % di luar range 0..100" };
+  }
+  const period = idx.interestPeriod >= 0 ? parsePeriod(get(idx.interestPeriod)) : undefined;
+  if (idx.interestPeriod >= 0 && get(idx.interestPeriod).trim() && !period) {
+    return { ok: false, reason: `Period bunga tidak dikenal "${get(idx.interestPeriod)}"` };
+  }
+  const status = idx.status >= 0 ? parseStatus(get(idx.status)) : undefined;
+  if (idx.status >= 0 && get(idx.status).trim() && !status) {
+    return { ok: false, reason: `Status tidak dikenal "${get(idx.status)}"` };
   }
   return {
     ok: true,
     row: {
       rawRowNum: rowNum,
       fullName,
-      dateOfBirth: parseDateCell(get(idx.dob)),
-      address: get(idx.address).trim() || null,
-      phone: get(idx.phone).replace(/^'/, "").trim() || null,
-      igHandle: get(idx.ig).replace(/^'/, "").trim() || null,
+      nickname: null,
+      nik: get(idx.nik).trim() || null,
       email: get(idx.email).trim() || null,
-      occupation: get(idx.occupation).trim() || null,
+      phone: get(idx.phone).replace(/^'/, "").trim() || null,
+      address: get(idx.address).trim() || null,
       bankName: get(idx.bank).trim() || null,
       bankAccountNumber: get(idx.accountNumber).trim() || null,
       bankAccountHolderName: get(idx.accountHolder).trim() || null,
-      modalDisetor: modal,
-      sharePct: sharePctRaw,
-      dividendBalance: balance,
+      principalOriginal: principal,
+      principalOutstanding: outstanding,
+      interestRatePct: rate,
+      interestPeriod: period,
+      startDate,
+      dueDate,
       status,
+      notes: get(idx.notes).trim() || null,
     },
   };
 }
 
-export function InvestorImportWizard({
-  open,
-  onClose,
-  onImported,
-}: InvestorImportWizardProps) {
+export function CreditorImportWizard({ open, onClose, onImported }: Props) {
   const [step, setStep] = useState<Step>("upload");
   const [csvText, setCsvText] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
-  /* Sesi AE-68 — mode default 'insert_only' (backward-compat: first migration
-   * dari Sheets pakai ini). User pilih 'upsert' kalau re-upload CSV dengan
-   * koreksi data (nominal/email berubah, name match → update). */
   const [mode, setMode] = useState<ImportMode>("insert_only");
 
   const parsed = useMemo(() => {
-    if (!csvText) return { parsedRows: [] as ParsedRow[], parseErrors: [] as { row: number; reason: string }[] };
+    if (!csvText)
+      return {
+        parsedRows: [] as ParsedRow[],
+        parseErrors: [] as { row: number; reason: string }[],
+      };
     const { headers, rows } = parseCsv(csvText);
     const idx = {
       name: findHeaderIdx(headers, ["nama lengkap", "nama"]),
-      dob: findHeaderIdx(headers, ["tanggal lahir", "dob"]),
-      address: findHeaderIdx(headers, ["alamat lengkap", "alamat"]),
-      investment: findHeaderIdx(headers, [
-        "besaran investasi",
-        "modal disetor",
-        "modal",
-        "investasi",
-      ]),
+      nik: findHeaderIdx(headers, ["nik"]),
+      email: findHeaderIdx(headers, ["email"]),
+      phone: findHeaderIdx(headers, ["telefon", "telp", "hp", "phone"]),
+      address: findHeaderIdx(headers, ["alamat"]),
       bank: findHeaderIdx(headers, ["bank"]),
       accountNumber: findHeaderIdx(headers, ["no rekening", "rekening"]),
       accountHolder: findHeaderIdx(headers, ["atas nama"]),
-      phone: findHeaderIdx(headers, ["nomor telefon", "telefon", "telp", "hp"]),
-      ig: findHeaderIdx(headers, ["instagram", "ig", "akun instagram"]),
-      email: findHeaderIdx(headers, ["email"]),
-      occupation: findHeaderIdx(headers, ["pekerjaan"]),
-      sharePct: findHeaderIdx(headers, ["share %", "share%", "share pct", "share"]),
-      dividendBalance: findHeaderIdx(headers, [
-        "saldo dividen",
-        "saldo dividend",
-        "dividend balance",
+      principalOriginal: findHeaderIdx(headers, [
+        "pokok awal",
+        "pokok original",
+        "pokok",
       ]),
+      principalOutstanding: findHeaderIdx(headers, [
+        "sisa hutang",
+        "sisa pokok",
+        "outstanding",
+      ]),
+      interestRatePct: findHeaderIdx(headers, ["bunga", "interest"]),
+      interestPeriod: findHeaderIdx(headers, ["period", "periode bunga"]),
+      startDate: findHeaderIdx(headers, ["tanggal mulai", "start date"]),
+      dueDate: findHeaderIdx(headers, ["jatuh tempo", "due date"]),
       status: findHeaderIdx(headers, ["status"]),
+      notes: findHeaderIdx(headers, ["catatan", "notes"]),
     };
-    if (idx.name < 0 || idx.investment < 0) {
+    if (idx.name < 0 || idx.principalOriginal < 0 || idx.startDate < 0) {
       return {
         parsedRows: [],
         parseErrors: [
           {
             row: 0,
-            reason: 'CSV harus punya kolom "Nama Lengkap" + "Besaran Investasi"',
+            reason:
+              'CSV harus punya kolom "Nama Lengkap" + "Pokok Awal" + "Tanggal Mulai"',
           },
         ],
       };
@@ -188,7 +223,7 @@ export function InvestorImportWizard({
     const parsedRows: ParsedRow[] = [];
     const parseErrors: { row: number; reason: string }[] = [];
     rows.forEach((row, i) => {
-      const r = mapRow(row, idx, i + 2); // +2: skip header + 1-indexed
+      const r = mapRow(row, idx, i + 2);
       if (r.ok) parsedRows.push(r.row);
       else parseErrors.push({ row: i + 2, reason: r.reason });
     });
@@ -204,28 +239,30 @@ export function InvestorImportWizard({
   async function handleConfirm() {
     if (submitting) return;
     if (parsed.parsedRows.length === 0) {
-      toast.error("Tidak ada baris valid untuk di-import");
+      toast.error("Tidak ada baris valid");
       return;
     }
     setSubmitting(true);
-    const res = await bulkImportInvestors({
+    const res = await bulkImportCreditors({
       mode,
       rows: parsed.parsedRows.map((r) => ({
         fullName: r.fullName,
+        nickname: r.nickname ?? null,
         nik: r.nik ?? null,
         email: r.email ?? null,
         phone: r.phone ?? null,
         address: r.address ?? null,
-        dateOfBirth: r.dateOfBirth ?? null,
-        occupation: r.occupation ?? null,
-        igHandle: r.igHandle ?? null,
         bankName: r.bankName ?? null,
         bankAccountNumber: r.bankAccountNumber ?? null,
         bankAccountHolderName: r.bankAccountHolderName ?? null,
-        modalDisetor: r.modalDisetor,
-        sharePct: r.sharePct ?? null,
-        dividendBalance: r.dividendBalance ?? null,
+        principalOriginal: r.principalOriginal,
+        principalOutstanding: r.principalOutstanding ?? null,
+        interestRatePct: r.interestRatePct,
+        interestPeriod: r.interestPeriod,
+        startDate: r.startDate,
+        dueDate: r.dueDate ?? null,
         status: r.status,
+        notes: r.notes ?? null,
       })),
     });
     setSubmitting(false);
@@ -245,70 +282,76 @@ export function InvestorImportWizard({
     onClose();
   }
 
-  /* Sesi AE-63 polish + AE-80 follow-up — Template CSV downloadable.
-   * Header sama dengan parser auto-detect supaya import langsung berhasil
-   * tanpa edit kolom. Include 2 row example (Mahakan-style). Tambah kolom
-   * Share % / Saldo Dividen / Status untuk v2. */
   function handleDownloadTemplate() {
     const headers = [
       "Nama Lengkap",
-      "Tanggal Lahir",
-      "Alamat Lengkap",
-      "Besaran Investasi",
+      "NIK",
+      "Email",
+      "Telefon",
+      "Alamat",
       "Bank",
       "No Rekening",
       "Atas Nama",
-      "Nomor Telefon",
-      "Akun Instagram",
-      "Email",
-      "Pekerjaan",
-      "Share %",
-      "Saldo Dividen",
+      "Pokok Awal",
+      "Sisa Hutang",
+      "Bunga (%)",
+      "Period Bunga",
+      "Tanggal Mulai",
+      "Jatuh Tempo",
       "Status",
+      "Catatan",
     ];
     const sample: (string | number)[][] = [
       [
-        "Aan Najmutsaqib",
-        "1996-07-01",
-        "Dsn mojounggul bareng jombang",
-        300000,
-        "BRI",
-        "624101014994534",
-        "Najmutsaqib",
-        "+6285815194914",
-        "@an_najmast_tsaqib",
-        "thomasahmad01@gmail.com",
-        "Pelajar / Mahasiswa",
+        "Bapak Suhardi",
         "",
         "",
+        "+6281234567899",
+        "Jl. Sudirman No. 5, Jakarta",
+        "BCA",
+        "8881234567",
+        "Suhardi",
+        10000000,
+        7500000,
+        "2",
+        "monthly",
+        "2025-08-15",
+        "2027-08-15",
         "active",
+        "Pinjaman renovasi outlet",
       ],
       [
-        "Aina Noor Ade Faradilla",
-        "1999-06-02",
-        "Komplek Kembang Larangan Jl. Manggar IV Blok B5 No.11, Tangerang",
-        500000,
+        "Ibu Sari",
+        "",
+        "",
+        "",
+        "",
         "Mandiri",
-        "1640002282293",
-        "Aina Noor Ade Faradilla",
-        "+6287887302993",
-        "@naainaanoo",
-        "ainafaradilla@gmail.com",
-        "Pelajar / Mahasiswa",
-        "5.25",
-        "150000",
-        "active",
+        "1700099887766",
+        "Sari Wahyuni",
+        5000000,
+        0,
+        "1.5",
+        "flat",
+        "2024-06-01",
+        "2025-06-01",
+        "settled",
+        "Lunas pre-system",
       ],
     ];
     downloadCsv(
-      "template-import-investor-mahakan.csv",
+      "template-import-kreditur-mahakan.csv",
       rowsToCsv(headers, sample),
     );
-    toast.success("Template CSV ter-download — isi data lalu upload");
+    toast.success("Template CSV ter-download");
   }
 
-  const totalModal = parsed.parsedRows.reduce(
-    (s, r) => s + r.modalDisetor,
+  const totalPokok = parsed.parsedRows.reduce(
+    (s, r) => s + r.principalOriginal,
+    0,
+  );
+  const totalOutstanding = parsed.parsedRows.reduce(
+    (s, r) => s + (r.principalOutstanding ?? r.principalOriginal),
     0,
   );
 
@@ -316,8 +359,8 @@ export function InvestorImportWizard({
     <Modal
       open={open}
       onClose={handleClose}
-      title="Import Investor dari CSV"
-      description="Bulk import dari Sheets MAHAKAN BUSINESS DASHBOARD."
+      title="Import Kreditur dari CSV"
+      description="Bulk import daftar hutang kreditur Mahakan."
       size="xl"
       footer={
         step === "result" ? (
@@ -333,7 +376,7 @@ export function InvestorImportWizard({
                 loading={submitting}
                 disabled={parsed.parsedRows.length === 0}
               >
-                Import {parsed.parsedRows.length} Investor
+                Import {parsed.parsedRows.length} Kreditur
               </Button>
             ) : null}
           </>
@@ -342,7 +385,6 @@ export function InvestorImportWizard({
     >
       {step === "upload" ? (
         <div className="space-y-4">
-          {/* Template download — Mahakan owner's first ask di sesi ini. */}
           <div className="rounded-lg border border-mahakan-green-700/30 bg-gradient-to-br from-mahakan-green-50 to-white p-4">
             <div className="flex items-start gap-3">
               <div className="rounded-full bg-mahakan-green-100 p-2">
@@ -353,8 +395,7 @@ export function InvestorImportWizard({
                   Belum punya CSV?
                 </h4>
                 <p className="mt-0.5 text-xs text-neutral-700">
-                  Download template Excel/CSV dengan kolom dan format yang
-                  sudah benar. Tinggal isi data lalu upload kembali.
+                  Download template dengan kolom yang sudah benar.
                 </p>
               </div>
               <Button
@@ -373,10 +414,10 @@ export function InvestorImportWizard({
               Pilih file CSV (max 500 baris)
             </p>
             <p className="mt-1 text-xs text-neutral-500">
-              Auto-detect kolom: Nama Lengkap, Tanggal Lahir, Alamat,
-              Besaran Investasi, Bank, No Rekening, Atas Nama, Telefon,
-              Instagram, Email, Pekerjaan. <b>Optional v2:</b> Share %,
-              Saldo Dividen, Status (active/inactive/exited).
+              <b>Wajib:</b> Nama Lengkap, Pokok Awal, Tanggal Mulai.{" "}
+              <b>Optional:</b> Sisa Hutang, Bunga (%), Period Bunga
+              (monthly/yearly/flat), Jatuh Tempo, Status
+              (active/settled/defaulted), NIK, Email, Bank info.
             </p>
             <input
               type="file"
@@ -391,14 +432,18 @@ export function InvestorImportWizard({
 
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
-              <p className="mb-1 font-semibold">💡 Anti-duplikat</p>
-              <p>Auto-skip baris dengan NIK / nama yang sudah ada
-                (case-insensitive).</p>
+              <p className="mb-1 font-semibold">💡 Dedup key</p>
+              <p>
+                Nama + Tanggal Mulai. Owner boleh punya 2 pinjaman dari orang
+                sama dengan start date beda — treated sebagai kontrak berbeda.
+              </p>
             </div>
             <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              <p className="mb-1 font-semibold">⚠️ Format tanggal</p>
-              <p>Pakai YYYY-MM-DD (mis. 1999-06-02) atau text bulan
-                ("02 June 1999").</p>
+              <p className="mb-1 font-semibold">⚠️ Sisa Hutang</p>
+              <p>
+                Kalau kosong, default = pokok awal. Untuk seed historical owner
+                bisa input outstanding &lt; pokok kalau sudah sebagian dicicil.
+              </p>
             </div>
           </div>
         </div>
@@ -410,18 +455,17 @@ export function InvestorImportWizard({
             </span>
             {parsed.parseErrors.length > 0 ? (
               <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-900">
-                {parsed.parseErrors.length} baris error parsing
+                {parsed.parseErrors.length} baris error
               </span>
             ) : null}
             <span className="rounded-full bg-neutral-100 px-3 py-1 text-neutral-700">
-              Total modal: {formatRupiah(totalModal)}
+              Total pokok: {formatRupiah(totalPokok)}
+            </span>
+            <span className="rounded-full bg-warning-100 px-3 py-1 text-warning-900">
+              Total outstanding: {formatRupiah(totalOutstanding)}
             </span>
           </div>
 
-          {/* Sesi AE-68 — Mode selector (insert_only vs upsert).
-           * Default 'insert_only' = first-time migration (skip kalau nama
-           * sudah ada). 'upsert' = re-upload CSV dengan koreksi (kalau nama
-           * sudah ada, update field nominal/email/dll). */}
           <fieldset className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
             <legend className="px-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
               Mode Import
@@ -436,7 +480,7 @@ export function InvestorImportWizard({
               >
                 <input
                   type="radio"
-                  name="import-mode"
+                  name="mode-kreditur"
                   value="insert_only"
                   checked={mode === "insert_only"}
                   onChange={() => setMode("insert_only")}
@@ -444,11 +488,10 @@ export function InvestorImportWizard({
                 />
                 <span>
                   <span className="block font-semibold text-neutral-900">
-                    Tambah Saja (Skip Duplikat)
+                    Tambah Saja
                   </span>
                   <span className="mt-0.5 block text-[11px] text-neutral-600">
-                    Kalau nama / NIK sudah ada di sistem, baris itu di-skip.
-                    Cocok untuk import pertama kali dari Sheets.
+                    Skip kalau (nama + tanggal mulai) sudah ada.
                   </span>
                 </span>
               </label>
@@ -461,7 +504,7 @@ export function InvestorImportWizard({
               >
                 <input
                   type="radio"
-                  name="import-mode"
+                  name="mode-kreditur"
                   value="upsert"
                   checked={mode === "upsert"}
                   onChange={() => setMode("upsert")}
@@ -472,9 +515,7 @@ export function InvestorImportWizard({
                     Tambah / Update (Upsert)
                   </span>
                   <span className="mt-0.5 block text-[11px] text-neutral-600">
-                    Kalau nama / NIK sudah ada, <strong>update</strong> field-nya
-                    pakai nilai baru dari CSV (nominal, email, dll). Cocok
-                    untuk re-upload setelah koreksi data.
+                    Update sisa hutang, bunga, status, dll dari CSV.
                   </span>
                 </span>
               </label>
@@ -492,9 +533,6 @@ export function InvestorImportWizard({
                     Baris {e.row}: {e.reason}
                   </li>
                 ))}
-                {parsed.parseErrors.length > 10 ? (
-                  <li>... dan {parsed.parseErrors.length - 10} lainnya</li>
-                ) : null}
               </ul>
             </div>
           ) : null}
@@ -505,11 +543,11 @@ export function InvestorImportWizard({
                 <tr>
                   <th className="px-2 py-1.5">No</th>
                   <th className="px-2 py-1.5">Nama</th>
-                  <th className="px-2 py-1.5 text-right">Modal</th>
-                  <th className="px-2 py-1.5 text-right">Share %</th>
-                  <th className="px-2 py-1.5 text-right">Saldo Dividen</th>
+                  <th className="px-2 py-1.5 text-right">Pokok</th>
+                  <th className="px-2 py-1.5 text-right">Sisa</th>
+                  <th className="px-2 py-1.5">Bunga</th>
+                  <th className="px-2 py-1.5">Mulai</th>
                   <th className="px-2 py-1.5">Status</th>
-                  <th className="px-2 py-1.5">Bank</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
@@ -518,68 +556,31 @@ export function InvestorImportWizard({
                     <td className="px-2 py-1">{r.rawRowNum}</td>
                     <td className="px-2 py-1 font-medium">{r.fullName}</td>
                     <td className="px-2 py-1 text-right tabular-nums">
-                      {formatRupiah(r.modalDisetor)}
+                      {formatRupiah(r.principalOriginal)}
                     </td>
-                    <td className="px-2 py-1 text-right tabular-nums text-neutral-600">
-                      {r.sharePct != null ? `${r.sharePct.toFixed(2)}%` : "—"}
+                    <td className="px-2 py-1 text-right tabular-nums text-warning-700">
+                      {formatRupiah(
+                        r.principalOutstanding ?? r.principalOriginal,
+                      )}
                     </td>
-                    <td className="px-2 py-1 text-right tabular-nums text-neutral-600">
-                      {r.dividendBalance != null && r.dividendBalance > 0
-                        ? formatRupiah(r.dividendBalance)
-                        : "—"}
+                    <td className="px-2 py-1 text-neutral-600">
+                      {r.interestRatePct != null
+                        ? `${r.interestRatePct}% / ${r.interestPeriod ?? "monthly"}`
+                        : "0%"}
+                    </td>
+                    <td className="px-2 py-1 text-neutral-600">
+                      {r.startDate}
                     </td>
                     <td className="px-2 py-1 text-neutral-600">
                       {r.status ?? "active"}
-                    </td>
-                    <td className="px-2 py-1 text-neutral-600">
-                      {r.bankName ?? "—"}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {parsed.parsedRows.length > 10 ? (
-              <p className="px-2 py-1.5 text-center text-xs text-neutral-500">
-                ... dan {parsed.parsedRows.length - 10} baris lainnya
-              </p>
-            ) : null}
           </div>
-
-          {/* Sum sharePct sanity check + saldo dividen total. */}
-          {(() => {
-            const rowsWithShare = parsed.parsedRows.filter(
-              (r) => r.sharePct != null,
-            );
-            const sumShare = rowsWithShare.reduce(
-              (s, r) => s + (r.sharePct ?? 0),
-              0,
-            );
-            const sumBalance = parsed.parsedRows.reduce(
-              (s, r) => s + (r.dividendBalance ?? 0),
-              0,
-            );
-            const shareDrift = rowsWithShare.length > 0 && Math.abs(sumShare - 100) > 0.01;
-            return (
-              <div className="flex flex-wrap gap-2 text-[11px]">
-                {rowsWithShare.length > 0 ? (
-                  <span
-                    className={`rounded-full px-2.5 py-1 ${shareDrift ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"}`}
-                  >
-                    Σ Share %: {sumShare.toFixed(4)}%{" "}
-                    {shareDrift ? "(≠ 100)" : "✓"}
-                  </span>
-                ) : null}
-                {sumBalance > 0 ? (
-                  <span className="rounded-full bg-blue-100 px-2.5 py-1 text-blue-900">
-                    Σ Saldo Dividen: {formatRupiah(sumBalance)}
-                  </span>
-                ) : null}
-              </div>
-            );
-          })()}
         </div>
       ) : (
-        /* result step */
         result && (
           <div className="space-y-3">
             <div className="rounded-md bg-emerald-50 p-4 text-center">
@@ -588,46 +589,17 @@ export function InvestorImportWizard({
                 Import selesai
               </p>
               <p className="text-xs text-emerald-800">
-                {result.inserted} baru ditambahkan
-                {result.updated > 0
-                  ? ` · ${result.updated} di-update`
-                  : ""}
+                {result.inserted} baru
+                {result.updated > 0 ? ` · ${result.updated} di-update` : ""}
                 {result.skippedDuplicate > 0
-                  ? ` · ${result.skippedDuplicate} di-skip (sudah ada)`
+                  ? ` · ${result.skippedDuplicate} di-skip`
                   : ""}
               </p>
             </div>
-            <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-              <Stat label="Total Baris" value={result.totalRows} />
-              <Stat label="Baru" value={result.inserted} tone="success" />
-              <Stat
-                label="Di-update"
-                value={result.updated}
-                tone={result.updated > 0 ? "success" : "neutral"}
-              />
-              <Stat
-                label="Di-skip"
-                value={result.skippedDuplicate}
-                tone={result.skippedDuplicate > 0 ? "warning" : "neutral"}
-              />
-            </dl>
-            {result.skippedDuplicate > 0 ? (
-              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-                <p className="font-semibold">
-                  💡 {result.skippedDuplicate} baris di-skip karena nama / NIK
-                  sudah ada di sistem.
-                </p>
-                <p className="mt-1">
-                  Kalau lo mau <strong>update</strong> data investor yang sudah
-                  ada (mis. koreksi nominal/email), upload ulang dengan mode
-                  <strong> Tambah / Update (Upsert)</strong> di step preview.
-                </p>
-              </div>
-            ) : null}
             {result.errors.length > 0 ? (
               <div className="max-h-40 overflow-y-auto rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-800">
                 <p className="mb-1 font-semibold">
-                  {result.errors.length} baris error:
+                  {result.errors.length} error:
                 </p>
                 {result.errors.map((e) => (
                   <p key={e.row}>
@@ -642,31 +614,3 @@ export function InvestorImportWizard({
     </Modal>
   );
 }
-
-function Stat({
-  label,
-  value,
-  tone = "neutral",
-}: {
-  label: string;
-  value: number;
-  tone?: "neutral" | "success" | "warning" | "danger";
-}) {
-  const toneCls =
-    tone === "success"
-      ? "text-emerald-700"
-      : tone === "warning"
-        ? "text-amber-700"
-        : tone === "danger"
-          ? "text-red-700"
-          : "text-neutral-700";
-  return (
-    <div className="rounded-md border border-neutral-200 bg-white p-2">
-      <p className="text-[11px] uppercase tracking-wide text-neutral-500">
-        {label}
-      </p>
-      <p className={`text-lg font-bold tabular-nums ${toneCls}`}>{value}</p>
-    </div>
-  );
-}
-

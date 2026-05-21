@@ -61,3 +61,37 @@ export const updatePengelolaSchema = pengelolaBaseSchema
     (v) => Object.keys(v).length > 0,
     "Minimal satu field harus diisi",
   );
+
+/* Sesi AE-80 follow-up — CSV bulk import for pengelola. */
+export const bulkImportPengelolaRowSchema = pengelolaBaseSchema
+  .pick({
+    fullName: true,
+    nickname: true,
+    nik: true,
+    email: true,
+    phone: true,
+    address: true,
+    dateOfBirth: true,
+    bankName: true,
+    bankAccountNumber: true,
+    bankAccountHolderName: true,
+    modalDisetor: true,
+  })
+  .extend({
+    dividendBalance: z
+      .number()
+      .int()
+      .min(0)
+      .max(99_999_999_999)
+      .optional()
+      .nullable(),
+    status: z.enum(["active", "inactive", "exited"]).optional(),
+  });
+
+export const bulkImportPengelolaSchema = z.object({
+  rows: z
+    .array(bulkImportPengelolaRowSchema)
+    .min(1, "Minimal 1 baris")
+    .max(100, "Maksimal 100 baris (pengelola jumlahnya sedikit)"),
+  mode: z.enum(["insert_only", "upsert"]).default("insert_only"),
+});

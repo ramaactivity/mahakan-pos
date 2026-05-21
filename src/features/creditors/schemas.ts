@@ -117,3 +117,53 @@ export type ReverseRepaymentParsed = z.infer<typeof reverseRepaymentSchema>;
 export type ConvertInvestorToCreditorParsed = z.infer<
   typeof convertInvestorToCreditorSchema
 >;
+
+/* Sesi AE-80 follow-up — CSV bulk import schema. */
+export const bulkImportCreditorRowSchema = z
+  .object({
+    fullName: z.string().trim().min(2).max(120),
+    nickname: z.string().trim().max(60).nullish(),
+    nik: z.string().trim().regex(/^\d{0,20}$/).nullish(),
+    email: z.string().trim().email().nullish().or(z.literal("").transform(() => null)),
+    phone: z.string().trim().max(30).nullish(),
+    address: z.string().trim().max(500).nullish(),
+    bankName: z.string().trim().max(60).nullish(),
+    bankAccountNumber: z.string().trim().max(40).nullish(),
+    bankAccountHolderName: z.string().trim().max(120).nullish(),
+    principalOriginal: moneyPos,
+    /* Outstanding optional — default = original kalau kosong. Untuk seed
+     * historical owner bisa input outstanding < original kalau sudah
+     * sebagian dicicil sebelum sistem. */
+    principalOutstanding: moneyNonNeg.optional().nullable(),
+    interestRatePct: z.number().min(0).max(100).optional(),
+    interestPeriod: z.enum(["monthly", "yearly", "flat"]).optional(),
+    startDate: isoDate,
+    dueDate: isoDateOptional,
+    status: z.enum(["active", "settled", "defaulted"]).optional(),
+    notes: z.string().trim().max(1000).nullish(),
+  })
+  .refine(
+    (v) =>
+      !v.principalOutstanding ||
+      v.principalOutstanding <= v.principalOriginal,
+    {
+      message: "Sisa hutang tidak boleh > pokok awal",
+      path: ["principalOutstanding"],
+    },
+  )
+  .refine(
+    (v) =>
+      !v.dueDate || (typeof v.dueDate === "string" && v.dueDate >= v.startDate),
+    {
+      message: "Tanggal jatuh tempo harus >= tanggal mulai",
+      path: ["dueDate"],
+    },
+  );
+
+export const bulkImportCreditorsSchema = z.object({
+  rows: z
+    .array(bulkImportCreditorRowSchema)
+    .min(1, "Minimal 1 baris")
+    .max(500, "Maksimal 500 baris per import"),
+  mode: z.enum(["insert_only", "upsert"]).default("insert_only"),
+});

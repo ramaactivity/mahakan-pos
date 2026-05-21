@@ -149,6 +149,9 @@ export const AUDIT_EVENT_TYPES = [
   "pengelola.create",
   "pengelola.update",
   "pengelola.delete",
+  /* Sesi AE-80 follow-up — bulk import CSV. */
+  "pengelola.import",
+  "creditor.import",
   "capital_movement.create",
   "capital_movement.delete",
   "distribution.compute",

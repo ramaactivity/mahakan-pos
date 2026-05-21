@@ -1,4 +1,5 @@
 export {
+  bulkImportCreditors,
   convertInvestorToCreditor,
   createCreditor,
   deleteCreditor,
@@ -12,6 +13,9 @@ export {
 export {
   isOk,
   type ApiResult,
+  type BulkImportCreditorRow,
+  type BulkImportCreditorsInput,
+  type BulkImportCreditorsResult,
   type ConvertInvestorToCreditorInput,
   type CreateCreditorInput,
   type Creditor,

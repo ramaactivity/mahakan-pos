@@ -57,7 +57,9 @@ import {
 } from "@/features/profit-distributions";
 import { CapitalChangesReportView } from "./investors/CapitalChangesReportView";
 import { InvestorFormModal } from "./investors/InvestorFormModal";
+import { CreditorImportWizard } from "./investors/CreditorImportWizard";
 import { InvestorImportWizard } from "./investors/InvestorImportWizard";
+import { PengelolaImportWizard } from "./investors/PengelolaImportWizard";
 import { PengelolaFormModal } from "./investors/PengelolaFormModal";
 import { DistributionPreviewModal } from "./investors/DistributionPreviewModal";
 /* Sesi AE-80 — Tab baru untuk modal-dividen v2. */
@@ -430,6 +432,7 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Pengelola | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const pengelolaQuery = useQuery({
     queryKey: ["pengelola"],
@@ -504,11 +507,20 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
           value={formatRupiah(totalDividendYtd)}
           sub="Total dibagi ke pengelola"
         />
-        <div className="flex items-end justify-end">
+        <div className="flex items-end justify-end gap-2">
           {canManage ? (
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="mr-1.5 size-4" /> Tambah Pengelola
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                onClick={() => setImportOpen(true)}
+                title="Import dari CSV"
+              >
+                <Upload className="mr-1.5 size-4" /> Import CSV
+              </Button>
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus className="mr-1.5 size-4" /> Tambah Pengelola
+              </Button>
+            </>
           ) : null}
         </div>
       </div>
@@ -561,6 +573,11 @@ function PengelolaTab({ canManage }: { canManage: boolean }) {
           setEditing(null);
         }}
         onSaved={refresh}
+      />
+      <PengelolaImportWizard
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={refresh}
       />
     </div>
   );

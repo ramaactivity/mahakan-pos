@@ -90,6 +90,10 @@ export interface BulkImportInvestorRow {
   bankAccountNumber?: string | null;
   bankAccountHolderName?: string | null;
   modalDisetor: number;
+  /* Sesi AE-80 follow-up — optional v2 fields. */
+  sharePct?: number | null;
+  dividendBalance?: number | null;
+  status?: InvestorStatus;
 }
 
 export interface BulkImportInvestorsInput {

@@ -1,5 +1,8 @@
 export type {
   ApiResult,
+  BulkImportPengelolaInput,
+  BulkImportPengelolaResult,
+  BulkImportPengelolaRow,
   CreatePengelolaInput,
   Pengelola,
   PengelolaStatus,
@@ -9,6 +12,7 @@ export type {
 export { isOk } from "./types";
 
 export {
+  bulkImportPengelola,
   createPengelola,
   deletePengelola,
   getPengelolaById,

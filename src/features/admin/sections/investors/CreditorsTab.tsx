@@ -13,6 +13,7 @@ import {
   RefreshCw,
   RotateCcw,
   Trash2,
+  Upload,
   Wallet,
 } from "lucide-react";
 import {
@@ -40,6 +41,7 @@ import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ConvertInvestorToCreditorModal } from "./ConvertInvestorToCreditorModal";
 import { CreditorFormModal } from "./CreditorFormModal";
+import { CreditorImportWizard } from "./CreditorImportWizard";
 import { CreditorRepaymentModal } from "./CreditorRepaymentModal";
 
 interface CreditorsTabProps {
@@ -60,6 +62,7 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
   const [reverseReason, setReverseReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const creditorsQuery = useQuery({
     queryKey: ["admin", "creditors", statusFilter],
@@ -238,6 +241,13 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
         <div className="flex-1" />
         {canManage ? (
           <>
+            <Button
+              variant="ghost"
+              onClick={() => setImportOpen(true)}
+              title="Bulk import kreditur dari CSV"
+            >
+              <Upload className="size-4" aria-hidden /> Import CSV
+            </Button>
             <Button
               variant="ghost"
               onClick={() => setConvertOpen(true)}
@@ -485,6 +495,16 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
           )}
         </CardContent>
       </Card>
+
+      {/* CSV import wizard */}
+      <CreditorImportWizard
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={() => {
+          setImportOpen(false);
+          refreshAll();
+        }}
+      />
 
       {/* Convert investor → kreditur modal */}
       <ConvertInvestorToCreditorModal
