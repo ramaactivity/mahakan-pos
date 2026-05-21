@@ -1,6 +1,6 @@
 "use server";
 
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { journalRetryQueue, journalEntries, users } from "@/db/schema";
@@ -478,14 +478,29 @@ export async function listJournalQueue(
     conds.push(sql`${journalRetryQueue.abandonedAt} IS NOT NULL`);
   }
 
-  const rows = await db
-    .select()
-    .from(journalRetryQueue)
-    .where(and(...conds))
-    .orderBy(desc(journalRetryQueue.createdAt))
-    .limit(limit);
+  /* Sesi AE-76 — wrap primary query di try/catch + extractDbError → kalau
+   * gagal, return fail() dengan reason aktual (bukan throw 500). UI bisa
+   * tampilkan error message ke owner. Sebelumnya error throw → server
+   * action throws → React Query error state ditelan UI → blank list. */
+  let rows;
+  try {
+    rows = await db
+      .select()
+      .from(journalRetryQueue)
+      .where(and(...conds))
+      .orderBy(desc(journalRetryQueue.createdAt))
+      .limit(limit);
+  } catch (e) {
+    const dbErr = extractDbError(e);
+    console.error("[listJournalQueue primary query]", e);
+    return fail("DB_ERROR", `Gagal load antrian: ${dbErr.formatted}`);
+  }
 
-  // Resolve display names
+  /* Resolve display names. Sesi AE-76 — replace `sql\`= ANY(${array})\``
+   * dengan inArray() helper. Pattern lama tidak reliable di prod
+   * (Neon serverless) — sama bug yang fix-ed di sesi AE-68 (investors).
+   * Plus wrap di try/catch supaya secondary query failure tidak nge-blank
+   * seluruh list — owner masih lihat row dengan "—" di kolom user. */
   const userIds = new Set<string>();
   for (const r of rows) {
     if (r.lastRetryByUserId) userIds.add(r.lastRetryByUserId);
@@ -494,11 +509,17 @@ export async function listJournalQueue(
   }
   const nameById = new Map<string, string>();
   if (userIds.size > 0) {
-    const usrRows = await db
-      .select({ id: users.id, name: users.name })
-      .from(users)
-      .where(sql`${users.id} = ANY(${Array.from(userIds)})`);
-    for (const u of usrRows) nameById.set(u.id, u.name);
+    try {
+      const usrRows = await db
+        .select({ id: users.id, name: users.name })
+        .from(users)
+        .where(inArray(users.id, Array.from(userIds)));
+      for (const u of usrRows) nameById.set(u.id, u.name);
+    } catch (e) {
+      console.error("[listJournalQueue user names lookup]", e);
+      /* Fallthrough — nameById empty, UI tampil "—" untuk nama. Lebih baik
+       * partial data daripada blank list (sesi AE-68 lesson). */
+    }
   }
 
   return ok(

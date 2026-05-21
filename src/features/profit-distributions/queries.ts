@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import {
   investors,
@@ -61,6 +61,8 @@ export async function fetchDistributionWithLines(
     .filter((l) => l.holderType === "pengelola")
     .map((l) => l.holderId);
 
+  /* Sesi AE-76 — replace sql`= ANY(${array})` dengan inArray() helper.
+   * Pattern lama tidak reliable di Neon serverless prod (sama bug AE-68). */
   const investorRows =
     investorIds.length > 0
       ? await db
@@ -70,7 +72,7 @@ export async function fetchDistributionWithLines(
             email: investors.email,
           })
           .from(investors)
-          .where(sql`${investors.id} = ANY(${investorIds})`)
+          .where(inArray(investors.id, investorIds))
       : [];
   const pengelolaRows =
     pengelolaIds.length > 0
@@ -81,7 +83,7 @@ export async function fetchDistributionWithLines(
             email: pengelola.email,
           })
           .from(pengelola)
-          .where(sql`${pengelola.id} = ANY(${pengelolaIds})`)
+          .where(inArray(pengelola.id, pengelolaIds))
       : [];
 
   const nameById = new Map<string, { fullName: string; email: string | null }>();
@@ -125,7 +127,7 @@ export async function findDistributionForPeriod(
         eq(profitDistributions.outletId, outletId),
         eq(profitDistributions.periodYear, year),
         eq(profitDistributions.periodMonth, month),
-        sql`${profitDistributions.status} = ANY(${statuses})`,
+        inArray(profitDistributions.status, statuses),
       ),
     )
     .limit(1);

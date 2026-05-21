@@ -219,6 +219,34 @@ export function JournalRetryQueueSection() {
           <Skeleton className="h-12 w-full" />
           <Skeleton className="h-12 w-full" />
         </Card>
+      ) : listQuery.isError ? (
+        /* Sesi AE-76 — surface error supaya tidak silent blank list.
+         * Mismatch pending=3 tapi list=[] hampir pasti query gagal di server. */
+        <Card className="p-6 space-y-3 border-danger-300 bg-danger-50/40">
+          <div className="flex items-start gap-3">
+            <AlertTriangle
+              className="size-5 shrink-0 text-danger-500 mt-0.5"
+              aria-hidden
+            />
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-semibold text-danger-700">
+                Gagal memuat antrian
+              </h3>
+              <p className="mt-1 text-xs text-danger-700">
+                {listQuery.error instanceof Error
+                  ? listQuery.error.message
+                  : String(listQuery.error)}
+              </p>
+              <Button
+                variant="outline"
+                onClick={refresh}
+                className="mt-3"
+              >
+                <RefreshCw className="size-4" aria-hidden /> Coba lagi
+              </Button>
+            </div>
+          </div>
+        </Card>
       ) : rows.length === 0 ? (
         <EmptyCard
           icon={CheckCircle2}

@@ -1,7 +1,7 @@
 "use server";
 
 import bcrypt from "bcryptjs";
-import { and, asc, desc, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -1392,11 +1392,17 @@ export async function listTransactionCorrections(
   }
   const nameById = new Map<string, string>();
   if (approverIds.size > 0) {
-    const usrRows = await db
-      .select({ id: users.id, name: users.name })
-      .from(users)
-      .where(sql`${users.id} = ANY(${Array.from(approverIds)})`);
-    for (const u of usrRows) nameById.set(u.id, u.name);
+    /* Sesi AE-76 — inArray() helper (sebelumnya `= ANY()` tidak reliable
+     * di Neon prod, bug pattern AE-68). */
+    try {
+      const usrRows = await db
+        .select({ id: users.id, name: users.name })
+        .from(users)
+        .where(inArray(users.id, Array.from(approverIds)));
+      for (const u of usrRows) nameById.set(u.id, u.name);
+    } catch (e) {
+      console.error("[correction list approver names]", e);
+    }
   }
 
   return ok(

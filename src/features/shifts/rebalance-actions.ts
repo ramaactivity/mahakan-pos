@@ -1,7 +1,7 @@
 "use server";
 
 import bcrypt from "bcryptjs";
-import { and, asc, desc, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -812,42 +812,52 @@ export async function listShiftRebalances(opts: {
   }
   const shiftIds = rows.map((r) => r.r.shiftId);
   const nameById = new Map<string, string>();
+  /* Sesi AE-76 — inArray() helper untuk semua secondary lookup queries.
+   * Pattern `sql\`= ANY(${array})\`` tidak reliable di Neon prod (AE-68). */
   if (userIds.size > 0) {
-    const userRows = await db
-      .select({ id: users.id, name: users.name })
-      .from(users)
-      .where(sql`${users.id} = ANY(${Array.from(userIds)})`);
-    for (const u of userRows) nameById.set(u.id, u.name);
+    try {
+      const userRows = await db
+        .select({ id: users.id, name: users.name })
+        .from(users)
+        .where(inArray(users.id, Array.from(userIds)));
+      for (const u of userRows) nameById.set(u.id, u.name);
+    } catch (e) {
+      console.error("[rebalance list approver names]", e);
+    }
   }
   const shiftMeta = new Map<
     string,
     { cashierName: string | null; closedAt: Date | null }
   >();
   if (shiftIds.length > 0) {
-    const shiftRows = await db
-      .select({
-        id: shifts.id,
-        userId: shifts.userId,
-        closedAt: shifts.closedAt,
-      })
-      .from(shifts)
-      .where(sql`${shifts.id} = ANY(${shiftIds})`);
-    const cashierIds = new Set<string>();
-    for (const s of shiftRows) cashierIds.add(s.userId);
-    const cashierRows =
-      cashierIds.size > 0
-        ? await db
-            .select({ id: users.id, name: users.name })
-            .from(users)
-            .where(sql`${users.id} = ANY(${Array.from(cashierIds)})`)
-        : [];
-    const cashierById = new Map<string, string>();
-    for (const u of cashierRows) cashierById.set(u.id, u.name);
-    for (const s of shiftRows) {
-      shiftMeta.set(s.id, {
-        cashierName: cashierById.get(s.userId) ?? null,
-        closedAt: s.closedAt,
-      });
+    try {
+      const shiftRows = await db
+        .select({
+          id: shifts.id,
+          userId: shifts.userId,
+          closedAt: shifts.closedAt,
+        })
+        .from(shifts)
+        .where(inArray(shifts.id, shiftIds));
+      const cashierIds = new Set<string>();
+      for (const s of shiftRows) cashierIds.add(s.userId);
+      const cashierRows =
+        cashierIds.size > 0
+          ? await db
+              .select({ id: users.id, name: users.name })
+              .from(users)
+              .where(inArray(users.id, Array.from(cashierIds)))
+          : [];
+      const cashierById = new Map<string, string>();
+      for (const u of cashierRows) cashierById.set(u.id, u.name);
+      for (const s of shiftRows) {
+        shiftMeta.set(s.id, {
+          cashierName: cashierById.get(s.userId) ?? null,
+          closedAt: s.closedAt,
+        });
+      }
+    } catch (e) {
+      console.error("[rebalance list shift meta]", e);
     }
   }
 

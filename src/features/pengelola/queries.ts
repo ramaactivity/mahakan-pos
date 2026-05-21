@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { capitalMovements, pengelola } from "@/db/schema";
 import type { Pengelola, PengelolaWithStats } from "./types";
@@ -57,7 +57,8 @@ export async function fetchPengelola(
         and(
           eq(capitalMovements.holderType, "pengelola"),
           eq(capitalMovements.outletId, outletId),
-          sql`${capitalMovements.holderId} = ANY(${ids})`,
+          /* Sesi AE-76 — inArray() (sebelumnya `= ANY()` tidak reliable, AE-68). */
+          inArray(capitalMovements.holderId, ids),
         ),
       )
       .groupBy(capitalMovements.holderId);
