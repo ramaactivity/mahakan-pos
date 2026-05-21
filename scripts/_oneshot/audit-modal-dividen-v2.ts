@@ -10,7 +10,7 @@
  *
  *   Sesi AE-84 — CROSS-LEDGER CHECKS (paling penting buat balance sheet):
  *   6. Σ active investor modal_disetor ≈ |neto journal balance 3101 Modal Owner|
- *   7. Σ active investor dividend_balance ≈ |neto journal balance 3202 Hutang Dividen|
+ *   7. Σ active investor dividend_balance ≈ |neto journal balance 2160 Hutang Dividen|
  *   8. Σ active creditor outstanding ≈ |neto journal balance 2150 Hutang Kreditur|
  *
  * Cross-ledger check pakai approximate equality (>=)
@@ -448,7 +448,7 @@ async function checkCrossLedgerModal() {
 
 async function checkCrossLedgerDividendBalance() {
   console.log(
-    "\n=== 7. Σ dividend_balance (investors) vs 3202 Hutang Dividen balance ===",
+    "\n=== 7. Σ dividend_balance (investors) vs 2160 Hutang Dividen balance ===",
   );
   const [divAgg] = await db
     .select({
@@ -458,21 +458,21 @@ async function checkCrossLedgerDividendBalance() {
     .where(isNull(investors.deletedAt));
   const sourceTotal = Number(divAgg?.total ?? 0);
 
-  const ledger = await getAccountBalance("3202");
+  const ledger = await getAccountBalance("2160");
   if (!ledger.accountId) {
     if (sourceTotal === 0) {
       ok(
-        "3202 Hutang Dividen tidak ada di COA + tidak ada saldo dividen = trivially consistent",
+        "2160 Hutang Dividen tidak ada di COA + tidak ada saldo dividen = trivially consistent",
       );
     } else {
       fail(
-        `Account 3202 tidak ada di COA tapi Σ dividend_balance = ${fmtIDR(sourceTotal)} — seed account dulu via Cutover Wizard`,
+        `Account 2160 tidak ada di COA tapi Σ dividend_balance = ${fmtIDR(sourceTotal)} — seed account dulu via Cutover Wizard`,
       );
     }
     return;
   }
   compareWithTolerance(
-    "3202 Hutang Dividen",
+    "2160 Hutang Dividen",
     sourceTotal,
     ledger.balance,
   );

@@ -68,9 +68,9 @@ export function DistributionPreviewModal({
   async function handleApprove() {
     if (submitting || !dist) return;
     /* Sesi AE-80 — confirm message berbeda per model. V2 post ke Hutang
-     * Dividen (3202), bukan langsung kas. */
+     * Dividen (2160), bukan langsung kas. */
     const jurnalDesc = isV2
-      ? "Dr 3201 Prive Owner / Cr 3202 Hutang Dividen (accrual)"
+      ? "Dr 3201 Prive Owner / Cr 2160 Hutang Dividen (accrual)"
       : "Dr 3201 Prive Owner / Cr 1101 Kas (langsung)";
     if (
       !window.confirm(
@@ -381,7 +381,7 @@ export function DistributionPreviewModal({
             </h3>
             <p className="mt-2 text-xs text-neutral-700">
               Jurnal pembalik akan di-post:{" "}
-              <strong>Dr 3202 Hutang Dividen / Cr 3201 Prive Owner</strong>.
+              <strong>Dr 2160 Hutang Dividen / Cr 3201 Prive Owner</strong>.
               Saldo dividen investor + pengelola akan dikurangi sesuai
               alokasi awal.
             </p>

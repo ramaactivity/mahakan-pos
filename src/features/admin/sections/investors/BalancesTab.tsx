@@ -471,7 +471,7 @@ export function BalancesTab({ canManage }: BalancesTabProps) {
         <div className="space-y-3">
           <div className="rounded-md border border-warning-300 bg-warning-50 p-2 text-xs text-warning-700">
             <AlertTriangle className="mr-1 inline size-3" />
-            Jurnal pembalik akan di-post (Dr Bank / Cr 3202). Saldo dividen
+            Jurnal pembalik akan di-post (Dr Bank / Cr 2160). Saldo dividen
             investor akan dikembalikan ke balance sebelumnya.
           </div>
           <Input

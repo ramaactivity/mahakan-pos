@@ -530,8 +530,8 @@ export async function approveAndPostDistribution(
 
       /* Sesi AE-80 — dispatch mapping v1 vs v2:
        *   V1: Dr 3201 / Cr 1101 (legacy, langsung kas keluar)
-       *   V2: Dr 3201 / Cr 3202 (accrual ke liability bucket, withdrawal
-       *       nanti Dr 3202 / Cr Kas). */
+       *   V2: Dr 3201 / Cr 2160 (accrual ke liability bucket, withdrawal
+       *       nanti Dr 2160 / Cr Kas). */
       const isV2 = distFull.calculationModel === "v2";
       const totalBagiHasil =
         distFull.investorPoolAmount + distFull.pengelolaPoolAmount;
@@ -858,7 +858,7 @@ export async function resendStatementsForDistribution(
  *     b. Post jurnal balik via recordJournal:
  *          sourceType: 'dividend_distribution_reversal'
  *          sourceId: id (sama dengan original distribution)
- *          Mapping: Dr 3202 Hutang Dividen / Cr 3201 Prive Owner
+ *          Mapping: Dr 2160 Hutang Dividen / Cr 3201 Prive Owner
  *     c. Insert capital_movements per line dengan kind='reversal',
  *        parent_movement_id = original.capitalMovementId.
  *     d. UPDATE investor.dividend_balance -= amount per line.
@@ -968,7 +968,7 @@ export async function reverseDistribution(
         }
       }
 
-      /* Post reversal journal (Dr 3202 / Cr 3201, opposite v2). */
+      /* Post reversal journal (Dr 2160 / Cr 3201, opposite v2). */
       const lines = mapDividendDistributionReversal({
         bagiHasilAmount: totalBagiHasil,
         periodLabel,

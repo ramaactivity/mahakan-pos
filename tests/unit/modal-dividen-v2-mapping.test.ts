@@ -22,7 +22,7 @@ import {
  * Sesi AE-80 — Mapping pure tests.
  *
  * Invariant: total Dr == total Cr untuk setiap mapping. Account codes
- * match COA seed (2150, 2160, 3201, 3202, 3401, 6701, dll).
+ * match COA seed (2150, 2160, 3201, 2160, 3401, 6701, dll).
  */
 
 function sumLines(lines: { debit?: number; credit?: number }[]): {
@@ -53,24 +53,24 @@ describe("Dividend distribution mappings", () => {
     expect(sum.debit).toBe(sum.credit);
   });
 
-  it("V2: Dr 3201 / Cr 3202 (re-classify ke liability)", () => {
+  it("V2: Dr 3201 / Cr 2160 (re-classify ke liability)", () => {
     const lines = mapDividendDistributionV2({
       bagiHasilAmount: 500_000,
       periodLabel: "Mei 2026",
     });
     expect(lines[0].accountCode).toBe("3201");
     expect(lines[0].debit).toBe(500_000);
-    expect(lines[1].accountCode).toBe("3202");
+    expect(lines[1].accountCode).toBe("2160");
     expect(lines[1].credit).toBe(500_000);
     expect(sumLines(lines).debit).toBe(sumLines(lines).credit);
   });
 
-  it("V2 reversal: Dr 3202 / Cr 3201 (swap)", () => {
+  it("V2 reversal: Dr 2160 / Cr 3201 (swap)", () => {
     const lines = mapDividendDistributionReversal({
       bagiHasilAmount: 500_000,
       periodLabel: "Mei 2026",
     });
-    expect(lines[0].accountCode).toBe("3202");
+    expect(lines[0].accountCode).toBe("2160");
     expect(lines[0].debit).toBe(500_000);
     expect(lines[1].accountCode).toBe("3201");
     expect(lines[1].credit).toBe(500_000);
@@ -79,21 +79,21 @@ describe("Dividend distribution mappings", () => {
 });
 
 describe("Dividend withdrawal mappings", () => {
-  it("withdrawal: Dr 3202 / Cr Bank balanced", () => {
+  it("withdrawal: Dr 2160 / Cr Bank balanced", () => {
     const lines = mapDividendWithdrawal({
       amount: 250_000,
       bankAccountCode: "1110",
       bankDestinationLabel: "BCA Anisa ...2515",
       investorName: "Anisa",
     });
-    expect(lines[0].accountCode).toBe("3202");
+    expect(lines[0].accountCode).toBe("2160");
     expect(lines[0].debit).toBe(250_000);
     expect(lines[1].accountCode).toBe("1110");
     expect(lines[1].credit).toBe(250_000);
     expect(sumLines(lines).debit).toBe(sumLines(lines).credit);
   });
 
-  it("reversal: Dr Bank / Cr 3202 (swap)", () => {
+  it("reversal: Dr Bank / Cr 2160 (swap)", () => {
     const lines = mapDividendWithdrawalReversal({
       amount: 250_000,
       bankAccountCode: "1110",
@@ -103,7 +103,7 @@ describe("Dividend withdrawal mappings", () => {
     });
     expect(lines[0].accountCode).toBe("1110");
     expect(lines[0].debit).toBe(250_000);
-    expect(lines[1].accountCode).toBe("3202");
+    expect(lines[1].accountCode).toBe("2160");
     expect(lines[1].credit).toBe(250_000);
     expect(sumLines(lines).debit).toBe(sumLines(lines).credit);
   });

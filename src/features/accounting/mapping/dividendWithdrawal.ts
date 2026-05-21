@@ -2,13 +2,13 @@
  * Sesi AE-80 — Mapping helper untuk dividend withdrawal journal.
  *
  * Saat investor tarik saldo dividen (V2 flow):
- *   Dr 3202 Hutang Dividen     withdraw.amount  (cancel liability)
+ *   Dr 2160 Hutang Dividen     withdraw.amount  (cancel liability)
  *      Cr <bank account>       withdraw.amount  (kas keluar)
  *
  * Bank account code di-resolve di caller via lookup bank_accounts (sama
  * pattern dengan cashDeposit). Caller pass pre-resolved code.
  *
- * Reversal: swap Dr/Cr — Dr Bank / Cr 3202 (restore liability).
+ * Reversal: swap Dr/Cr — Dr Bank / Cr 2160 (restore liability).
  */
 
 import type { JournalLineInput } from "../posting";
@@ -32,7 +32,7 @@ export function mapDividendWithdrawal(
   }
   return [
     {
-      accountCode: "3202",
+      accountCode: "2160",
       debit: input.amount,
       description: `Pencairan dividen ${input.investorName}`,
     },
@@ -48,7 +48,7 @@ export function mapDividendWithdrawal(
  * Reversal: swap Dr/Cr. Restore Hutang Dividen + tarik kas balik dari bank.
  *
  *   Dr <bank account>          amount  (kas balik dari bank)
- *      Cr 3202 Hutang Dividen   amount  (restore liability)
+ *      Cr 2160 Hutang Dividen   amount  (restore liability)
  *
  * Caller pass `reason` untuk audit trail description.
  */
@@ -66,7 +66,7 @@ export function mapDividendWithdrawalReversal(
       description: `Reversal transfer dari ${input.bankDestinationLabel}: ${reasonShort}`,
     },
     {
-      accountCode: "3202",
+      accountCode: "2160",
       credit: input.amount,
       description: `Restore hutang dividen ${input.investorName}: ${reasonShort}`,
     },

@@ -45,7 +45,7 @@ import {
  *      a. lockInvestors([investorId]) — prevent concurrent withdrawal.
  *      b. lockBankAccountAdvisory(bankAccountId) — serialize per-bank.
  *      c. Re-check investor.dividend_balance >= amount (post-lock).
- *      d. recordJournal sourceType='dividend_withdrawal' → Dr 3202 / Cr Bank.
+ *      d. recordJournal sourceType='dividend_withdrawal' → Dr 2160 / Cr Bank.
  *      e. Insert withdrawal_requests + capital_movements kind='dividend_withdrawal'.
  *      f. UPDATE investor.dividend_balance -= amount (CHECK >= 0 last defense).
  *      g. Update withdrawal_requests dengan journalEntryId + capitalMovementId.
@@ -198,7 +198,7 @@ export async function postWithdrawal(
         })
         .returning();
 
-      /* Post journal Dr 3202 / Cr Bank. */
+      /* Post journal Dr 2160 / Cr Bank. */
       const lines = mapDividendWithdrawal({
         amount: v.amount,
         bankAccountCode,

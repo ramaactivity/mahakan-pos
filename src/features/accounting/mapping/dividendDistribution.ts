@@ -54,11 +54,11 @@ export function mapDividendDistribution(
  *
  * V2 model re-classify equity → liability saat approve distribution:
  *   Dr 3201 Prive Owner       bagiHasil
- *     Cr 3202 Hutang Dividen   bagiHasil
+ *     Cr 2160 Hutang Dividen   bagiHasil
  *
  * Bedanya dengan V1: tidak langsung Cr Kas. Saldo dividen "menggantung"
- * di akun liability 3202 sampai investor melakukan withdrawal — saat
- * withdrawal, baru Dr 3202 / Cr Kas (lihat mapping/dividendWithdrawal.ts).
+ * di akun liability 2160 sampai investor melakukan withdrawal — saat
+ * withdrawal, baru Dr 2160 / Cr Kas (lihat mapping/dividendWithdrawal.ts).
  *
  * Retained earnings TIDAK dijurnal — sisa otomatis tetap di equity
  * (3301 Saldo Laba Ditahan tidak terpengaruh oleh distribusi v2 ini;
@@ -76,7 +76,7 @@ export function mapDividendDistributionV2(
       description: `Dividen Bagi Hasil ${input.periodLabel} (v2 accrual)`,
     },
     {
-      accountCode: "3202",
+      accountCode: "2160",
       debit: 0,
       credit: amount,
       description: `Hutang Dividen ${input.periodLabel}`,
@@ -88,7 +88,7 @@ export function mapDividendDistributionV2(
  * Sesi AE-80 — Reversal mapping. Mirror v2 dengan Dr↔Cr swap.
  *
  * Saat reverseDistribution dipanggil:
- *   Dr 3202 Hutang Dividen     bagiHasil  (cancel liability)
+ *   Dr 2160 Hutang Dividen     bagiHasil  (cancel liability)
  *     Cr 3201 Prive Owner       bagiHasil  (restore equity)
  */
 export function mapDividendDistributionReversal(
@@ -97,7 +97,7 @@ export function mapDividendDistributionReversal(
   const amount = Math.max(0, Math.floor(input.bagiHasilAmount));
   return [
     {
-      accountCode: "3202",
+      accountCode: "2160",
       debit: amount,
       credit: 0,
       description: `Pembatalan Hutang Dividen ${input.periodLabel}`,

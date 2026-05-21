@@ -27,7 +27,7 @@ import { formatRupiah, parseRupiah } from "@/lib/format";
  *
  * Server-side: lockInvestor + lockBankAccountAdvisory + re-check post-lock.
  *
- * Journal: Dr 3202 Hutang Dividen / Cr <bank code>. Capital movement
+ * Journal: Dr 2160 Hutang Dividen / Cr <bank code>. Capital movement
  * kind='dividend_withdrawal' di-create dengan link ke journal.
  */
 
@@ -113,7 +113,7 @@ export function WithdrawalModal({
     const selectedBank = bankList.find((b) => b.id === bankAccountId);
     if (
       !window.confirm(
-        `Yakin tarik Rp ${parsedAmount.toLocaleString("id-ID")} ke ${selectedBank ? formatBankAccountDisplay(selectedBank) : "bank yang dipilih"}?\n\nJurnal: Dr 3202 / Cr Bank\nSaldo dividen ${investorName}: Rp ${dividendBalance.toLocaleString("id-ID")} → Rp ${(dividendBalance - parsedAmount).toLocaleString("id-ID")}`,
+        `Yakin tarik Rp ${parsedAmount.toLocaleString("id-ID")} ke ${selectedBank ? formatBankAccountDisplay(selectedBank) : "bank yang dipilih"}?\n\nJurnal: Dr 2160 / Cr Bank\nSaldo dividen ${investorName}: Rp ${dividendBalance.toLocaleString("id-ID")} → Rp ${(dividendBalance - parsedAmount).toLocaleString("id-ID")}`,
       )
     ) {
       return;
@@ -240,7 +240,7 @@ export function WithdrawalModal({
         {validation.ok && parsedAmount > 0 ? (
           <div className="rounded-md border border-neutral-200 bg-neutral-50 p-2 text-[11px] font-mono text-neutral-700">
             <p className="mb-1 font-semibold not-italic">Preview Jurnal:</p>
-            <p>Dr 3202 Hutang Dividen ............ {formatRupiah(parsedAmount)}</p>
+            <p>Dr 2160 Hutang Dividen ............ {formatRupiah(parsedAmount)}</p>
             <p>&nbsp;&nbsp;Cr Bank (resolved) ......... {formatRupiah(parsedAmount)}</p>
           </div>
         ) : null}
