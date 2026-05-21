@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Banknote,
   BarChart3,
+  Bike,
   BookOpen,
   Briefcase,
   ClipboardList,
@@ -46,6 +47,7 @@ export type AdminSection =
   | "accounting"
   | "balance_account"
   | "reconciliation"
+  | "aggregator_online"
   | "promos"
   | "reports"
   | "audit"
@@ -123,6 +125,9 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "balance_account", label: "Saldo Akun", Icon: WalletIcon },
       { key: "accounting", label: "Akuntansi", Icon: BookOpen },
       { key: "reports", label: "Laporan", Icon: BarChart3 },
+      /* Sesi AE-77 — Laporan online order (GoFood/GrabFood/ShopeeFood)
+       * + cashless (QRIS/EDC). Drilldown per-order kalau import CSV. */
+      { key: "aggregator_online", label: "Online & Cashless", Icon: Bike },
       { key: "reconciliation", label: "Rekonsiliasi", Icon: History },
       /* Sesi AE-62w — antrian retry untuk failed journal hooks.
        * Owner trigger retry / abandon. Manager view-only (via RBAC). */

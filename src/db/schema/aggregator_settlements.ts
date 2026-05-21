@@ -8,6 +8,8 @@ import {
   date,
   index,
   check,
+  jsonb,
+  integer,
 } from "drizzle-orm/pg-core";
 import { outlets } from "./outlets";
 import { users } from "./users";
@@ -48,6 +50,18 @@ export const aggregatorSettlements = pgTable(
     bankAccountId: uuid("bank_account_id"),
     referenceNo: text("reference_no"),
     notes: text("notes"),
+
+    /** Sesi AE-77 — Per-order line items dari CSV import (optional, NULL
+     * untuk manual entry). Format:
+     *   { "rows": [{ "date": "YYYY-MM-DD", "orderNo"?: string, "gross": int,
+     *               "fee": int, "net": int, "customer"?: string,
+     *               "notes"?: string, "rawLine"?: number }], ... }
+     * Dipakai untuk drilldown UI di Laporan Aggregator. Finance/akuntansi
+     * audit per-order trail (tanggal, no order, gross, fee). */
+    lineItems: jsonb("line_items"),
+    /** Sesi AE-77 — quick count untuk list view tanpa parse JSON setiap kali.
+     * NULL = no line items, 0 = empty array, N = N rows. */
+    lineItemsCount: integer("line_items_count"),
 
     createdBy: uuid("created_by")
       .notNull()

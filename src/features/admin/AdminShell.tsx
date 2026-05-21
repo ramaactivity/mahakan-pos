@@ -90,6 +90,11 @@ const ReconciliationSection = lazy(() =>
     default: m.ReconciliationSection,
   })),
 );
+const AggregatorOnlineSection = lazy(() =>
+  import("@/features/admin/sections/AggregatorOnlineSection").then((m) => ({
+    default: m.AggregatorOnlineSection,
+  })),
+);
 const ReportsSection = lazy(() =>
   import("@/features/admin/sections/ReportsSection").then((m) => ({
     default: m.ReportsSection,
@@ -140,6 +145,7 @@ const VALID_SECTIONS: ReadonlySet<AdminSection> = new Set([
   "accounting",
   "balance_account",
   "reconciliation",
+  "aggregator_online",
   "promos",
   "reports",
   "audit",
@@ -257,6 +263,8 @@ export function AdminShell() {
               <BalanceAccountSection />
             ) : section === "reconciliation" ? (
               <ReconciliationSection viewerRole={session.user.role} />
+            ) : section === "aggregator_online" ? (
+              <AggregatorOnlineSection />
             ) : section === "reports" ? (
               <ReportsSection viewerRole={session.user.role} />
             ) : section === "audit" ? (

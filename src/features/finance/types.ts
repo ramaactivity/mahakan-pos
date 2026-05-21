@@ -97,6 +97,18 @@ export type VerifyCashDepositInput = {
 export type RejectCashDepositInput = { id: string; reason: string };
 export type UnverifyCashDepositInput = { id: string; reason: string };
 
+/** Sesi AE-77 — per-order line item dari CSV import. */
+export type AggregatorLineItem = {
+  date: string;
+  orderNo?: string | null;
+  gross: number;
+  fee: number;
+  net: number;
+  customer?: string | null;
+  notes?: string | null;
+  rawLine?: number | null;
+};
+
 export type CreateAggregatorSettlementInput = {
   channel: AggregatorChannel;
   periodFrom: string;
@@ -106,6 +118,9 @@ export type CreateAggregatorSettlementInput = {
   bankCreditedAt?: Date | string | null;
   referenceNo?: string | null;
   notes?: string | null;
+  bankAccountId?: string | null;
+  /** Optional — saat dari CSV import, sertakan per-order rows untuk drilldown. */
+  lineItems?: AggregatorLineItem[] | null;
 };
 
 export type UpdateAggregatorSettlementInput = {

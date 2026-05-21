@@ -83,6 +83,19 @@ export const aggregatorChannelEnum = z.enum([
   "qris",
 ]);
 
+/** Sesi AE-77 — per-order line item dari CSV import. Optional; manual
+ * entry tidak punya line items. */
+export const aggregatorLineItemSchema = z.object({
+  date: isoDate,
+  orderNo: z.string().trim().max(64).nullish(),
+  gross: z.number().int().nonnegative().max(999_999_999),
+  fee: z.number().int().nonnegative().max(999_999_999).default(0),
+  net: z.number().int().nonnegative().max(999_999_999),
+  customer: z.string().trim().max(128).nullish(),
+  notes: z.string().trim().max(256).nullish(),
+  rawLine: z.number().int().nullish(),
+});
+
 export const createAggregatorSettlementSchema = z
   .object({
     channel: aggregatorChannelEnum,
@@ -101,6 +114,9 @@ export const createAggregatorSettlementSchema = z
       .transform((v) => (v ? new Date(v) : null)),
     referenceNo: z.string().trim().max(64).nullish(),
     notes: z.string().trim().max(500).nullish(),
+    bankAccountId: z.string().uuid().nullish(),
+    /** Optional — saat dari CSV import, sertakan per-order rows untuk drilldown. */
+    lineItems: z.array(aggregatorLineItemSchema).max(10_000).nullish(),
   })
   .refine((v) => v.periodTo >= v.periodFrom, {
     message: "Periode akhir harus >= periode awal",

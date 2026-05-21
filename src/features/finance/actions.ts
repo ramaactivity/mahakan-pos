@@ -27,6 +27,7 @@ import {
   fetchReconciliationDrillDown,
   getCashDepositDashboard,
   getCashFlowLedger,
+  getAggregatorSettlementDetail,
   getCashOnHand,
   getDailySettlementReport,
   getOutletThreshold,
@@ -188,6 +189,24 @@ export async function fetchAggregatorSettlements(opts?: {
   const data = await listAggregatorSettlements({
     outletId: session.user.outletId,
     ...opts,
+  });
+  return ok(data);
+}
+
+/** Sesi AE-77 — Fetch detail 1 settlement (dengan line_items JSON) untuk
+ * drilldown modal di Laporan Aggregator. */
+export async function fetchAggregatorSettlementDetail(input: {
+  id: string;
+}): Promise<
+  ApiResult<Awaited<ReturnType<typeof getAggregatorSettlementDetail>>>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "aggregator_settlement.view")) {
+    return fail("FORBIDDEN", "Tidak punya akses settlement aggregator");
+  }
+  const data = await getAggregatorSettlementDetail({
+    outletId: session.user.outletId,
+    id: input.id,
   });
   return ok(data);
 }
@@ -799,6 +818,10 @@ export async function createAggregatorSettlement(
   const v = parsed.data;
   const net = v.grossAmount - v.feeAmount;
 
+  /* Sesi AE-77 — line items (optional dari CSV import) stored di JSONB
+   * column. UI drilldown lookup line_items[] untuk lihat per-order detail. */
+  const lineItemsArr =
+    v.lineItems && v.lineItems.length > 0 ? v.lineItems : null;
   const [row] = await db
     .insert(aggregatorSettlements)
     .values({
@@ -810,8 +833,11 @@ export async function createAggregatorSettlement(
       feeAmount: v.feeAmount,
       netAmount: net,
       bankCreditedAt: v.bankCreditedAt ?? null,
+      bankAccountId: v.bankAccountId ?? null,
       referenceNo: v.referenceNo ?? null,
       notes: v.notes ?? null,
+      lineItems: lineItemsArr,
+      lineItemsCount: lineItemsArr ? lineItemsArr.length : null,
       createdBy: session.user.id,
     })
     .returning();

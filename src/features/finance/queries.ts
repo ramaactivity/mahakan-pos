@@ -1716,6 +1716,7 @@ export async function listAggregatorSettlements(opts: {
       bankCreditedAt: Date | null;
       referenceNo: string | null;
       notes: string | null;
+      lineItemsCount: number | null;
       createdAt: Date;
       createdByName: string | null;
     }
@@ -1761,9 +1762,66 @@ export async function listAggregatorSettlements(opts: {
     bankCreditedAt: r.row.bankCreditedAt,
     referenceNo: r.row.referenceNo,
     notes: r.row.notes,
+    /* Sesi AE-77 — quick count untuk badge "12 orders" tanpa fetch full JSON. */
+    lineItemsCount: r.row.lineItemsCount ?? null,
     createdAt: r.row.createdAt,
     createdByName: r.creatorName ?? null,
   }));
+}
+
+/* Sesi AE-77 — Fetch settlement by id dengan full lineItems untuk drilldown. */
+export async function getAggregatorSettlementDetail(opts: {
+  outletId: string;
+  id: string;
+}): Promise<{
+  id: string;
+  channel: AggregatorChannel;
+  periodFrom: string;
+  periodTo: string;
+  grossAmount: number;
+  feeAmount: number;
+  netAmount: number;
+  bankCreditedAt: Date | null;
+  bankAccountId: string | null;
+  referenceNo: string | null;
+  notes: string | null;
+  lineItems: unknown;
+  lineItemsCount: number | null;
+  createdAt: Date;
+  createdByName: string | null;
+} | null> {
+  const [row] = await db
+    .select({
+      row: aggregatorSettlements,
+      creatorName: users.name,
+    })
+    .from(aggregatorSettlements)
+    .leftJoin(users, eq(aggregatorSettlements.createdBy, users.id))
+    .where(
+      and(
+        eq(aggregatorSettlements.outletId, opts.outletId),
+        eq(aggregatorSettlements.id, opts.id),
+      ),
+    )
+    .limit(1);
+  if (!row) return null;
+  return {
+    id: row.row.id,
+    channel: row.row.channel as AggregatorChannel,
+    periodFrom: row.row.periodFrom,
+    periodTo: row.row.periodTo,
+    grossAmount: row.row.grossAmount,
+    feeAmount: row.row.feeAmount,
+    netAmount: row.row.netAmount,
+    bankCreditedAt: row.row.bankCreditedAt,
+    bankAccountId: row.row.bankAccountId,
+    referenceNo: row.row.referenceNo,
+    notes: row.row.notes,
+    lineItems: row.row.lineItems,
+    lineItemsCount: row.row.lineItemsCount ?? null,
+    createdAt: row.row.createdAt,
+    createdByName: row.creatorName ?? null,
+  };
 }
 
 // ---------------------------------------------------------------------------
