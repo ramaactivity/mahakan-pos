@@ -59,6 +59,15 @@ interface ItemRow {
   qty: string;
   unit: string;
   unitCost: string;
+  /** Sesi AE-78 — dual-input "smart math" mirror Google Sheets. User bisa
+   * input EITHER harga per satuan atau total bayar; sistem auto-derive
+   * yang lain. `inputMode` tracks mana yang user-typed (source of truth):
+   *   - "unit": user input unitCost (default), total = qty × unitCost
+   *   - "total": user input total, unitCost = total ÷ qty (mirror sheets
+   *     pattern Anisa — dia type total, harga per Kg auto-derive)
+   * `total` field stored UI-side, server tetap terima qty + unitCost. */
+  inputMode: "unit" | "total";
+  total: string;
 }
 
 function newRow(): ItemRow {
@@ -68,6 +77,8 @@ function newRow(): ItemRow {
     qty: "",
     unit: "",
     unitCost: "",
+    inputMode: "unit",
+    total: "",
   };
 }
 
@@ -114,6 +125,14 @@ function parseQtyDecimal(s: string): number {
   const cleaned = s.trim().replace(/\s/g, "").replace(",", ".");
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : NaN;
+}
+
+/** Sesi AE-78 — Parse total bayar (rupiah). Accept "10.000", "10000", "Rp 10.000". */
+function parseTotalSafe(s: string): number {
+  const cleaned = s.trim().replace(/[^\d]/g, "");
+  if (!cleaned) return 0;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
 }
 
 function formatQtyForDisplay(n: number): string {
@@ -260,6 +279,89 @@ export function PurchaseFormModal({
     );
   }
 
+  /* Sesi AE-78 — Smart math handlers untuk dual-input.
+   *
+   * User scenario (feedback Anisa, mirror Google Sheets):
+   *   "Aku mau input bawang merah 1/4 [Kg], harganya 10.000"
+   * Di Sheets, dia type:
+   *   - QTY (H): 0.25
+   *   - Total (K): 10000
+   * Harga satuan (J) auto-derive = K/H = 40000/Kg.
+   *
+   * Di POS pre-AE-78, dia harus type harga per Kg (40000) — terbalik dari
+   * mental model dia "aku bayar 10rb untuk 250gr". AE-78 add input "Total
+   * Bayar" yang bisa di-type langsung; harga per satuan jadi derived.
+   *
+   * Recalc logic:
+   *   - inputMode="unit"  → total = qty × unitCost (re-compute on qty/cost change)
+   *   - inputMode="total" → unitCost = total ÷ qty (re-compute on qty/total change) */
+  function setUnitCost(id: string, newCost: string) {
+    setItems((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const qtyN = parseQtyDecimal(r.qty);
+        const costN = parseRupiahSafe(newCost);
+        const newTotal =
+          Number.isFinite(qtyN) && qtyN > 0 && costN >= 0
+            ? String(Math.round(qtyN * costN))
+            : r.total;
+        return {
+          ...r,
+          unitCost: newCost,
+          total: newTotal,
+          inputMode: "unit",
+        };
+      }),
+    );
+  }
+
+  function setTotal(id: string, newTotal: string) {
+    setItems((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const qtyN = parseQtyDecimal(r.qty);
+        const totalN = parseTotalSafe(newTotal);
+        const newCost =
+          Number.isFinite(qtyN) && qtyN > 0 && totalN >= 0
+            ? String(Math.round(totalN / qtyN))
+            : r.unitCost;
+        return {
+          ...r,
+          total: newTotal,
+          unitCost: newCost,
+          inputMode: "total",
+        };
+      }),
+    );
+  }
+
+  function setQty(id: string, newQty: string) {
+    setItems((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const qtyN = parseQtyDecimal(newQty);
+        if (!Number.isFinite(qtyN) || qtyN <= 0) {
+          return { ...r, qty: newQty };
+        }
+        if (r.inputMode === "total" && r.total) {
+          const totalN = parseTotalSafe(r.total);
+          const newCost = totalN >= 0 ? String(Math.round(totalN / qtyN)) : r.unitCost;
+          return { ...r, qty: newQty, unitCost: newCost };
+        }
+        // default mode "unit" — recompute total kalau cost ada
+        const costN = parseRupiahSafe(r.unitCost);
+        if (costN >= 0) {
+          return {
+            ...r,
+            qty: newQty,
+            total: String(Math.round(qtyN * costN)),
+          };
+        }
+        return { ...r, qty: newQty };
+      }),
+    );
+  }
+
   /* Sesi AE-63 phase6 — staff gudang request: "input timbangan 250gr +
    * harga per kg" pattern (kayak Sheets). Saat user ganti dropdown unit,
    * kalau unit baru beda dimensi (Kg↔gr, L↔ml), auto-scale harga supaya
@@ -275,6 +377,22 @@ export function PurchaseFormModal({
     setItems((prev) =>
       prev.map((r) => {
         if (r.id !== rowId) return r;
+        /* Sesi AE-78 — kalau row di mode "total", harga per satuan adalah
+         * derived dari total/qty. Total tidak perlu di-scale (ngga ada
+         * unit dimension untuk total). Cuma re-derive harga supaya
+         * tampilannya match unit baru.
+         *
+         * Kalau row di mode "unit" (default), scale harga sama unit
+         * (existing AE-63 phase6 behavior). */
+        if (r.inputMode === "total") {
+          const qtyN = parseQtyDecimal(r.qty);
+          const totalN = parseTotalSafe(r.total);
+          const newCost =
+            Number.isFinite(qtyN) && qtyN > 0 && totalN >= 0
+              ? String(Math.round(totalN / qtyN))
+              : r.unitCost;
+          return { ...r, unit: newUnit, unitCost: newCost };
+        }
         const scaledRaw = scaleCostOnUnitChange({
           oldUnit: r.unit,
           newUnit,
@@ -283,7 +401,18 @@ export function PurchaseFormModal({
         if (scaledRaw === null) {
           return { ...r, unit: newUnit };
         }
-        return { ...r, unit: newUnit, unitCost: String(Math.round(scaledRaw)) };
+        const newCost = String(Math.round(scaledRaw));
+        const qtyN = parseQtyDecimal(r.qty);
+        const newTotal =
+          Number.isFinite(qtyN) && qtyN > 0
+            ? String(Math.round(qtyN * scaledRaw))
+            : r.total;
+        return {
+          ...r,
+          unit: newUnit,
+          unitCost: newCost,
+          total: newTotal,
+        };
       }),
     );
   }
@@ -308,6 +437,11 @@ export function PurchaseFormModal({
     // Auto-fill unit cost from master kalau row kosong.
     if (row && row.unitCost.trim() === "" && ing.costPerUnit > 0) {
       patch.unitCost = String(ing.costPerUnit);
+      /* Sesi AE-78 — sync total kalau qty sudah ada (mirror existing math). */
+      const qtyN = row ? parseQtyDecimal(row.qty) : NaN;
+      if (Number.isFinite(qtyN) && qtyN > 0) {
+        patch.total = String(Math.round(qtyN * ing.costPerUnit));
+      }
     }
     // Auto-fill unit dari master kalau staff belum pilih.
     if (row && !row.unit) {
@@ -334,17 +468,24 @@ export function PurchaseFormModal({
     if (!isOk(res) || !res.data) return;
     const m = res.data;
     setItems((prev) =>
-      prev.map((r) =>
-        r.id === rowId
-          ? {
-              ...r,
-              // Pakai harga total per pack langsung — staff input qty
-              // dalam pack unit, total = qty × unit_cost.
-              unitCost: String(m.unitCost),
-              unit: m.packUnit,
-            }
-          : r,
-      ),
+      prev.map((r) => {
+        if (r.id !== rowId) return r;
+        /* Sesi AE-78 — sync total kalau qty ada (mirror smart math). */
+        const qtyN = parseQtyDecimal(r.qty);
+        const newTotal =
+          Number.isFinite(qtyN) && qtyN > 0
+            ? String(Math.round(qtyN * m.unitCost))
+            : r.total;
+        return {
+          ...r,
+          // Pakai harga total per pack langsung — staff input qty
+          // dalam pack unit, total = qty × unit_cost.
+          unitCost: String(m.unitCost),
+          unit: m.packUnit,
+          total: newTotal,
+          inputMode: "unit",
+        };
+      }),
     );
     // Sesi AE-43 — simpan pack info untuk preview conversion. Server akan
     // re-lookup di transaction (source of truth tetap supplier_ingredients).
@@ -643,15 +784,32 @@ export function PurchaseFormModal({
               </Button>
             </div>
             <p className="text-xs text-neutral-600">
-              Mirror Google Sheet — pilih bahan, isi QTY (boleh
-              <strong> 0.5</strong> kalau setengah), pilih satuan, isi harga
-              per satuan tersebut. Total per baris hidup-update otomatis.{" "}
-              <span className="text-mahakan-green-900">
-                Ganti satuan Kg ↔ gr (atau L ↔ ml) → harga otomatis
-                ter-scale.
-              </span>
+              <strong>Mirror Google Sheet</strong> — pilih bahan, isi
+              <strong> QTY</strong> (boleh 0.5 / 0.25 kalau setengah / seperempat),
+              pilih satuan, lalu pilih salah satu:
+              <strong className="text-mahakan-green-900">
+                {" "}
+                isi <em>Harga per satuan</em>
+              </strong>{" "}
+              <em>ATAU</em>
+              <strong className="text-mahakan-green-900">
+                {" "}
+                isi <em>Total Bayar</em>
+              </strong>
+              . Field yang lain auto-hitung. Contoh: beli bawang merah 250gr,
+              total Rp 10.000 → tinggal isi QTY=0.25, Satuan=Kg, Total=10.000
+              → harga per Kg otomatis muncul (Rp 40.000/Kg).
             </p>
             <div className="space-y-3 rounded-md border border-neutral-200 p-2">
+              {/* Sesi AE-78 — column header (sub-grid, hanya tampil di md+). */}
+              <div className="hidden gap-2 px-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 md:grid md:grid-cols-[1.4fr_80px_90px_160px_160px_36px]">
+                <span>Bahan</span>
+                <span>QTY</span>
+                <span>Satuan</span>
+                <span>Harga / Satuan</span>
+                <span>Total Bayar</span>
+                <span />
+              </div>
               {items.map((row, idx) => {
                 const ing = row.ingredientId
                   ? ingredientById.get(row.ingredientId)
@@ -717,7 +875,10 @@ export function PurchaseFormModal({
                     key={row.id}
                     className="rounded-md bg-neutral-50 p-2"
                   >
-                    <div className="grid gap-2 md:grid-cols-[1.5fr_90px_100px_180px_36px]">
+                    {/* Sesi AE-78 — Layout 6-col: Bahan / QTY / Satuan /
+                     * Harga per Satuan / Total Bayar / Hapus. Plus visual
+                     * indikator field mana yang user-typed vs derived. */}
+                    <div className="grid gap-2 md:grid-cols-[1.4fr_80px_90px_160px_160px_36px]">
                       <Combobox
                         ariaLabel={`Bahan ${idx + 1}`}
                         placeholder="Pilih bahan…"
@@ -743,9 +904,7 @@ export function PurchaseFormModal({
                         type="text"
                         inputMode="decimal"
                         value={row.qty}
-                        onChange={(e) =>
-                          updateRow(row.id, { qty: e.target.value })
-                        }
+                        onChange={(e) => setQty(row.id, e.target.value)}
                       />
                       <Select
                         ariaLabel={`Satuan baris ${idx + 1}`}
@@ -754,33 +913,67 @@ export function PurchaseFormModal({
                         onValueChange={(v) => onUnitChange(row.id, v)}
                         disabled={!ing}
                       />
-                      {/* Sesi AE-63 phase6 — harga input dengan dynamic
-                        * "per {unit}" suffix yang jelas. Pre-fix:
-                        * placeholder generic "Harga per unit". Sekarang
-                        * jelas "per Kg" / "per gr" / "per Pcs" — staff
-                        * tidak salah interpret. */}
+                      {/* Harga per satuan — user-typed kalau inputMode='unit',
+                       * derived (light bg) kalau inputMode='total'. */}
                       <div className="relative">
                         <Input
                           aria-label={`Harga per ${unit || "unit"} baris ${idx + 1}`}
-                          placeholder="0"
+                          placeholder={
+                            row.inputMode === "total" ? "auto" : "0"
+                          }
                           type="text"
                           inputMode="numeric"
                           value={row.unitCost}
-                          onChange={(e) =>
-                            updateRow(row.id, { unitCost: e.target.value })
-                          }
-                          className="pr-16"
+                          onChange={(e) => setUnitCost(row.id, e.target.value)}
+                          className={cn(
+                            "pr-16",
+                            row.inputMode === "total" &&
+                              "bg-neutral-100 text-neutral-600",
+                          )}
                         />
                         <span
                           className={cn(
                             "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                            unit
-                              ? "bg-mahakan-green-100 text-mahakan-green-900"
-                              : "bg-neutral-200 text-neutral-500",
+                            row.inputMode === "total"
+                              ? "bg-neutral-200 text-neutral-500"
+                              : unit
+                                ? "bg-mahakan-green-100 text-mahakan-green-900"
+                                : "bg-neutral-200 text-neutral-500",
                           )}
                           aria-hidden
                         >
-                          per {unit || "—"}
+                          {row.inputMode === "total" ? "auto" : `per ${unit || "—"}`}
+                        </span>
+                      </div>
+                      {/* Sesi AE-78 — Total Bayar field (Sheets-style).
+                       * User-typed kalau inputMode='total', derived (light bg)
+                       * kalau inputMode='unit'. */}
+                      <div className="relative">
+                        <Input
+                          aria-label={`Total bayar baris ${idx + 1}`}
+                          placeholder={
+                            row.inputMode === "unit" ? "auto" : "0"
+                          }
+                          type="text"
+                          inputMode="numeric"
+                          value={row.total}
+                          onChange={(e) => setTotal(row.id, e.target.value)}
+                          className={cn(
+                            "pr-16",
+                            row.inputMode === "unit" &&
+                              "bg-neutral-100 text-neutral-600",
+                          )}
+                        />
+                        <span
+                          className={cn(
+                            "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                            row.inputMode === "unit"
+                              ? "bg-neutral-200 text-neutral-500"
+                              : "bg-mahakan-green-100 text-mahakan-green-900",
+                          )}
+                          aria-hidden
+                        >
+                          {row.inputMode === "unit" ? "auto" : "total"}
                         </span>
                       </div>
                       <Button
@@ -804,6 +997,15 @@ export function PurchaseFormModal({
                             {formatRupiah(lineTotal)}
                           </strong>
                         </span>
+                        {/* Sesi AE-78 — kalau mode total, tunjukkan formula
+                         * "Total ÷ QTY = Harga" supaya jelas. */}
+                        {row.inputMode === "total" ? (
+                          <span className="font-mono text-[11px] text-neutral-500">
+                            ({formatRupiah(parseTotalSafe(row.total))} ÷{" "}
+                            {formatQtyForDisplay(qtyN)} = {formatRupiah(costN)}/
+                            {unit || "unit"})
+                          </span>
+                        ) : null}
                         {/* Sesi AE-63 phase6 — show per-master equivalent
                           * supaya owner bisa cross-check harga vs ingatannya
                           * ("harga bawang Rp 10rb/Kg"). */}
@@ -815,7 +1017,7 @@ export function PurchaseFormModal({
                       </div>
                     ) : ing ? (
                       <div className="mt-1.5 flex justify-end pr-12 text-xs text-neutral-500">
-                        <span>Isi QTY + Harga buat lihat total</span>
+                        <span>Isi QTY + (Harga ATAU Total) buat lihat hitungan</span>
                       </div>
                     ) : null}
                     {/* Sesi AE-43 — preview konversi unit ke master. Hijau
