@@ -516,6 +516,42 @@ export async function postJournalForCashDepositUnverified(args: {
 
   const code = args.bankAccountCode ?? resolveBankCodeFromDestination(args.bankDestination);
 
+  /* Sesi AE-69 P0 FATAL FIX — pre-check original BEFORE posting REVERT.
+   *
+   * Bug yang ditemukan via prod (Anisa test cycle create→verify→unverify→
+   * edit→reject): kalau ORIGINAL cash_deposit_verified JE sudah tidak
+   * ada/sudah reversed (mis. lifecycle aneh: create→verify→unverify→edit→
+   * unverify lagi), hook ini akan POST orphan REVERT JE yang TIDAK pernah
+   * di-pair-void → muncul di Buku Besar sebagai phantom credit.
+   *
+   * Strategi: cek dulu apakah ada original posted untuk depositId ini.
+   * Kalau TIDAK ADA → skip post REVERT (idempotent, no phantom entry).
+   * Kalau ADA → post REVERT + pair-void keduanya (AE-64 invariant).
+   *
+   * Real-world prod case: JE-202605-0005 stuck posted Rp 3M ke Bank BCA,
+   * jadi saldo akhir Buku Besar Bank BCA tampil −3.700.000 (kontra). */
+  const [existingOriginal] = await db
+    .select({ id: journalEntries.id })
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.outletId, args.outletId),
+        eq(journalEntries.sourceType, "cash_deposit_verified"),
+        eq(journalEntries.sourceId, args.cashDepositId),
+        sql`${journalEntries.status} = 'posted'`,
+      ),
+    )
+    .limit(1);
+
+  if (!existingOriginal) {
+    /* No active original — skip phantom REVERT. unverify still valid
+     * sebagai status-flag operation, tapi tidak butuh journal post. */
+    console.warn(
+      `[cash_deposit_unverified] No active original verified JE for deposit ${args.cashDepositId} — skip REVERT post (sesi AE-69 P0 fix)`,
+    );
+    return;
+  }
+
   const lines = mapCashDepositUnverified({
     cashDepositId: args.cashDepositId,
     outletId: args.outletId,
@@ -544,33 +580,26 @@ export async function postJournalForCashDepositUnverified(args: {
   // (2) audit trail link unverify ↔ original via reversedByEntryId
   // (3) pair-void: counter ikut di-mark reversed di bawah supaya net 0
   //     di ledger sum (lihat reverseJournalEntry comment)
-  const updated = await db
+  await db
     .update(journalEntries)
     .set({
       status: "reversed",
       reversedByEntryId: result.entryId,
       updatedAt: new Date(),
     })
-    .where(
-      and(
-        eq(journalEntries.outletId, args.outletId),
-        eq(journalEntries.sourceType, "cash_deposit_verified"),
-        eq(journalEntries.sourceId, args.cashDepositId),
-        sql`${journalEntries.status} = 'posted'`,
-      ),
-    )
-    .returning({ id: journalEntries.id });
+    .where(eq(journalEntries.id, existingOriginal.id));
 
-  if (updated.length > 0) {
-    await db
-      .update(journalEntries)
-      .set({
-        status: "reversed",
-        reversesEntryId: updated[0].id,
-        updatedAt: new Date(),
-      })
-      .where(eq(journalEntries.id, result.entryId));
-  }
+  /* Sesi AE-64 pair-void: counter (REVERT) juga marked reversed.
+   * Sekarang aman dilakukan UNCONDITIONAL karena kita sudah pre-check
+   * original ada. */
+  await db
+    .update(journalEntries)
+    .set({
+      status: "reversed",
+      reversesEntryId: existingOriginal.id,
+      updatedAt: new Date(),
+    })
+    .where(eq(journalEntries.id, result.entryId));
 }
 
 // ============================================================

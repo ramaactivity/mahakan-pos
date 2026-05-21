@@ -122,13 +122,28 @@ export function IncomeFormModal({
         <div className="space-y-1.5">
           <label className="block text-sm font-medium text-neutral-900">
             Metode Terima
+            <span className="ml-2 text-xs font-normal text-neutral-500">
+              (pilih akun GL tujuan)
+            </span>
           </label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {(
               [
-                { v: "cash" as const, label: "Tunai" },
-                { v: "transfer" as const, label: "Transfer" },
-                { v: "other" as const, label: "Lainnya" },
+                {
+                  v: "cash" as const,
+                  label: "Tunai",
+                  sub: "1101 Kas Tunai",
+                },
+                {
+                  v: "transfer" as const,
+                  label: "Transfer BCA",
+                  sub: "1110 Bank BCA",
+                },
+                {
+                  v: "other" as const,
+                  label: "Bank Lain-lain",
+                  sub: "1112 Bank Lain-lain",
+                },
               ]
             ).map((opt) => (
               <button
@@ -136,16 +151,24 @@ export function IncomeFormModal({
                 type="button"
                 onClick={() => setMethod(opt.v)}
                 className={cn(
-                  "rounded-md border py-2 text-sm font-medium transition-all",
+                  "rounded-md border px-3 py-2 text-left text-sm font-medium transition-all",
                   method === opt.v
                     ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
                     : "border-neutral-300 bg-white hover:bg-neutral-100",
                 )}
               >
-                {opt.label}
+                <div className="font-semibold">{opt.label}</div>
+                <div className="text-[10px] font-normal text-neutral-500">
+                  → {opt.sub}
+                </div>
               </button>
             ))}
           </div>
+          <p className="text-[11px] text-neutral-500">
+            Pemasukan otomatis ter-post ke jurnal: Dr akun di atas / Cr 4201
+            Pendapatan Lain-lain. Untuk adjustment Saldo Awal bank, pilih
+            metode bank-nya — saldo akun akan langsung bertambah di Buku Besar.
+          </p>
         </div>
         {error ? (
           <p role="alert" className="text-sm font-medium text-danger-500">

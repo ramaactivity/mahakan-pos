@@ -383,7 +383,7 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
         <RowList
           rows={rows}
           canReverse={canReverse}
-          canDeleteDraft={canPost}
+          canDeleteDraft={canDraft}
           canEditDraft={canDraft}
           onReverse={onReverse}
           onDeleteDraft={onDeleteDraft}

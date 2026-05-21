@@ -1170,10 +1170,16 @@ export async function deleteDraftJournalEntry(
   entryId: string,
 ): Promise<ApiResult<{ deleted: true; entryNumber: string }>> {
   const session = await requireSession();
-  if (!hasPermission(session.user.role, "accounting.journal.post")) {
+  /* Sesi AE-69 P1 — RBAC fix per feedback staff finance (Anisa). Sebelumnya
+   * delete draft butuh `accounting.journal.post` (owner only) → staff finance
+   * yang punya hak draft TIDAK BISA hapus draft sendiri yang dia buat → harus
+   * eskalasi ke owner. Padahal draft belum mempengaruhi report, safe untuk
+   * di-hapus oleh peran yang punya hak draft. Sekarang pakai `.draft`
+   * permission (owner + manager). */
+  if (!hasPermission(session.user.role, "accounting.journal.draft")) {
     return fail(
       "FORBIDDEN",
-      "Hanya Owner yang dapat hapus draft journal entry",
+      "Tidak punya hak hapus draft journal entry",
     );
   }
 
