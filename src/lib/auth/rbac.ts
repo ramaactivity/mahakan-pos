@@ -183,6 +183,9 @@ export const permissions = {
   "distribution.view": ["owner", "manager"],
   "distribution.compute": ["owner", "manager"],
   "distribution.approve": ["owner"],
+  /* Sesi AE-80 — reverse distribusi yang sudah posted. Owner-only karena
+   * impact ke saldo investor + journal. */
+  "distribution.reverse": ["owner"],
   "investor_statement.resend": ["owner"],
 
   // Promos / Campaigns (Sesi K). View read-only at backoffice; manage =

@@ -44,7 +44,10 @@ export const investorStatementEmails = pgTable(
     /** Provider message id (Gmail SMTP / Resend). NULL kalau logged/failed. */
     messageId: text("message_id"),
     status: text("status", {
-      enum: ["sent", "failed", "logged"],
+      /* Sesi AE-80 — tambah 'void' untuk email yang related ke
+       * distribusi yang di-reverse. Investor disuruh abaikan email
+       * sebelumnya. Pre-AE-80 enum: sent|failed|logged. */
+      enum: ["sent", "failed", "logged", "void"],
     }).notNull(),
     errorMessage: text("error_message"),
     /** "AUTH_FAILED" | "CONNECTION_TIMEOUT" | "RATE_LIMITED" |
