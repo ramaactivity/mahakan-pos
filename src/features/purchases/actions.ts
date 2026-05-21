@@ -538,6 +538,18 @@ export async function createPurchase(
               }${v.notes ? ` · ${v.notes}` : ""}`,
               amount: total,
               paymentMethod: expensePaymentMethod(v.paymentMethod),
+              /* Sesi AE-79 — sourceType='purchase' (default 'manual') supaya:
+               *   1. Expense filter di laporan benar (purchase expenses tidak
+               *      ke-mix dengan manual entry).
+               *   2. Soft FK purchaseId ↔ purchase.expenseId symmetric.
+               *   3. Future-safe: kalau expense_delete suatu hari fire reverse
+               *      journal hook, sourceType check di hooks.ts:1182
+               *      (`if exp.sourceType !== "manual" return`) skip dengan
+               *      benar — sebelumnya purchase expense tagged 'manual' →
+               *      bisa fire reverse journal yg konflik dengan purchase
+               *      journal. */
+              sourceType: "purchase",
+              purchaseId: created.id,
               createdBy: session.user.id,
             })
             .returning({ id: expenses.id });
@@ -983,6 +995,10 @@ export async function markPurchasePaid(
             } (purchase ${p.id.slice(0, 8)})`,
             amount: p.totalAmount,
             paymentMethod: expensePaymentMethod(v.paymentMethod),
+            /* Sesi AE-79 — tag sebagai purchase (lihat catatan sama di
+             * createPurchase line ~545). */
+            sourceType: "purchase",
+            purchaseId: p.id,
             createdBy: session.user.id,
           })
           .returning({ id: expenses.id });
