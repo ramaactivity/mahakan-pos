@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, DatePicker, Input, Modal, toast } from "@/components/ui";
+import { Button, DatePicker, Input, Modal, Select, toast } from "@/components/ui";
 import {
   createIncome,
   isOk,
@@ -231,80 +231,76 @@ export function IncomeFormModal({
           </p>
         </div>
 
-        {/* Sesi AE-69 — Bank account selector (hanya kalau metode != cash) */}
+        {/* Sesi AE-69 — Bank account selector (hanya kalau metode != cash).
+         * Sesi AE-74 — switched dari native <select> ke Select reusable. */}
         {method !== "cash" ? (
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-neutral-900">
-              Rekening Bank{" "}
-              <span className="text-xs font-normal text-neutral-500">
-                (opsional — pilih kalau spesifik)
-              </span>
-            </label>
-            {bankAccounts.length === 0 ? (
+          bankAccounts.length === 0 ? (
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-neutral-900">
+                Rekening Bank{" "}
+                <span className="text-xs font-normal text-neutral-500">
+                  (opsional — pilih kalau spesifik)
+                </span>
+              </label>
               <p className="rounded-md border border-warning-300 bg-warning-100/40 px-3 py-2 text-xs text-warning-700">
                 Belum ada master rekening bank. Set di Pengaturan → Rekening
                 Bank. Sementara akan pakai default mapping per metode.
               </p>
-            ) : (
-              <select
-                value={bankAccountId}
-                onChange={(e) => setBankAccountId(e.target.value)}
-                className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-mahakan-green-500 focus:outline-none focus:ring-2 focus:ring-mahakan-green-200"
-              >
-                <option value="">— Pilih rekening (opsional) —</option>
-                {bankAccounts.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {formatBankAccountDisplay(b)}
-                  </option>
-                ))}
-              </select>
-            )}
-            <p className="text-[11px] text-neutral-500">
-              Pemasukan terkait dengan rekening yang dipilih. Resolver pakai
-              nama bank (BCA / BRI / dll) untuk derive akun GL yang sesuai di
-              jurnal — kalau kosong, fallback ke mapping default.
-            </p>
-          </div>
+            </div>
+          ) : (
+            <Select
+              label="Rekening Bank"
+              placeholder="— Pilih rekening (opsional) —"
+              options={bankAccounts.map((b) => ({
+                value: b.id,
+                label: formatBankAccountDisplay(b),
+              }))}
+              value={bankAccountId || undefined}
+              onValueChange={(v) => setBankAccountId(v)}
+              hint="Pemasukan terkait dengan rekening yang dipilih. Resolver pakai nama bank (BCA / BRI / dll) untuk derive akun GL yang sesuai di jurnal — kalau kosong, fallback ke mapping default."
+            />
+          )
         ) : null}
 
         {/* Sesi AE-71 — Kategori Pendapatan selector (Cr side override).
          * Sesi AE-73 — rename "Akun Pendapatan" → "Kategori Pendapatan"
-         * supaya konsisten dengan form Pengeluaran yang pakai "Kategori". */}
-        <div className="space-y-1.5">
-          <label className="block text-sm font-medium text-neutral-900">
-            Kategori Pendapatan{" "}
-            <span className="text-xs font-normal text-neutral-500">
-              (untuk breakdown di Laporan Laba Rugi)
-            </span>
-          </label>
-          {revenueAccounts.length === 0 ? (
+         * supaya konsisten dengan form Pengeluaran yang pakai "Kategori".
+         * Sesi AE-74 — switched dari native <select> ke Select reusable.
+         * Radix Select disallow empty-string sebagai option value, jadi
+         * "Default (4201)" pakai sentinel "__default__" → convert ke "" di
+         * onValueChange. */}
+        {revenueAccounts.length === 0 ? (
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-neutral-900">
+              Kategori Pendapatan{" "}
+              <span className="text-xs font-normal text-neutral-500">
+                (untuk breakdown di Laporan Laba Rugi)
+              </span>
+            </label>
             <p className="rounded-md border border-warning-300 bg-warning-100/40 px-3 py-2 text-xs text-warning-700">
               Memuat akun pendapatan…
             </p>
-          ) : (
-            <select
-              value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
-              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-mahakan-green-500 focus:outline-none focus:ring-2 focus:ring-mahakan-green-200"
-            >
-              <option value="">
-                Default (4201 Pendapatan Lain-lain)
-              </option>
-              {revenueAccounts
+          </div>
+        ) : (
+          <Select
+            label="Kategori Pendapatan"
+            options={[
+              {
+                value: "__default__",
+                label: "Default (4201 Pendapatan Lain-lain)",
+              },
+              ...revenueAccounts
                 .filter((a) => a.code !== "4201")
-                .map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.code} — {a.name}
-                  </option>
-                ))}
-            </select>
-          )}
-          <p className="text-[11px] text-neutral-500">
-            Pilih akun pendapatan specific (mis. 4202 Sewa Ruang, 4203 Titip
-            Jual) untuk breakdown lebih granular di Laporan Laba Rugi.
-            Default → 4201 Pendapatan Lain-lain (generic).
-          </p>
-        </div>
+                .map((a) => ({
+                  value: a.id,
+                  label: `${a.code} — ${a.name}`,
+                })),
+            ]}
+            value={accountId || "__default__"}
+            onValueChange={(v) => setAccountId(v === "__default__" ? "" : v)}
+            hint="Pilih akun pendapatan specific (mis. 4202 Sewa Ruang, 4203 Titip Jual) untuk breakdown lebih granular di Laporan Laba Rugi. Default → 4201 Pendapatan Lain-lain (generic)."
+          />
+        )}
 
         {error ? (
           <p role="alert" className="text-sm font-medium text-danger-500">

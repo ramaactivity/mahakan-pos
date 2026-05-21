@@ -249,40 +249,35 @@ export function ExpenseFormModal({
           </div>
         </div>
 
-        {/* Sesi AE-69 — Bank account selector (hanya kalau metode != cash) */}
+        {/* Sesi AE-69 — Bank account selector (hanya kalau metode != cash).
+         * Sesi AE-74 — switched dari native <select> ke Select reusable. */}
         {method !== "cash" ? (
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-neutral-900">
-              Rekening Bank{" "}
-              <span className="text-xs font-normal text-neutral-500">
-                (opsional — pilih kalau spesifik)
-              </span>
-            </label>
-            {bankAccounts.length === 0 ? (
+          bankAccounts.length === 0 ? (
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-neutral-900">
+                Rekening Bank{" "}
+                <span className="text-xs font-normal text-neutral-500">
+                  (opsional — pilih kalau spesifik)
+                </span>
+              </label>
               <p className="rounded-md border border-warning-300 bg-warning-100/40 px-3 py-2 text-xs text-warning-700">
                 Belum ada master rekening bank. Set di Pengaturan → Rekening
                 Bank. Sementara akan pakai default mapping per metode.
               </p>
-            ) : (
-              <select
-                value={bankAccountId}
-                onChange={(e) => setBankAccountId(e.target.value)}
-                className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-mahakan-green-500 focus:outline-none focus:ring-2 focus:ring-mahakan-green-200"
-              >
-                <option value="">— Pilih rekening (opsional) —</option>
-                {bankAccounts.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {formatBankAccountDisplay(b)}
-                  </option>
-                ))}
-              </select>
-            )}
-            <p className="text-[11px] text-neutral-500">
-              Pengeluaran dari rekening yang dipilih. Resolver pakai nama bank
-              (BCA / BRI / dll) untuk derive akun GL yang sesuai di jurnal —
-              kalau kosong, fallback ke mapping default.
-            </p>
-          </div>
+            </div>
+          ) : (
+            <Select
+              label="Rekening Bank"
+              placeholder="— Pilih rekening (opsional) —"
+              options={bankAccounts.map((b) => ({
+                value: b.id,
+                label: formatBankAccountDisplay(b),
+              }))}
+              value={bankAccountId || undefined}
+              onValueChange={(v) => setBankAccountId(v)}
+              hint="Pengeluaran dari rekening yang dipilih. Resolver pakai nama bank (BCA / BRI / dll) untuk derive akun GL yang sesuai di jurnal — kalau kosong, fallback ke mapping default."
+            />
+          )
         ) : null}
 
         {/* Receipt photo upload (sesi V deferred — now live) */}
