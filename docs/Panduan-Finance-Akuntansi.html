@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Panduan Finance & Akuntansi — Mahakan POS</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    font-size: 10.5pt; line-height: 1.55; color: #1f2937; margin: 0;
+  }
+  h1 {
+    color: #14532d; font-size: 24pt; margin: 0 0 6px;
+    border-bottom: 4px solid #14532d; padding-bottom: 8px;
+  }
+  h2 {
+    color: #14532d; font-size: 16pt; margin: 28px 0 8px;
+    padding: 8px 12px; background: #ecfdf5; border-left: 5px solid #14532d;
+    page-break-after: avoid; border-radius: 0 4px 4px 0;
+  }
+  h3 {
+    color: #166534; font-size: 13pt; margin: 18px 0 6px;
+    page-break-after: avoid;
+  }
+  h4 {
+    color: #166534; font-size: 11.5pt; margin: 14px 0 4px;
+    page-break-after: avoid;
+  }
+  p { margin: 6px 0; }
+  ul, ol { margin: 6px 0 10px; padding-left: 22px; }
+  li { margin: 3px 0; }
+  strong { color: #14532d; }
+  code, .kbd {
+    background: #f3f4f6; padding: 1px 6px; border-radius: 3px;
+    font-size: 9.5pt; font-family: "SF Mono", Menlo, monospace;
+  }
+  .menu {
+    background: #dbeafe; color: #1e3a8a; padding: 1px 7px;
+    border-radius: 3px; font-weight: 600; font-size: 10pt;
+  }
+  .intro {
+    background: #fef3c7; border-left: 4px solid #d97706;
+    padding: 12px 16px; margin: 14px 0 20px; border-radius: 4px;
+  }
+  .toc {
+    background: #f8fafc; border: 1px solid #cbd5e1;
+    padding: 14px 18px; margin: 14px 0 24px; border-radius: 6px;
+  }
+  .toc h3 { margin: 0 0 8px; color: #14532d; }
+  .toc ol { margin: 0; padding-left: 20px; }
+  .toc a { color: #166534; text-decoration: none; font-weight: 500; }
+  .box-green {
+    background: #ecfdf5; border: 1px solid #86efac;
+    padding: 10px 14px; margin: 10px 0; border-radius: 4px;
+  }
+  .box-yellow {
+    background: #fffbeb; border: 1px solid #fcd34d;
+    padding: 10px 14px; margin: 10px 0; border-radius: 4px;
+  }
+  .box-red {
+    background: #fef2f2; border: 1px solid #fca5a5;
+    padding: 10px 14px; margin: 10px 0; border-radius: 4px;
+  }
+  .box-blue {
+    background: #eff6ff; border: 1px solid #93c5fd;
+    padding: 10px 14px; margin: 10px 0; border-radius: 4px;
+  }
+  .tip {
+    background: #eff6ff; border-left: 4px solid #3b82f6;
+    padding: 8px 12px; margin: 8px 0; border-radius: 4px; font-size: 10pt;
+  }
+  .warning {
+    background: #fef2f2; border-left: 4px solid #dc2626;
+    padding: 8px 12px; margin: 8px 0; border-radius: 4px; font-size: 10pt;
+  }
+  .success {
+    background: #ecfdf5; border-left: 4px solid #16a34a;
+    padding: 8px 12px; margin: 8px 0; border-radius: 4px; font-size: 10pt;
+  }
+  .label-status {
+    display: inline-block; padding: 1px 8px; border-radius: 10px;
+    font-size: 9pt; font-weight: 600; margin: 0 2px;
+  }
+  .badge-green { background: #d1fae5; color: #065f46; }
+  .badge-yellow { background: #fef3c7; color: #92400e; }
+  .badge-red { background: #fee2e2; color: #991b1b; }
+  .badge-blue { background: #dbeafe; color: #1e40af; }
+  .badge-gray { background: #e5e7eb; color: #374151; }
+  hr {
+    border: none; border-top: 1px dashed #d1d5db; margin: 18px 0;
+  }
+  .faq-q { font-weight: 600; color: #14532d; margin-top: 12px; }
+  .faq-a { margin: 4px 0 10px; padding-left: 14px; }
+  .closing {
+    background: #ecfdf5; border: 2px solid #14532d;
+    padding: 16px 20px; margin: 24px 0 0; border-radius: 6px;
+    text-align: center; font-weight: 500;
+  }
+  .footer {
+    margin-top: 30px; padding-top: 10px; border-top: 1px solid #d1d5db;
+    text-align: center; color: #6b7280; font-size: 9pt;
+  }
+  table {
+    width: 100%; border-collapse: collapse; margin: 10px 0;
+    font-size: 10pt; page-break-inside: avoid;
+  }
+  th, td {
+    border: 1px solid #d1d5db; padding: 7px 10px; text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #14532d; color: white; font-weight: 600;
+  }
+  tr:nth-child(even) td { background: #f9fafb; }
+  .page-break { page-break-before: always; }
+  .step-box {
+    background: #f0fdf4; border: 1px solid #86efac;
+    padding: 12px 16px; margin: 8px 0; border-radius: 6px;
+  }
+  .step-box .step-num {
+    display: inline-block; background: #14532d; color: white;
+    width: 24px; height: 24px; border-radius: 50%; text-align: center;
+    line-height: 24px; font-weight: 700; font-size: 11pt;
+    margin-right: 8px;
+  }
+  .cheatsheet {
+    background: #fef9c3; border: 2px solid #ca8a04;
+    padding: 16px; margin: 14px 0; border-radius: 6px;
+    page-break-inside: avoid;
+  }
+  .cheatsheet h3 { margin-top: 0; color: #854d0e; }
+  .formula {
+    background: #f3e8ff; border: 1px solid #c084fc;
+    padding: 8px 12px; margin: 8px 0; border-radius: 4px;
+    font-family: "SF Mono", Menlo, monospace; font-size: 10pt;
+    color: #6b21a8;
+  }
+</style>
+</head>
+<body>
+
+<h1>Panduan Finance &amp; Akuntansi<br><span style="font-size: 14pt; color: #166534; font-weight: 500;">Mahakan POS — Buat Tim Finance</span></h1>
+
+<div class="intro">
+<strong>Halo!</strong> Panduan ini menjelaskan cara mengoperasikan seluruh modul finance: setoran tunai, petty cash, rekonsiliasi aggregator, saldo akun, akuntansi (jurnal &amp; periode), laporan, dan rekonsiliasi histori. Dibuat khusus untuk Finance Officer Mahakan supaya bisa kerja independen tanpa harus tanya tiap langkah ke Owner.
+</div>
+
+<div class="toc">
+<h3>Daftar Isi</h3>
+<ol>
+<li><a href="#prinsip">Prinsip Dasar &amp; Konsep Akuntansi Mahakan</a></li>
+<li><a href="#sidebar">Peta Sidebar — Modul Finance</a></li>
+<li><a href="#setup">Setup Awal &amp; Master Data</a></li>
+<li><a href="#setoran">Modul Setoran Tunai</a></li>
+<li><a href="#kas">Modul Kas (Petty Cash)</a></li>
+<li><a href="#keuangan">Modul Keuangan (Arus Kas + Aggregator)</a></li>
+<li><a href="#saldo">Modul Saldo Akun</a></li>
+<li><a href="#akuntansi">Modul Akuntansi (Bagan Akun, Jurnal, Periode)</a></li>
+<li><a href="#laporan">Modul Laporan (11 jenis)</a></li>
+<li><a href="#rekonsiliasi">Modul Rekonsiliasi (Histori &amp; Audit)</a></li>
+<li><a href="#routine">Routine Harian / Mingguan / Bulanan</a></li>
+<li><a href="#faq">FAQ Finance</a></li>
+<li><a href="#redflag">Yang HARUS Diperhatikan (Red Flags)</a></li>
+<li><a href="#cheat">Cheatsheet Cepat</a></li>
+</ol>
+</div>
+
+<h2 id="prinsip">1. Prinsip Dasar &amp; Konsep Akuntansi Mahakan</h2>
+
+<h3>Apa yang Tracking Sistem Ini</h3>
+<ul>
+<li><strong>Penjualan POS</strong> — kasir input ke POS, otomatis ter-record dengan payment method (Tunai / QRIS / EDC / GoFood / GrabFood / ShopeeFood)</li>
+<li><strong>Kas Drawer</strong> — saldo fisik di laci kasir, di-track lewat Buka Shift &amp; Tutup Shift</li>
+<li><strong>Setoran Tunai</strong> — uang fisik dari laci kasir disetor ke bank, perlu verifikasi Finance</li>
+<li><strong>Petty Cash</strong> — pengeluaran/pemasukan kecil sehari-hari (mis. beli galon, bayar parkir, top-up pulsa toko)</li>
+<li><strong>Aggregator Settlement</strong> — uang dari GoFood/GrabFood/ShopeeFood masuk ke rekening (T+1 sampai T+7), perlu di-reconcile</li>
+<li><strong>Pembelian</strong> — purchase order ke supplier, bisa cash/transfer atau TOP (utang)</li>
+<li><strong>Payroll</strong> — gaji karyawan bulanan</li>
+<li><strong>Akuntansi formal</strong> — bagan akun, jurnal, periode, laporan resmi (Trial Balance, P&amp;L, Balance Sheet)</li>
+</ul>
+
+<h3>Konsep Penting: Auto-Journal</h3>
+<div class="box-green">
+<p>Setiap transaksi POS / pembelian / payroll / setoran <strong>otomatis fire jurnal akuntansi</strong> saat terjadi (kalau flag Auto-Journal AKTIF). Finance tidak perlu input jurnal manual untuk transaksi rutin — sistem yang handle.</p>
+<p style="margin: 0;"><strong>Contoh:</strong> kasir input penjualan kopi Rp 50.000 cash → sistem otomatis buat jurnal <em>Debit: Kas Tunai 50.000 / Credit: Penjualan Minuman 50.000</em>. Saldo Akun terupdate realtime.</p>
+</div>
+
+<div class="warning">
+<strong>PENTING:</strong> Cek dulu apakah Auto-Journal AKTIF. Buka <span class="menu">Akuntansi</span> — kalau ada badge <span class="label-status badge-yellow">Auto-Journal: NONAKTIF</span>, klik tombol <strong>"Aktifkan"</strong> di tab Jurnal atau di halaman Saldo Akun (1-click). Tanpa flag aktif, transaksi tidak ter-record di jurnal.
+</div>
+
+<h3>Konsep: Cutover &amp; Jurnal Pembukaan</h3>
+<p>Mahakan baru migrasi dari Majoo. Tanggal "cutover" = tanggal di mana sistem POS mulai jadi sumber kebenaran (default <strong>1 Juni 2026</strong>). Saldo per <strong>31 Mei 2026</strong> di-input sekali sebagai "Jurnal Pembukaan" (opening balance) supaya laporan ke depan akurat. Lihat tab <span class="menu">Akuntansi → Periode</span>.</p>
+
+<h2 id="sidebar">2. Peta Sidebar — Modul Finance</h2>
+
+<table>
+<thead>
+<tr><th style="width: 18%;">Group</th><th style="width: 25%;">Menu</th><th>Fungsi Singkat</th></tr>
+</thead>
+<tbody>
+<tr><td rowspan="2"><strong>Cashflow</strong></td><td><span class="menu">Setoran Tunai</span></td><td>Reconcile uang fisik laci kasir vs deposit bank, verifikasi staff lapor</td></tr>
+<tr><td><span class="menu">Kas</span></td><td>Petty cash: input expense / income kecil sehari-hari</td></tr>
+<tr><td rowspan="5"><strong>Finance</strong></td><td><span class="menu">Keuangan</span></td><td>Arus kas summary, settlement aggregator (GoFood/GrabFood/ShopeeFood), bank accounts master</td></tr>
+<tr><td><span class="menu">Saldo Akun</span></td><td>Dashboard saldo per akun (Aset/Liabilitas/Ekuitas/Pendapatan/HPP/Beban) + drill-down buku besar</td></tr>
+<tr><td><span class="menu">Akuntansi</span></td><td>Bagan Akun (master), Jurnal Umum, Periode (open/close), Laporan resmi, Aset Tetap</td></tr>
+<tr><td><span class="menu">Laporan</span></td><td>11 jenis laporan operasional &amp; finansial (Daily Sales, P&amp;L, Per-Bill, Targets, dll)</td></tr>
+<tr><td><span class="menu">Rekonsiliasi</span></td><td>Saldo Awal trial + import histori CSV Majoo</td></tr>
+</tbody>
+</table>
+
+<h2 id="setup">3. Setup Awal &amp; Master Data</h2>
+
+<p>Sebelum operasional harian, pastikan master data sudah komplit. Cek 1× di awal, kemudian update sesuai perubahan.</p>
+
+<h3>3.1 Bank Accounts</h3>
+<p><span class="menu">Keuangan → tab Bank</span></p>
+<ul>
+<li>Tambah semua rekening Mahakan: BCA Operasional, BRI Cadangan, dll</li>
+<li>Per akun: nama bank, nomor rekening (atas nama), label internal</li>
+<li>Dipakai sebagai dropdown di Setoran Tunai (kasir pilih bank tujuan setor)</li>
+</ul>
+
+<h3>3.2 Kategori Pengeluaran (Expense Categories)</h3>
+<p><span class="menu">Kas → kelola kategori</span> atau via Settings</p>
+<ul>
+<li>Default sudah ada: Belanja Bahan Baku, Listrik &amp; Air, Perawatan Alat, Lain-lain</li>
+<li>Tambah sesuai kebutuhan: Sewa Tempat, Marketing &amp; Iklan, Internet, BPJS, dll</li>
+<li>Kategori akan jadi breakdown di laporan P&amp;L</li>
+</ul>
+
+<h3>3.3 Bagan Akun (Chart of Accounts / COA)</h3>
+<p><span class="menu">Akuntansi → Bagan Akun</span></p>
+<ul>
+<li>Default sudah di-seed sistem: 1101 Kas Tunai, 2101 Hutang Dagang, 3101 Modal Owner, 4101 Penjualan Makanan, 5101 HPP Makanan, 6101 Gaji Karyawan, dll</li>
+<li>Tipe: Aset / Liabilitas / Ekuitas / Pendapatan / HPP / Beban</li>
+<li>Akun tag <span class="label-status badge-blue">sistem</span> tidak boleh dihapus (auto-jurnal pakai)</li>
+<li>Owner / Finance bisa tambah akun custom (mis. 6109 Biaya Konsultan)</li>
+</ul>
+
+<h3>3.4 Auto-Journal Flag</h3>
+<p><span class="menu">Akuntansi</span> — cek pill badge di header.</p>
+<div class="step-box">
+<p><strong>Kalau status <span class="label-status badge-yellow">NONAKTIF</span>:</strong></p>
+<ol>
+<li>Klik tombol <strong>"Aktifkan Auto-Journal"</strong> di banner Saldo Akun atau Jurnal</li>
+<li>Konfirmasi toast: "Auto-Journal aktif. Transaksi berikutnya akan auto-post."</li>
+<li>Test: buat 1 transaksi POS dummy → cek balik di tab Jurnal harus muncul entry "POS Sale" status <span class="label-status badge-green">Posted</span></li>
+</ol>
+</div>
+
+<h2 id="setoran">4. Modul Setoran Tunai</h2>
+
+<p>Setoran tunai = proses kasir setorin uang fisik dari laci kasir ke bank. Finance verifikasi setoran ini cocok dengan bukti transfer / slip setoran fisik.</p>
+
+<h3>Alur Standar</h3>
+<table>
+<thead>
+<tr><th style="width: 5%;">No</th><th style="width: 25%;">Aksi</th><th style="width: 25%;">Pelaku</th><th>Detail</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>Tutup shift</td><td>Kasir / Supervisor</td><td>Hitung kas drawer fisik vs ekspektasi sistem. Pisahkan uang yang akan disetor (mis. semua di atas Rp 500rb).</td></tr>
+<tr><td>2</td><td>Setor ke bank</td><td>Kasir / Supervisor</td><td>Pergi ATM/teller atau kirim via driver. Simpan bukti slip / screenshot mutasi.</td></tr>
+<tr><td>3</td><td>Lapor di POS</td><td>Kasir / Supervisor</td><td>Buka <span class="menu">Setoran Tunai → Lapor Setoran</span>. Input: tanggal, jumlah, bank tujuan, upload foto bukti.</td></tr>
+<tr><td>4</td><td>Verifikasi</td><td><strong>Finance</strong></td><td>Buka <span class="menu">Setoran Tunai</span> filter status <span class="label-status badge-yellow">Pending Verifikasi</span>. Cek jumlah lapor vs bukti, vs mutasi rekening. Klik <strong>Verifikasi</strong> kalau cocok, atau <strong>Tolak</strong> dengan alasan.</td></tr>
+<tr><td>5</td><td>Auto-jurnal</td><td>Sistem</td><td>Saat status berubah jadi <span class="label-status badge-green">Verified</span>, sistem otomatis fire: <em>Dr Bank XX / Cr Kas Tunai</em>. Saldo Akun terupdate.</td></tr>
+</tbody>
+</table>
+
+<h3>Workflow Finance Harian (Setoran)</h3>
+<div class="step-box">
+<span class="step-num">1</span><strong>Pagi (5 menit):</strong> buka <span class="menu">Setoran Tunai</span> → filter <span class="label-status badge-yellow">Pending</span>. Lihat setoran kemarin yang belum verified.
+</div>
+<div class="step-box">
+<span class="step-num">2</span><strong>Untuk tiap setoran pending:</strong>
+<ul>
+<li>Klik row → modal detail keluar</li>
+<li>Cek foto bukti (slip ATM atau screenshot internet banking)</li>
+<li>Buka mobile banking / cek via web → match jumlah, tanggal, bank</li>
+<li>Kalau match: klik <strong>Verifikasi</strong>. Selesai.</li>
+<li>Kalau beda: klik <strong>Tolak</strong> + tulis alasan ("setoran lapor 5jt, mutasi cuma 4.5jt, beda 500rb"). Kasir akan re-submit.</li>
+</ul>
+</div>
+<div class="step-box">
+<span class="step-num">3</span><strong>Kalau ada selisih:</strong> jangan langsung tolak. Tanya kasir dulu via WA. Kemungkinan:
+<ul>
+<li>Salah ketik nominal saat lapor</li>
+<li>Setoran beda hari (kasir setor besoknya)</li>
+<li>Bank charge biaya admin (tipikal -Rp 5rb)</li>
+<li>Setoran via 2 transaksi (split, perlu di-merge)</li>
+</ul>
+</div>
+
+<div class="warning">
+<strong>JANGAN verifikasi tanpa cek mutasi bank.</strong> Verifikasi = sistem anggap dana sudah masuk bank → jurnal auto-post. Kalau salah verifikasi, perlu manual reverse jurnal (ribet).
+</div>
+
+<h3>Status Setoran</h3>
+<table>
+<thead><tr><th>Status</th><th>Arti</th><th>Aksi Finance</th></tr></thead>
+<tbody>
+<tr><td><span class="label-status badge-yellow">Pending</span></td><td>Kasir lapor, belum diverifikasi</td><td>Cek &amp; verifikasi atau tolak</td></tr>
+<tr><td><span class="label-status badge-green">Verified</span></td><td>Dana confirmed masuk bank</td><td>Done. Auto-jurnal sudah fire.</td></tr>
+<tr><td><span class="label-status badge-red">Rejected</span></td><td>Ditolak, kasir perlu re-submit</td><td>Tunggu kasir submit ulang</td></tr>
+</tbody>
+</table>
+
+<h2 id="kas">5. Modul Kas (Petty Cash)</h2>
+
+<p>Petty cash = pengeluaran kecil sehari-hari yang tidak ke supplier formal. Misal beli galon air, bayar parkir, top-up token listrik, beli gembok. Atau pemasukan kecil non-POS (mis. dapet uang ganti dari saldo gas, refund supplier).</p>
+
+<h3>Cara Input Pengeluaran</h3>
+<div class="step-box">
+<span class="step-num">1</span>Menu <span class="menu">Kas → tab Pengeluaran</span> → klik <strong>"Tambah Pengeluaran"</strong>
+</div>
+<div class="step-box">
+<span class="step-num">2</span>Isi form:
+<ul>
+<li><strong>Tanggal</strong> — default hari ini, bisa backdate sampai -30 hari</li>
+<li><strong>Kategori</strong> — pilih dari dropdown (Belanja Bahan Baku, Listrik, dll). Banyak quick-chip untuk speedup.</li>
+<li><strong>Deskripsi</strong> — catatan singkat ("beli 2 galon Aqua")</li>
+<li><strong>Jumlah</strong> — Rp (pakai numpad)</li>
+<li><strong>Metode bayar</strong> — Cash (kurang dari Kas Tunai) / Non-cash (transfer dari rekening, tidak affect drawer)</li>
+<li><strong>Upload bukti</strong> — foto nota / screenshot transfer (auto-save Drive)</li>
+</ul>
+</div>
+<div class="step-box">
+<span class="step-num">3</span>Save → auto-fire jurnal (<em>Dr Beban-{kategori} / Cr Kas atau Bank</em>)
+</div>
+
+<h3>Beda Cash vs Non-Cash (PENTING!)</h3>
+<div class="box-yellow">
+<p><strong>Cash</strong> = uang dari laci kasir (Kas Tunai). <strong>Affect saldo drawer</strong> → kalau pengeluaran cash Rp 100k, di Tutup Shift nanti expected cash berkurang Rp 100k.</p>
+<p style="margin: 0;"><strong>Non-cash</strong> = transfer dari rekening bank, atau pakai e-wallet. <strong>Tidak affect drawer</strong>, cuma ke saldo bank/e-wallet.</p>
+</div>
+
+<h3>Cara Input Pemasukan Manual</h3>
+<p><span class="menu">Kas → tab Pemasukan</span> → form serupa. Contoh use case: refund supplier (galon kembali kosong, dapet ganti uang), penjualan barang inventaris bekas, tambahan modal owner.</p>
+
+<h3>Edit / Hapus</h3>
+<ul>
+<li>Boleh edit/delete kalau tanggalnya BELUM ada shift closed</li>
+<li>Kalau sudah ada shift closed di tanggal itu → di-block (lock window protection)</li>
+<li>Kalau perlu koreksi tanggal yang sudah locked: buat reversing entry hari ini (pengeluaran negatif / pemasukan negatif sesuai keperluan)</li>
+</ul>
+
+<h3>Kategori &quot;Penyesuaian&quot;</h3>
+<p>Untuk koreksi non-routine (mis. saldo bank awal, koreksi rounding, gain/loss valas):</p>
+<ul>
+<li>Buat kategori baru "Penyesuaian Saldo Awal"</li>
+<li>Pakai sebagai catch-all untuk koreksi yang bukan operasional rutin</li>
+<li>Cek balik 1x sebulan supaya tidak tertumpuk</li>
+</ul>
+
+<h2 id="keuangan">6. Modul Keuangan (Arus Kas + Aggregator)</h2>
+
+<p>Halaman ini summary arus kas + tools untuk reconcile aggregator settlements (GoFood/GrabFood/ShopeeFood).</p>
+
+<h3>6.1 Tab Arus Kas</h3>
+<ul>
+<li>Stat cards: Total kas masuk hari ini, total keluar, net flow, saldo terakhir</li>
+<li>Tabel mutasi per hari: source (POS Sale / Manual Income / Setoran / Petty / Aggregator) + amount + payment method</li>
+<li>Filter date range untuk lihat trend mingguan / bulanan</li>
+<li>Export CSV untuk dikirim ke akuntan eksternal</li>
+</ul>
+
+<h3>6.2 Tab Settlement Aggregator</h3>
+<p>Aggregator (GoFood/GrabFood/ShopeeFood) tidak transfer realtime — biasanya T+1 sampai T+7 dengan potongan komisi 10-25%. Kasir input penjualan saat customer bayar, tapi uang baru masuk rekening kemudian.</p>
+
+<h3>Workflow Settlement</h3>
+<div class="step-box">
+<span class="step-num">1</span><strong>Pagi:</strong> buka mobile banking / merchant dashboard masing-masing aggregator → cek mutasi T+1
+</div>
+<div class="step-box">
+<span class="step-num">2</span><strong>Buka <span class="menu">Keuangan → tab Settlement</span>:</strong>
+<ul>
+<li>Sistem tampil "Pending Settlement" per aggregator (transaksi POS yang belum settled)</li>
+<li>Per row: tanggal trx, gross amount, expected net (setelah komisi)</li>
+</ul>
+</div>
+<div class="step-box">
+<span class="step-num">3</span>Klik <strong>"Catat Settlement"</strong> → input:
+<ul>
+<li>Tanggal settle (T-actual sesuai mutasi)</li>
+<li>Gross (sebelum potongan)</li>
+<li>Komisi/biaya admin (selisih)</li>
+<li>Net received (yang masuk rekening)</li>
+<li>Bank tujuan</li>
+<li>Reference number (dari merchant dashboard)</li>
+</ul>
+</div>
+<div class="step-box">
+<span class="step-num">4</span>Save → auto-jurnal: <em>Dr Bank XX (net) + Dr Beban Komisi (potongan) / Cr Piutang Aggregator (gross)</em>
+</div>
+
+<h3>Cek Anomali Settlement</h3>
+<div class="warning">
+<strong>Red flags:</strong>
+<ul style="margin: 4px 0;">
+<li>Transaksi POS aggregator tertentu masih "Pending" lebih dari 7 hari → kemungkinan dispute / GoFood lupa transfer</li>
+<li>Net received vs expected beda lebih dari 5% → cek detail komisi / chargeback</li>
+<li>Gross di sistem ≠ gross di merchant dashboard → kasir salah input atau ada transaksi hilang</li>
+</ul>
+</div>
+
+<h3>6.3 Tab Bank Accounts</h3>
+<p>Master data semua rekening. CRUD owner-only. Finance bisa view + check saldo running per bank (aggregate dari verified setoran + verified settlements).</p>
+
+<h2 id="saldo">7. Modul Saldo Akun</h2>
+
+<p>Dashboard saldo per akun + drill-down riwayat transaksi (general ledger).</p>
+
+<h3>Layout</h3>
+<ul>
+<li><strong>Top:</strong> 6 stat cards per kategori (Aset / Liabilitas / Ekuitas / Pendapatan / HPP / Beban) — clickable jadi filter</li>
+<li><strong>Filter pills + search bar</strong> — narrow ke akun spesifik</li>
+<li><strong>As-of date picker</strong> — lihat saldo per tanggal tertentu (default hari ini)</li>
+<li><strong>Tabel akun:</strong> kode, nama, tipe badge, debit total, kredit total, saldo (signed by normal balance)</li>
+</ul>
+
+<h3>Drill-Down (Buku Besar per Akun)</h3>
+<div class="step-box">
+<span class="step-num">1</span>Klik row akun apapun (mis. <code>1101 Kas Tunai</code>)
+</div>
+<div class="step-box">
+<span class="step-num">2</span>Modal "Buku Besar" terbuka:
+<ul>
+<li>Date range picker (default 1 bulan terakhir)</li>
+<li>Saldo Awal, Saldo Akhir, Jumlah Transaksi</li>
+<li>Tabel: tanggal, no jurnal, deskripsi, debit, kredit, running balance</li>
+<li>Hijau ↑ = debit, Kuning ↓ = kredit</li>
+</ul>
+</div>
+<div class="step-box">
+<span class="step-num">3</span>Use case Finance:
+<ul>
+<li>Kas Tunai minus → cek mutasi → ketauan ada penarikan tidak tercatat</li>
+<li>Hutang Dagang besar → siapa supplier yang masih outstanding</li>
+<li>Biaya Listrik bulan ini vs bulan lalu → trend naik?</li>
+</ul>
+</div>
+
+<div class="tip">
+<strong>Tip:</strong> Banner di Saldo Akun kasih tau status Auto-Journal (AKTIF/NONAKTIF). Kalau NONAKTIF, klik tombol di banner langsung untuk aktifkan.
+</div>
+
+<h2 id="akuntansi">8. Modul Akuntansi</h2>
+
+<h3>8.1 Tab Bagan Akun (Chart of Accounts)</h3>
+<p>Master semua akun. Filter by tipe + search. Per akun:</p>
+<ul>
+<li><strong>Kode</strong> (4 digit, mis. 1101) + Nama + Tipe + Normal balance (Debit/Credit) + Status (Aktif/Nonaktif)</li>
+<li><strong>Sistem</strong> badge → akun di-protect, tidak boleh dihapus</li>
+<li>Tombol <strong>"Tambah Akun"</strong> untuk akun custom (mis. tambah 6109 Biaya Konsultan)</li>
+</ul>
+
+<h4>Konvensi Kode</h4>
+<table>
+<thead><tr><th>Range</th><th>Tipe</th><th>Contoh</th></tr></thead>
+<tbody>
+<tr><td>1xxx</td><td>Aset</td><td>1101 Kas Tunai, 1110 Bank BCA, 1140 Persediaan, 1150 Aktiva Tetap</td></tr>
+<tr><td>2xxx</td><td>Liabilitas</td><td>2101 Hutang Dagang, 2102 Hutang Gaji</td></tr>
+<tr><td>3xxx</td><td>Ekuitas</td><td>3101 Modal Owner, 3302 Laba Ditahan</td></tr>
+<tr><td>4xxx</td><td>Pendapatan</td><td>4101 Penjualan Makanan, 4102 Penjualan Minuman</td></tr>
+<tr><td>5xxx</td><td>HPP</td><td>5101 HPP Makanan, 5102 HPP Minuman</td></tr>
+<tr><td>6xxx</td><td>Beban</td><td>6101 Gaji, 6102 Sewa, 6103 Listrik &amp; Air</td></tr>
+</tbody>
+</table>
+
+<h3>8.2 Tab Jurnal Umum</h3>
+<p>Daftar semua entri jurnal (auto + manual). Filter by sumber / status / tanggal.</p>
+
+<h4>Status Jurnal</h4>
+<table>
+<thead><tr><th>Status</th><th>Arti</th></tr></thead>
+<tbody>
+<tr><td><span class="label-status badge-yellow">Draft</span></td><td>Manual entry yang belum di-post (masih bisa edit)</td></tr>
+<tr><td><span class="label-status badge-green">Posted</span></td><td>Sudah ter-finalize, mempengaruhi saldo akun. Tidak bisa edit, tapi bisa di-Reverse.</td></tr>
+<tr><td><span class="label-status badge-gray">Reversed</span></td><td>Dibatalkan via reversing entry (audit trail tetap ada)</td></tr>
+</tbody>
+</table>
+
+<h4>Buat Jurnal Manual</h4>
+<p>Untuk koreksi non-routine (mis. depresiasi manual, write-off, koreksi salah kategori):</p>
+<div class="step-box">
+<span class="step-num">1</span>Klik <strong>"Buat Entry Manual"</strong>
+</div>
+<div class="step-box">
+<span class="step-num">2</span>Isi: tanggal, deskripsi, list lines (akun + debit OR credit + sub-deskripsi optional)
+</div>
+<div class="step-box">
+<span class="step-num">3</span>Total debit harus = total credit (validasi sistem). Save sebagai <span class="label-status badge-yellow">Draft</span>.
+</div>
+<div class="step-box">
+<span class="step-num">4</span>Cek ulang → klik <strong>"Post"</strong> → status jadi <span class="label-status badge-green">Posted</span>, saldo terupdate
+</div>
+
+<h4>Reverse Jurnal (Pembatalan)</h4>
+<ul>
+<li>Cuma bisa reverse entry yang status <span class="label-status badge-green">Posted</span></li>
+<li>Tidak menghapus, tapi membuat reversing entry baru (debit/credit terbalik) di tanggal hari ini</li>
+<li>Audit trail full (siapa reverse, kapan, alasan)</li>
+</ul>
+
+<h3>8.3 Tab Periode</h3>
+<p>Lifecycle akuntansi: Open → Closed → Locked.</p>
+<table>
+<thead><tr><th>Status</th><th>Arti</th><th>Aksi</th></tr></thead>
+<tbody>
+<tr><td><span class="label-status badge-green">Open</span></td><td>Periode aktif, jurnal bisa post</td><td>Default state. Lanjut input transaksi.</td></tr>
+<tr><td><span class="label-status badge-yellow">Closed</span></td><td>Tutup bulan, jurnal baru di-block</td><td>Tutup setelah selesai input bulan itu.</td></tr>
+<tr><td><span class="label-status badge-red">Locked</span></td><td>Final, tidak bisa di-reopen tanpa Owner approve</td><td>Akhir tahun atau audit final.</td></tr>
+</tbody>
+</table>
+
+<h4>Tutup Bulan (Monthly Close)</h4>
+<div class="step-box">
+<span class="step-num">1</span>Buka <span class="menu">Akuntansi → Periode</span>
+</div>
+<div class="step-box">
+<span class="step-num">2</span>Pastikan semua transaksi bulan ini sudah ter-input:
+<ul>
+<li>Setoran tunai semua verified</li>
+<li>Aggregator settlement semua catat</li>
+<li>Pembelian semua input</li>
+<li>Payroll mark paid</li>
+<li>Petty cash semua catat</li>
+</ul>
+</div>
+<div class="step-box">
+<span class="step-num">3</span>Klik <strong>"Tutup Bulan"</strong> pada periode yang aktif. Sistem akan:
+<ul>
+<li>Posting closing entries (Pendapatan + Beban → Laba Ditahan)</li>
+<li>Lock period status jadi <span class="label-status badge-yellow">Closed</span></li>
+<li>Generate snapshot Trial Balance, P&amp;L, Balance Sheet</li>
+</ul>
+</div>
+
+<h4>Jurnal Pembukaan (Opening Balance)</h4>
+<p>Khusus untuk cutover dari Majoo. Sekali setup, tidak diulang.</p>
+<div class="step-box">
+<span class="step-num">1</span>Tab Periode → klik <strong>"Post Jurnal Pembukaan"</strong>
+</div>
+<div class="step-box">
+<span class="step-num">2</span>Form: input saldo per akun per 31 Mei 2026 (dari neraca terakhir Majoo)
+</div>
+<div class="step-box">
+<span class="step-num">3</span>Sistem fire jurnal khusus dengan source <code>opening_balance</code>. Total debit = total credit (balanced check).
+</div>
+
+<h3>8.4 Tab Laporan Akuntansi</h3>
+<p>Laporan formal sesuai standar akuntansi.</p>
+
+<h4>Trial Balance</h4>
+<p>Daftar semua akun + saldo. Total debit harus = total credit. Kalau tidak balanced, ada error data integrity.</p>
+
+<h4>Income Statement (P&amp;L Resmi)</h4>
+<p>Pendapatan - HPP - Beban = Laba Bersih. Per kategori. Range bulanan / range custom.</p>
+
+<h4>Balance Sheet</h4>
+<p>Aset = Liabilitas + Ekuitas (per tanggal tertentu). Snapshot posisi finansial.</p>
+
+<h4>Cash Flow Statement</h4>
+<p>Operasi / Investasi / Pendanaan. Arus kas masuk-keluar per kategori.</p>
+
+<h4>General Ledger</h4>
+<p>Per akun: list semua entries dengan running balance. Sama seperti drill-down di Saldo Akun.</p>
+
+<h3>8.5 Tab Aset Tetap</h3>
+<p>Manajemen mesin / equipment / kendaraan dengan depresiasi otomatis bulanan.</p>
+<ul>
+<li>Bulk import via CSV (template ada)</li>
+<li>Per asset: nama, tanggal beli, harga, masa pakai bulan, kategori</li>
+<li>Sistem auto-fire depresiasi tiap akhir bulan: <em>Dr Beban Depresiasi / Cr Akumulasi Depresiasi</em></li>
+<li>Lihat laporan: depresiasi bulan ini, sisa nilai buku, estimasi habis pakai</li>
+</ul>
+
+<h2 id="laporan">9. Modul Laporan (11 jenis)</h2>
+
+<p>Halaman laporan operational yang owner / finance lihat sehari-hari. Beda dari "Akuntansi → Laporan" yang formal.</p>
+
+<table>
+<thead><tr><th style="width: 22%;">Laporan</th><th>Kapan Dipakai</th><th>Output Penting</th></tr></thead>
+<tbody>
+<tr><td><strong>Daily Sales</strong></td><td>Cek harian penjualan kemarin</td><td>Total revenue, count trx, breakdown payment method, top items, hourly heatmap</td></tr>
+<tr><td><strong>Sales Range</strong></td><td>Mingguan / bulanan, trend chart</td><td>Revenue per hari, comparison vs prior period, top items, byCategory</td></tr>
+<tr><td><strong>Per-Bill</strong></td><td>Analisa karakteristik bill</td><td>Avg ticket, median, mode, histogram per bucket (small/medium/large/premium)</td></tr>
+<tr><td><strong>Closing Shift</strong></td><td>Cek variance shift kasir</td><td>Per shift: opening, expected, actual, variance, settlement breakdown</td></tr>
+<tr><td><strong>Targets</strong></td><td>Track progress vs target revenue (Owner-only)</td><td>Daily/weekly/monthly/yearly target vs actual, projection</td></tr>
+<tr><td><strong>P&amp;L</strong></td><td>Analisa profitabilitas (cash basis)</td><td>Revenue, COGS, OpEx, Gross Margin, Net Profit. Termasuk historical Majoo.</td></tr>
+<tr><td><strong>Item Performance</strong></td><td>Performa per menu</td><td>Per item: qty sold, revenue, COGS, margin %</td></tr>
+<tr><td><strong>Menu Engineering</strong></td><td>Strategi menu (quadrant)</td><td>Star / Plowhorse / Puzzle / Dog classification</td></tr>
+<tr><td><strong>Inventory Monthly Flow / HPP</strong></td><td>Tracking pergerakan bahan + nilai stok</td><td>Per ingredient: stok awal, pembelian, stok akhir, pemakaian, nilai HPP</td></tr>
+<tr><td><strong>Refund/Void/Compliment</strong></td><td>Audit trail event sensitif</td><td>Per event: kasir, approver, alasan, dampak inventory + COGS</td></tr>
+<tr><td><strong>Purchase Rollup</strong></td><td>Analisa pembelian per supplier</td><td>Total per supplier, count PO, avg per PO, trend</td></tr>
+</tbody>
+</table>
+
+<h3>Workflow Finance Bulanan (Laporan)</h3>
+<div class="step-box">
+<span class="step-num">1</span><strong>Tanggal 1 awal bulan:</strong> tutup bulan sebelumnya
+<ul>
+<li>Pastikan semua transaksi bulan lalu sudah masuk</li>
+<li>Stok opname (sama tanggal 1) untuk akurasi HPP</li>
+<li>Generate &amp; download semua laporan utama (P&amp;L, Trial Balance, Balance Sheet, Cash Flow)</li>
+<li>Save ke folder bulanan untuk arsip + laporan investor</li>
+</ul>
+</div>
+<div class="step-box">
+<span class="step-num">2</span><strong>Tutup periode akuntansi</strong> → status <span class="label-status badge-yellow">Closed</span> (lihat section 8.3)
+</div>
+<div class="step-box">
+<span class="step-num">3</span><strong>Investor reporting</strong> (kalau ada): export P&amp;L + Sales Range chart sebagai PDF/Excel, kirim
+</div>
+
+<h2 id="rekonsiliasi">10. Modul Rekonsiliasi</h2>
+
+<h3>10.1 Tab Saldo Awal</h3>
+<p>Checklist 7-step setup snapshot saldo per tanggal trial start. Lihat panduan penjelasan langkah-langkah dalam section masing-masing modul.</p>
+
+<h3>10.2 Tab Import Histori</h3>
+<p>Owner import data Majoo bulan-bulan lampau via CSV. Wizard 4-step (Upload → Mapping → Preview → Confirm). Data muncul dengan badge <span class="label-status badge-yellow">Histori</span> di laporan.</p>
+
+<h3>10.3 Tab Daftar Historis</h3>
+<p>List + edit + delete entries historis yang sudah di-import. Untuk koreksi typo atau update.</p>
+
+<h2 id="routine">11. Routine Harian / Mingguan / Bulanan</h2>
+
+<h3>Daily Routine (10-15 menit)</h3>
+<div class="step-box">
+<strong>Pagi (sebelum buka outlet):</strong>
+<ul>
+<li>Cek <span class="menu">Setoran Tunai</span> → verifikasi setoran kemarin</li>
+<li>Cek <span class="menu">Keuangan → Settlement Aggregator</span> → catat T+1 mutasi</li>
+<li>Cek <span class="menu">Saldo Akun</span> → ada akun yang aneh? (Kas minus, Hutang naik drastis)</li>
+</ul>
+</div>
+<div class="step-box">
+<strong>Siang (kalau ada pengeluaran insidental):</strong>
+<ul>
+<li>Input <span class="menu">Kas → Pengeluaran</span> ASAP supaya tidak lupa</li>
+</ul>
+</div>
+<div class="step-box">
+<strong>Sore (sebelum tutup):</strong>
+<ul>
+<li>Cek <span class="menu">Laporan → Daily Sales</span> hari ini → ada anomali?</li>
+<li>Cek <span class="menu">Laporan → Refund/Void/Compliment</span> → ada event yang perlu di-flag?</li>
+</ul>
+</div>
+
+<h3>Weekly Routine (1 jam, hari Senin)</h3>
+<div class="step-box">
+<ul>
+<li>Cek <span class="menu">Laporan → Closing Shift</span> minggu lalu → ada variance besar?</li>
+<li>Cek <span class="menu">Akuntansi → Jurnal</span> filter status="Draft" → ada draft tertinggal yang perlu di-post?</li>
+<li>Cek <span class="menu">Laporan → P&amp;L</span> mingguan → trend revenue</li>
+<li>Filter <span class="menu">Audit Log</span> event <code>journal.posting_failed</code> → ada error auto-jurnal yang perlu fix?</li>
+<li>Reconcile aggregator: pastikan semua POS sale aggregator minggu lalu sudah ada match settlement</li>
+</ul>
+</div>
+
+<h3>Monthly Close (3-4 jam, awal bulan)</h3>
+<div class="step-box">
+<span class="step-num">1</span><strong>Pre-close (tanggal 1):</strong>
+<ul>
+<li>Stok opname semua bahan utama (akurasi HPP)</li>
+<li>Pastikan semua setoran bulan lalu verified</li>
+<li>Pastikan semua aggregator settlement sudah catat</li>
+<li>Pastikan semua pembelian bulan lalu sudah input (cek sama purchasing)</li>
+<li>Mark paid payroll bulan lalu (kalau belum)</li>
+</ul>
+</div>
+<div class="step-box">
+<span class="step-num">2</span><strong>Tutup periode</strong> via <span class="menu">Akuntansi → Periode</span>
+</div>
+<div class="step-box">
+<span class="step-num">3</span><strong>Generate laporan:</strong>
+<ul>
+<li>Trial Balance (cek balanced)</li>
+<li>P&amp;L (income statement)</li>
+<li>Balance Sheet</li>
+<li>Cash Flow Statement</li>
+<li>General Ledger per akun untuk akun-akun penting (Kas, Bank, Hutang)</li>
+</ul>
+</div>
+<div class="step-box">
+<span class="step-num">4</span><strong>Cross-check</strong>:
+<ul>
+<li>Total Pendapatan P&amp;L = total Daily Sales bulan ini? (selisih kecil OK karena timing)</li>
+<li>Total Beban Listrik = jumlah tagihan PLN yang masuk?</li>
+<li>Hutang Dagang = total purchases status TOP belum lunas?</li>
+<li>Saldo Bank di P&amp;L = saldo mobile banking aktual?</li>
+</ul>
+</div>
+<div class="step-box">
+<span class="step-num">5</span><strong>Investor / Owner report:</strong>
+<ul>
+<li>Export laporan ke PDF/Excel</li>
+<li>Tulis narrative singkat: revenue MoM, top 3 expense, anomali bulan ini, plan bulan depan</li>
+</ul>
+</div>
+
+<h2 id="faq">12. FAQ Finance</h2>
+
+<div class="faq-q">Q: Saya verifikasi setoran tapi salah, gimana batalin?</div>
+<div class="faq-a">Buka setoran detail → klik "Tolak". Sistem akan reverse jurnal otomatis. Kasir akan get notif untuk re-submit.</div>
+
+<div class="faq-q">Q: Saldo Bank di sistem beda dari mobile banking, kenapa?</div>
+<div class="faq-a">Kemungkinan: (1) ada setoran belum verified, (2) ada settlement aggregator belum catat, (3) ada biaya admin bank yang belum input sebagai expense. Cek satu-satu via drill-down Buku Besar akun bank tersebut.</div>
+
+<div class="faq-q">Q: Auto-jurnal aktif tapi kok jurnal tidak muncul setelah saya buat transaksi POS?</div>
+<div class="faq-a">Filter Audit Log untuk event <code>journal.posting_failed</code>. Kemungkinan: (1) akun yang dibutuhkan belum ada di Bagan Akun, (2) recipe / kategori menu belum di-set sehingga COGS tidak bisa dimap. Detail error ada di payload audit log.</div>
+
+<div class="faq-q">Q: Mau koreksi expense bulan lalu yang sudah locked, gimana?</div>
+<div class="faq-a">Periode locked tidak bisa diubah langsung. Buat reversing entry hari ini (jurnal manual: balikkan posisi debit/credit), lalu input entry baru yang benar di tanggal hari ini. Tetap tracked.</div>
+
+<div class="faq-q">Q: Trial Balance tidak balanced (debit ≠ credit), apa yang salah?</div>
+<div class="faq-a">Critical bug! Salah satu kemungkinan: (1) jurnal manual yang debit ≠ credit lolos validasi (cek di tab Jurnal sort by date), (2) ada drift di auto-journal yang missed. Hubungi Owner / developer ASAP. Trial Balance HARUS balanced.</div>
+
+<div class="faq-q">Q: Ada transaksi POS aggregator status "settled" tapi saya gak ngeliat masuk ke bank?</div>
+<div class="faq-a">Cek tab Settlement filter "Verified". Kalau sudah verified tapi rekening tidak ada, mungkin salah verify (verify duluan tanpa cek mutasi). Reverse settlement → tunggu mutasi → re-catat.</div>
+
+<div class="faq-q">Q: Stok bahan minus / aneh, terkait Finance gak?</div>
+<div class="faq-a">Iya, karena affect HPP &amp; nilai persediaan. Hubungi tim Gudang untuk opname spot. Kalau opname menemukan selisih besar, koreksi via opname akan auto-fire jurnal Adjustment.</div>
+
+<h2 id="redflag">13. Yang HARUS Diperhatikan (Red Flags)</h2>
+
+<div class="box-red">
+<strong>RED FLAG = STOP, telusuri, jangan diabaikan</strong>
+<ul style="margin: 4px 0;">
+<li><strong>Trial Balance tidak balanced</strong> — debit ≠ credit. Critical, hubungi developer.</li>
+<li><strong>Saldo Kas Tunai negatif</strong> — fisik tidak mungkin minus. Pasti ada error input.</li>
+<li><strong>Setoran "verified" tanpa bukti mutasi</strong> — Finance malas verify, dana mungkin nyangkut atau hilang.</li>
+<li><strong>Variance shift &gt; Rp 50rb berulang</strong> — kemungkinan kasir kurang teliti atau ada masalah lain.</li>
+<li><strong>Refund / Compliment dari kasir tertentu sangat sering (≥5/hari)</strong> — pattern abuse.</li>
+<li><strong>Aggregator settlement late &gt; 7 hari</strong> — perlu chase ke merchant support.</li>
+<li><strong>Net Profit P&amp;L negatif berulang bulan-bulan ini</strong> — outlet rugi, owner perlu intervention.</li>
+<li><strong>Audit log <code>journal.posting_failed</code> count tinggi</strong> — auto-journal ada masalah, jurnal incomplete.</li>
+<li><strong>Stok bahan minus banyak</strong> — affect nilai persediaan + HPP.</li>
+<li><strong>Hutang Dagang naik drastis</strong> — overdue payment ke supplier, risk merusak relasi.</li>
+</ul>
+</div>
+
+<h2 id="cheat">14. Cheatsheet Cepat</h2>
+
+<div class="cheatsheet">
+<h3>One-Page Reference</h3>
+
+<h4>Daily (15 menit)</h4>
+<ul>
+<li>Verifikasi setoran kemarin → <span class="menu">Setoran Tunai</span></li>
+<li>Catat aggregator T+1 → <span class="menu">Keuangan → Settlement</span></li>
+<li>Scan Saldo Akun → <span class="menu">Saldo Akun</span></li>
+</ul>
+
+<h4>Weekly (1 jam, Senin)</h4>
+<ul>
+<li>Cek closing shift variance → <span class="menu">Laporan → Closing Shift</span></li>
+<li>Cek draft jurnal tertinggal → <span class="menu">Akuntansi → Jurnal</span> filter Draft</li>
+<li>Filter <code>journal.posting_failed</code> → <span class="menu">Audit Log</span></li>
+</ul>
+
+<h4>Monthly (3-4 jam, tanggal 1-2)</h4>
+<ol>
+<li>Pre-close: opname, semua transaksi bulan lalu masuk</li>
+<li>Tutup periode → <span class="menu">Akuntansi → Periode</span></li>
+<li>Generate &amp; export 4 laporan: Trial Balance, P&amp;L, Balance Sheet, Cash Flow</li>
+<li>Cross-check: P&amp;L vs Daily Sales, Bank vs mutasi, Hutang vs purchases TOP</li>
+<li>Investor reporting: export PDF + narrative</li>
+</ol>
+
+<h4>Formula Akuntansi Penting</h4>
+<div class="formula">
+Aset = Liabilitas + Ekuitas (Balance Sheet)<br>
+Pendapatan - HPP - Beban = Laba Bersih (P&amp;L)<br>
+Saldo Awal + Pembelian - Stok Akhir = HPP (Inventory)<br>
+Kas Awal Shift + Penjualan Cash - Refund Cash - Petty Cash Out + Petty Cash In = Kas Harusnya
+</div>
+
+<h4>Status Cheatsheet</h4>
+<ul>
+<li>Setoran: <span class="label-status badge-yellow">Pending</span> → <span class="label-status badge-green">Verified</span> / <span class="label-status badge-red">Rejected</span></li>
+<li>Jurnal: <span class="label-status badge-yellow">Draft</span> → <span class="label-status badge-green">Posted</span> → <span class="label-status badge-gray">Reversed</span></li>
+<li>Periode: <span class="label-status badge-green">Open</span> → <span class="label-status badge-yellow">Closed</span> → <span class="label-status badge-red">Locked</span></li>
+<li>Pembelian (TOP): <span class="label-status badge-yellow">Pending Payment</span> → <span class="label-status badge-green">Paid</span></li>
+</ul>
+
+<h4>Kontak Eskalasi</h4>
+<ul>
+<li><strong>Bug sistem</strong> (Trial Balance unbalanced, error aneh) → Owner via WhatsApp + screenshot</li>
+<li><strong>Selisih setoran tidak ketemu</strong> → Tanya kasir terkait dulu</li>
+<li><strong>Mutasi bank tidak match POS</strong> → Cek Settlement aggregator + Setoran pending</li>
+<li><strong>Kebijakan akuntansi</strong> (mau klasifikasi gimana) → Owner approve dulu</li>
+</ul>
+</div>
+
+<div class="closing">
+<strong>Selamat bekerja!</strong><br>
+Pelan-pelan saja, kerjakan urutan dari Daily → Weekly → Monthly. Kalau bingung step manapun, screenshot &amp; tanya Owner. Jangan ragu untuk verifikasi 2x sebelum klik tombol yang affect saldo (Verifikasi Setoran, Tutup Periode, Post Jurnal).<br><br>
+<em>Sistem dibuat untuk membantu, bukan menggantikan judgement Anda. Tetap teliti.</em>
+</div>
+
+<div class="footer">
+Mahakan Coffee &amp; Space — Panduan Finance &amp; Akuntansi · Versi 2026-05-15
+</div>
+
+</body>
+</html>

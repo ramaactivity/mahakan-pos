@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Panduan Sistem POS-ERP — Tim Gudang & Purchasing</title>
+<style>
+  @page {
+    size: A4;
+    margin: 18mm 16mm;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.55;
+    color: #1f2937;
+    max-width: 100%;
+    margin: 0;
+  }
+  h1 {
+    color: #14532d;
+    font-size: 22pt;
+    margin: 0 0 6px;
+    border-bottom: 3px solid #14532d;
+    padding-bottom: 8px;
+  }
+  h2 {
+    color: #14532d;
+    font-size: 15pt;
+    margin: 24px 0 8px;
+    padding: 6px 10px;
+    background: #ecfdf5;
+    border-left: 4px solid #14532d;
+    page-break-after: avoid;
+  }
+  h3 {
+    color: #166534;
+    font-size: 12pt;
+    margin: 14px 0 6px;
+    page-break-after: avoid;
+  }
+  p { margin: 6px 0; }
+  ul, ol { margin: 6px 0 10px; padding-left: 22px; }
+  li { margin: 3px 0; }
+  strong { color: #14532d; }
+  code, .kbd {
+    background: #f3f4f6;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10pt;
+    font-family: "SF Mono", Menlo, monospace;
+  }
+  .menu {
+    background: #dbeafe;
+    color: #1e3a8a;
+    padding: 1px 7px;
+    border-radius: 3px;
+    font-weight: 600;
+    font-size: 10.5pt;
+  }
+  .intro {
+    background: #fef3c7;
+    border-left: 4px solid #d97706;
+    padding: 10px 14px;
+    margin: 14px 0 20px;
+    border-radius: 4px;
+  }
+  .box-green {
+    background: #ecfdf5;
+    border: 1px solid #86efac;
+    padding: 10px 14px;
+    margin: 10px 0;
+    border-radius: 4px;
+  }
+  .box-yellow {
+    background: #fffbeb;
+    border: 1px solid #fcd34d;
+    padding: 10px 14px;
+    margin: 10px 0;
+    border-radius: 4px;
+  }
+  .box-red {
+    background: #fef2f2;
+    border: 1px solid #fca5a5;
+    padding: 10px 14px;
+    margin: 10px 0;
+    border-radius: 4px;
+  }
+  .tip {
+    background: #eff6ff;
+    border-left: 4px solid #3b82f6;
+    padding: 8px 12px;
+    margin: 8px 0;
+    border-radius: 4px;
+    font-size: 10.5pt;
+  }
+  .label-status {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 9.5pt;
+    font-weight: 600;
+    margin: 0 2px;
+  }
+  .badge-draft { background: #e5e7eb; color: #374151; }
+  .badge-open { background: #dbeafe; color: #1e40af; }
+  .badge-partial { background: #fef3c7; color: #92400e; }
+  .badge-closed { background: #d1fae5; color: #065f46; }
+  .badge-cancelled { background: #fee2e2; color: #991b1b; }
+  .badge-green { background: #d1fae5; color: #065f46; }
+  .badge-yellow { background: #fef3c7; color: #92400e; }
+  .badge-red { background: #fee2e2; color: #991b1b; }
+  hr {
+    border: none;
+    border-top: 1px dashed #d1d5db;
+    margin: 18px 0;
+  }
+  .faq-q {
+    font-weight: 600;
+    color: #14532d;
+    margin-top: 12px;
+  }
+  .faq-a {
+    margin: 4px 0 10px;
+    padding-left: 14px;
+  }
+  .step-num {
+    display: inline-block;
+    background: #14532d;
+    color: white;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    text-align: center;
+    line-height: 22px;
+    font-weight: 700;
+    font-size: 10pt;
+    margin-right: 6px;
+  }
+  .closing {
+    background: #ecfdf5;
+    border: 2px solid #14532d;
+    padding: 14px 18px;
+    margin: 20px 0 0;
+    border-radius: 6px;
+    text-align: center;
+    font-weight: 500;
+  }
+  .footer {
+    margin-top: 30px;
+    padding-top: 10px;
+    border-top: 1px solid #d1d5db;
+    text-align: center;
+    color: #6b7280;
+    font-size: 9pt;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 10.5pt;
+  }
+  th, td {
+    border: 1px solid #d1d5db;
+    padding: 6px 10px;
+    text-align: left;
+  }
+  th {
+    background: #14532d;
+    color: white;
+    font-weight: 600;
+  }
+  tr:nth-child(even) td { background: #f9fafb; }
+  .page-break { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<h1>Panduan Sistem POS-ERP Mahakan<br><span style="font-size: 13pt; color: #166534; font-weight: 500;">Untuk Tim Gudang &amp; Purchasing</span></h1>
+
+<div class="intro">
+<strong>Halo!</strong> Ini panduan santai cara pakai update terbaru. Pelan-pelan aja, ikuti urutan dari atas ke bawah. Kalau bingung di step manapun, screenshot &amp; kirim ke Owner.
+</div>
+
+<h2>1. Halaman Bahan Baku</h2>
+
+<p>Login → menu <span class="menu">Inventory → Bahan Baku</span></p>
+
+<h3>Yang Baru</h3>
+<ul>
+  <li>Ada toggle <strong>"Snapshot"</strong> ↔ <strong>"Pergerakan Bulan"</strong> di pojok kanan atas</li>
+  <li><strong>Snapshot</strong> = stok sekarang (mode lama, default)</li>
+  <li><strong>Pergerakan Bulan</strong> = BARU. Per bulan: Stok Awal + Pembelian + Stok Akhir + HPP</li>
+</ul>
+
+<h3>Cobain Dulu</h3>
+<ol>
+  <li>Klik <strong>"Pergerakan Bulan"</strong></li>
+  <li>Pilih bulan (default bulan ini)</li>
+  <li>Lihat tabel: tiap bahan ada <strong>Stok Awal Bulan → Pembelian → Stok Akhir → Pemakaian → Nilai HPP</strong></li>
+  <li>Klik salah satu bahan → modal drill-down keluar: list <strong>semua gerakan</strong> bulan itu (Pembelian, Pemakaian POS, Waste, Adjust, Refund Restore)</li>
+  <li>Coba tombol <strong>"Unduh CSV"</strong> — format mirip Google Sheets COGS dulu</li>
+</ol>
+
+<div class="tip">
+<strong>Yang perlu diperhatikan:</strong>
+<ul style="margin: 4px 0;">
+<li>Banner kuning <em>"X bahan belum punya opname awal bulan"</em> → stok awal belum akurat. Perlu Stok Opname.</li>
+<li>Status badge: <span class="label-status badge-green">Akurat</span> punya opname awal · <span class="label-status badge-yellow">Partial</span> sebagian · <span class="label-status badge-red">No baseline</span> belum ada opname</li>
+</ul>
+</div>
+
+<h2>2. Stok Opname</h2>
+
+<p>Menu <span class="menu">Inventory → Stok Opname</span></p>
+
+<h3>Kapan Opname?</h3>
+<ul>
+  <li><strong>WAJIB tanggal 1 tiap bulan</strong> → supaya "Stok Awal Bulan" akurat</li>
+  <li>Boleh juga akhir hari untuk bahan kritikal (kopi, susu, daging)</li>
+</ul>
+
+<h3>Caranya</h3>
+<ol>
+  <li>Klik <strong>"Buat Opname Baru"</strong></li>
+  <li>Pilih bahan yang mau di-count (boleh sebagian atau semua)</li>
+  <li>Input qty fisik (yang kamu timbang/hitung di gudang)</li>
+  <li>Sistem otomatis tampil selisih vs sistem</li>
+  <li>Kasih alasan kalau selisih &gt; 5% (mis. "waste cup retak", "tumpah")</li>
+  <li>Simpan</li>
+</ol>
+
+<div class="tip">
+Selisih besar tanpa alasan jelas → cek "Pergerakan Bulan" drill-down bahan itu, telusuri ada gerakan ganjil tidak.
+</div>
+
+<h2>3. Purchase Request (PR) — Permintaan Beli</h2>
+
+<p>Menu <span class="menu">Purchasing → PR</span></p>
+
+<h3>Konsep Singkat</h3>
+<ul>
+  <li>Staff/kasir sadar bahan menipis → buat PR</li>
+  <li>Owner approve</li>
+  <li>Kamu (purchasing) catat pembelian dari PR itu</li>
+</ul>
+
+<h3>Yang Baru di PR List</h3>
+<ul>
+  <li>Tiap PR sekarang tampil sebagai <strong>card ringkas</strong> (bukan wall-of-text lagi)</li>
+  <li>Tampil: status badge, nama requester+tanggal, jumlah item, progress bar hijau (% sudah diterima)</li>
+  <li>Klik card → modal detail keluar, baru lihat item &amp; aksi</li>
+</ul>
+
+<h3>Status PR</h3>
+<ul>
+  <li><span class="label-status badge-draft">Draft</span> belum approve owner</li>
+  <li><span class="label-status badge-open">Open</span> siap dibeli</li>
+  <li><span class="label-status badge-partial">Partial</span> sudah ke-terima sebagian</li>
+  <li><span class="label-status badge-closed">Closed</span> sudah ke-terima semua</li>
+  <li><span class="label-status badge-cancelled">Cancelled</span> batal</li>
+</ul>
+
+<h2>4. Tarik PR ke Pembelian <span style="color: #d97706;">★ FITUR PENTING</span></h2>
+
+<div class="box-red">
+<strong>Skenario lama:</strong> PR approved → kamu buat Pembelian baru → ketik ulang nama bahan + qty satu per satu. Ribet kan?
+</div>
+
+<div class="box-green">
+<strong>Skenario baru:</strong> PR approved → klik <em>"Tarik ke Pembelian"</em> → form auto-isi semua item dari PR. Tinggal centang &amp; submit.
+</div>
+
+<h3>Cara A — dari Halaman Pembelian</h3>
+<ol>
+  <li>Menu <span class="menu">Inventory → Pembelian</span></li>
+  <li>Klik tombol <strong>"Tarik dari PR"</strong> (samping tombol "Catat Pembelian")</li>
+  <li><strong>Step 1:</strong> Pilih PR dari list (urut dari yang paling lama dulu)</li>
+  <li><strong>Step 2:</strong> Form muncul dengan semua item PR sudah ke-isi</li>
+  <li>Centang/uncentang item yang mau dibeli batch ini (boleh partial!)</li>
+  <li>Supplier <strong>auto-suggest</strong> dari Market List → ada badge <strong>"Auto"</strong> muncul. Kamu boleh ganti per baris.</li>
+  <li>Edit qty / harga kalau beda dari PR (mis. supplier kasih lebih murah)</li>
+  <li>Lihat <strong>preview groups:</strong> <em>"3 pembelian akan dibuat: Supplier A Rp 250rb · Supplier B Rp 180rb · Supplier C Rp 95rb"</em></li>
+  <li>Klik Simpan → semua pembelian dibuat sekaligus</li>
+</ol>
+
+<h3>Cara B — dari Modal Detail PR</h3>
+<ol>
+  <li>Menu <span class="menu">Purchasing → PR</span></li>
+  <li>Klik card PR (status Open atau Partial)</li>
+  <li>Modal detail keluar → klik tombol <strong>"Tarik ke Pembelian"</strong></li>
+  <li>Langsung ke Step 2 wizard (skip pilih PR, kan udah dipilih)</li>
+</ol>
+
+<h3>Multi-Vendor Split — Gimana Kerjanya?</h3>
+<div class="box-green">
+Misal 1 PR isinya: <strong>Susu</strong> (dari supplier A), <strong>Kopi</strong> (dari supplier B), <strong>Gula</strong> (dari supplier C). Sistem auto-grouping per supplier → buat <strong>3 pembelian terpisah sekaligus</strong>. Tiap supplier dapat nota sendiri-sendiri (rapi buat akuntansi).
+</div>
+
+<h3>Catat Partial</h3>
+<ul>
+  <li>PR minta 10 Kg kopi, hari ini supplier cuma kasih 6 Kg</li>
+  <li>Centang item kopi, <strong>edit qty jadi 6</strong></li>
+  <li>Submit → PR otomatis update jadi <span class="label-status badge-partial">Partial</span> (outstanding masih 4 Kg)</li>
+  <li>Besok supplier kirim 4 Kg sisanya → tarik PR yang sama lagi → tinggal 4 Kg outstanding</li>
+</ul>
+
+<h2>5. Catat Pembelian Langsung (Tanpa PR)</h2>
+
+<p>Kalau beli dadakan tanpa PR (mis. mendadak kehabisan, beli di pasar):</p>
+<p>Menu <span class="menu">Inventory → Pembelian</span> → klik <strong>"Catat Pembelian"</strong></p>
+
+<p>Form mirror Google Sheets COGS (yang biasa Cacil/Anisa pakai):</p>
+<ul>
+  <li>Pilih supplier (atau "Pembelian Langsung" untuk pasar)</li>
+  <li>Tambah baris bahan</li>
+  <li>Input qty + harga total per baris</li>
+  <li>Sistem hitung otomatis subtotal</li>
+</ul>
+
+<h3 style="color: #b91c1c;">Unit Conversion — INI PENTING (buat Cacil &amp; Anisa)</h3>
+
+<p>Saat input qty, ada <strong>preview LIVE</strong> di bawah field:</p>
+
+<table>
+<thead>
+<tr><th style="width: 22%;">Warna Preview</th><th>Contoh Pesan</th><th style="width: 22%;">Artinya</th></tr>
+</thead>
+<tbody>
+<tr><td><span class="label-status badge-green">Hijau ✓</span></td><td><em>"≈ 2.000 gr (master)"</em></td><td>Aman, sistem auto-convert</td></tr>
+<tr><td><span class="label-status badge-green">Hijau via-pack</span></td><td><em>"via Market List: 1 Pack = 25.000 gr"</em></td><td>Aman, ada Pack Size</td></tr>
+<tr><td><span class="label-status badge-yellow">Kuning ⚠</span></td><td><em>"Set Pack Size dulu di Market List"</em></td><td>Setup Market List dulu</td></tr>
+<tr><td><span class="label-status badge-red">Merah ⛔</span></td><td><em>"Tidak compatible"</em></td><td>Unit beda dimensi (gr vs liter)</td></tr>
+</tbody>
+</table>
+
+<h3>Contoh Skenario</h3>
+
+<div class="box-green">
+<strong>Skenario 1 — Same Dimension:</strong>
+<ul>
+<li>Master kopi di sistem: <strong>gram</strong></li>
+<li>Kamu beli "2 Kg kopi" → input qty <strong>2</strong>, pilih unit <strong>"Kg"</strong></li>
+<li>Preview hijau muncul: <em>"≈ 2.000 gr (master)"</em></li>
+<li>Stok sistem nambah <strong>2.000 gr</strong> (BUKAN 2 doang!). Sebelum update ini bisa salah jadi cuma +2, sekarang aman.</li>
+</ul>
+</div>
+
+<div class="box-green">
+<strong>Skenario 2 — Via Pack:</strong>
+<ul>
+<li>Master tepung: gram</li>
+<li>Kamu beli "1 Pack tepung 25 Kg" dari Supplier A</li>
+<li><strong>Pertama kali:</strong> setup di Market List dulu → supplier A × tepung → Pack Size = 25, Pack Unit = Kg</li>
+<li>Setelah setup, input qty <strong>1</strong>, unit <strong>"Pack"</strong> → preview <em>"via Market List: 1 Pack = 25.000 gr"</em> → stok +25.000 gr</li>
+<li><strong>Sekali setup, selamanya bebas catat pakai "Pack"</strong></li>
+</ul>
+</div>
+
+<div class="tip">
+<strong>Tips gaptek:</strong>
+<ul style="margin: 4px 0;">
+<li><strong>Tidak yakin unit-nya?</strong> Liat preview. Hijau = lanjut. Kuning/merah = stop, fix dulu.</li>
+<li><strong>Selalu cek total Rp di bawah</strong> sebelum simpan — match sama nota fisik</li>
+<li><strong>Upload bukti foto nota</strong> — auto-save ke Google Drive folder STRUK PEMBELIAN</li>
+</ul>
+</div>
+
+<h2>6. Market List (Setup Pack Size)</h2>
+
+<p>Menu <span class="menu">Inventory → Market List</span></p>
+
+<p><strong>Apa itu?</strong> Tabel kombinasi: <strong>Supplier × Bahan + harga + pack info</strong>.</p>
+
+<h3>Kapan Perlu Setup?</h3>
+<ul>
+  <li>Bahan yang sering dibeli dalam pack: Tepung 25Kg, Beras 50Kg, Susu UHT 1L, Minyak 5L</li>
+  <li>Setup sekali → forever bisa pakai unit "Pack"</li>
+</ul>
+
+<h3>Cara Setup</h3>
+<ol>
+  <li>Cari kombinasi supplier × bahan (atau klik "Tambah Entry")</li>
+  <li>Isi:
+    <ul>
+      <li>Pack Size: <strong>25</strong></li>
+      <li>Pack Unit: <strong>Kg</strong></li>
+      <li>Harga Per Pack: <strong>Rp X</strong></li>
+    </ul>
+  </li>
+  <li><strong>Centang "Primary supplier"</strong> kalau ini supplier utama untuk bahan ini → akan auto-suggest saat tarik PR</li>
+  <li>Simpan</li>
+</ol>
+
+<h2>7. FAQ Gaptek</h2>
+
+<div class="faq-q">Q: Pembelian sudah dicatat tapi stok kelihatan aneh?</div>
+<div class="faq-a">Cek "Pergerakan Bulan" → klik bahan itu → drill-down. Pasti ketauan: salah unit input, ada waste tidak tercatat, atau qty kebalik.</div>
+
+<div class="faq-q">Q: PR sudah approve tapi tidak muncul di "Tarik dari PR"?</div>
+<div class="faq-a">Status PR harus <strong>Open</strong> atau <strong>Partial</strong>. Kalau "Draft" = belum approve. Kalau "Closed" = sudah ke-terima semua.</div>
+
+<div class="faq-q">Q: Setelah Tarik PR salah, mau batal?</div>
+<div class="faq-a">Buka Pembelian yang baru dibuat → klik <strong>Cancel</strong>. PR otomatis revert outstanding-nya, bisa di-tarik ulang.</div>
+
+<div class="faq-q">Q: Beli barang yang belum ada di master bahan?</div>
+<div class="faq-a">Setup bahan dulu di <strong>Bahan Baku → "Tambah Bahan"</strong>. Kasih unit dasar:
+<ul>
+<li>Timbangan → <strong>gram</strong></li>
+<li>Cairan → <strong>ml</strong></li>
+<li>Butiran/biji → <strong>pcs</strong></li>
+</ul>
+Setelah save, baru bisa catat pembelian-nya.</div>
+
+<div class="faq-q">Q: Ada bahan yang stok-nya minus / merah?</div>
+<div class="faq-a">Dashboard Bahan Baku → card <strong>"Stok Negatif"</strong> warna merah. Artinya ada penjualan tapi belum catat pembelian, atau salah unit dulu. Drill-down untuk telusuri &amp; koreksi via opname.</div>
+
+<div class="faq-q">Q: Opname sudah disimpan tapi stok minus belum hilang?</div>
+<div class="faq-a">Opname koreksi stok sistem = stok fisik kamu. Kalau masih minus berarti <strong>tanggal opname belum match</strong> atau ada flow yang belum di-save. Cek tanggal opname.</div>
+
+<div class="faq-q">Q: Preview unit kuning "Set Pack Size dulu" — gimana?</div>
+<div class="faq-a">Berarti kombinasi Supplier × Bahan ini belum ada Pack Size di Market List. Dua pilihan:
+<ol>
+<li>Ganti unit input ke unit master (gr/ml/pcs) — langsung jalan</li>
+<li>Setup Market List dulu (sekali setup, forever)</li>
+</ol></div>
+
+<div class="faq-q">Q: Multi-vendor split — kalau salah satu supplier kasih barang nya beda dari PR?</div>
+<div class="faq-a">Step 2 wizard kamu bisa <strong>edit qty/harga per baris</strong> sebelum submit. Tidak harus match PR persis.</div>
+
+<h2>8. Urutan Pakai Harian (Routine)</h2>
+
+<h3>Pagi (5 menit)</h3>
+<ul>
+  <li>Buka Bahan Baku → cek card <strong>Stok Rendah</strong> &amp; <strong>Stok Negatif</strong></li>
+  <li>Yang merah = prioritas hari ini (telp supplier atau buat PR)</li>
+</ul>
+
+<h3>Saat Ada PR Baru</h3>
+<ul>
+  <li>Menu PR → review yang status Open</li>
+  <li>Tunggu supplier datang → Tarik ke Pembelian</li>
+</ul>
+
+<h3>Saat Terima Barang dari Supplier</h3>
+<ul>
+  <li><strong>Tarik dari PR</strong> (kalau ada PR-nya) atau <strong>Catat Langsung</strong> (kalau dadakan)</li>
+  <li><strong>WAJIB cek preview unit conversion</strong> harus hijau ✓</li>
+  <li>Input qty match nota</li>
+  <li>Upload foto nota (untuk audit Owner)</li>
+</ul>
+
+<h3>Akhir Hari (5 menit)</h3>
+<ul>
+  <li>Buka Pergerakan Bulan → cepat scan ada bahan yang "aneh" pemakaiannya tidak?</li>
+  <li>Kalau ada selisih besar → opname spot bahan itu</li>
+</ul>
+
+<h3 style="color: #b91c1c;">Awal Bulan (WAJIB, 30 menit)</h3>
+<ul>
+  <li>Stok Opname semua bahan utama</li>
+  <li>Ini yang bikin "Stok Awal Bulan" akurat untuk laporan COGS</li>
+</ul>
+
+<h2>9. Yang Sering Bikin Salah (Hindari!)</h2>
+
+<div class="box-red">
+<ul style="margin: 4px 0;">
+<li><strong>JANGAN input qty pakai unit yang gak dimengerti sistem.</strong> Selalu liat preview, harus hijau.</li>
+<li><strong>JANGAN skip opname awal bulan.</strong> Pergerakan Bulan jadi gak akurat → laporan HPP melenceng.</li>
+<li><strong>JANGAN catat 2× untuk barang yang sama</strong> (mis. tarik dari PR + catat langsung). Cek dulu.</li>
+<li><strong>JANGAN delete pembelian</strong> kalau cuma mau koreksi qty — pakai Edit. Delete cuma kalau bener-bener batal.</li>
+</ul>
+</div>
+
+<div class="closing">
+Pelan-pelan aja ya. Coba dari step 1 dulu (lihat-lihat Bahan Baku), terus step 2 (opname kecil-kecilan), baru step 3-4 (PR &amp; Tarik PR).<br>
+Kalau stuck di step manapun, screenshot kirim Owner. <strong>Semangat!</strong>
+</div>
+
+<div class="footer">
+Mahakan Coffee &amp; Space — Panduan Sistem POS-ERP · Versi 2026-05-15
+</div>
+
+</body>
+</html>
