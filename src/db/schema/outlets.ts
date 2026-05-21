@@ -153,6 +153,16 @@ export type OutletSettings = {
     /** ISO timestamp last edit, untuk audit/staleness check. */
     updatedAt?: string;
   };
+  /** Sesi AE-70 — Opening balance checklist progress (Rekonsiliasi).
+   * Persisted di server supaya tidak hilang antar device/browser. */
+  openingBalance?: {
+    /** Tanggal trial start — POS efektif dipakai harian per tanggal ini. */
+    trialStartDate?: string;
+    /** State per checklist step. Key = step.key dari OpeningBalanceChecklist. */
+    steps?: Record<string, "done" | "skip" | "pending">;
+    /** ISO timestamp last update untuk audit. */
+    updatedAt?: string;
+  };
 };
 
 export const outlets = pgTable("outlets", {

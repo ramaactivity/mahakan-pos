@@ -325,5 +325,14 @@ export const seedExpenseCategories: SeedExpenseCategory[] = [
   { name: "Kemasan", isSystem: false, displayOrder: 6 },
   { name: "Marketing", isSystem: false, displayOrder: 7 },
   { name: "Lain-lain", isSystem: false, displayOrder: 8 },
+  /* Sesi AE-70 — Pre-seed kategori untuk workflow Rekonsiliasi Saldo Awal.
+   * Dipakai staff finance saat input adjustment saldo cash drawer / bank
+   * awal di trial start. isSystem=true supaya tidak bisa di-delete owner
+   * (penting untuk integrity referensi historis). */
+  {
+    name: "Penyesuaian Saldo Awal",
+    isSystem: true,
+    displayOrder: 98,
+  },
   { name: "Refund", isSystem: true, displayOrder: 99 },
 ];

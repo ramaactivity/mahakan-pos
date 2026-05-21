@@ -5,6 +5,7 @@ export {
   updateApproval,
   updateAttendanceSettings,
   updateBusinessInfo,
+  updateOpeningBalance,
   updateOperationalHours,
   updatePayrollSettings,
   updateReceiptSettings,

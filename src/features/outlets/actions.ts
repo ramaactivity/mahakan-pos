@@ -318,7 +318,8 @@ async function updateSettingsSection(
     | "features"
     | "approval"
     | "attendance"
-    | "payroll",
+    | "payroll"
+    | "openingBalance",
   patch: Partial<OutletSettings[keyof OutletSettings]>,
 ): Promise<ApiResult<Outlet>> {
   let session;
@@ -445,6 +446,33 @@ export async function updatePayrollSettings(
     "payroll.manage",
     "payroll",
     parsed.data,
+  );
+}
+
+/* Sesi AE-70 — Opening balance checklist progress persistence.
+ * State per-outlet di outlets.settings.openingBalance JSONB.
+ * Permission: pakai `settings.business.update` (owner + manager) — owner
+ * yang biasanya isi, manager kadang assist staff finance.
+ */
+const openingBalanceSchema = z.object({
+  trialStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  steps: z
+    .record(z.string(), z.enum(["done", "skip", "pending"]))
+    .optional(),
+  updatedAt: z.string().optional(),
+});
+
+export async function updateOpeningBalance(
+  input: z.input<typeof openingBalanceSchema>,
+): Promise<ApiResult<Outlet>> {
+  const parsed = openingBalanceSchema.safeParse(input);
+  if (!parsed.success) {
+    return err("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "");
+  }
+  return updateSettingsSection(
+    "settings.business.update",
+    "openingBalance",
+    { ...parsed.data, updatedAt: new Date().toISOString() },
   );
 }
 
