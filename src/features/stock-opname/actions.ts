@@ -714,10 +714,39 @@ export async function finalizeOpname(
         return Number.isFinite(d) ? d : 0;
       };
 
+      /* Sesi AE-81 — Replace-semantic fix for stale-snapshot bug.
+       *
+       * OLD bug: kode dulu apply `actual - expected_snapshot` (snapshot diff)
+       * ke `currentStock_NOW`. Tapi snapshot di-freeze saat session start,
+       * sementara POS sales / purchases bisa mutate currentStock di antara
+       * snapshot dan finalize. Hasilnya: kalau snapshot 700, sales kuras
+       * jadi 40, lalu staff hitung 230 fisik, formula = 40 + (230-700) =
+       * -430 → NEGATIVE_STOCK error meskipun staff hitung benar.
+       *
+       * NEW: opname adalah PHYSICAL TRUTH. Pakai replace semantic:
+       *   - realDelta = actual - currentStockNow  (delta yang benar2 di-apply)
+       *   - newStock = currentStockNow + realDelta = actual  (count IS truth)
+       *   - Movement record realDelta supaya inventory ledger balanced.
+       *
+       * Filter `computeDiff(line) !== 0` (= snapshot diff != 0) tetap di-pakai
+       * untuk skip auto-filled lines (submit step auto-fill actualQty=
+       * expectedQty kalau staff skip). Lines tanpa count nyata tidak boleh
+       * trigger adjustment.
+       *
+       * Untuk shrinkage cost analytics (separate dari net adjustment),
+       * stock_opname_lines.expectedQty + actualQty tetap ada — bisa di-query
+       * untuk laporan "selisih ditemukan selama opname window".
+       */
+
       // Lock all impacted ingredients up front for atomicity.
       const impactedIds = lines
         .filter((l) => l.actualQty !== null && computeDiff(l) !== 0)
         .map((l) => l.ingredientId);
+
+      /* Sesi AE-81 — track per-line realDelta untuk:
+       *  1. accounting hook section aggregation (Dr/Cr journal match stock change)
+       *  2. audit / reporting (totalAbsDiffQty + Cost reflect actual adjustment) */
+      const realDeltaByIngredient = new Map<string, number>();
 
       if (impactedIds.length > 0) {
         const liveIngs = await tx
@@ -737,8 +766,8 @@ export async function finalizeOpname(
         for (const line of lines) {
           if (line.actualQty === null) continue;
           // Sesi AE-15 — diff prefer decimal precision.
-          const diff = computeDiff(line);
-          if (diff === 0) continue;
+          const snapshotDiff = computeDiff(line);
+          if (snapshotDiff === 0) continue;
 
           const live = liveById.get(line.ingredientId);
           if (!live || live.deletedAt !== null) {
@@ -751,10 +780,6 @@ export async function finalizeOpname(
             throw new Error("OUTLET_MISMATCH");
           }
 
-          // Sesi AE-12 — decimal mirror.
-          // Sesi AE-62g — block kalau projection sebenarnya negative.
-          // computeNewStock clamp 0, jadi check `newStock.bigint < 0` (dead
-          // code dulu) ga pernah fire. Resolve pre-clamp projected dulu.
           const oldDecimalCur = (() => {
             if (live.currentStockDecimal !== null) {
               const p = parseFloat(live.currentStockDecimal);
@@ -762,18 +787,34 @@ export async function finalizeOpname(
             }
             return live.currentStock;
           })();
-          const projectedDecimal = oldDecimalCur + diff;
-          if (projectedDecimal < 0) {
+
+          /* Sesi AE-81 — REPLACE semantic. */
+          const actualDecimal = safeParseDec(
+            line.actualQtyDecimal,
+            line.actualQty,
+          );
+          const realDelta = actualDecimal - oldDecimalCur;
+          if (realDelta === 0) {
+            /* Stock sudah pas dengan count fisik (sales/purchases sudah
+             * reconcile drift selama session). No movement needed. */
+            continue;
+          }
+
+          /* Defensive guard — physical count harus >= 0. Schema CHECK
+           * `actualQty >= 0` sudah enforce di submit time, tapi double-check
+           * di sini supaya error message jelas kalau ada decimal corruption. */
+          if (actualDecimal < 0) {
             throw new Error(
               `NEGATIVE_STOCK:${line.ingredientNameSnapshot}`,
             );
           }
+
           const newStock = computeNewStock({
             currentBigint: live.currentStock,
             currentDecimal: live.currentStockDecimal,
-            delta: diff,
+            delta: realDelta,
           });
-          const movementDelta = formatMovementDelta(diff);
+          const movementDelta = formatMovementDelta(realDelta);
 
           await tx
             .update(ingredients)
@@ -798,7 +839,7 @@ export async function finalizeOpname(
               unitCostAtMovement: line.unitCostAtSnapshot,
               referenceType: "manual",
               referenceId: v.sessionId,
-              reason: `Opname ${sess.periodLabel} — selisih ${diff > 0 ? "+" : ""}${diff}`,
+              reason: `Opname ${sess.periodLabel} — adjust ${realDelta > 0 ? "+" : ""}${realDelta.toFixed(4)} (snapshot diff ${snapshotDiff > 0 ? "+" : ""}${snapshotDiff.toFixed(4)})`,
               createdBy: session.user.id,
             })
             .returning({ id: inventoryMovements.id });
@@ -808,9 +849,10 @@ export async function finalizeOpname(
             .set({ movementId: movement.id })
             .where(eq(stockOpnameLines.id, line.id));
 
+          realDeltaByIngredient.set(line.ingredientId, realDelta);
           movementsCreated++;
-          totalAbsDiffQty += Math.abs(diff);
-          totalAbsDiffCost += Math.abs(diff) * line.unitCostAtSnapshot;
+          totalAbsDiffQty += Math.abs(realDelta);
+          totalAbsDiffCost += Math.abs(realDelta) * line.unitCostAtSnapshot;
         }
       }
 
@@ -875,29 +917,39 @@ export async function finalizeOpname(
   });
 
   // Sesi U — Accounting auto-journal hook (opname adjustment).
-  // Aggregate per-line diff_value × unit_cost grouped by ingredient.section
-  // post-commit query. Skip kalau no movements (totalDiffCost=0).
-  // Sesi AE-62e — pakai decimal mirror (COALESCE fallback ke bigint) supaya
-  // negative-stock ingredients tetap dapat correct diff. Bigint expected_qty
-  // di-clamp 0 di snapshot, real value di decimal — diff math harus
-  // pakai decimal supaya cocok dengan finalize.
+  //
+  // Sesi AE-81 — aggregate dari inventoryMovements yang BARU di-buat saat
+  // finalize ini (kind='adjust' + referenceType='manual' + referenceId=sessionId),
+  // bukan dari stock_opname_lines diff. Alasan: setelah replace-semantic fix,
+  // movement.qtyDelta = realDelta (= actual - currentStockNow), bukan
+  // snapshot_diff. Journal Dr/Cr harus match stock change yang BENAR2 di-apply
+  // supaya asset balance tetap konsisten.
+  //
+  // Sebelumnya pakai snapshot_diff yang akan over/under-report kalau ada
+  // sales/purchase antara snapshot dan finalize.
   if (result.movementsCreated > 0) {
     const ingSections = await db
       .select({
         section: ingredients.section,
         diffValue: sql<number>`SUM(
-          ${stockOpnameLines.unitCostAtSnapshot}::numeric * (
-            COALESCE(${stockOpnameLines.actualQtyDecimal}, ${stockOpnameLines.actualQty}::numeric)
-            - COALESCE(${stockOpnameLines.expectedQtyDecimal}, ${stockOpnameLines.expectedQty}::numeric)
+          ${inventoryMovements.unitCostAtMovement}::numeric * COALESCE(
+            ${inventoryMovements.qtyDeltaDecimal},
+            ${inventoryMovements.qtyDelta}::numeric
           )
         )`,
       })
-      .from(stockOpnameLines)
+      .from(inventoryMovements)
       .innerJoin(
         ingredients,
-        eq(stockOpnameLines.ingredientId, ingredients.id),
+        eq(inventoryMovements.ingredientId, ingredients.id),
       )
-      .where(eq(stockOpnameLines.sessionId, v.sessionId))
+      .where(
+        and(
+          eq(inventoryMovements.kind, "adjust"),
+          eq(inventoryMovements.referenceType, "manual"),
+          eq(inventoryMovements.referenceId, v.sessionId),
+        ),
+      )
       .groupBy(ingredients.section);
 
     const sectionDiffs = ingSections
