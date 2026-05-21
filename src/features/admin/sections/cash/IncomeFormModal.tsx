@@ -137,7 +137,7 @@ export function IncomeFormModal({
       onClose={onClose}
       title="Tambah Pemasukan Non-POS"
       description="Sewa ruang event, titip jual, dll. Pemasukan POS otomatis dari transaksi."
-      size="md"
+      size="2xl"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
@@ -150,13 +150,27 @@ export function IncomeFormModal({
       }
     >
       <div className="space-y-4">
-        <DatePicker
-          label="Tanggal"
-          value={date}
-          onChange={(v) => setDate(v ?? today)}
-          required
-          clearable={false}
-        />
+        {/* Sesi AE-73 — Layout 2-col supaya form tidak memanjang ke bawah.
+         * Kiri: Tanggal, Nominal, Metode. Kanan: Deskripsi, Rekening Bank,
+         * Kategori Pendapatan. */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <DatePicker
+            label="Tanggal"
+            value={date}
+            onChange={(v) => setDate(v ?? today)}
+            required
+            clearable={false}
+          />
+          <Input
+            label="Nominal"
+            type="text"
+            inputMode="numeric"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ""))}
+            hint={parsedAmount > 0 ? `Preview: ${formatRupiah(parsedAmount)}` : undefined}
+            required
+          />
+        </div>
         <Input
           label="Deskripsi"
           value={description}
@@ -164,15 +178,6 @@ export function IncomeFormModal({
           placeholder="Misal: sewa ruang event komunitas fotografi"
           required
           maxLength={200}
-        />
-        <Input
-          label="Nominal"
-          type="text"
-          inputMode="numeric"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ""))}
-          hint={parsedAmount > 0 ? `Preview: ${formatRupiah(parsedAmount)}` : undefined}
-          required
         />
         <div className="space-y-1.5">
           <label className="block text-sm font-medium text-neutral-900">
@@ -262,10 +267,12 @@ export function IncomeFormModal({
           </div>
         ) : null}
 
-        {/* Sesi AE-71 — Akun Pendapatan selector (Cr side override) */}
+        {/* Sesi AE-71 — Kategori Pendapatan selector (Cr side override).
+         * Sesi AE-73 — rename "Akun Pendapatan" → "Kategori Pendapatan"
+         * supaya konsisten dengan form Pengeluaran yang pakai "Kategori". */}
         <div className="space-y-1.5">
           <label className="block text-sm font-medium text-neutral-900">
-            Akun Pendapatan{" "}
+            Kategori Pendapatan{" "}
             <span className="text-xs font-normal text-neutral-500">
               (untuk breakdown di Laporan Laba Rugi)
             </span>

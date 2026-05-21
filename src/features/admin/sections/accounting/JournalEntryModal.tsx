@@ -209,23 +209,30 @@ export function JournalEntryModal({
     );
   }
 
-  /* Sesi AE-72 — Quick templates: preset 1-tap untuk pola umum.
+  /* Sesi AE-72 + AE-73 — Quick templates: preset 1-tap untuk pola umum.
    * Setelah dipick, modal pre-fill description + 2 lines dengan akun yang
-   * masuk akal. Owner masih harus isi nominal + edit akhir sebelum post. */
+   * masuk akal. Owner masih harus isi nominal + edit akhir sebelum post.
+   *
+   * Owner request: lebih lengkap + most-used templates. Group berdasarkan
+   * konteks (setup awal, operasional, koreksi). */
   type Template = {
     key: string;
     label: string;
     description: string;
     lineDebitCode: string;
     lineCreditCode: string;
+    /** Group label untuk visual organize. */
+    group: "Saldo Awal" | "Operasional" | "Koreksi";
   };
   const TEMPLATES: Template[] = [
+    /* === Saldo Awal === */
     {
       key: "saldo-bank",
       label: "Saldo Awal Bank",
       description: "Penyesuaian Saldo Awal Bank ",
       lineDebitCode: "1110",
       lineCreditCode: "3101",
+      group: "Saldo Awal",
     },
     {
       key: "saldo-kas",
@@ -233,6 +240,7 @@ export function JournalEntryModal({
       description: "Penyesuaian Saldo Awal Kas",
       lineDebitCode: "1101",
       lineCreditCode: "3101",
+      group: "Saldo Awal",
     },
     {
       key: "owner-suntik",
@@ -240,6 +248,65 @@ export function JournalEntryModal({
       description: "Setoran modal owner ",
       lineDebitCode: "1110",
       lineCreditCode: "3101",
+      group: "Saldo Awal",
+    },
+    /* === Operasional === */
+    {
+      key: "bayar-sewa",
+      label: "Bayar Sewa Lokasi",
+      description: "Pembayaran sewa lokasi bulan ",
+      lineDebitCode: "6201",
+      lineCreditCode: "1110",
+      group: "Operasional",
+    },
+    {
+      key: "bayar-listrik",
+      label: "Bayar Listrik",
+      description: "Pembayaran listrik bulan ",
+      lineDebitCode: "6202",
+      lineCreditCode: "1110",
+      group: "Operasional",
+    },
+    {
+      key: "bayar-internet",
+      label: "Bayar Internet",
+      description: "Pembayaran internet bulan ",
+      lineDebitCode: "6204",
+      lineCreditCode: "1110",
+      group: "Operasional",
+    },
+    {
+      key: "sewa-ruang",
+      label: "Terima Sewa Ruang",
+      description: "Pendapatan sewa ruang acara ",
+      lineDebitCode: "1110",
+      lineCreditCode: "4202",
+      group: "Operasional",
+    },
+    {
+      key: "titip-jual",
+      label: "Terima Titip Jual",
+      description: "Pendapatan titip jual ",
+      lineDebitCode: "1101",
+      lineCreditCode: "4203",
+      group: "Operasional",
+    },
+    /* === Koreksi === */
+    {
+      key: "kas-ke-bank",
+      label: "Setor Kas ke Bank",
+      description: "Setoran kas drawer ke Bank ",
+      lineDebitCode: "1110",
+      lineCreditCode: "1101",
+      group: "Koreksi",
+    },
+    {
+      key: "bank-ke-kas",
+      label: "Tarik Bank ke Kas",
+      description: "Tarik tunai dari Bank ",
+      lineDebitCode: "1101",
+      lineCreditCode: "1110",
+      group: "Koreksi",
     },
   ];
   function applyTemplate(t: Template) {
@@ -403,24 +470,50 @@ export function JournalEntryModal({
       }
     >
       <div className="space-y-3">
-        {/* Sesi AE-72 — Quick templates. Hanya tampil di mode CREATE, bukan
-         * edit (edit pre-fill dari existing entry). */}
+        {/* Sesi AE-72/AE-73 — Quick templates grouped. Hanya tampil di
+         * mode CREATE, bukan edit (edit pre-fill dari existing entry). */}
         {!isEdit ? (
-          <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-neutral-200 bg-neutral-50/50 px-3 py-2 text-xs">
-            <Sparkles className="size-3.5 text-mahakan-green-700" aria-hidden />
-            <span className="font-medium text-neutral-700">
-              Quick Template:
-            </span>
-            {TEMPLATES.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => applyTemplate(t)}
-                className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 text-[11px] font-medium text-neutral-700 hover:border-mahakan-green-500 hover:bg-mahakan-green-50 hover:text-mahakan-green-900"
-              >
-                {t.label}
-              </button>
-            ))}
+          <div className="space-y-2 rounded-md border border-dashed border-neutral-200 bg-neutral-50/50 px-3 py-2">
+            <div className="flex items-center gap-2 text-xs">
+              <Sparkles
+                className="size-3.5 text-mahakan-green-700"
+                aria-hidden
+              />
+              <span className="font-medium text-neutral-700">
+                Quick Template
+              </span>
+              <span className="text-[10px] text-neutral-500">
+                — pilih template untuk auto-fill akun + deskripsi
+              </span>
+            </div>
+            {(["Saldo Awal", "Operasional", "Koreksi"] as const).map(
+              (group) => {
+                const groupTemplates = TEMPLATES.filter(
+                  (t) => t.group === group,
+                );
+                if (groupTemplates.length === 0) return null;
+                return (
+                  <div
+                    key={group}
+                    className="flex flex-wrap items-center gap-1.5"
+                  >
+                    <span className="min-w-[80px] text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                      {group}
+                    </span>
+                    {groupTemplates.map((t) => (
+                      <button
+                        key={t.key}
+                        type="button"
+                        onClick={() => applyTemplate(t)}
+                        className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 text-[11px] font-medium text-neutral-700 hover:border-mahakan-green-500 hover:bg-mahakan-green-50 hover:text-mahakan-green-900"
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                );
+              },
+            )}
           </div>
         ) : null}
 
@@ -464,15 +557,6 @@ export function JournalEntryModal({
                  * highlight Dr/Cr cell sesuai normalBalance. */
                 const acc = line.accountId ? accountById.get(line.accountId) : null;
                 const normalBalance: NormalBalance | null = acc?.normalBalance ?? null;
-                const dr = Number(line.debit) || 0;
-                const cr = Number(line.credit) || 0;
-                /* Detect "abnormal posting" warning: kalau owner isi sisi
-                 * yang tidak sesuai normal balance akun. Bukan blocker
-                 * (kadang valid: contra entry), cuma soft warning. */
-                const abnormal =
-                  acc &&
-                  ((normalBalance === "debit" && cr > 0 && dr === 0) ||
-                    (normalBalance === "credit" && dr > 0 && cr === 0));
                 return (
                   <tr key={line.id}>
                     <td className="px-2 py-1.5 align-top">
@@ -503,11 +587,16 @@ export function JournalEntryModal({
                         </div>
                       ) : null}
                     </td>
+                    {/* Sesi AE-73 — Hard lock: kalau akun selected, disable
+                     * sisi opposite of normalBalance. Mencegah accidental
+                     * mis-post + visual cue tegas mana sisi yang benar.
+                     * Owner pemula tidak perlu hafal Dr/Cr rule. */}
                     <td
                       className={cn(
                         "px-2 py-1.5 align-top",
                         normalBalance === "debit" &&
                           "bg-mahakan-green-50/40",
+                        normalBalance === "credit" && "bg-neutral-100/60",
                       )}
                     >
                       <NumericInput
@@ -515,13 +604,20 @@ export function JournalEntryModal({
                         value={line.debit}
                         onChange={(v) => updateLine(line.id, { debit: v })}
                         prefix="Rp"
+                        disabled={normalBalance === "credit"}
                       />
+                      {normalBalance === "credit" ? (
+                        <p className="mt-0.5 text-[10px] italic text-neutral-400">
+                          Akun ini normal CR — isi di kolom Credit
+                        </p>
+                      ) : null}
                     </td>
                     <td
                       className={cn(
                         "px-2 py-1.5 align-top",
                         normalBalance === "credit" &&
                           "bg-mahakan-green-50/40",
+                        normalBalance === "debit" && "bg-neutral-100/60",
                       )}
                     >
                       <NumericInput
@@ -529,7 +625,13 @@ export function JournalEntryModal({
                         value={line.credit}
                         onChange={(v) => updateLine(line.id, { credit: v })}
                         prefix="Rp"
+                        disabled={normalBalance === "debit"}
                       />
+                      {normalBalance === "debit" ? (
+                        <p className="mt-0.5 text-[10px] italic text-neutral-400">
+                          Akun ini normal DR — isi di kolom Debit
+                        </p>
+                      ) : null}
                     </td>
                     <td className="px-2 py-1.5 align-top">
                       <Input
@@ -540,15 +642,6 @@ export function JournalEntryModal({
                         }
                         maxLength={200}
                       />
-                      {abnormal ? (
-                        <p className="mt-1 text-[10px] text-warning-700">
-                          ⚠ Posisi tidak biasa untuk akun{" "}
-                          {formatAccountTypeLabel(acc!.type as AccountType)}
-                          {" "}(normal {normalBalance === "debit" ? "DR" : "CR"}).
-                          Pastikan benar — biasanya valid hanya untuk contra
-                          entry / koreksi.
-                        </p>
-                      ) : null}
                     </td>
                     <td className="px-2 py-1.5 align-top">
                       <button

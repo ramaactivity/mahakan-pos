@@ -154,7 +154,7 @@ export function ExpenseFormModal({
       open={open}
       onClose={onClose}
       title={edit ? "Edit Pengeluaran" : "Tambah Pengeluaran"}
-      size="md"
+      size="2xl"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
@@ -167,13 +167,25 @@ export function ExpenseFormModal({
       }
     >
       <div className="space-y-4">
-        <DatePicker
-          label="Tanggal"
-          value={date}
-          onChange={(v) => setDate(v ?? today)}
-          required
-          clearable={false}
-        />
+        {/* Sesi AE-73 — Layout 2-col, supaya form tidak memanjang ke bawah. */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <DatePicker
+            label="Tanggal"
+            value={date}
+            onChange={(v) => setDate(v ?? today)}
+            required
+            clearable={false}
+          />
+          <Input
+            label="Nominal"
+            type="text"
+            inputMode="numeric"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ""))}
+            hint={parsedAmount > 0 ? `Preview: ${formatRupiah(parsedAmount)}` : undefined}
+            required
+          />
+        </div>
 
         <Select
           label="Kategori"
@@ -192,16 +204,6 @@ export function ExpenseFormModal({
           placeholder="Misal: beli susu UHT 12L"
           required
           maxLength={200}
-        />
-
-        <Input
-          label="Nominal"
-          type="text"
-          inputMode="numeric"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ""))}
-          hint={parsedAmount > 0 ? `Preview: ${formatRupiah(parsedAmount)}` : undefined}
-          required
         />
 
         <div className="space-y-1.5">
