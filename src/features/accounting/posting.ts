@@ -293,13 +293,29 @@ export async function recordJournal(
       }
     }
 
-    // Count existing entries di period — sequence baru = count+1
-    const [{ count }] = await tx
-      .select({ count: sql<number>`count(*)::int` })
+    /* Sesi AE-76 — sequence generation via MAX(seq)+1, BUKAN COUNT(*)+1.
+     *
+     * Bug history: COUNT(*)+1 broken kalau ada entries yang di-delete
+     * (deleteDraftJournalEntry hard-delete row). Setelah delete, count
+     * turun tapi MAX entry_number tetap → next insert pakai seq dari
+     * count+1 yang sudah taken oleh existing entry → UNIQUE violation
+     * SQLSTATE 23505 di `ux_je_outlet_number`.
+     *
+     * MAX+1 gap-tolerant: meski ada deleted slot di tengah, seq baru
+     * selalu > existing max → guaranteed fresh. Advisory lock di atas
+     * tetap dipakai untuk serialize concurrent insert dalam satu period.
+     *
+     * Regex: extract trailing digit grup setelah dash terakhir di
+     * entry_number format "JE-YYYYMM-NNNN". COALESCE(..., 0) handle
+     * period kosong (no entries yet → seq=1). */
+    const [{ maxSeq }] = await tx
+      .select({
+        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${journalEntries.entryNumber} FROM '-([0-9]+)$') AS INT)), 0)::int`,
+      })
       .from(journalEntries)
       .where(eq(journalEntries.periodId, periodRow.id));
 
-    const seq = count + 1;
+    const seq = maxSeq + 1;
     const entryNumber = `JE-${year}${pad2(month)}-${pad4(seq)}`;
 
     // Insert header

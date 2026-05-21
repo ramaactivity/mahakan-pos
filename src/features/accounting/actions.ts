@@ -1165,6 +1165,11 @@ export async function reverseJournalEntry(
  *
  * Cascading: journal_lines.entry_id punya ON DELETE CASCADE → lines
  * otomatis ke-hapus saat entry di-delete.
+ *
+ * Sesi AE-76 — IMPORTANT: hard-delete entry BIKIN GAP di entry_number
+ * sequence (mis. JE-0046, JE-0048 tanpa JE-0047). Algorithm
+ * `recordJournal` sekarang pakai MAX(seq)+1 (bukan COUNT(*)+1) supaya
+ * tidak collision setelah gap. Aman.
  */
 export async function deleteDraftJournalEntry(
   entryId: string,

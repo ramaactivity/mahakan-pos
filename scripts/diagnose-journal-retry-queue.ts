@@ -18,8 +18,12 @@
  * Tidak modify data — read-only.
  */
 
+import { config } from "dotenv";
+config({ path: ".env.local" });
+
+import { Pool } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-serverless";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { db } from "../src/db";
 import {
   accountingPeriods,
   expenses,
@@ -28,7 +32,15 @@ import {
   journalRetryQueue,
   stockOpnameSessions,
   transactions,
-} from "../src/db/schema";
+} from "@/db/schema";
+
+if (!process.env.DATABASE_URL) {
+  console.error("DATABASE_URL required (set in .env.local)");
+  process.exit(1);
+}
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const db = drizzle(pool);
 
 const outletIdArg = process.argv[2];
 
