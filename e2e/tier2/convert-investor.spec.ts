@@ -55,8 +55,9 @@ test.describe("Convert Investor → Kreditur (sesi AE-80)", () => {
     /* Verify ada Combobox investor picker (label "Pilih Investor"). */
     await expect(page.getByText(/Pilih Investor/i)).toBeVisible();
 
-    /* Verify field bunga + period render. */
-    await expect(page.getByText(/Bunga.*%/i)).toBeVisible();
+    /* Verify field bunga + period render dalam dialog (scope ke modal). */
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText(/Bunga.*%/i).first()).toBeVisible();
   });
 
   test("Tab Hutang Kreditur juga punya tombol Import CSV", async ({ page }) => {
