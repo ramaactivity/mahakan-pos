@@ -58,6 +58,10 @@ export interface ComputeDistributionInput {
   /** Optional override Net Profit (kalau owner mau test angka). Kalau
    *  null/undefined, server fetch dari Income Statement. */
   netProfitOverride?: number | null;
+  /* Sesi AE-80 — Override payout ratio % per distribution (v2 only).
+   * Range 0..100. Kalau undefined, pakai outlet.settings.dividen.defaultPayoutRatioPct
+   * atau DEFAULT_V2_CONFIG (10). V1 ignore field ini. */
+  payoutRatioOverride?: number | null;
 }
 
 /* Sesi AE-63e — Laporan Perubahan Modal types. Extracted dari

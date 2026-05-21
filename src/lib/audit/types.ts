@@ -156,6 +156,18 @@ export const AUDIT_EVENT_TYPES = [
   "distribution.post",
   "distribution.cancel",
   "distribution.recompute",
+  /* Sesi AE-80 — reversal distribusi V2 + flows baru. */
+  "distribution.reverse",
+  "withdrawal.post",
+  "withdrawal.reverse",
+  "creditor.create",
+  "creditor.update",
+  "creditor.delete",
+  "creditor_repayment.post",
+  "creditor_repayment.reverse",
+  "share_transaction.p2p_transfer",
+  "share_transaction.company_buyback",
+  "share_transaction.reverse",
   "investor_statement.send",
   "investor_statement.resend",
   "investor_statement.failed",
@@ -324,6 +336,11 @@ export type AuditEntityType =
   | "profit_distribution"
   | "profit_distribution_line"
   | "investor_statement_email"
+  /* Sesi AE-80 — Modal & Dividen v2 (Ledger / Mutasi Dinamis). */
+  | "withdrawal_request"
+  | "creditor"
+  | "creditor_repayment"
+  | "share_transaction"
   | "promo"
   | "employee_career_history"
   | "stock_opname_session"

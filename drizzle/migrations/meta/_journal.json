@@ -449,6 +449,13 @@
       "when": 1779347016391,
       "tag": "0063_aggregator_line_items",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1779357344284,
+      "tag": "0064_modal_dividen_v2_schema",
+      "breakpoints": true
     }
   ]
 }

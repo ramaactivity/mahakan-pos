@@ -74,12 +74,17 @@ const DEFAULTS: DefaultAccount[] = [
   { code: "2102", name: "Hutang Gaji", type: "liability", normalBalance: "credit", parentCode: "2100", isSystem: false, displayOrder: 2, notes: "Phase 3 accrual (sesi R: skip — mark-paid langsung Dr Gaji Cr Bank)" },
   { code: "2110", name: "Hutang Pajak", type: "liability", normalBalance: "credit", parentCode: "2100", isSystem: false, displayOrder: 10, notes: "Placeholder Phase 3 (PPh Final UMKM 0.5% atau PPN)" },
   { code: "2120", name: "Pendapatan Diterima Dimuka", type: "liability", normalBalance: "credit", parentCode: "2100", isSystem: false, displayOrder: 20, notes: "Manual entry — event booking deposit, gift card" },
+  /* Sesi AE-80 — Modal & Dividen v2. */
+  { code: "2150", name: "Hutang Kreditur", type: "liability", normalBalance: "credit", parentCode: "2100", isSystem: true, displayOrder: 30, notes: "Hutang pinjaman ke kreditur (pemberi pinjaman non-equity). Cr saat creditor created; Dr saat cicilan pokok dibayar (creditor_repayments)." },
+  { code: "2160", name: "Hutang Dividen Investor", type: "liability", normalBalance: "credit", parentCode: "2100", isSystem: true, displayOrder: 40, notes: "Saldo dividen yang sudah ke-credit ke investor tapi belum dicairkan. Cr saat distribution v2 posted (re-classify dari 3201 Prive); Dr saat withdrawal posted." },
 
   // ============ 3xxx EKUITAS ============
   { code: "3101", name: "Modal Owner", type: "equity", normalBalance: "credit", parentCode: "3100", isSystem: true, displayOrder: 1, notes: "Setoran modal awal + tambahan setoran" },
   { code: "3201", name: "Prive Owner", type: "equity", normalBalance: "debit", parentCode: "3200", isContra: true, isSystem: true, displayOrder: 10, notes: "Penarikan Owner (kontra-equity, normal balance debit)" },
   { code: "3301", name: "Saldo Laba Ditahan", type: "equity", normalBalance: "credit", parentCode: "3300", isSystem: true, displayOrder: 20, notes: "Akumulasi laba rugi closed periods" },
   { code: "3302", name: "Laba Rugi Berjalan", type: "equity", normalBalance: "credit", parentCode: "3300", isSystem: true, displayOrder: 21, notes: "Net income period berjalan, auto-transfer ke 3301 saat period close" },
+  /* Sesi AE-80 — Treasury stock untuk company buyback share investor. */
+  { code: "3401", name: "Treasury Stock (Buyback Saham)", type: "equity", normalBalance: "debit", parentCode: "3400", isContra: true, isSystem: true, displayOrder: 30, notes: "Sesi AE-80: Kontra-equity. Dr saat outlet beli kembali share dari investor (share_transactions kind='company_buyback'). Mengurangi total ekuitas." },
 
   // ============ 4xxx PENDAPATAN ============
   { code: "4101", name: "Penjualan Makanan", type: "revenue", normalBalance: "credit", parentCode: "4100", isSystem: true, displayOrder: 1, notes: "Sum subtotal items kategori makanan (ricebowl/bakmie/snack default)" },
@@ -137,6 +142,11 @@ const DEFAULTS: DefaultAccount[] = [
    * + payment fees (64xx) → group sendiri 66xx. */
   { code: "6601", name: "Sumbangan Sosial", type: "expense", normalBalance: "debit", parentCode: "6600", isSystem: false, displayOrder: 45, notes: "Manual entry — donasi ke yayasan/komunitas/individual yang tidak terkait promosi" },
   { code: "6602", name: "Beban CSR (Corporate Social Responsibility)", type: "expense", normalBalance: "debit", parentCode: "6600", isSystem: false, displayOrder: 46, notes: "Manual entry — program CSR (mis. coffee for kids, neighbour outreach), beda dengan marketing yang track ROI" },
+
+  // ============ 67xx BEBAN KEUANGAN ============
+  /* Sesi AE-80 — Beban bunga ke kreditur. Dr saat creditor_repayments
+   * posted dengan interestAmount > 0. */
+  { code: "6701", name: "Beban Bunga Kreditur", type: "expense", normalBalance: "debit", parentCode: "6700", isSystem: true, displayOrder: 47, notes: "Sesi AE-80: Auto-debit saat creditor_repayment posted (interest portion). Beda dengan pokok yang Dr 2150 Hutang Kreditur." },
 
   // ============ 69xx Lain-lain ============
   { code: "6901", name: "Lain-lain", type: "expense", normalBalance: "debit", parentCode: "6900", isSystem: true, displayOrder: 50, notes: "Default fallback untuk expense tanpa akun explicit" },

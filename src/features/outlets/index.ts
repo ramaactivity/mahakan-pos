@@ -9,6 +9,7 @@ export {
   updateOpeningBalance,
   updateOperationalHours,
   updatePayrollSettings,
+  updateDividenSettings,
   updateReceiptSettings,
   updateScheduleTemplates,
   updateThresholds,

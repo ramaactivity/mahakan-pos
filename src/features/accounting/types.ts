@@ -56,7 +56,15 @@ export type JournalSourceType =
   /* Sesi AE-63 — Investor / Pengelola modal & dividen flows. */
   | "capital_injection"
   | "capital_withdrawal"
-  | "dividend_distribution";
+  | "dividend_distribution"
+  /* Sesi AE-80 — Modal & Dividen v2 (ledger / mutasi dinamis). */
+  | "dividend_distribution_reversal"
+  | "dividend_withdrawal"
+  | "dividend_withdrawal_reversal"
+  | "creditor_repayment"
+  | "creditor_repayment_reversal"
+  | "share_buyback"
+  | "share_buyback_reversal";
 
 export type JournalEntryStatus = "draft" | "posted" | "reversed";
 

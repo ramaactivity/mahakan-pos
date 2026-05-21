@@ -6,6 +6,7 @@ import {
   timestamp,
   bigint,
   date,
+  decimal,
   index,
   uniqueIndex,
   check,
@@ -69,6 +70,24 @@ export const investors = pgTable(
       .notNull()
       .default(0),
 
+    /* Sesi AE-80 — Truth source untuk share % di waterfall v2.
+     * Backfill saat migration: share_pct = modal / SUM(modal_outlet) × 100.
+     * Setelah backfill, owner bisa edit manual via UI (mis. saat investor
+     * jual/beli saham antar pribadi yang tidak mengubah modal_disetor).
+     * Range 0..100, 4-decimal precision. Server validate SUM(active) = 100. */
+    sharePct: decimal("share_pct", { precision: 7, scale: 4 })
+      .notNull()
+      .default("0.0000"),
+
+    /* Sesi AE-80 — Saldo dividen yang belum dicairkan.
+     * += setiap dividend_credit dari distribution.
+     * −= setiap withdrawal yang ke-post.
+     * CHECK >= 0 guarantee tidak bisa over-withdraw via DB constraint
+     * (last line of defense; service layer pakai FOR UPDATE row lock). */
+    dividendBalance: bigint("dividend_balance", { mode: "number" })
+      .notNull()
+      .default(0),
+
     // Status lifecycle
     status: text("status", {
       enum: ["active", "inactive", "exited"],
@@ -103,10 +122,21 @@ export const investors = pgTable(
       .on(t.outletId, t.email)
       .where(sql`${t.email} IS NOT NULL AND ${t.deletedAt} IS NULL`),
     check("ck_investors_modal_nonneg", sql`${t.modalDisetor} >= 0`),
+    /* Sesi AE-80 — invariant guards. */
+    check(
+      "ck_investors_share_pct_range",
+      sql`${t.sharePct}::numeric BETWEEN 0 AND 100`,
+    ),
+    check(
+      "ck_investors_dividend_balance_nonneg",
+      sql`${t.dividendBalance} >= 0`,
+    ),
     check(
       "ck_investors_exit_consistency",
       sql`(${t.status} = 'exited' AND ${t.exitedAt} IS NOT NULL)
         OR (${t.status} != 'exited')`,
     ),
+    /* Sesi AE-80 — sorting + lookup index untuk UI Tab Mutasi Saham. */
+    index("idx_investors_outlet_share").on(t.outletId, t.sharePct),
   ],
 );

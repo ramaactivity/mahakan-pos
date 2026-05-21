@@ -60,12 +60,27 @@ import { InvestorFormModal } from "./investors/InvestorFormModal";
 import { InvestorImportWizard } from "./investors/InvestorImportWizard";
 import { PengelolaFormModal } from "./investors/PengelolaFormModal";
 import { DistributionPreviewModal } from "./investors/DistributionPreviewModal";
+/* Sesi AE-80 — Tab baru untuk modal-dividen v2. */
+import { BalancesTab } from "./investors/BalancesTab";
+import { CreditorsTab } from "./investors/CreditorsTab";
+import { ShareTransactionsTab } from "./investors/ShareTransactionsTab";
 
-type Tab = "investors" | "pengelola" | "distribution" | "report";
+type Tab =
+  | "investors"
+  | "pengelola"
+  | "share_transactions"
+  | "balances"
+  | "creditors"
+  | "distribution"
+  | "report";
 
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: "investors", label: "Investor" },
   { key: "pengelola", label: "Pengelola" },
+  /* Sesi AE-80 — 3 tab baru. */
+  { key: "share_transactions", label: "Mutasi Saham" },
+  { key: "balances", label: "Saldo & Pencairan" },
+  { key: "creditors", label: "Hutang Kreditur" },
   { key: "distribution", label: "Distribusi" },
   { key: "report", label: "Laporan" },
 ];
@@ -133,6 +148,12 @@ export function InvestorsSection({ viewerRole }: InvestorsSectionProps) {
         <InvestorsTab canManage={canManage} />
       ) : tab === "pengelola" ? (
         <PengelolaTab canManage={canManagePengelola} />
+      ) : tab === "share_transactions" ? (
+        <ShareTransactionsTab canManage={canApproveDistribution} />
+      ) : tab === "balances" ? (
+        <BalancesTab canManage={canApproveDistribution} />
+      ) : tab === "creditors" ? (
+        <CreditorsTab canManage={canApproveDistribution} />
       ) : tab === "distribution" ? (
         <DistributionTab
           canCompute={canCompute}
@@ -744,6 +765,7 @@ function DistributionRow({
     approved: "Approved",
     posted: "Posted ✓",
     cancelled: "Cancelled",
+    reversed: "Reversed ↺",
   };
   return (
     <tr
@@ -814,11 +836,24 @@ function ReportTab() {
  * dari ~110 ke ~20 visible rows di Galaxy A7 Lite (60-70% reduction).
  *
  * View type extends InvestorWithStats dengan precomputed sharePct + nikMasked
- * (lihat investorsView useMemo di InvestorsTab). */
-type InvestorRowView = InvestorWithStats & {
+ * (lihat investorsView useMemo di InvestorsTab).
+ *
+ * Sesi AE-80 — schema sharePct sekarang decimal(7,4) → Drizzle map ke string.
+ * View override jadi number (live-computed). Pakai Omit supaya intersection
+ * tidak konflik string vs number. */
+type InvestorRowView = Omit<InvestorWithStats, "sharePct"> & {
   sharePct: number;
   nikMasked: string | null;
 };
+
+/* Sesi AE-80 — Bridge balik dari InvestorRowView ke InvestorWithStats
+ * untuk handler edit/delete yang expect schema sharePct (string). */
+function toInvestorWithStats(view: InvestorRowView): InvestorWithStats {
+  return {
+    ...view,
+    sharePct: view.sharePct.toFixed(4),
+  };
+}
 
 /* Grid column template: align header + body rows. Tailwind arbitrary value
  * supaya className stable (memo-friendly), tidak via style object. */
@@ -898,7 +933,7 @@ const InvestorRow = memo(function InvestorRow({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onEdit(inv)}
+              onClick={() => onEdit(toInvestorWithStats(inv))}
               title="Edit"
             >
               <Pencil className="size-3.5" />
@@ -906,7 +941,7 @@ const InvestorRow = memo(function InvestorRow({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onDelete(inv)}
+              onClick={() => onDelete(toInvestorWithStats(inv))}
               className="text-red-600 hover:bg-red-50"
               title="Hapus"
             >

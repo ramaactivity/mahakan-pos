@@ -19,6 +19,8 @@ export {
   listDistributions,
   resendStatementForLine,
   resendStatementsForDistribution,
+  /* Sesi AE-80 — Reverse distribusi V2 yang sudah posted. */
+  reverseDistribution,
 } from "./actions";
 
 export {
