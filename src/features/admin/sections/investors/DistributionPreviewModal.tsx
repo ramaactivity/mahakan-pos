@@ -2,13 +2,20 @@
 
 import { memo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { AlertTriangle, CheckCircle2, Send, X } from "lucide-react";
-import { Badge, Button, Modal, toast } from "@/components/ui";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  RotateCcw,
+  Send,
+  X,
+} from "lucide-react";
+import { Badge, Button, Input, Modal, toast } from "@/components/ui";
 import {
   approveAndPostDistribution,
   cancelDistribution,
   isOk,
   resendStatementsForDistribution,
+  reverseDistribution,
   type DistributionWithLines,
 } from "@/features/profit-distributions";
 import { formatRupiah } from "@/lib/format";
@@ -46,17 +53,28 @@ export function DistributionPreviewModal({
   canApprove,
 }: DistributionPreviewModalProps) {
   const [submitting, setSubmitting] = useState(false);
+  /* Sesi AE-80 — reverse modal state. */
+  const [showReverseDialog, setShowReverseDialog] = useState(false);
+  const [reverseReason, setReverseReason] = useState("");
 
   if (!dist) return null;
   const periodLabel = `${MONTH_LABELS_ID[dist.periodMonth - 1]} ${dist.periodYear}`;
   const isDraft = dist.status === "draft";
   const isPosted = dist.status === "posted";
+  const isReversed = dist.status === "reversed";
+  const isV2 = dist.calculationModel === "v2";
+  const canReverse = isPosted && isV2 && canApprove;
 
   async function handleApprove() {
     if (submitting || !dist) return;
+    /* Sesi AE-80 — confirm message berbeda per model. V2 post ke Hutang
+     * Dividen (3202), bukan langsung kas. */
+    const jurnalDesc = isV2
+      ? "Dr 3201 Prive Owner / Cr 3202 Hutang Dividen (accrual)"
+      : "Dr 3201 Prive Owner / Cr 1101 Kas (langsung)";
     if (
       !window.confirm(
-        `Yakin approve & post distribusi ${periodLabel}? Ini akan membuat jurnal Dr 3201 / Cr 1101 dan email statement ke ${dist.lines.length} holder.`,
+        `Yakin approve & post distribusi ${periodLabel}?\n\nJurnal: ${jurnalDesc}\nEmail statement ke ${dist.lines.length} holder.`,
       )
     ) {
       return;
@@ -69,6 +87,26 @@ export function DistributionPreviewModal({
       return;
     }
     toast.success(`Distribusi ${periodLabel} berhasil di-post`);
+    onChanged();
+    onClose();
+  }
+
+  async function handleReverseSubmit() {
+    if (submitting || !dist) return;
+    if (reverseReason.trim().length < 5) {
+      toast.error("Alasan reverse minimal 5 karakter");
+      return;
+    }
+    setSubmitting(true);
+    const res = await reverseDistribution(dist.id, reverseReason.trim());
+    setSubmitting(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(`Distribusi ${periodLabel} di-reverse`);
+    setShowReverseDialog(false);
+    setReverseReason("");
     onChanged();
     onClose();
   }
@@ -146,33 +184,140 @@ export function DistributionPreviewModal({
             </>
           ) : null}
           {isPosted && canApprove ? (
-            <Button
-              variant="outline"
-              onClick={handleResendAll}
-              disabled={submitting}
-            >
-              <Send className="mr-1.5 size-4" /> Kirim Ulang Statement
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                onClick={handleResendAll}
+                disabled={submitting}
+              >
+                <Send className="mr-1.5 size-4" /> Kirim Ulang Statement
+              </Button>
+              {canReverse ? (
+                <Button
+                  variant="outline"
+                  onClick={() => setShowReverseDialog(true)}
+                  disabled={submitting}
+                  className="text-danger-600 hover:bg-danger-50"
+                >
+                  <RotateCcw className="mr-1.5 size-4" /> Reverse
+                </Button>
+              ) : null}
+            </>
           ) : null}
         </>
       }
     >
-      {/* Status badge */}
-      <div className="mb-3">
+      {/* Status badge + model badge (sesi AE-80) */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <Badge
           variant={
             isPosted
               ? "success"
               : dist.status === "cancelled"
                 ? "danger"
-                : isDraft
-                  ? "warning"
-                  : "info"
+                : isReversed
+                  ? "neutral"
+                  : isDraft
+                    ? "warning"
+                    : "info"
           }
         >
           {dist.status.toUpperCase()}
         </Badge>
+        <Badge variant={isV2 ? "info" : "neutral"}>
+          MODEL {(dist.calculationModel ?? "v1").toUpperCase()}
+        </Badge>
+        {isV2 && dist.payoutRatioPct ? (
+          <Badge variant="neutral">
+            Payout {Number(dist.payoutRatioPct).toFixed(2)}%
+          </Badge>
+        ) : null}
+        {isReversed && dist.reversedAt ? (
+          <span className="text-[11px] text-neutral-600">
+            Reversed {new Date(dist.reversedAt).toLocaleDateString("id-ID")}
+            {dist.reversalReason ? ` — ${dist.reversalReason}` : ""}
+          </span>
+        ) : null}
       </div>
+
+      {/* Sesi AE-80 — Waterfall V2 breakdown card (read-only). */}
+      {isV2 ? (
+        <div className="mb-4 rounded-lg border border-mahakan-green-200 bg-mahakan-green-50/40 p-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-mahakan-green-900">
+            Breakdown Waterfall V2
+          </p>
+          <div className="space-y-1 text-xs">
+            <WaterfallRow label="Net Profit" value={dist.netProfitSnapshot} bold />
+            <WaterfallRow
+              label={`− Loss Bricket (${dist.lossRateSnapshot ?? dist.lossPct}%)`}
+              value={-dist.lossAmount}
+              tone="muted"
+            />
+            <WaterfallRow
+              label={`− Capex (${dist.capexRateSnapshot ?? dist.capexPct}%)`}
+              value={-dist.capexAmount}
+              tone="muted"
+            />
+            <WaterfallRow
+              label="= Dasar Bagi Hasil"
+              value={
+                dist.netProfitSnapshot -
+                dist.lossAmount -
+                dist.capexAmount
+              }
+              divider
+            />
+            <WaterfallRow
+              label={`× Payout Ratio (${dist.payoutRatioPct ?? "10"}%)`}
+              value={0}
+              tone="muted"
+              valueOverride="—"
+            />
+            <WaterfallRow
+              label="= Bagi Hasil (yang dibagi)"
+              value={dist.bagiHasilAmount}
+              tone="primary"
+              bold
+            />
+            <WaterfallRow
+              label="↳ Retained (sisa otomatis)"
+              value={dist.retainedAmount}
+              tone="muted"
+            />
+            <div className="pl-4 pt-1">
+              <WaterfallRow
+                label={`├ Investor Pool (${dist.investorPoolPct}%)`}
+                value={dist.investorPoolAmount}
+                tone="info"
+              />
+              <WaterfallRow
+                label={`└ Pengelola Pool (${dist.pengelolaPoolPct}%)`}
+                value={dist.pengelolaPoolAmount}
+                tone="info"
+              />
+            </div>
+          </div>
+          {/* Sanity check footer */}
+          {(() => {
+            const sum =
+              dist.lossAmount +
+              dist.capexAmount +
+              dist.bagiHasilAmount +
+              dist.retainedAmount;
+            const drift = sum - dist.netProfitSnapshot;
+            return drift === 0 ? (
+              <p className="mt-2 rounded border border-success-300 bg-success-50 px-2 py-1 text-[11px] font-medium text-success-700">
+                ✓ Total alokasi sesuai Net Profit (no drift)
+              </p>
+            ) : (
+              <p className="mt-2 rounded border border-danger-300 bg-danger-50 px-2 py-1 text-[11px] font-medium text-danger-700">
+                ⚠ Drift Rp {Math.abs(drift).toLocaleString("id-ID")} —
+                cek compute logic
+              </p>
+            );
+          })()}
+        </div>
+      ) : null}
 
       {/* Summary cards */}
       <div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -226,7 +371,95 @@ export function DistributionPreviewModal({
           <LinesTable lines={investorLines} />
         </section>
       ) : null}
+
+      {/* Sesi AE-80 — Reverse confirm dialog (nested modal). */}
+      {showReverseDialog ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-lg border border-neutral-200 bg-white p-4 shadow-lg">
+            <h3 className="text-base font-bold text-danger-700">
+              Reverse Distribusi {periodLabel}?
+            </h3>
+            <p className="mt-2 text-xs text-neutral-700">
+              Jurnal pembalik akan di-post:{" "}
+              <strong>Dr 3202 Hutang Dividen / Cr 3201 Prive Owner</strong>.
+              Saldo dividen investor + pengelola akan dikurangi sesuai
+              alokasi awal.
+            </p>
+            <p className="mt-2 rounded border border-warning-300 bg-warning-50 px-2 py-1 text-[11px] text-warning-700">
+              ⚠ Tidak bisa di-reverse kalau investor sudah tarik saldo —
+              CHECK constraint dividend_balance ≥ 0 akan menolak.
+            </p>
+            <Input
+              label="Alasan reverse (wajib, min 5 char)"
+              value={reverseReason}
+              onChange={(e) => setReverseReason(e.target.value)}
+              placeholder="mis. salah hitung net profit"
+              maxLength={500}
+              className="mt-3"
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setShowReverseDialog(false);
+                  setReverseReason("");
+                }}
+                disabled={submitting}
+              >
+                Batal
+              </Button>
+              <Button
+                onClick={handleReverseSubmit}
+                loading={submitting}
+                className="bg-danger-600 hover:bg-danger-700"
+              >
+                Reverse Distribusi
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </Modal>
+  );
+}
+
+/* Sesi AE-80 — Waterfall row helper untuk v2 breakdown card. */
+function WaterfallRow({
+  label,
+  value,
+  bold,
+  divider,
+  tone,
+  valueOverride,
+}: {
+  label: string;
+  value: number;
+  bold?: boolean;
+  divider?: boolean;
+  tone?: "muted" | "primary" | "info";
+  valueOverride?: string;
+}) {
+  const labelCls =
+    tone === "muted"
+      ? "text-neutral-600"
+      : tone === "primary"
+        ? "text-mahakan-green-900 font-semibold"
+        : tone === "info"
+          ? "text-blue-700"
+          : "text-neutral-900";
+  const valueCls = bold ? "font-bold tabular-nums" : "tabular-nums";
+  return (
+    <div
+      className={cn(
+        "flex items-baseline justify-between gap-2",
+        divider ? "border-t border-mahakan-green-200 pt-1 mt-1" : "",
+      )}
+    >
+      <span className={cn("text-xs", labelCls)}>{label}</span>
+      <span className={cn("text-xs", valueCls, labelCls)}>
+        {valueOverride ?? formatRupiah(value)}
+      </span>
+    </div>
   );
 }
 

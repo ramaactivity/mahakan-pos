@@ -327,7 +327,8 @@ async function updateSettingsSection(
     | "approval"
     | "attendance"
     | "payroll"
-    | "openingBalance",
+    | "openingBalance"
+    | "dividen",
   patch: Partial<OutletSettings[keyof OutletSettings]>,
 ): Promise<ApiResult<Outlet>> {
   let session;
@@ -453,6 +454,33 @@ export async function updatePayrollSettings(
   return updateSettingsSection(
     "payroll.manage",
     "payroll",
+    parsed.data,
+  );
+}
+
+/* Sesi AE-80 — Modal & Dividen v2 settings.
+ *
+ * Owner toggle waterfall v2 + edit default rate. Permission:
+ * 'distribution.approve' (owner-only) supaya change config audited
+ * dan tidak bisa di-flip oleh manager. */
+const dividenSettingsSchema = z.object({
+  useWaterfallV2: z.boolean().optional(),
+  defaultPayoutRatioPct: z.number().min(0).max(100).optional(),
+  defaultLossPct: z.number().min(0).max(100).optional(),
+  defaultCapexPct: z.number().min(0).max(100).optional(),
+  investorPoolPct: z.number().min(0).max(100).optional(),
+});
+
+export async function updateDividenSettings(
+  input: z.input<typeof dividenSettingsSchema>,
+): Promise<ApiResult<Outlet>> {
+  const parsed = dividenSettingsSchema.safeParse(input);
+  if (!parsed.success) {
+    return err("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "");
+  }
+  return updateSettingsSection(
+    "distribution.approve",
+    "dividen",
     parsed.data,
   );
 }
