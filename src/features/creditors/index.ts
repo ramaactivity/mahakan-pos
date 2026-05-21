@@ -1,4 +1,5 @@
 export {
+  convertInvestorToCreditor,
   createCreditor,
   deleteCreditor,
   fetchCreditors,
@@ -11,6 +12,7 @@ export {
 export {
   isOk,
   type ApiResult,
+  type ConvertInvestorToCreditorInput,
   type CreateCreditorInput,
   type Creditor,
   type CreditorListRow,

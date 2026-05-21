@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { outlets } from "./outlets";
 import { users } from "./users";
+import { investors } from "./investors";
 
 /**
  * Sesi AE-80 — Kreditur (pemberi pinjaman) Mahakan.
@@ -84,6 +85,24 @@ export const creditors = pgTable(
 
     notes: text("notes"),
 
+    /* Sesi AE-80 follow-up — Convert / link investor → kreditur.
+     *
+     * `linkedInvestorId` non-null = kreditur ini hasil convert dari investor
+     * yang exited (atau dikaitkan ke profil investor existing untuk auto-fill
+     * kontak/bank, tanpa convert). Nullable supaya tetap allow kreditur baru
+     * yang murni pihak eksternal (tidak pernah jadi investor).
+     *
+     * `convertedFromInvestorAt` non-null hanya kalau row hasil convert
+     * (bukan sekadar link). Saat convert dibuka, kita post journal
+     * Dr 3101 Modal Owner / Cr 2150 Hutang Kreditur untuk re-classify
+     * equity → liability. */
+    linkedInvestorId: uuid("linked_investor_id").references(
+      () => investors.id,
+    ),
+    convertedFromInvestorAt: timestamp("converted_from_investor_at", {
+      withTimezone: true,
+    }),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -120,5 +139,9 @@ export const creditors = pgTable(
       "ck_creditors_due_after_start",
       sql`${t.dueDate} IS NULL OR ${t.dueDate} >= ${t.startDate}`,
     ),
+    /* Sesi AE-80 follow-up — index lookup linked_investor_id (jarang query
+     * tapi non-trivial saat owner buka detail kreditur "ini dulu investor
+     * siapa"). Partial index: skip null. */
+    index("idx_creditors_linked_investor").on(t.linkedInvestorId),
   ],
 );

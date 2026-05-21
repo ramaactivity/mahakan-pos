@@ -64,7 +64,9 @@ export type JournalSourceType =
   | "creditor_repayment"
   | "creditor_repayment_reversal"
   | "share_buyback"
-  | "share_buyback_reversal";
+  | "share_buyback_reversal"
+  /* Sesi AE-80 follow-up — convert investor → kreditur. */
+  | "investor_to_creditor_conversion";
 
 export type JournalEntryStatus = "draft" | "posted" | "reversed";
 

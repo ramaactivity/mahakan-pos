@@ -1,7 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Button, DatePicker, Input, Modal, Select, toast } from "@/components/ui";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link2 } from "lucide-react";
+import {
+  Button,
+  Combobox,
+  DatePicker,
+  Input,
+  Modal,
+  Select,
+  toast,
+} from "@/components/ui";
 import {
   createCreditor,
   isOk,
@@ -9,7 +19,8 @@ import {
   type Creditor,
   type CreateCreditorInput,
 } from "@/features/creditors";
-import { parseRupiah } from "@/lib/format";
+import { listInvestors } from "@/features/investors/actions";
+import { formatRupiah, parseRupiah } from "@/lib/format";
 
 /**
  * Sesi AE-80 — Form create/edit kreditur.
@@ -48,6 +59,29 @@ export function CreditorFormModal({
   const [dueDate, setDueDate] = useState<string>("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [linkedInvestorId, setLinkedInvestorId] = useState<string | null>(null);
+
+  /* Investor list untuk optional link (create mode only). */
+  const investorsQuery = useQuery({
+    queryKey: ["admin", "investors", "for-link"],
+    queryFn: async () => {
+      const res = await listInvestors({ status: "all", pageSize: 300 });
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data.items;
+    },
+    enabled: open && !initial,
+    staleTime: 60 * 1000,
+  });
+
+  const investorLinkOptions = useMemo(
+    () =>
+      (investorsQuery.data ?? []).map((i) => ({
+        value: i.id,
+        label: i.fullName,
+        hint: `${i.status === "exited" ? "exited · " : i.status === "inactive" ? "inactive · " : ""}Modal ${formatRupiah(i.modalDisetor)}`,
+      })),
+    [investorsQuery.data],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -67,6 +101,7 @@ export function CreditorFormModal({
       setStartDate(initial.startDate);
       setDueDate(initial.dueDate ?? "");
       setNotes(initial.notes ?? "");
+      setLinkedInvestorId(initial.linkedInvestorId ?? null);
     } else {
       setFullName("");
       setNickname("");
@@ -82,10 +117,33 @@ export function CreditorFormModal({
       setStartDate(today());
       setDueDate("");
       setNotes("");
+      setLinkedInvestorId(null);
     }
     setSubmitting(false);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open, initial]);
+
+  /* Auto-fill contact/bank fields kalau owner pilih investor di link picker
+   * (create mode only). Tidak overwrite kalau user sudah ngisi manual. */
+  useEffect(() => {
+    if (initial || !linkedInvestorId) return;
+    const inv = (investorsQuery.data ?? []).find(
+      (i) => i.id === linkedInvestorId,
+    );
+    if (!inv) return;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setFullName((cur) => cur || inv.fullName);
+    setNickname((cur) => cur || inv.nickname || "");
+    setNik((cur) => cur || inv.nik || "");
+    setEmail((cur) => cur || inv.email || "");
+    setPhone((cur) => cur || inv.phone || "");
+    setBankName((cur) => cur || inv.bankName || "");
+    setBankAccountNumber((cur) => cur || inv.bankAccountNumber || "");
+    setBankAccountHolderName(
+      (cur) => cur || inv.bankAccountHolderName || "",
+    );
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [linkedInvestorId, initial, investorsQuery.data]);
 
   async function handleSubmit() {
     if (submitting) return;
@@ -120,6 +178,7 @@ export function CreditorFormModal({
       startDate,
       dueDate: dueDate || null,
       notes: notes.trim() || null,
+      linkedInvestorId: linkedInvestorId ?? null,
     };
 
     setSubmitting(true);
@@ -153,6 +212,44 @@ export function CreditorFormModal({
       }
     >
       <div className="space-y-3">
+        {/* Optional link ke investor (create mode only). */}
+        {!initial ? (
+          <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-3">
+            <Combobox
+              label="Link ke Investor (opsional)"
+              options={investorLinkOptions}
+              value={linkedInvestorId}
+              onChange={setLinkedInvestorId}
+              placeholder="— tidak di-link —"
+              searchPlaceholder="Cari investor untuk auto-fill..."
+              emptyText="Tidak ada investor"
+              clearable
+              hint="Pilih kalau kreditur ini adalah investor existing. Auto-fill kontak/bank tanpa exit investor. Untuk full convert pakai tombol 'Convert dari Investor'."
+              loading={investorsQuery.isLoading}
+            />
+            {linkedInvestorId ? (
+              <div className="mt-2 flex items-center gap-1.5 text-[11px] text-mahakan-green-700">
+                <Link2 className="size-3" /> Linked — field kontak/bank
+                ter-auto-fill dari profil investor
+              </div>
+            ) : null}
+          </div>
+        ) : initial.linkedInvestorId ? (
+          <div className="flex items-center gap-2 rounded-md border border-mahakan-green-300 bg-mahakan-green-50 p-2 text-xs text-mahakan-green-800">
+            <Link2 className="size-3" />
+            Kreditur ini ter-link ke investor
+            {initial.convertedFromInvestorAt ? (
+              <span>
+                {" "}
+                — hasil convert dari investor pada{" "}
+                {new Date(initial.convertedFromInvestorAt).toLocaleDateString(
+                  "id-ID",
+                )}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="grid gap-3 md:grid-cols-2">
           <Input
             label="Nama Lengkap *"

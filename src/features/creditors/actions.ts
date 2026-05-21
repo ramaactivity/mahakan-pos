@@ -7,6 +7,7 @@ import {
   capitalMovements,
   creditorRepayments,
   creditors,
+  investors,
 } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
@@ -14,12 +15,15 @@ import { logAndSanitize } from "@/lib/server-error";
 import {
   lockBankAccountAdvisory,
   lockCreditor,
+  lockInvestors,
+  lockOutletDividenAdvisory,
 } from "@/lib/db/locking";
 import { recordJournal } from "@/features/accounting/posting";
 import {
   mapCreditorRepayment,
   mapCreditorRepaymentReversal,
 } from "@/features/accounting/mapping/creditorRepayment";
+import { mapInvestorToCreditorConversion } from "@/features/accounting/mapping/investorToCreditorConversion";
 import { resolveBankCodeFromBankName } from "@/features/accounting/mapping/dividendWithdrawal";
 import {
   listCreditors,
@@ -27,6 +31,7 @@ import {
   fetchCreditorById,
 } from "./queries";
 import {
+  convertInvestorToCreditorSchema,
   createCreditorSchema,
   postRepaymentSchema,
   reverseRepaymentSchema,
@@ -36,6 +41,7 @@ import {
   fail,
   ok,
   type ApiResult,
+  type ConvertInvestorToCreditorInput,
   type CreateCreditorInput,
   type Creditor,
   type CreditorListRow,
@@ -127,6 +133,31 @@ export async function createCreditor(
   }
   const v = parsed.data;
 
+  /* Optional link investor validation: investor harus exist + same outlet.
+   * Tidak ada constraint state — link diperbolehkan untuk investor apa saja
+   * (active/inactive/exited) karena ini cuma audit pointer. */
+  if (v.linkedInvestorId) {
+    const [inv] = await db
+      .select({ id: investors.id, outletId: investors.outletId })
+      .from(investors)
+      .where(eq(investors.id, v.linkedInvestorId))
+      .limit(1);
+    if (!inv) {
+      return fail(
+        "INVESTOR_NOT_FOUND",
+        "Investor link tidak ditemukan",
+        "linkedInvestorId",
+      );
+    }
+    if (inv.outletId !== session.user.outletId) {
+      return fail(
+        "FORBIDDEN",
+        "Investor link dari outlet lain",
+        "linkedInvestorId",
+      );
+    }
+  }
+
   try {
     const [row] = await db
       .insert(creditors)
@@ -149,6 +180,7 @@ export async function createCreditor(
         dueDate: v.dueDate ?? null,
         notes: v.notes ?? null,
         status: "active",
+        linkedInvestorId: v.linkedInvestorId ?? null,
         createdBy: session.user.id,
         updatedBy: session.user.id,
       })
@@ -689,6 +721,312 @@ export async function reverseRepayment(
     return fail(
       "DB_ERROR",
       logAndSanitize(e, "creditor_repayment.reverse", "Operasi database gagal"),
+    );
+  }
+}
+
+// ============================================================================
+// Convert Investor → Kreditur
+// ============================================================================
+
+/**
+ * Sesi AE-80 follow-up — Convert investor existing menjadi kreditur.
+ *
+ * Flow:
+ *  1. Validate investor active + outlet match + dividendBalance === 0
+ *     (kalau ada saldo dividen belum di-tarik, owner harus settle dulu via
+ *     withdrawal — supaya tidak ada equity sisa yang menggantung).
+ *  2. Lock investor row + outlet dividen advisory.
+ *  3. Tentukan pokok hutang: principalOverride atau modalDisetor investor.
+ *  4. Insert creditor (linkedInvestorId + convertedFromInvestorAt populated,
+ *     auto-fill nama/kontak/bank dari profil investor).
+ *  5. Update investor: status='exited', sharePct='0', exitedAt, exitReason.
+ *  6. Insert capital_movements kind='withdrawal' (amount = pokok yg dikonversi).
+ *  7. Post journal Dr 3101 Modal Owner / Cr 2150 Hutang Kreditur.
+ *  8. Update creditor.principalOriginal = principalOutstanding = pokok.
+ *
+ * INVARIANT yang di-jaga:
+ *  - investor.dividendBalance must be 0 sebelum convert (no dangling equity).
+ *  - sharePct investor di-set 0 (sisa share otomatis jadi treasury / company
+ *    share di compute v2 berikutnya — pengelola_pool serap).
+ *  - principalOverride <= modalDisetor (tidak boleh > supaya tidak generate
+ *    equity gain palsu).
+ *  - Idempotent loose: kalau investor sudah exited karena convert sebelumnya,
+ *    fail dengan ALREADY_EXITED.
+ */
+export async function convertInvestorToCreditor(
+  input: ConvertInvestorToCreditorInput,
+): Promise<ApiResult<{ creditorId: string; journalEntryId: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "distribution.approve")) {
+    return fail("FORBIDDEN", "Tidak punya hak convert investor ke kreditur");
+  }
+  const parsed = convertInvestorToCreditorSchema.safeParse(input);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return fail(
+      "VALIDATION_ERROR",
+      issue?.message ?? "Input tidak valid",
+      issue?.path?.[0]?.toString(),
+    );
+  }
+  const v = parsed.data;
+
+  /* Pre-check investor di luar tx supaya error message jelas. */
+  const [pre] = await db
+    .select()
+    .from(investors)
+    .where(
+      and(
+        eq(investors.id, v.investorId),
+        eq(investors.outletId, session.user.outletId),
+        isNull(investors.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!pre) return fail("NOT_FOUND", "Investor tidak ditemukan");
+  if (pre.status === "exited") {
+    return fail(
+      "ALREADY_EXITED",
+      "Investor sudah ter-exit (tidak bisa convert ulang)",
+    );
+  }
+  if (pre.status === "inactive") {
+    return fail(
+      "INVALID_STATE",
+      "Investor status inactive — aktifkan dulu sebelum convert",
+    );
+  }
+  if (pre.dividendBalance > 0) {
+    return fail(
+      "DIVIDEND_BALANCE_NOT_ZERO",
+      `Investor masih punya saldo dividen Rp ${pre.dividendBalance.toLocaleString("id-ID")} — tarik dulu via Pencairan sebelum convert`,
+    );
+  }
+  if (pre.modalDisetor <= 0) {
+    return fail(
+      "INVALID_PRINCIPAL",
+      "Investor modalDisetor 0 — tidak ada yang bisa dikonversi",
+    );
+  }
+  const principal = v.principalOverride ?? pre.modalDisetor;
+  if (principal > pre.modalDisetor) {
+    return fail(
+      "INVALID_PRINCIPAL",
+      `Pokok hutang Rp ${principal.toLocaleString("id-ID")} > modal investor Rp ${pre.modalDisetor.toLocaleString("id-ID")}`,
+      "principalOverride",
+    );
+  }
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      /* Lock dulu — investor + outlet advisory untuk serialize concurrent
+       * convert / share-transfer / distribution post. */
+      await lockInvestors(tx, [v.investorId]);
+      await lockOutletDividenAdvisory(tx, session.user.outletId);
+
+      /* Re-fetch investor di dalam lock supaya dapat snapshot post-lock. */
+      const [inv] = await tx
+        .select()
+        .from(investors)
+        .where(eq(investors.id, v.investorId))
+        .limit(1);
+      if (!inv) throw new Error("INVESTOR_NOT_FOUND");
+      if (inv.status === "exited") throw new Error("ALREADY_EXITED");
+      if (inv.dividendBalance > 0) {
+        throw new Error(`DIVIDEND_BALANCE:${inv.dividendBalance}`);
+      }
+      if (principal > inv.modalDisetor) {
+        throw new Error(`PRINCIPAL_OVER:${inv.modalDisetor}`);
+      }
+
+      /* Insert creditor dengan auto-fill dari investor + link. */
+      const [cred] = await tx
+        .insert(creditors)
+        .values({
+          outletId: session.user.outletId,
+          fullName: inv.fullName,
+          nickname: inv.nickname,
+          nik: inv.nik,
+          email: inv.email,
+          phone: inv.phone,
+          address: inv.address,
+          bankName: inv.bankName,
+          bankAccountNumber: inv.bankAccountNumber,
+          bankAccountHolderName: inv.bankAccountHolderName,
+          principalOriginal: principal,
+          principalOutstanding: principal,
+          interestRatePct: String(v.interestRatePct ?? 0),
+          interestPeriod: v.interestPeriod ?? "monthly",
+          startDate: v.startDate,
+          dueDate: v.dueDate ?? null,
+          notes: v.notes ?? null,
+          status: "active",
+          linkedInvestorId: inv.id,
+          convertedFromInvestorAt: new Date(),
+          createdBy: session.user.id,
+          updatedBy: session.user.id,
+        })
+        .returning();
+
+      /* Exit investor: status='exited', sharePct=0, exitedAt, exitReason. */
+      const previousSharePct = inv.sharePct;
+      await tx
+        .update(investors)
+        .set({
+          status: "exited",
+          sharePct: "0.0000",
+          exitedAt: new Date(),
+          exitReason: v.exitReason,
+          updatedAt: new Date(),
+          updatedBy: session.user.id,
+        })
+        .where(eq(investors.id, inv.id));
+
+      /* Capital movement trail untuk investor (kind=withdrawal, amount =
+       * pokok yang dikonversi). Journal entry id di-link nanti. */
+      const [cm] = await tx
+        .insert(capitalMovements)
+        .values({
+          outletId: session.user.outletId,
+          holderType: "investor",
+          holderId: inv.id,
+          kind: "withdrawal",
+          amount: principal,
+          occurredAt: new Date(),
+          description: `Convert ke kreditur "${cred.fullName}" (sharePct ${previousSharePct}% → 0; reason: ${v.exitReason.slice(0, 100)})`,
+          createdBy: session.user.id,
+        })
+        .returning();
+
+      /* Post journal Dr 3101 / Cr 2150. */
+      const lines = mapInvestorToCreditorConversion({
+        principalIdr: principal,
+        investorName: inv.fullName,
+        creditorName: cred.fullName,
+      });
+      const entryDate = new Date().toISOString().slice(0, 10);
+      const journalResult = await recordJournal({
+        outletId: session.user.outletId,
+        entryDate,
+        description: `Convert investor "${inv.fullName}" → kreditur — pokok Rp ${principal.toLocaleString("id-ID")}`,
+        sourceType: "investor_to_creditor_conversion",
+        sourceId: cred.id,
+        lines,
+        status: "posted",
+        actorId: session.user.id,
+        metadata: {
+          investorId: inv.id,
+          creditorId: cred.id,
+          investorName: inv.fullName,
+          previousSharePct,
+          principal,
+          exitReason: v.exitReason,
+        },
+      });
+
+      /* Link journal ke capital_movement. */
+      await tx
+        .update(capitalMovements)
+        .set({ journalEntryId: journalResult.entryId })
+        .where(eq(capitalMovements.id, cm.id));
+
+      return {
+        creditorId: cred.id,
+        creditorName: cred.fullName,
+        journalEntryId: journalResult.entryId,
+        previousSharePct,
+        principal,
+        modalDisetor: inv.modalDisetor,
+      };
+    });
+
+    logAudit({
+      eventType: "creditor.convert_from_investor",
+      userId: session.user.id,
+      entityType: "creditor",
+      entityId: result.creditorId,
+      payload: {
+        summary: `Convert investor "${pre.fullName}" → kreditur "${result.creditorName}" — pokok Rp ${result.principal.toLocaleString("id-ID")}, sharePct ${result.previousSharePct}% → 0`,
+        context: {
+          investorId: pre.id,
+          creditorId: result.creditorId,
+          principal: result.principal,
+          principalOverride: v.principalOverride ?? null,
+          modalDisetor: result.modalDisetor,
+          previousSharePct: result.previousSharePct,
+          interestRatePct: v.interestRatePct,
+          interestPeriod: v.interestPeriod,
+          exitReason: v.exitReason,
+          journalEntryId: result.journalEntryId,
+        },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }).catch((e) =>
+      console.error("[audit creditor.convert_from_investor]", e),
+    );
+
+    /* Mirror audit dari sisi investor agar muncul di timeline investor juga. */
+    logAudit({
+      eventType: "investor.convert_to_creditor",
+      userId: session.user.id,
+      entityType: "investor",
+      entityId: pre.id,
+      payload: {
+        summary: `Investor "${pre.fullName}" exit & dikonversi jadi kreditur — pokok Rp ${result.principal.toLocaleString("id-ID")}`,
+        context: {
+          creditorId: result.creditorId,
+          principal: result.principal,
+          previousSharePct: result.previousSharePct,
+          exitReason: v.exitReason,
+          journalEntryId: result.journalEntryId,
+        },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }).catch((e) =>
+      console.error("[audit investor.convert_to_creditor]", e),
+    );
+
+    return ok({
+      creditorId: result.creditorId,
+      journalEntryId: result.journalEntryId,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === "ALREADY_EXITED") {
+      return fail("ALREADY_EXITED", "Investor sudah ter-exit");
+    }
+    if (msg === "INVESTOR_NOT_FOUND") {
+      return fail("NOT_FOUND", "Investor tidak ditemukan");
+    }
+    if (msg.startsWith("DIVIDEND_BALANCE:")) {
+      const bal = msg.split(":")[1] ?? "0";
+      return fail(
+        "DIVIDEND_BALANCE_NOT_ZERO",
+        `Saldo dividen Rp ${Number(bal).toLocaleString("id-ID")} harus 0 — tarik dulu sebelum convert`,
+      );
+    }
+    if (msg.startsWith("PRINCIPAL_OVER:")) {
+      const modal = msg.split(":")[1] ?? "0";
+      return fail(
+        "INVALID_PRINCIPAL",
+        `Pokok hutang > modal Rp ${Number(modal).toLocaleString("id-ID")}`,
+        "principalOverride",
+      );
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(
+        e,
+        "creditor.convert_from_investor",
+        "Gagal convert investor ke kreditur",
+      ),
     );
   }
 }

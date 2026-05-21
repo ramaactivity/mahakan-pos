@@ -224,6 +224,13 @@ export const journalEntries = pgTable(
         "creditor_repayment_reversal",
         "share_buyback",
         "share_buyback_reversal",
+        /* Sesi AE-80 follow-up — convert investor → kreditur.
+         *
+         * Investor di-exit dan modalnya dipindah ke akun hutang kreditur
+         * (re-classify equity ke liability). sourceId = creditor.id (kreditur
+         * yang baru di-create). Journal: Dr 3101 Modal Owner / Cr 2150
+         * Hutang Kreditur senilai principalOriginal. */
+        "investor_to_creditor_conversion",
       ],
     }).notNull(),
 

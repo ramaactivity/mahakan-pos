@@ -163,6 +163,9 @@ export const AUDIT_EVENT_TYPES = [
   "creditor.create",
   "creditor.update",
   "creditor.delete",
+  /* Sesi AE-80 follow-up — convert investor → kreditur. */
+  "creditor.convert_from_investor",
+  "investor.convert_to_creditor",
   "creditor_repayment.post",
   "creditor_repayment.reverse",
   "share_transaction.p2p_transfer",

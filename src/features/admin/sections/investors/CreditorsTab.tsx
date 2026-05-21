@@ -4,8 +4,10 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowRightLeft,
   Banknote,
   HandCoins,
+  Link2,
   Pencil,
   Plus,
   RefreshCw,
@@ -36,6 +38,7 @@ import {
 } from "@/features/creditors";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ConvertInvestorToCreditorModal } from "./ConvertInvestorToCreditorModal";
 import { CreditorFormModal } from "./CreditorFormModal";
 import { CreditorRepaymentModal } from "./CreditorRepaymentModal";
 
@@ -56,6 +59,7 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
     useState<CreditorRepaymentListRow | null>(null);
   const [reverseReason, setReverseReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [convertOpen, setConvertOpen] = useState(false);
 
   const creditorsQuery = useQuery({
     queryKey: ["admin", "creditors", statusFilter],
@@ -233,9 +237,19 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
         </div>
         <div className="flex-1" />
         {canManage ? (
-          <Button onClick={() => setFormTarget(null)}>
-            <Plus className="size-4" aria-hidden /> Tambah Kreditur
-          </Button>
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setConvertOpen(true)}
+              title="Convert investor existing menjadi kreditur (re-classify modal → hutang)"
+            >
+              <ArrowRightLeft className="size-4" aria-hidden /> Convert dari
+              Investor
+            </Button>
+            <Button onClick={() => setFormTarget(null)}>
+              <Plus className="size-4" aria-hidden /> Tambah Kreditur
+            </Button>
+          </>
         ) : null}
       </div>
 
@@ -283,8 +297,27 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
                   {creditors.map((c) => (
                     <tr key={c.id} className="hover:bg-neutral-50">
                       <td className="px-3 py-2">
-                        <div className="font-medium text-neutral-900">
-                          {c.fullName}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-medium text-neutral-900">
+                            {c.fullName}
+                          </span>
+                          {c.convertedFromInvestorAt ? (
+                            <Badge
+                              variant="neutral"
+                              className="gap-1 bg-mahakan-green-50 text-mahakan-green-700"
+                              title={`Dari investor di-convert pada ${new Date(c.convertedFromInvestorAt).toLocaleDateString("id-ID")}`}
+                            >
+                              <ArrowRightLeft className="size-2.5" /> ex-Investor
+                            </Badge>
+                          ) : c.linkedInvestorId ? (
+                            <Badge
+                              variant="neutral"
+                              className="gap-1 bg-neutral-100 text-neutral-700"
+                              title="Linked ke profil investor existing"
+                            >
+                              <Link2 className="size-2.5" /> Linked
+                            </Badge>
+                          ) : null}
                         </div>
                         {c.bankName ? (
                           <div className="text-[11px] text-neutral-500">
@@ -452,6 +485,18 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
           )}
         </CardContent>
       </Card>
+
+      {/* Convert investor → kreditur modal */}
+      <ConvertInvestorToCreditorModal
+        open={convertOpen}
+        onClose={() => setConvertOpen(false)}
+        onSaved={() => {
+          setConvertOpen(false);
+          refreshAll();
+          /* Invalidate investors cache karena salah satu jadi exited. */
+          void queryClient.invalidateQueries({ queryKey: ["admin", "investors"] });
+        }}
+      />
 
       {/* Form modal */}
       {formTarget !== undefined ? (

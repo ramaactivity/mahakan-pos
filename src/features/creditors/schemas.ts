@@ -29,6 +29,7 @@ export const createCreditorSchema = z
     startDate: isoDate,
     dueDate: isoDateOptional,
     notes: z.string().trim().max(1000).nullish(),
+    linkedInvestorId: z.string().uuid().nullish(),
   })
   .refine(
     (v) =>
@@ -80,7 +81,39 @@ export const reverseRepaymentSchema = z.object({
   reason: z.string().trim().min(5, "Alasan minimal 5 karakter").max(500),
 });
 
+/* Sesi AE-80 follow-up — convert investor → kreditur. */
+export const convertInvestorToCreditorSchema = z
+  .object({
+    investorId: z.string().uuid(),
+    /* Override pokok opsional (default = investor.modalDisetor). Owner
+     * boleh negotiate principal < modal kalau ada agreement. Tidak boleh
+     * > modal supaya tidak menciptakan equity gain palsu. */
+    principalOverride: z
+      .number()
+      .int()
+      .positive()
+      .max(MAX_RUPIAH)
+      .optional(),
+    interestRatePct: z.number().min(0).max(100).default(0),
+    interestPeriod: z.enum(["monthly", "yearly", "flat"]).default("monthly"),
+    startDate: isoDate,
+    dueDate: isoDateOptional,
+    notes: z.string().trim().max(1000).nullish(),
+    exitReason: z.string().trim().min(5, "Alasan exit min 5 char").max(500),
+  })
+  .refine(
+    (v) =>
+      !v.dueDate || (typeof v.dueDate === "string" && v.dueDate >= v.startDate),
+    {
+      message: "Tanggal jatuh tempo harus >= tanggal mulai",
+      path: ["dueDate"],
+    },
+  );
+
 export type CreateCreditorParsed = z.infer<typeof createCreditorSchema>;
 export type UpdateCreditorParsed = z.infer<typeof updateCreditorSchema>;
 export type PostRepaymentParsed = z.infer<typeof postRepaymentSchema>;
 export type ReverseRepaymentParsed = z.infer<typeof reverseRepaymentSchema>;
+export type ConvertInvestorToCreditorParsed = z.infer<
+  typeof convertInvestorToCreditorSchema
+>;

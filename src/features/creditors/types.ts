@@ -53,6 +53,10 @@ export interface CreateCreditorInput {
   startDate: string;
   dueDate?: string | null;
   notes?: string | null;
+  /** Sesi AE-80 follow-up — link ke investor existing (tanpa convert).
+   * Untuk kasus kreditur adalah orang yang sama dengan investor (mis.
+   * investor inactive yang minjamin uang baru terpisah). */
+  linkedInvestorId?: string | null;
 }
 
 export interface UpdateCreditorInput extends Partial<CreateCreditorInput> {
@@ -74,6 +78,20 @@ export interface PostRepaymentInput {
 export interface ReverseRepaymentInput {
   id: string;
   reason: string;
+}
+
+/* Sesi AE-80 follow-up — convert investor → kreditur input. */
+export interface ConvertInvestorToCreditorInput {
+  investorId: string;
+  /** Override pokok opsional (default = investor.modalDisetor). */
+  principalOverride?: number;
+  interestRatePct?: number;
+  interestPeriod?: InterestPeriod;
+  /** ISO date YYYY-MM-DD. */
+  startDate: string;
+  dueDate?: string | null;
+  notes?: string | null;
+  exitReason: string;
 }
 
 export interface CreditorListRow extends Creditor {
