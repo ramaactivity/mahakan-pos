@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { journalRetryQueue, journalEntries, users } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { extractDbError } from "@/lib/db-error";
 import { logAndSanitize } from "@/lib/server-error";
 import {
   postJournalForExpenseCreate,
@@ -167,7 +168,12 @@ const HOOK_REGISTRY: Record<RetryQueueHookLabel, HookRegistryEntry<any>> = {
 export async function enqueueFailedJournal(
   input: EnqueueJournalFailureInput,
 ): Promise<{ queueId: string | null }> {
-  const msg = input.error instanceof Error ? input.error.message : String(input.error);
+  /* Sesi AE-76 — extract PG reason + SQLSTATE dari cause chain. Sebelum
+   * AE-76 kita store e.message saja yang cuma "Failed query: <SQL>" tanpa
+   * reason — owner gak bisa diagnose tanpa SSH ke Vercel logs. */
+  const dbErr = extractDbError(input.error);
+  const fallbackMsg =
+    input.error instanceof Error ? input.error.message : String(input.error);
   const stack = input.error instanceof Error ? input.error.stack : undefined;
   const actorIdMaybe = (input.hookArgs as { actorId?: unknown }).actorId;
   const actorId = typeof actorIdMaybe === "string" ? actorIdMaybe : null;
@@ -180,7 +186,7 @@ export async function enqueueFailedJournal(
         hookArgs: input.hookArgs,
         sourceType: input.sourceType ?? null,
         sourceId: input.sourceId ?? null,
-        lastError: msg.slice(0, 500),
+        lastError: dbErr.formatted.slice(0, 500),
         lastErrorStack: stack?.split("\n").slice(0, 8).join("\n") ?? null,
       })
       .returning({ id: journalRetryQueue.id });
@@ -192,12 +198,16 @@ export async function enqueueFailedJournal(
       entityType: "journal_retry_queue",
       entityId: row.id,
       payload: {
-        summary: `🔁 Journal queued for retry: ${input.hookLabel} — ${msg.slice(0, 120)}`,
+        summary: `🔁 Journal queued for retry: ${input.hookLabel} — ${dbErr.formatted.slice(0, 200)}`,
         context: {
           hookLabel: input.hookLabel,
           sourceType: input.sourceType,
           sourceId: input.sourceId,
-          rawError: msg,
+          reason: dbErr.reason,
+          sqlstate: dbErr.sqlstate,
+          constraint: dbErr.constraint,
+          detail: dbErr.detail,
+          rawError: fallbackMsg,
         },
       },
       metadata: { outletId: input.outletId, actorRole: "system" },
@@ -330,7 +340,10 @@ export async function retryJournalQueueRow(input: {
       retryCount: newRetryCount,
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    /* Sesi AE-76 — extract PG reason supaya audit log + lastError berisi
+     * info actionable (SQLSTATE + constraint + detail), bukan cuma SQL. */
+    const dbErr = extractDbError(e);
+    const fallbackMsg = e instanceof Error ? e.message : String(e);
     const stack = e instanceof Error ? e.stack : undefined;
     const newRetryCount = row.retryCount + 1;
     await db
@@ -339,7 +352,7 @@ export async function retryJournalQueueRow(input: {
         retryCount: newRetryCount,
         lastRetryAt: now,
         lastRetryByUserId: session.user.id,
-        lastError: msg.slice(0, 500),
+        lastError: dbErr.formatted.slice(0, 500),
         lastErrorStack: stack?.split("\n").slice(0, 8).join("\n") ?? null,
       })
       .where(eq(journalRetryQueue.id, row.id))
@@ -353,13 +366,17 @@ export async function retryJournalQueueRow(input: {
       entityType: "journal_retry_queue",
       entityId: row.id,
       payload: {
-        summary: `✗ Retry journal ${row.hookLabel} gagal (attempt ${newRetryCount}): ${msg.slice(0, 120)}`,
+        summary: `✗ Retry journal ${row.hookLabel} gagal (attempt ${newRetryCount}): ${dbErr.formatted.slice(0, 200)}`,
         context: {
           hookLabel: row.hookLabel,
           sourceType: row.sourceType,
           sourceId: row.sourceId,
           retryCount: newRetryCount,
-          rawError: msg,
+          reason: dbErr.reason,
+          sqlstate: dbErr.sqlstate,
+          constraint: dbErr.constraint,
+          detail: dbErr.detail,
+          rawError: fallbackMsg,
         },
       },
       metadata: { outletId: row.outletId, actorRole: session.user.role },

@@ -2791,17 +2791,28 @@ export async function closeOpenBill(
     );
   }
 
-  // Sesi T — Accounting auto-journal hook (open bill → paid). Fire here, NOT
-  // di saveAsOpenBill (which calls createTransaction with skipEarn=true).
-  // sesi AD-11: hoisted to static import.
+  /* Sesi T — Accounting auto-journal hook (open bill → paid). Fire here, NOT
+   * di saveAsOpenBill (which calls createTransaction with skipEarn=true).
+   * sesi AD-11: hoisted to static import.
+   *
+   * Sesi AE-76 — sebelumnya fire tanpa context + retrySpec, jadi kalau
+   * journal post gagal: audit log YA tapi retry queue TIDAK → owner cuma
+   * lihat audit error, tidak bisa retry dari UI. Sekarang lengkap context
+   * + retrySpec sama dengan createTransaction path (line 840). */
+  const closePosSaleArgs = {
+    outletId: session.user.outletId,
+    transactionId: input.transactionId,
+    actorId: session.user.id,
+  };
   fireJournalHook(
-    () =>
-      postJournalForPosSale({
-        outletId: session.user.outletId,
-        transactionId: input.transactionId,
-        actorId: session.user.id,
-      }),
+    () => postJournalForPosSale(closePosSaleArgs),
     "pos_sale_open_bill_close",
+    {
+      sourceId: input.transactionId,
+      outletId: session.user.outletId,
+      actorId: session.user.id,
+    },
+    { label: "pos_sale", args: closePosSaleArgs },
   );
 
   const refreshed = await fetchTransactionById(input.transactionId);

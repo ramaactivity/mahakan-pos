@@ -167,14 +167,20 @@ export function validateLines(
 /**
  * Idempotency check — returns existing entry if (outletId, sourceType, sourceId)
  * already has an active entry. Skips reversed entries.
+ *
+ * Sesi AE-76 — `txOrDb` arg supaya bisa di-reuse inside transaction (AFTER
+ * advisory lock) untuk race-condition safety. Tanpa ini, 2 concurrent fires
+ * untuk same source bisa both see null pre-tx → both insert → second hits
+ * UNIQUE violation `ux_je_outlet_source_active`.
  */
 async function findExistingEntry(
   outletId: string,
   sourceType: JournalSourceType,
   sourceId: string | null,
+  txOrDb: typeof db = db,
 ): Promise<{ id: string; entryNumber: string; periodId: string } | null> {
   if (!sourceId) return null;
-  const [row] = await db
+  const [row] = await txOrDb
     .select({
       id: journalEntries.id,
       entryNumber: journalEntries.entryNumber,
@@ -258,6 +264,34 @@ export async function recordJournal(
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext(${`je-seq-${input.outletId}-${year}-${pad2(month)}`}))`,
     );
+
+    /* Sesi AE-76 — RACE FIX: re-check existence AFTER lock acquired. Tanpa
+     * ini, 2 concurrent fires untuk same (outlet, sourceType, sourceId):
+     *   1. Both call findExistingEntry pre-tx → both see null.
+     *   2. Both enter tx + acquire lock (sequential per lock semantics).
+     *   3. First insert succeeds (entry_number JE-...N, source UNIQUE OK).
+     *   4. Second insert fails dengan SQLSTATE 23505 ON
+     *      `ux_je_outlet_source_active` constraint — RAISES error → audit
+     *      log "Failed query: insert into journal_entries..." → queue retry
+     *      → retry sees existing now (post-fix) → returns ok idempotent.
+     * Fix: re-check inside tx setelah lock → second caller sees existing
+     * dan return early tanpa attempt insert. Idempotency guaranteed. */
+    if (input.sourceId) {
+      const existingInTx = await findExistingEntry(
+        input.outletId,
+        input.sourceType,
+        input.sourceId,
+        tx as unknown as typeof db,
+      );
+      if (existingInTx) {
+        return {
+          entryId: existingInTx.id,
+          entryNumber: existingInTx.entryNumber,
+          periodId: existingInTx.periodId,
+          created: false,
+        };
+      }
+    }
 
     // Count existing entries di period — sequence baru = count+1
     const [{ count }] = await tx

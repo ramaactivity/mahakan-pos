@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { extractDbError } from "@/lib/db-error";
 import {
   bankAccounts,
   chartOfAccounts,
@@ -1378,9 +1379,17 @@ export function fireJournalHook(
   },
 ): void {
   fn().catch(async (e) => {
-    const msg = e instanceof Error ? e.message : String(e);
+    /* Sesi AE-76 — Drizzle wrap PG errors sebagai DrizzleQueryError dengan
+     * message = "Failed query: <SQL>" dan cause = original PG error. Kalau
+     * cuma capture e.message, owner lihat SQL tanpa reason aktual (unique
+     * violation? FK? check?). extractDbError walk cause chain → ambil
+     * SQLSTATE + constraint name + detail. */
+    const dbErr = extractDbError(e);
     const stack = e instanceof Error ? e.stack : undefined;
-    console.error(`[journal:${label}] ${msg}`);
+    const fallbackMsg = e instanceof Error ? e.message : String(e);
+    console.error(
+      `[journal:${label}] ${dbErr.formatted}\n${fallbackMsg}`,
+    );
 
     // Audit log buat owner visibility. Defensive: catch + console kalau
     // audit itu sendiri gagal (rare — DB down). Hindari infinite loop:
@@ -1393,11 +1402,17 @@ export function fireJournalHook(
         entityType: "journal_entry",
         entityId: context?.sourceId ?? null,
         payload: {
-          summary: `🚨 Journal post gagal: ${label} — ${msg}`,
+          summary: `🚨 Journal post gagal: ${label} — ${dbErr.formatted}`,
           context: {
             sourceType: label,
             sourceId: context?.sourceId,
-            rawError: msg,
+            /* reason aktual dari PG (mis. unique violation message). */
+            reason: dbErr.reason,
+            sqlstate: dbErr.sqlstate,
+            constraint: dbErr.constraint,
+            detail: dbErr.detail,
+            /* rawError full untuk debug; sebelumnya cuma SQL. */
+            rawError: fallbackMsg,
             stackPreview: stack?.split("\n").slice(0, 5).join("\n"),
           },
         },
