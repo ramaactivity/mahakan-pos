@@ -50,7 +50,7 @@ export async function ensureShiftOpen(page: Page): Promise<void> {
   await page.waitForTimeout(2_000);
 }
 
-export async function createPaidTransaction(page: Page): Promise<void> {
+export async function createPaidTransaction(page: Page): Promise<string | null> {
   /* Pastikan di tab Kasir. */
   const kasirTab = page
     .getByRole("button", { name: "Kasir", exact: true })
@@ -106,10 +106,22 @@ export async function createPaidTransaction(page: Page): Promise<void> {
   await expect(konfirmBtn).toBeEnabled({ timeout: 5_000 });
   await konfirmBtn.click();
 
-  /* TransactionSuccessModal — tutup pakai Escape (paling reliable).
-   * Modal punya beberapa action button (Cetak, Selesai, Transaksi Baru)
-   * yang strict-mode locator bingung. */
+  /* TransactionSuccessModal render TRX number di receipt — extract dulu
+   * sebelum dismiss supaya caller bisa verify entry akuntansi. */
   await page.waitForTimeout(2_500);
+
+  let trxNumber: string | null = null;
+  const trxLocator = page.locator('text=/TRX-\\d{8}-\\d+/').first();
+  if (await trxLocator.isVisible({ timeout: 2_000 }).catch(() => false)) {
+    const text = (await trxLocator.textContent())?.trim() ?? "";
+    const match = text.match(/TRX-\d{8}-\d+/);
+    trxNumber = match ? match[0] : null;
+  }
+
+  /* Dismiss modal pakai Escape (paling reliable — multiple action buttons
+   * di strict-mode locator bingung). */
   await page.keyboard.press("Escape");
   await page.waitForTimeout(1_000);
+
+  return trxNumber;
 }
