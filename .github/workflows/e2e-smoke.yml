@@ -1,0 +1,71 @@
+name: E2E Smoke (Tier 1)
+
+# Sesi AE-97 — Read-only smoke test terhadap prod URL setelah push ke
+# release/phase-1 atau main. Tier 1 saja (no DB mutation), jadi tidak butuh
+# Neon secret. Goal: detect broken routes, auth redirect, SSR crash
+# segera setelah deploy.
+#
+# Trigger:
+#   - push ke release/phase-1 atau main (post-merge / post-commit)
+#   - manual via workflow_dispatch (UI button "Run workflow")
+#
+# Catatan: deploy production di-trigger manual via `npx vercel --prod`
+# (lihat memory feedback_deploy_authorization.md). Workflow ini run
+# setelah deploy biasanya selesai, jadi sleep 60s di awal supaya Vercel
+# sempat warm up edge cache.
+
+on:
+  push:
+    branches: [release/phase-1, main]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Base URL to smoke-test"
+        required: false
+        default: "https://mahakan-pos.vercel.app"
+
+jobs:
+  smoke:
+    name: Tier 1 smoke against prod
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Install Playwright browser (chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: Wait for prod cache warmup (post-deploy)
+        run: sleep 30
+
+      - name: Run Tier 1 smoke
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ github.event.inputs.base_url || 'https://mahakan-pos.vercel.app' }}
+        run: npx playwright test --project=chromium-desktop --reporter=list e2e/smoke.spec.ts
+
+      - name: Upload HTML report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Upload test results (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 7
