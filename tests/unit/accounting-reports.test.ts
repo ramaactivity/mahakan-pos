@@ -514,6 +514,78 @@ describe("buildBalanceSheet", () => {
     expect(labaRugi).toBeDefined();
     expect(labaRugi?.amount).toBe(3_000_000);
   });
+
+  /* Sesi AE-106 — regression test untuk bug ditemukan via E2E spec
+   * `balance-sheet-verify.spec.ts` (AE-105). Pre-fix: contra equity
+   * Prive Owner di-store dengan amount positive tapi `totalEquity`
+   * tidak negate, sehingga total kewajiban+ekuitas over-stated. Result:
+   * Neraca tidak balance (drift = 2 × prive amount).
+   *
+   * Post-fix: totalEquity reduce respect `isContra` flag → kontra
+   * equity di-subtract dari total, accounting equation holds.
+   */
+  it("regression AE-106: contra equity (Prive Owner) subtracted from totalEquity", () => {
+    const balances: AccountBalanceRow[] = [
+      /* Asset: Rp 10M */
+      {
+        accountId: "a1",
+        code: "1101",
+        name: "Kas",
+        type: "asset",
+        normalBalance: "debit",
+        isContra: false,
+        parentCode: null,
+        debitTotal: 10_000_000,
+        creditTotal: 0,
+      },
+      /* Equity normal: Modal Owner Rp 12M */
+      {
+        accountId: "e1",
+        code: "3101",
+        name: "Modal Owner",
+        type: "equity",
+        normalBalance: "credit",
+        isContra: false,
+        parentCode: null,
+        debitTotal: 0,
+        creditTotal: 12_000_000,
+      },
+      /* Contra equity: Prive Owner Rp 2M (owner ngambil duit) */
+      {
+        accountId: "e2",
+        code: "3201",
+        name: "Prive Owner",
+        type: "equity",
+        normalBalance: "debit",
+        isContra: true,
+        parentCode: null,
+        debitTotal: 2_000_000,
+        creditTotal: 0,
+      },
+    ];
+    const bs = buildBalanceSheet(balances, "2026-06-30");
+
+    /* Equity items breakdown:
+     *   3101 Modal: amount = 12M (positive, normal)
+     *   3201 Prive: amount = 2M (positive stored, isContra=true)
+     */
+    const modal = bs.equity.find((e) => e.code === "3101");
+    const prive = bs.equity.find((e) => e.code === "3201");
+    expect(modal?.amount).toBe(12_000_000);
+    expect(prive?.amount).toBe(2_000_000);
+    expect(prive?.isContra).toBe(true);
+
+    /* CRITICAL: totalEquity HARUS net out contra. Modal - Prive = 10M. */
+    expect(
+      bs.totalEquity,
+      `totalEquity HARUS subtract contra equity (Prive 2M). Pre-fix: 14M, Post-fix: 10M.`,
+    ).toBe(10_000_000);
+
+    /* Accounting equation HOLDS: Assets 10M = Liab 0 + Equity 10M */
+    expect(bs.balanced).toBe(true);
+    expect(bs.totalAssets).toBe(10_000_000);
+    expect(bs.totalLiabilities).toBe(0);
+  });
 });
 
 // ============================================================

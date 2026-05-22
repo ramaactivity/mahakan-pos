@@ -311,10 +311,20 @@ export function buildBalanceSheet(
 
   const totalAssets = assets.reduce((s, a) => s + a.amount, 0);
   const totalLiabilities = liabilities.reduce((s, l) => s + l.amount, 0);
-  const totalEquity = equity.reduce((s, e) => s + e.amount, 0);
-  // Equity contra accounts (3201 Prive) subtract — but we already store amount as positive
-  // for kontra (debit-normal-positive). Actually for proper neraca, kontra equity
-  // should show as negative subtotal. Let UI handle display sign.
+  /* Sesi AE-106 — contra equity (Prive Owner 3201) HARUS di-subtract dari
+   * totalEquity. Pre-fix bug: stored amount positive (per debit-normal
+   * convention untuk row display "(-) Prive Rp X"), tapi reduce treat
+   * as additive → totalEquity over-stated → Neraca drift.
+   *
+   * Asset side sudah handle isContra via `amount = b.isContra ? -net : net`
+   * pada line 257 — itu menghasilkan signed amount yang langsung correct
+   * untuk sum. Equity side beda: stored as positive untuk display, jadi
+   * sum harus eksplisit negate untuk contra.
+   */
+  const totalEquity = equity.reduce(
+    (s, e) => s + (e.isContra ? -e.amount : e.amount),
+    0,
+  );
 
   return {
     asOfDate,

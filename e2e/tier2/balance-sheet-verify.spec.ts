@@ -33,18 +33,13 @@ import { loginAsE2EOwner } from "./_fixtures/auth";
  */
 
 test.describe("Balance Sheet (Neraca) accounting equation", () => {
-  test("Assets = Liabilities + Equity (or report drift)", async ({
+  test("Assets = Liabilities + Equity (balanced)", async ({
     page,
   }, testInfo) => {
-    /* AE-105 known finding — current test branch Neraca drift Rp 1.4M.
-     * Hypothesis: totalEquity tidak respect isContra Prive Owner.
-     * test.fail() marks expected failure — Playwright report ke-pass
-     * kalau test fail (current state), dan report ke-fail kalau test
-     * pass (bug fixed, time to remove this annotation). */
-    test.fail(
-      true,
-      "Known issue AE-105: Neraca drift ~Rp 1.4M. Investigate isContra handling pada totalEquity calc + test branch persediaan negatif pollution.",
-    );
+    /* AE-106 — bug fixed: totalEquity sekarang respect isContra flag.
+     * Spec ini regression check supaya kalau ada developer revert atau
+     * change account treatment, Neraca tetap balanced.
+     */
 
     await loginAsE2EOwner(page, "/dashboard#accounting");
     await page.waitForLoadState("networkidle");
