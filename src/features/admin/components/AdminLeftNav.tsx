@@ -7,6 +7,7 @@ import {
   Bike,
   BookOpen,
   Briefcase,
+  Calculator,
   ClipboardList,
   Clock,
   Coffee,
@@ -33,6 +34,7 @@ import type { Role } from "@/lib/auth";
 export type AdminSection =
   | "dashboard"
   | "menu"
+  | "cogs_variance"
   | "inventory"
   | "suppliers"
   | "purchase_requests"
@@ -101,7 +103,10 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     heading: "Menu",
-    items: [{ key: "menu", label: "Menu", Icon: Coffee }],
+    items: [
+      { key: "menu", label: "Menu", Icon: Coffee },
+      { key: "cogs_variance", label: "COGS & Variance", Icon: Calculator },
+    ],
   },
   {
     heading: "Cashflow",

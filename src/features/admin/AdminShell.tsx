@@ -80,6 +80,11 @@ const MenuSection = lazy(() =>
     default: m.MenuSection,
   })),
 );
+const CogsVarianceSection = lazy(() =>
+  import("@/features/admin/sections/CogsVarianceSection").then((m) => ({
+    default: m.CogsVarianceSection,
+  })),
+);
 const BalanceAccountSection = lazy(() =>
   import("@/features/admin/sections/BalanceAccountSection").then((m) => ({
     default: m.BalanceAccountSection,
@@ -230,6 +235,8 @@ export function AdminShell() {
           <Suspense fallback={<SectionFallback />}>
             {section === "menu" ? (
               <MenuSection />
+            ) : section === "cogs_variance" ? (
+              <CogsVarianceSection />
             ) : section === "inventory" ? (
               <InventorySection onNavigate={setSection} />
             ) : section === "suppliers" ? (
