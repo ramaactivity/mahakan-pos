@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ClipboardCheck, History, Table } from "lucide-react";
 import type { Role } from "@/lib/auth";
-import { cn } from "@/lib/utils";
+import { Tab, TabList, TabPanel, Tabs } from "@/components/ui";
 import { HistoricalImportWizard } from "./reconciliation/HistoricalImportWizard";
 import { HistoricalSummaryList } from "./reconciliation/HistoricalSummaryList";
 import { OpeningBalanceWizard } from "./reconciliation/OpeningBalanceWizard";
@@ -58,7 +58,7 @@ export function ReconciliationSection({
   }, []);
 
   return (
-    <div>
+    <Tabs value={tab} onChange={(v) => setTab(v as ReconciliationTab)}>
       <div className="space-y-3 px-6 pt-6">
         <header>
           <h1 className="text-2xl font-bold text-mahakan-green-900">
@@ -71,45 +71,33 @@ export function ReconciliationSection({
           </p>
         </header>
 
-        <div
-          role="tablist"
-          aria-label="Rekonsiliasi tabs"
-          className="flex gap-1 border-b border-neutral-200"
-        >
+        <TabList ariaLabel="Rekonsiliasi tabs">
           {TABS.map((t) => {
-            const active = tab === t.key;
             const Icon = t.Icon;
             return (
-              <button
+              <Tab
                 key={t.key}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setTab(t.key)}
-                className={cn(
-                  "flex items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-medium transition-colors",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
-                  active
-                    ? "border-mahakan-green-700 text-mahakan-green-900"
-                    : "border-transparent text-neutral-500 hover:text-neutral-900",
-                )}
+                value={t.key}
                 title={t.hint}
+                className="flex items-center gap-1.5"
               >
                 <Icon className="size-4" aria-hidden />
                 {t.label}
-              </button>
+              </Tab>
             );
           })}
-        </div>
+        </TabList>
       </div>
 
-      {tab === "checklist" ? (
+      <TabPanel value="checklist">
         <OpeningBalanceWizard />
-      ) : tab === "import" ? (
+      </TabPanel>
+      <TabPanel value="import">
         <HistoricalImportWizard />
-      ) : (
+      </TabPanel>
+      <TabPanel value="list">
         <HistoricalSummaryList viewerRole={viewerRole} />
-      )}
-    </div>
+      </TabPanel>
+    </Tabs>
   );
 }

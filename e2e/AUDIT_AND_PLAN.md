@@ -136,6 +136,9 @@ ke-run sebelum push, prod bisa deploy dengan UI broken.
 | F3 | Console error collector | ✅ SHIPPED commit `5d48d99` | 12/12 critical pages zero console errors |
 | F4 | Tablet POS coverage (`npm run test:e2e:tablet`) | ✅ SHIPPED commit `5d48d99` | 15 pass + 2 intentional skip di Galaxy A7 Lite 1340×800 |
 | F6 | GitHub Actions Tier 1 smoke | ⏸️ FILE READY (working tree), PUSH BLOCKED | PAT tidak punya `workflow` scope — Rama push manual atau update token |
+| F5 | Seed helper (paid transaction) | ✅ SHIPPED (round 2) | `_fixtures/pos-seed.ts` reusable; correction-chain test now graceful skip dengan clear reason kalau branch state polluted |
+| F2 | Wait helpers (`waitForSectionReady`, `waitForDialog`, `waitForHidden`, `waitForIdle`) | ✅ SHIPPED (round 2) | `_fixtures/wait-helpers.ts` siap; per-spec migration ditunda berkala |
+| F1 | Tabs primitive component + dogfood | ✅ SHIPPED (round 2) | `src/components/ui/Tabs.tsx` (Tab/TabList/TabPanel/Tabs) dengan proper ARIA + keyboard nav. ReconciliationSection + InventorySection refactored. 14 file lainnya bisa migrasi inkremental. |
 
 **F6 follow-up untuk Rama:** File `.github/workflows/e2e-smoke.yml`
 sudah ada di working tree lokal tapi belum ke-push karena

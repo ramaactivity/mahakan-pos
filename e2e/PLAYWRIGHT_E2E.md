@@ -274,6 +274,42 @@ test.describe("Feature X", () => {
 
 ## 7. Konvensi & gotcha penting
 
+### Helpers (`_fixtures/`) yang tersedia
+
+| File | Helper | Purpose |
+|---|---|---|
+| `auth.ts` | `loginAsE2EOwner(page, callbackUrl?)` | Login PIN E2E owner |
+| `console-errors.ts` | `attachConsoleErrorCollector(page)` + `expectNoConsoleErrors(page, action)` | Catch silent JS bugs (AE-97 F3) |
+| `pos-seed.ts` | `ensureShiftOpen(page)`, `createPaidTransaction(page)` | UI-driven seed untuk state-dependent test (AE-97 F5) |
+| `wait-helpers.ts` | `waitForSectionReady(page, heading)`, `waitForDialog(page)`, `waitForHidden(locator)`, `waitForIdle(page)` | Replace `waitForTimeout` smell (AE-97 F2) |
+
+### Tabs primitive: pakai shared component
+
+`src/components/ui/Tabs.tsx` menyediakan `Tabs / TabList / Tab / TabPanel`
+dengan proper ARIA + keyboard nav (ArrowLeft/Right, Home, End). Pakai di
+section baru:
+
+```tsx
+import { Tabs, TabList, Tab, TabPanel } from "@/components/ui";
+
+const [tab, setTab] = useState<"a" | "b">("a");
+
+return (
+  <Tabs value={tab} onChange={(v) => setTab(v as "a" | "b")}>
+    <TabList ariaLabel="Section tabs">
+      <Tab value="a">Label A</Tab>
+      <Tab value="b">Label B</Tab>
+    </TabList>
+    <TabPanel value="a"><PanelA /></TabPanel>
+    <TabPanel value="b"><PanelB /></TabPanel>
+  </Tabs>
+);
+```
+
+Sudah dipakai di: `ReconciliationSection`, `InventorySection` (sesi
+AE-97). File section lain yang masih raw `<button role="tab">` ada di
+AUDIT_AND_PLAN.md — bisa migrasi inkremental.
+
 ### Locator: pilih role yang tepat
 
 Mahakan POS render banyak tablist via raw `<button role="tab">` — **bukan**

@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { loginAsE2EOwner } from "./_fixtures/auth";
+import {
+  createPaidTransaction,
+  ensureShiftOpen,
+} from "./_fixtures/pos-seed";
 
 /**
  * Sesi AE-96 — Multi-koreksi pos_sale chain UI smoke (AE-83 fix).
@@ -72,30 +76,67 @@ test.describe("Multi-koreksi UI entrypoint (HistoryDetailModal)", () => {
   test("HistoryDetailModal → 'Koreksi Transaksi' → TransactionCorrectionModal", async ({
     page,
   }) => {
-    const trxRow = page.locator('text=/TRX-?\\d/').first();
-    if (!(await trxRow.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip(true, "Tidak ada transaksi di test branch");
-    }
-    await trxRow.click();
-    await page.waitForTimeout(1_500);
+    /* F5 — seed fresh paid transaction supaya kemungkinan besar ada
+     * eligible trx (tidak ada pending correction). Tetap graceful skip
+     * kalau ternyata semua trx top-N punya pending correction (mis. dari
+     * banyak test run sebelumnya yang sudah pollute state). */
+    await ensureShiftOpen(page);
+    await createPaidTransaction(page);
 
-    const koreksiBtn = page
-      .getByRole("button", { name: /Koreksi Transaksi/i })
+    const riwayatTab = page
+      .getByRole("button", { name: "Riwayat", exact: true })
       .first();
-    if (
-      !(await koreksiBtn.isVisible({ timeout: 5_000 }).catch(() => false))
-    ) {
+    await riwayatTab.click();
+    await page.waitForTimeout(2_000);
+
+    const lunasChip = page.getByRole("button", { name: /^Lunas$/i }).first();
+    if (await lunasChip.isVisible({ timeout: 3_000 }).catch(() => false)) {
+      await lunasChip.click();
+      await page.waitForTimeout(1_000);
+    }
+
+    /* Iterate semua paid transactions (max 10). Fresh-seeded should be
+     * di top. Kalau none eligible, skip dengan clear reason. */
+    const rows = page.locator('text=/TRX-?\\d/');
+    const rowCount = await rows.count();
+    if (rowCount === 0) {
+      test.skip(true, "Seed gagal — no paid transaction visible");
+    }
+
+    const limit = Math.min(rowCount, 10);
+    let foundEligible = false;
+    for (let i = 0; i < limit; i++) {
+      await rows.nth(i).click();
+      const dialog = page.getByRole("dialog").first();
+      await dialog.waitFor({ state: "visible", timeout: 5_000 });
+
+      const koreksiBtn = dialog
+        .getByRole("button", { name: /Koreksi Transaksi/i })
+        .first();
+      const visible = await koreksiBtn
+        .isVisible({ timeout: 2_000 })
+        .catch(() => false);
+
+      if (visible) {
+        await koreksiBtn.click();
+        const ajukanHeading = page.getByText(/Ajukan Koreksi/i).first();
+        await expect(ajukanHeading).toBeVisible({ timeout: 5_000 });
+        foundEligible = true;
+        break;
+      }
+
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "hidden", timeout: 3_000 }).catch(() => {});
+    }
+
+    /* F5 known limitation — kalau test branch sudah ter-pollute pending
+     * correction dari banyak run sebelumnya, skip tanpa fail. Skip ini
+     * informational, bukan tanda regression. */
+    if (!foundEligible) {
       test.skip(
         true,
-        "Tombol Koreksi Transaksi tidak visible (mungkin pending/void)",
+        `Test branch state pollution: ${limit} paid trx teratas semua sudah ada pending correction. Reset branch atau approve/reject pending correction lama untuk re-enable.`,
       );
     }
-    await koreksiBtn.click();
-    await page.waitForTimeout(1_500);
-
-    /* Modal TransactionCorrectionModal terbuka — verify ada heading
-     * "Ajukan Koreksi". */
-    const ajukanHeading = page.getByText(/Ajukan Koreksi/i).first();
-    await expect(ajukanHeading).toBeVisible({ timeout: 5_000 });
   });
 });

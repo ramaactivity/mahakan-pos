@@ -57,3 +57,6 @@ export type { ResponsiveColumn } from "./ResponsiveTable";
 export { Spinner } from "./Spinner";
 
 export { Toaster, toast } from "./Toast";
+
+export { Tabs, TabList, Tab, TabPanel } from "./Tabs";
+export type { TabsProps, TabListProps, TabProps, TabPanelProps } from "./Tabs";

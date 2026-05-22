@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Calculator } from "lucide-react";
-import { Button } from "@/components/ui";
+import { Button, Tab, TabList, TabPanel, Tabs } from "@/components/ui";
 import { CogsCalculatorWidget } from "./inventory/CogsCalculatorWidget";
 import { IngredientsList } from "./inventory/IngredientsList";
 import { MarketListView } from "./inventory/market-list/MarketListView";
@@ -12,7 +12,6 @@ import { PreparationsList } from "./inventory/PreparationsList";
 import { PurchasesView } from "./inventory/purchases/PurchasesView";
 import { RecipesList } from "./inventory/RecipesList";
 import { TopTrackerView } from "./inventory/purchases/TopTrackerView";
-import { cn } from "@/lib/utils";
 import type { AdminSection } from "../components/AdminLeftNav";
 
 type InventoryTab =
@@ -45,7 +44,11 @@ export function InventorySection({ onNavigate }: InventorySectionProps = {}) {
   const [calcOpen, setCalcOpen] = useState(false);
 
   return (
-    <div className="space-y-4 p-6">
+    <Tabs
+      value={tab}
+      onChange={(v) => setTab(v as InventoryTab)}
+      className="space-y-4 p-6"
+    >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-mahakan-green-900">
@@ -61,57 +64,43 @@ export function InventorySection({ onNavigate }: InventorySectionProps = {}) {
         </Button>
       </header>
 
-      <div
-        role="tablist"
-        aria-label="Inventory tabs"
-        className="flex gap-1 border-b border-neutral-200"
-      >
+      <TabList ariaLabel="Inventory tabs">
         {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.key}
-            onClick={() => !t.soon && setTab(t.key)}
-            disabled={t.soon}
-            className={cn(
-              "border-b-2 px-4 py-2 text-sm font-medium transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
-              tab === t.key
-                ? "border-mahakan-green-700 text-mahakan-green-900"
-                : "border-transparent text-neutral-500 hover:text-neutral-900",
-              t.soon && "cursor-not-allowed opacity-60",
-            )}
-          >
+          <Tab key={t.key} value={t.key} disabled={t.soon}>
             {t.label}
             {t.soon ? (
               <span className="ml-1.5 text-[10px] uppercase text-neutral-400">
                 Segera
               </span>
             ) : null}
-          </button>
+          </Tab>
         ))}
-      </div>
+      </TabList>
 
-      <div>
-        {tab === "ingredients" ? (
-          <IngredientsList />
-        ) : tab === "market_list" ? (
-          <MarketListView />
-        ) : tab === "preparations" ? (
-          <PreparationsList />
-        ) : tab === "purchases" ? (
-          <PurchasesView />
-        ) : tab === "top" ? (
-          <TopTrackerView />
-        ) : tab === "opname" ? (
-          <OpnameTab />
-        ) : tab === "movements" ? (
-          <MovementsList />
-        ) : (
-          <RecipesList />
-        )}
-      </div>
+      <TabPanel value="ingredients">
+        <IngredientsList />
+      </TabPanel>
+      <TabPanel value="market_list">
+        <MarketListView />
+      </TabPanel>
+      <TabPanel value="preparations">
+        <PreparationsList />
+      </TabPanel>
+      <TabPanel value="purchases">
+        <PurchasesView />
+      </TabPanel>
+      <TabPanel value="top">
+        <TopTrackerView />
+      </TabPanel>
+      <TabPanel value="opname">
+        <OpnameTab />
+      </TabPanel>
+      <TabPanel value="movements">
+        <MovementsList />
+      </TabPanel>
+      <TabPanel value="recipes">
+        <RecipesList />
+      </TabPanel>
 
       <CogsCalculatorWidget
         open={calcOpen}
@@ -125,6 +114,6 @@ export function InventorySection({ onNavigate }: InventorySectionProps = {}) {
             : undefined
         }
       />
-    </div>
+    </Tabs>
   );
 }
