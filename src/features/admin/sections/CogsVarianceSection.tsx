@@ -347,19 +347,12 @@ function VarianceTab({ report }: { report: CogsReport }) {
     toast.success(`Export Variance ${report.period.label}`);
   }
 
-  /* Sum Theoretical/Actual Rp across rows. Sumber utama untuk owner. */
-  const totalTheoretical = rows.reduce(
-    (s, r) => s + r.theoreticalUsageCost,
-    0,
-  );
-  const totalActual = rows.reduce((s, r) => s + r.actualUsageCost, 0);
-
   return (
     <div className="space-y-3 pt-4">
       <div className="flex items-center justify-between">
         <div className="text-sm text-neutral-700">
-          <strong>Theoretical</strong> = Σ(resep × menu terjual) × harga avg ·{" "}
-          <strong>Actual</strong> = (stock awal + pembelian - stock akhir) × harga avg
+          <strong>Theoretical</strong> = Σ(resep × menu terjual) qty ·{" "}
+          <strong>Actual</strong> = stock awal + pembelian - stock akhir qty
         </div>
         <Button variant="outline" size="sm" onClick={exportCsv}>
           <Download className="size-3.5" /> CSV
@@ -367,17 +360,7 @@ function VarianceTab({ report }: { report: CogsReport }) {
       </div>
 
       {/* Summary stats */}
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-        <StatCard
-          label="Theoretical Cost"
-          value={formatRupiah(totalTheoretical)}
-          tone="default"
-        />
-        <StatCard
-          label="Actual Cost"
-          value={formatRupiah(totalActual)}
-          tone="default"
-        />
+      <div className="grid grid-cols-3 gap-2">
         <StatCard
           label="Total Variance Cost"
           value={formatRupiah(report.summary.totalVarianceCost)}
@@ -387,9 +370,12 @@ function VarianceTab({ report }: { report: CogsReport }) {
           label="Bahan dgn Variance"
           value={`${report.summary.ingredientsWithVariance} / ${report.rows.length}`}
         />
+        <StatCard label="Periode" value={report.period.label} />
       </div>
 
-      {/* Table — Rp-centric (cost biasanya lebih relevant untuk owner). */}
+      {/* Table — QTY-centric per Rama feedback (sesi AE-119).
+       *   Theoretical Qty + Actual Qty in main display.
+       *   Δ Cost (Rp) sebagai impact column terakhir. */}
       <div className="overflow-x-auto rounded-md border border-neutral-200">
         <table className="min-w-full text-sm">
           <thead className="bg-neutral-50 text-xs uppercase tracking-wider text-neutral-500">
@@ -398,25 +384,26 @@ function VarianceTab({ report }: { report: CogsReport }) {
               <th className="px-3 py-2 text-left font-medium">Unit</th>
               <th
                 className="px-3 py-2 text-right font-medium"
-                title="Theoretical = Σ(resep × menu terjual) × harga avg. 'Diambil dari cost menu penjual.'"
+                title="Theoretical = Σ(resep × menu terjual) qty. Apa yg harusnya konsumsi dari menu yang terjual."
               >
-                Theoretical Cost
+                Theoretical
               </th>
               <th
                 className="px-3 py-2 text-right font-medium"
-                title="Actual = qty consumed (= COGS Qty Pemakaian) × harga avg"
+                title="Actual = qty consumed real (= COGS Qty Pemakaian). Stock awal + pembelian - stock akhir."
               >
-                Actual Cost
+                Actual
               </th>
-              <th className="px-3 py-2 text-right font-medium">Δ Cost</th>
+              <th className="px-3 py-2 text-right font-medium">Δ Qty</th>
               <th className="px-3 py-2 text-right font-medium">Δ %</th>
+              <th className="px-3 py-2 text-right font-medium">Δ Cost</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-100">
             {rows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={7}
                   className="px-3 py-8 text-center text-sm text-neutral-500"
                 >
                   Tidak ada data variance di periode ini.
@@ -451,10 +438,6 @@ function VarianceRow({ r }: { r: IngredientCogsRow }) {
     <tr>
       <td className="px-3 py-1.5">
         <div className="font-medium">{r.name}</div>
-        <div className="text-[10px] text-neutral-500">
-          {formatNum(r.theoreticalUsageQty)} {r.unit} theoretical ·{" "}
-          {formatNum(r.actualUsageQty)} {r.unit} actual
-        </div>
         {r.warnings.length > 0 ? (
           <div className="text-[10px] text-warning-600">
             ⚠️ {r.warnings[0]}
@@ -463,19 +446,20 @@ function VarianceRow({ r }: { r: IngredientCogsRow }) {
       </td>
       <td className="px-3 py-1.5 text-neutral-500">{r.unit}</td>
       <td className="px-3 py-1.5 text-right font-mono">
-        {r.theoreticalUsageCost !== 0
-          ? formatRupiah(r.theoreticalUsageCost)
-          : "—"}
+        {formatNum(r.theoreticalUsageQty)}
       </td>
       <td className="px-3 py-1.5 text-right font-mono">
-        {r.actualUsageCost !== 0 ? formatRupiah(r.actualUsageCost) : "—"}
+        {formatNum(r.actualUsageQty)}
       </td>
       <td className={cn("px-3 py-1.5 text-right font-mono", tone)}>
         <Icon className="mr-1 inline size-3" />
-        {r.varianceCost !== 0 ? formatRupiah(r.varianceCost) : "—"}
+        {formatNum(r.varianceQty)}
       </td>
       <td className={cn("px-3 py-1.5 text-right font-mono", tone)}>
         {r.variancePct !== null ? `${formatNum(r.variancePct)}%` : "—"}
+      </td>
+      <td className={cn("px-3 py-1.5 text-right font-mono", tone)}>
+        {r.varianceCost !== 0 ? formatRupiah(r.varianceCost) : "—"}
       </td>
     </tr>
   );
