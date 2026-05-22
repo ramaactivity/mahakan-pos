@@ -8,10 +8,12 @@ export interface PrPurchaseItemRow {
   purchaseRequestItemId: string;
   ingredientId: string;
   ingredientName: string;
+  /** Unit asal dari PR item snapshot (label staff input). */
   unit: string;
   /** Quantity dari sisi PR (sisa outstanding). */
   outstandingQty: number;
-  /** Qty yang dipilih staff untuk dibeli. <= outstandingQty. */
+  /** Qty yang dipilih staff untuk dibeli. Boleh ≠ outstanding (over /
+   * under, sesi AE-122). PR receivedQty di-cap di outstanding side. */
   qty: number;
   /** Supplier yang dipilih staff. NULL = belum di-assign. */
   supplierId: string | null;
@@ -85,11 +87,20 @@ export function groupItemsBySupplier(
 /**
  * Validation result untuk staff sebelum submit. Catat semua issue
  * (bukan throw pertama) supaya UI bisa list seluruh masalah.
+ *
+ * Sesi AE-122 — `severity`:
+ *   - "error" (default): block submit. Mis. supplier kosong, qty <= 0.
+ *   - "warning": ditampilkan kuning untuk awareness, TAPI tidak block
+ *     submit. Owner punya pertimbangan lain (acara, ramai, salah qty
+ *     dari staff).
+ *
+ * Helper baru `validatePurchaseGroupBlockers()` filter hanya error.
  */
 export interface ValidationIssue {
   itemId: string;
   field: "supplier" | "qty" | "unitCost";
   message: string;
+  severity: "error" | "warning";
 }
 
 export function validatePurchaseGroupItems(
@@ -103,6 +114,7 @@ export function validatePurchaseGroupItems(
         itemId: item.purchaseRequestItemId,
         field: "supplier",
         message: `${item.ingredientName}: pilih supplier dulu`,
+        severity: "error",
       });
     }
     if (!Number.isFinite(item.qty) || item.qty <= 0) {
@@ -110,12 +122,15 @@ export function validatePurchaseGroupItems(
         itemId: item.purchaseRequestItemId,
         field: "qty",
         message: `${item.ingredientName}: qty harus > 0`,
+        severity: "error",
       });
     } else if (item.qty > item.outstandingQty) {
+      const delta = item.qty - item.outstandingQty;
       issues.push({
         itemId: item.purchaseRequestItemId,
         field: "qty",
-        message: `${item.ingredientName}: maks ${item.outstandingQty} (sisa outstanding)`,
+        message: `${item.ingredientName}: lebih ${delta.toLocaleString("id-ID")} dari yang di-request (${item.outstandingQty})`,
+        severity: "warning",
       });
     }
     if (!Number.isFinite(item.unitCost) || item.unitCost < 0) {
@@ -123,10 +138,18 @@ export function validatePurchaseGroupItems(
         itemId: item.purchaseRequestItemId,
         field: "unitCost",
         message: `${item.ingredientName}: harga harus ≥ 0`,
+        severity: "error",
       });
     }
   }
   return issues;
+}
+
+/** Hanya issue dengan severity="error" — yang block submit. */
+export function getPurchaseGroupBlockers(
+  issues: ValidationIssue[],
+): ValidationIssue[] {
+  return issues.filter((i) => i.severity === "error");
 }
 
 /**

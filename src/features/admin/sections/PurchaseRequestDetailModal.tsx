@@ -255,10 +255,27 @@ function purchaseRequestItemColumns(): ResponsiveColumn<PurchaseRequestItem>[] {
           <p className="font-medium text-neutral-900">
             {it.ingredientNameSnapshot}
           </p>
+          {it.ingredientId == null ? (
+            <p className="text-[10px] uppercase tracking-wider text-warning-600">
+              Manual · belum link master
+            </p>
+          ) : null}
           {it.notes ? (
             <p className="text-xs text-neutral-600">{it.notes}</p>
           ) : null}
         </div>
+      ),
+    },
+    /* Sesi AE-122 — dedicated UNIT/SATUAN column. Sebelumnya inline kecil
+     * di kolom Diminta. Owner request: lebih prominent supaya jelas
+     * unit yang di-request (mis. Pcs vs Kg). */
+    {
+      key: "unit",
+      label: "Satuan",
+      render: (it) => (
+        <span className="inline-flex rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-700">
+          {it.unitSnapshot}
+        </span>
       ),
     },
     {
@@ -266,9 +283,8 @@ function purchaseRequestItemColumns(): ResponsiveColumn<PurchaseRequestItem>[] {
       label: "Diminta",
       align: "right",
       render: (it) => (
-        <span>
-          {Number(it.requestedQty).toLocaleString("id-ID")}{" "}
-          <span className="text-xs text-neutral-500">{it.unitSnapshot}</span>
+        <span className="font-mono tabular-nums">
+          {Number(it.requestedQty).toLocaleString("id-ID")}
         </span>
       ),
     },
@@ -276,7 +292,11 @@ function purchaseRequestItemColumns(): ResponsiveColumn<PurchaseRequestItem>[] {
       key: "received",
       label: "Diterima",
       align: "right",
-      render: (it) => Number(it.receivedQty).toLocaleString("id-ID"),
+      render: (it) => (
+        <span className="font-mono tabular-nums">
+          {Number(it.receivedQty).toLocaleString("id-ID")}
+        </span>
+      ),
     },
     {
       key: "remaining",
@@ -288,6 +308,7 @@ function purchaseRequestItemColumns(): ResponsiveColumn<PurchaseRequestItem>[] {
         return (
           <span
             className={cn(
+              "font-mono tabular-nums",
               itemDone
                 ? "text-mahakan-green-700"
                 : remaining > 0
