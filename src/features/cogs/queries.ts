@@ -16,6 +16,7 @@ import { and, asc, desc, eq, gte, isNull, lt, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   ingredients,
+  inventoryMovements,
   outlets,
   purchaseItems,
   purchases,
@@ -46,6 +47,11 @@ export interface CogsReport {
   lastOpname: {
     before: { id: string; periodLabel: string; finalizedAt: string } | null;
     within: { id: string; periodLabel: string; finalizedAt: string } | null;
+  };
+  /** Per-period purchase stats untuk surface ke UI. */
+  purchaseStats: {
+    activeCount: number;
+    cancelledCount: number;
   };
 }
 
@@ -116,6 +122,11 @@ export async function getCogsReport(args: {
     string,
     { qty: number; unitCost: number }
   >();
+  /* AE-117 — Fallback map kalau no prev opname: net delta movements
+   * dalam period per ingredient. Stock awal = current_stock - net_delta.
+   * Math-guaranteed: stock_awal + delta = stock_akhir. */
+  let periodMovementByIng: Map<string, number> | null = null;
+
   if (opnameBefore) {
     const lines = await db
       .select({
@@ -134,22 +145,73 @@ export async function getCogsReport(args: {
     }
   } else {
     banners.push(
-      `Belum ada opname sebelum ${period.fromDate}. Stock Awal di-asumsikan 0 untuk semua bahan.`,
+      `Belum ada opname sebelum ${period.fromDate}. Stock Awal di-derive dari current stock minus movements bulan ini (math-guaranteed: awal + delta = akhir).`,
     );
+
+    const periodMovements = await db.execute<{
+      ingredient_id: string;
+      net_delta: string;
+    }>(sql`
+      SELECT
+        im.ingredient_id,
+        COALESCE(SUM(im.qty_delta_decimal), 0)::text AS net_delta
+      FROM inventory_movements im
+      WHERE im.outlet_id = ${args.outletId}
+        AND im.created_at >= ${period.fromDate + ' 00:00:00+07:00'}
+        AND im.created_at <= ${period.toDate + ' 23:59:59+07:00'}
+      GROUP BY im.ingredient_id
+    `);
+    const movArr = ((periodMovements as unknown as { rows?: unknown[] }).rows ?? []) as Array<{
+      ingredient_id: string; net_delta: string;
+    }>;
+    periodMovementByIng = new Map(movArr.map((r) => [r.ingredient_id, Number(r.net_delta)]));
   }
 
   // ──────────────────────────────────────────────────────────────
-  // 4. Pembelian within period (NOT cancelled) → per ingredient agg
+  // 4. Pembelian within period — separate active vs cancelled counts.
+  //    For COGS computation, use ONLY active purchases.
+  //    Surface cancelled count to UI for transparency.
+  //
+  //    Query: join via inventory_movements (master unit qty, source of
+  //    truth post-AE-43). purchase_items.qty_decimal is RAW input, may
+  //    not be in master unit kalau ada conversion.
   // ──────────────────────────────────────────────────────────────
+  const purchaseStatsRows = await db.execute<{ status: string; count: string }>(sql`
+    SELECT p.status, COUNT(*)::text AS count
+    FROM purchases p
+    WHERE p.outlet_id = ${args.outletId}
+      AND p.purchase_date >= ${period.fromDate}
+      AND p.purchase_date <= ${period.toDate}
+    GROUP BY p.status
+  `);
+  const psArr = ((purchaseStatsRows as unknown as { rows?: unknown[] }).rows ?? []) as Array<{ status: string; count: string }>;
+  let activePurchaseCount = 0;
+  let cancelledPurchaseCount = 0;
+  for (const r of psArr) {
+    const n = parseInt(r.count, 10);
+    if (r.status === "cancelled") cancelledPurchaseCount += n;
+    else activePurchaseCount += n;
+  }
+  if (cancelledPurchaseCount > 0 && activePurchaseCount === 0) {
+    banners.push(
+      `Tidak ada pembelian aktif di periode ${period.label} (${cancelledPurchaseCount} dibatalkan). Tambah pembelian via Inventory → Pembelian → Catat Pembelian.`,
+    );
+  }
+
   const purchaseRows = await db
     .select({
       ingredientId: purchaseItems.ingredientId,
-      qtyDecimal: purchaseItems.qtyDecimal,
-      qty: purchaseItems.qty,
+      movementQtyDeltaDecimal: inventoryMovements.qtyDeltaDecimal,
+      qtyDecimalRaw: purchaseItems.qtyDecimal,
+      qtyBigint: purchaseItems.qty,
       totalCost: purchaseItems.totalCost,
     })
     .from(purchaseItems)
     .innerJoin(purchases, eq(purchases.id, purchaseItems.purchaseId))
+    .leftJoin(
+      inventoryMovements,
+      eq(purchaseItems.movementId, inventoryMovements.id),
+    )
     .where(
       and(
         eq(purchases.outletId, args.outletId),
@@ -161,10 +223,16 @@ export async function getCogsReport(args: {
 
   const pembelianByIng = new Map<string, { qty: number; total: number }>();
   for (const r of purchaseRows) {
-    const qty =
-      r.qtyDecimal !== null && r.qtyDecimal !== undefined
-        ? Number(r.qtyDecimal)
-        : r.qty;
+    /* Master unit qty — fallback ke purchase_items.qty_decimal kalau
+     * movement row hilang (legacy/corrupt). */
+    let qty: number;
+    if (r.movementQtyDeltaDecimal !== null && r.movementQtyDeltaDecimal !== undefined) {
+      qty = Number(r.movementQtyDeltaDecimal);
+    } else if (r.qtyDecimalRaw !== null && r.qtyDecimalRaw !== undefined) {
+      qty = Number(r.qtyDecimalRaw);
+    } else {
+      qty = r.qtyBigint;
+    }
     const cur = pembelianByIng.get(r.ingredientId) ?? { qty: 0, total: 0 };
     cur.qty += qty;
     cur.total += r.totalCost;
@@ -256,7 +324,29 @@ export async function getCogsReport(args: {
   }
 
   // ──────────────────────────────────────────────────────────────
-  // 7. Compute per-ingredient rows
+  // 7. Need current_stock_decimal per ingredient untuk fallback stock awal
+  //    calc (kalau periodMovementByIng available). Already fetched in
+  //    `ings` query → use ing.currentStockDecimal.
+  // ──────────────────────────────────────────────────────────────
+  /* Refetch current stock decimal (was not selected in original ings query). */
+  const currentStockRows = await db
+    .select({
+      id: ingredients.id,
+      currentStockDecimal: ingredients.currentStockDecimal,
+    })
+    .from(ingredients)
+    .where(
+      and(
+        eq(ingredients.outletId, args.outletId),
+        isNull(ingredients.deletedAt),
+      ),
+    );
+  const currentStockByIng = new Map(
+    currentStockRows.map((r) => [r.id, Number(r.currentStockDecimal ?? 0)]),
+  );
+
+  // ──────────────────────────────────────────────────────────────
+  // 8. Compute per-ingredient rows
   // ──────────────────────────────────────────────────────────────
   const rows: IngredientCogsRow[] = [];
   for (const ing of ings) {
@@ -265,19 +355,32 @@ export async function getCogsReport(args: {
     const sk = stockAkhirByIng.get(ing.id);
     const th = theoreticalByIng.get(ing.id);
 
-    /* Skip bahan kalau no data sama sekali (clutter cleanup). */
-    if (!sa && !pb && !sk && !th) continue;
+    /* AE-117 — Derive stock awal qty when no prev opname:
+     * stock_awal = current_stock - SUM(movements_in_period)
+     * Math-guaranteed: stock_awal + delta = stock_akhir. */
+    let stockAwalQty = sa?.qty ?? 0;
+    let stockAwalAvgPrice = sa?.unitCost ?? ing.costPerUnit;
+    if (!sa && periodMovementByIng) {
+      const current = currentStockByIng.get(ing.id) ?? 0;
+      const netDelta = periodMovementByIng.get(ing.id) ?? 0;
+      stockAwalQty = current - netDelta;
+      // Harga awal pakai costPerUnit master (Rama's request AE-117).
+      stockAwalAvgPrice = ing.costPerUnit;
+    }
+
+    /* Skip bahan kalau benar-benar no data (clean output). */
+    if (!sa && !pb && !sk && !th && stockAwalQty === 0) continue;
 
     const input: IngredientCogsInput = {
       ingredientId: ing.id,
       name: ing.name,
       unit: ing.unit,
       section: ing.section,
-      stockAwalQty: sa?.qty ?? 0,
-      stockAwalAvgPrice: sa?.unitCost ?? ing.costPerUnit,
+      stockAwalQty,
+      stockAwalAvgPrice,
       pembelianQty: pb?.qty ?? 0,
       pembelianTotal: pb?.total ?? 0,
-      stockAkhirQty: sk ?? 0,
+      stockAkhirQty: sk ?? currentStockByIng.get(ing.id) ?? 0,
       theoreticalUsageQty: th ?? 0,
       currentCostPerUnit: ing.costPerUnit,
     };
@@ -314,6 +417,10 @@ export async function getCogsReport(args: {
             finalizedAt: opnameWithin.finalizedAt?.toISOString() ?? "",
           }
         : null,
+    },
+    purchaseStats: {
+      activeCount: activePurchaseCount,
+      cancelledCount: cancelledPurchaseCount,
     },
   };
 }

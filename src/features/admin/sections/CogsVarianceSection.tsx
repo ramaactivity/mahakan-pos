@@ -617,6 +617,13 @@ function CogsTab({ report }: { report: CogsReport }) {
 }
 
 function CogsRow({ r }: { r: IngredientCogsRow }) {
+  /* AE-117 — Hide harga display when qty = 0 (cleaner, no misleading values).
+   * Total ke-display 0 / "—" karena qty × harga = 0 regardless. */
+  const showAwalPrice = r.stockAwalQty !== 0;
+  const showPembelianPrice = r.pembelianQty !== 0;
+  const showAkhirPrice = r.stockAkhirQty !== 0;
+  const showCogsPrice = r.cogsQty !== 0;
+
   return (
     <tr className="hover:bg-neutral-50">
       <td className="px-2 py-1">
@@ -634,40 +641,40 @@ function CogsRow({ r }: { r: IngredientCogsRow }) {
         {formatNum(r.stockAwalQty)}
       </td>
       <td className="px-2 py-1 text-right font-mono bg-warning-50/30">
-        {formatRupiah(r.stockAwalAvgPrice)}
+        {showAwalPrice ? formatRupiah(r.stockAwalAvgPrice) : "—"}
       </td>
       <td className="px-2 py-1 text-right font-mono bg-warning-50/30 border-r">
-        {formatRupiah(r.stockAwalTotal)}
+        {showAwalPrice ? formatRupiah(r.stockAwalTotal) : "—"}
       </td>
       {/* Pembelian */}
       <td className="px-2 py-1 text-right font-mono bg-success-50/30">
         {formatNum(r.pembelianQty)}
       </td>
       <td className="px-2 py-1 text-right font-mono bg-success-50/30">
-        {formatRupiah(r.pembelianAvgPrice)}
+        {showPembelianPrice ? formatRupiah(r.pembelianAvgPrice) : "—"}
       </td>
       <td className="px-2 py-1 text-right font-mono bg-success-50/30 border-r">
-        {formatRupiah(r.pembelianTotal)}
+        {showPembelianPrice ? formatRupiah(r.pembelianTotal) : "—"}
       </td>
       {/* Stock Akhir */}
       <td className="px-2 py-1 text-right font-mono bg-info-50/30">
         {formatNum(r.stockAkhirQty)}
       </td>
       <td className="px-2 py-1 text-right font-mono bg-info-50/30">
-        {formatRupiah(r.stockAkhirAvgPrice)}
+        {showAkhirPrice ? formatRupiah(r.stockAkhirAvgPrice) : "—"}
       </td>
       <td className="px-2 py-1 text-right font-mono bg-info-50/30 border-r">
-        {formatRupiah(r.stockAkhirTotal)}
+        {showAkhirPrice ? formatRupiah(r.stockAkhirTotal) : "—"}
       </td>
       {/* COGS */}
       <td className="px-2 py-1 text-right font-mono bg-mahakan-green-50/30">
         {formatNum(r.cogsQty)}
       </td>
       <td className="px-2 py-1 text-right font-mono bg-mahakan-green-50/30">
-        {formatRupiah(r.cogsAvgPrice)}
+        {showCogsPrice ? formatRupiah(r.cogsAvgPrice) : "—"}
       </td>
       <td className="px-2 py-1 text-right font-mono bg-mahakan-green-50/30 font-semibold">
-        {formatRupiah(r.cogsTotal)}
+        {showCogsPrice ? formatRupiah(r.cogsTotal) : "—"}
       </td>
     </tr>
   );
