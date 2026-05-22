@@ -8,31 +8,25 @@ import { IngredientsList } from "./inventory/IngredientsList";
 import { MarketListView } from "./inventory/market-list/MarketListView";
 import { MovementsList } from "./inventory/MovementsList";
 import { OpnameTab } from "./inventory/opname/OpnameTab";
-import { PreparationsList } from "./inventory/PreparationsList";
 import { PurchasesView } from "./inventory/purchases/PurchasesView";
-import { RecipesList } from "./inventory/RecipesList";
 import { TopTrackerView } from "./inventory/purchases/TopTrackerView";
 import type { AdminSection } from "../components/AdminLeftNav";
 
 type InventoryTab =
   | "ingredients"
   | "market_list"
-  | "preparations"
   | "opname"
   | "purchases"
   | "top"
-  | "movements"
-  | "recipes";
+  | "movements";
 
 const TABS: Array<{ key: InventoryTab; label: string; soon?: boolean }> = [
   { key: "ingredients", label: "Bahan" },
   { key: "market_list", label: "Market List" },
-  { key: "preparations", label: "Preparations" },
   { key: "purchases", label: "Pembelian" },
   { key: "top", label: "Hutang Dagang" },
   { key: "opname", label: "Opname" },
   { key: "movements", label: "Pergerakan" },
-  { key: "recipes", label: "Resep" },
 ];
 
 interface InventorySectionProps {
@@ -55,8 +49,8 @@ export function InventorySection({ onNavigate }: InventorySectionProps = {}) {
             Inventory
           </h1>
           <p className="text-sm text-neutral-700">
-            Kelola bahan, preparation, terima stok, dan pantau pergerakan
-            inventory.
+            Kelola bahan baku, terima stok, pembelian, opname, dan pantau
+            pergerakan inventory. Resep & Preparation dipindah ke menu Menu.
           </p>
         </div>
         <Button variant="outline" onClick={() => setCalcOpen(true)}>
@@ -83,9 +77,6 @@ export function InventorySection({ onNavigate }: InventorySectionProps = {}) {
       <TabPanel value="market_list">
         <MarketListView />
       </TabPanel>
-      <TabPanel value="preparations">
-        <PreparationsList />
-      </TabPanel>
       <TabPanel value="purchases">
         <PurchasesView />
       </TabPanel>
@@ -97,9 +88,6 @@ export function InventorySection({ onNavigate }: InventorySectionProps = {}) {
       </TabPanel>
       <TabPanel value="movements">
         <MovementsList />
-      </TabPanel>
-      <TabPanel value="recipes">
-        <RecipesList />
       </TabPanel>
 
       <CogsCalculatorWidget
