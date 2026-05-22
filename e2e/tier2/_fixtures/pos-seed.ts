@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * Sesi AE-97 — POS UI-driven seed helpers (F5 improvement).
@@ -41,12 +41,40 @@ export async function ensureShiftOpen(page: Page): Promise<void> {
 
   await page.getByRole("button", { name: /Buka Shift\s*·\s*Rp/i }).click();
 
-  await expect(
-    page.getByRole("button", { name: /Selesai.*Mulai Jualan/i }),
-  ).toBeVisible({ timeout: 15_000 });
-  await page
-    .getByRole("button", { name: /Selesai.*Mulai Jualan/i })
-    .click();
+  /* Mahakan business rule: 1× shift per hari per user. Kalau e2e-owner
+   * sudah close shift hari ini (mis. dari spec shift-close-variance-verify),
+   * OpenShiftModal show warning "sudah pernah dibuka" + "Selesai · Mulai
+   * Jualan" button TIDAK muncul. Detect kondisi ini dan skip spec yang
+   * butuh open shift. */
+  const successBtn = page.getByRole("button", {
+    name: /Selesai.*Mulai Jualan/i,
+  });
+  /* Race detection: success button vs daily-limit warning, whichever
+   * appears first. waitFor pakai Promise.race. */
+  const dailyLimitText = page.getByText(/sudah pernah dibuka/i).first();
+  const success = await Promise.race([
+    successBtn
+      .waitFor({ state: "visible", timeout: 8_000 })
+      .then(() => "success" as const)
+      .catch(() => null),
+    dailyLimitText
+      .waitFor({ state: "visible", timeout: 8_000 })
+      .then(() => "daily_limit" as const)
+      .catch(() => null),
+  ]);
+
+  if (success === "daily_limit") {
+    test.skip(
+      true,
+      "Test branch state: e2e-owner sudah close shift hari ini (rule '1× shift per hari per user'). Spec ini butuh open shift. Auto-recover besok (WIB) atau reset test branch via Neon.",
+    );
+  }
+  if (success !== "success") {
+    /* Beneran tidak muncul tapi bukan daily-limit — fail dengan stack
+     * trace yang jelas. */
+    await expect(successBtn).toBeVisible({ timeout: 5_000 });
+  }
+  await successBtn.click();
   await page.waitForTimeout(2_000);
 }
 
@@ -121,10 +149,19 @@ export async function createPaidTransaction(page: Page): Promise<string | null> 
     }
   }
 
-  /* Dismiss modal pakai Escape (paling reliable — multiple action buttons
-   * di strict-mode locator bingung). */
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(1_000);
+  /* Dismiss modal — TransactionSuccessModal punya tombol "Selesai (Order
+   * Disiapkan)" hijau di footer. Escape sering tidak close modal verifikasi
+   * struk ini, jadi click eksplisit. Fallback: Escape kalau tombol tidak
+   * ada. */
+  const selesaiBtn = page
+    .getByRole("button", { name: /Selesai.*Order Disiapkan/i })
+    .first();
+  if (await selesaiBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
+    await selesaiBtn.click();
+  } else {
+    await page.keyboard.press("Escape");
+  }
+  await page.waitForTimeout(1_500);
 
   return trxNumber;
 }
