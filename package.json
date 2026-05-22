@@ -13,6 +13,8 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:report": "playwright show-report",
     "test:e2e:tier2": "E2E_INCLUDE_TIER2=1 PLAYWRIGHT_BASE_URL=http://localhost:3001 playwright test e2e/tier2",
+    "test:e2e:tablet": "E2E_INCLUDE_TIER2=1 PLAYWRIGHT_BASE_URL=http://localhost:3001 playwright test --project=tablet-galaxy-a7-lite e2e/tier2/pos-smoke.spec.ts e2e/tier2/pos-shift-flow.spec.ts e2e/tier2/pos-transaction.spec.ts e2e/tier2/open-bill.spec.ts e2e/tier2/riwayat-smoke.spec.ts e2e/tier2/correction-chain.spec.ts e2e/tier2/transaction-correction.spec.ts",
+    "test:e2e:both-projects": "E2E_INCLUDE_TIER2=1 PLAYWRIGHT_BASE_URL=http://localhost:3001 playwright test --project=chromium-desktop --project=tablet-galaxy-a7-lite e2e/tier2",
     "dev:e2e": "tsx scripts/dev-e2e.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
