@@ -1,3 +1,23 @@
+// ──────────────────────────────────────────────────────────────────
+// API result helpers (shared between server actions + client)
+// ──────────────────────────────────────────────────────────────────
+
+export interface ApiOk<T> {
+  ok: true;
+  data: T;
+}
+
+export interface ApiFail {
+  ok: false;
+  error: { code: string; message: string };
+}
+
+export type ApiResult<T> = ApiOk<T> | ApiFail;
+
+export function isOk<T>(r: ApiResult<T>): r is ApiOk<T> {
+  return r.ok;
+}
+
 /**
  * Sesi AE-113 — Pure functions untuk WAC (Weighted Average Cost) +
  * Variance Cost calculation per periode bulanan.

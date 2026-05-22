@@ -1,19 +1,8 @@
 "use server";
 
 import { auth, hasPermission } from "@/lib/auth";
+import type { ApiOk, ApiFail, ApiResult } from "./cogs-calc";
 import { getCogsReport, type CogsReport } from "./queries";
-
-export interface ApiOk<T> {
-  ok: true;
-  data: T;
-}
-
-export interface ApiFail {
-  ok: false;
-  error: { code: string; message: string };
-}
-
-export type ApiResult<T> = ApiOk<T> | ApiFail;
 
 function ok<T>(data: T): ApiOk<T> {
   return { ok: true, data };
@@ -52,6 +41,3 @@ export async function fetchCogsReport(ym: string): Promise<ApiResult<CogsReport>
   }
 }
 
-export function isOk<T>(r: ApiResult<T>): r is ApiOk<T> {
-  return r.ok;
-}
