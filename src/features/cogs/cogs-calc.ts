@@ -202,6 +202,65 @@ function round(n: number, decimals = 0): number {
 }
 
 // ──────────────────────────────────────────────────────────────────
+// Running WAC update (called per purchase)
+// ──────────────────────────────────────────────────────────────────
+
+export interface WacUpdateInput {
+  /** Current stock qty di ingredient (decimal). */
+  oldQty: number;
+  /** Current cost_per_unit di ingredient (Rp/master-unit). */
+  oldCost: number;
+  /** Qty pembelian (decimal, sudah di-convert ke master-unit). */
+  purchaseQty: number;
+  /** Total Rp pembelian (= purchase_qty × unit_cost). */
+  purchaseTotal: number;
+}
+
+export interface WacUpdateResult {
+  newCost: number;
+  effectiveOldQty: number; // setelah clamp negative ke 0
+  oldValue: number; // effectiveOldQty × oldCost
+  newTotalQty: number;
+  newTotalValue: number;
+}
+
+/**
+ * Compute new WAC (cost_per_unit) setelah pembelian baru.
+ *
+ * Formula:
+ *   newCost = (effectiveOldQty × oldCost + purchaseTotal)
+ *             / (effectiveOldQty + purchaseQty)
+ *
+ * Safety:
+ *   - effectiveOldQty = max(0, oldQty) — negative stock defensive
+ *   - Kalau totalQty = 0 (no awal + no purchase qty), fallback ke oldCost
+ *   - Kalau purchaseQty = 0 (defensive), return oldCost
+ */
+export function computeNewWac(input: WacUpdateInput): WacUpdateResult {
+  const effectiveOldQty = Math.max(0, input.oldQty);
+  const oldValue = effectiveOldQty * input.oldCost;
+  const newTotalQty = effectiveOldQty + input.purchaseQty;
+  const newTotalValue = oldValue + input.purchaseTotal;
+
+  let newCost: number;
+  if (input.purchaseQty <= 0) {
+    newCost = input.oldCost;
+  } else if (newTotalQty > 0) {
+    newCost = newTotalValue / newTotalQty;
+  } else {
+    newCost = input.oldCost;
+  }
+
+  return {
+    newCost: Math.round(newCost),
+    effectiveOldQty,
+    oldValue: Math.round(oldValue),
+    newTotalQty,
+    newTotalValue: Math.round(newTotalValue),
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────
 // Period helpers
 // ──────────────────────────────────────────────────────────────────
 

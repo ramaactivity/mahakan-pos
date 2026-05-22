@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeIngredientCogs,
+  computeNewWac,
   parseMonthlyPeriod,
   previousMonth,
   summarizeCogs,
@@ -168,6 +169,89 @@ describe("summarizeCogs", () => {
     expect(s.bySection.unassigned).toBe(100_000);
     expect(s.ingredientsWithVariance).toBe(2);
     expect(s.totalVarianceCost).toBe(20_000); // 50_000 + (-30_000)
+  });
+});
+
+describe("computeNewWac — running average cost", () => {
+  it("computes WAC from old stock + new purchase", () => {
+    // 10 unit × Rp 1000 + 5 unit × Rp 1500 = 10000 + 7500 = 17500 / 15 = 1166.67
+    const r = computeNewWac({
+      oldQty: 10,
+      oldCost: 1_000,
+      purchaseQty: 5,
+      purchaseTotal: 7_500,
+    });
+    expect(r.newCost).toBe(1_167);
+    expect(r.newTotalQty).toBe(15);
+    expect(r.newTotalValue).toBe(17_500);
+  });
+
+  it("first purchase ever (no old stock) → unit cost dari purchase", () => {
+    const r = computeNewWac({
+      oldQty: 0,
+      oldCost: 0,
+      purchaseQty: 100,
+      purchaseTotal: 50_000,
+    });
+    expect(r.newCost).toBe(500);
+  });
+
+  it("clamps negative oldQty to 0 (defensive)", () => {
+    // Negative stock from over-deduction shouldn't break WAC
+    const r = computeNewWac({
+      oldQty: -10,
+      oldCost: 1_000,
+      purchaseQty: 5,
+      purchaseTotal: 7_500,
+    });
+    expect(r.effectiveOldQty).toBe(0);
+    expect(r.newCost).toBe(1_500); // 7500 / 5 = 1500
+  });
+
+  it("purchaseQty=0 fallback to oldCost (no-op)", () => {
+    const r = computeNewWac({
+      oldQty: 10,
+      oldCost: 1_000,
+      purchaseQty: 0,
+      purchaseTotal: 0,
+    });
+    expect(r.newCost).toBe(1_000);
+  });
+
+  it("rounding to integer", () => {
+    // 1 × 1000 + 2 × 2000 = 5000 / 3 = 1666.67 → 1667
+    const r = computeNewWac({
+      oldQty: 1,
+      oldCost: 1_000,
+      purchaseQty: 2,
+      purchaseTotal: 4_000,
+    });
+    expect(r.newCost).toBe(1_667);
+  });
+
+  it("price increase shifts WAC upward gradually", () => {
+    // Start with 100 unit × Rp 1000 = 100k. Buy 10 more at Rp 1200 each.
+    // New WAC = (100*1000 + 10*1200) / 110 = 112000/110 = 1018.18
+    const r = computeNewWac({
+      oldQty: 100,
+      oldCost: 1_000,
+      purchaseQty: 10,
+      purchaseTotal: 12_000,
+    });
+    expect(r.newCost).toBe(1_018);
+    // Not Rp 1200 (which would be overwrite-replace behavior)
+    expect(r.newCost).not.toBe(1_200);
+  });
+
+  it("price decrease shifts WAC downward gradually", () => {
+    // Start 100 × 1000. Buy 50 at 500. New = (100k + 25k) / 150 = 833
+    const r = computeNewWac({
+      oldQty: 100,
+      oldCost: 1_000,
+      purchaseQty: 50,
+      purchaseTotal: 25_000,
+    });
+    expect(r.newCost).toBe(833);
   });
 });
 

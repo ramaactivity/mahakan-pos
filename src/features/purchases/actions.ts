@@ -5,6 +5,7 @@ import { db } from "@/db";
 import {
   expenseCategories,
   expenses,
+  ingredientCostHistory,
   ingredients,
   inventoryMovements,
   purchaseItems,
@@ -13,6 +14,8 @@ import {
   purchases,
   supplierIngredients,
 } from "@/db/schema";
+import { computeNewWac } from "@/features/cogs/cogs-calc";
+import { cascadeCostUpdate } from "@/features/inventory/preparation-flow";
 import { computePrStatus } from "@/features/purchase-requests/group-items-pure";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
@@ -377,7 +380,34 @@ export async function createPurchase(
         });
         const movementDelta = formatMovementDelta(qtyMaster);
 
-        // Update stock.
+        // Sesi AE-115 — Auto WAC (Weighted Average Cost). Sebelumnya
+        // costPerUnit di-overwrite dengan unitCostMaster (latest price).
+        // Sekarang: hitung running WAC supaya cost reflect blended price
+        // across all purchases, sesuai accounting standard.
+        //
+        //   effectiveOldQty = max(0, currentStockDecimal)
+        //   oldValue = effectiveOldQty × oldCost
+        //   newQty   = effectiveOldQty + qtyMaster
+        //   newCost  = (oldValue + totalCostMaster) / newQty
+        //
+        // Caller bisa disable via v.updateCost=false (rare; e.g. pembelian
+        // one-off untuk acara, tidak mau pollute master cost).
+        const oldQtyDecimal = Number(ing.currentStockDecimal ?? 0);
+        const oldCostBefore = ing.costPerUnit;
+        const totalCostMaster = Math.round(qtyMaster * unitCostMaster);
+
+        let newWacCost = oldCostBefore;
+        if (v.updateCost) {
+          const wac = computeNewWac({
+            oldQty: oldQtyDecimal,
+            oldCost: oldCostBefore,
+            purchaseQty: qtyMaster,
+            purchaseTotal: totalCostMaster,
+          });
+          newWacCost = wac.newCost;
+        }
+        const costChanged = v.updateCost && newWacCost !== oldCostBefore;
+
         const updateValues: Record<string, unknown> = {
           currentStock: newStock.bigint,
           currentStockDecimal: newStock.decimal,
@@ -385,13 +415,47 @@ export async function createPurchase(
           updatedBy: session.user.id,
         };
         if (v.updateCost) {
-          updateValues.costPerUnit = unitCostMaster;
-          updateValues.costLastChangedAt = new Date();
+          updateValues.costPerUnit = newWacCost;
+          if (costChanged) {
+            updateValues.costLastChangedAt = new Date();
+          }
         }
         await tx
           .update(ingredients)
           .set(updateValues)
           .where(eq(ingredients.id, item.ingredientId));
+
+        // Insert cost history (audit trail) — only kalau cost berubah.
+        // Cascade ke preparation recipes yang depend on this ingredient
+        // supaya prep cost ikut update.
+        if (costChanged) {
+          await tx.insert(ingredientCostHistory).values({
+            outletId: session.user.outletId,
+            ingredientId: item.ingredientId,
+            oldCostPerUnit: oldCostBefore,
+            newCostPerUnit: newWacCost,
+            triggerType: "purchase_wac",
+            triggerRefType: "purchase",
+            triggerRefId: created.id,
+            changedQty: qtyMaster.toFixed(4),
+            changedValue: totalCostMaster,
+            actorId: session.user.id,
+            notes: `Purchase ${v.invoiceNo ?? created.id.slice(0, 8)} — unit cost ${unitCostMaster}`,
+          });
+          // Cascade fail-soft: catch supaya purchase tetap commit kalau
+          // cascade error (mis. preparation recipe corrupt). Cost history
+          // di atas tetap recorded sebagai audit trail.
+          try {
+            await cascadeCostUpdate(
+              tx,
+              session.user.outletId,
+              item.ingredientId,
+              session.user.id,
+            );
+          } catch {
+            // Silent — cost history sudah recorded, manual recompute via UI.
+          }
+        }
 
         // Movement.
         const [movement] = await tx

@@ -274,3 +274,70 @@ export const inventoryMovements = pgTable(
     ),
   ],
 );
+
+/**
+ * Sesi AE-115 — Audit trail untuk perubahan cost_per_unit (WAC).
+ *
+ * Setiap kali ingredient.cost_per_unit berubah, insert row di sini supaya
+ * owner bisa investigate: kapan cost berubah, dari berapa ke berapa,
+ * trigger-nya apa (purchase auto-WAC, manual edit, opname adjust, dll).
+ *
+ * Read-only audit table — insert only, never update/delete.
+ */
+export const ingredientCostHistory = pgTable(
+  "ingredient_cost_history",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    outletId: uuid("outlet_id")
+      .notNull()
+      .references(() => outlets.id),
+    ingredientId: uuid("ingredient_id")
+      .notNull()
+      .references(() => ingredients.id),
+
+    /** Cost sebelumnya (Rp/master-unit). NULL untuk first record. */
+    oldCostPerUnit: bigint("old_cost_per_unit", { mode: "number" }),
+    /** Cost baru (Rp/master-unit). */
+    newCostPerUnit: bigint("new_cost_per_unit", { mode: "number" }).notNull(),
+
+    triggerType: text("trigger_type", {
+      enum: [
+        "purchase_wac",
+        "manual_edit",
+        "bulk_csv",
+        "opname_recalc",
+        "cascade",
+        "initial",
+      ],
+    }).notNull(),
+
+    /** Optional reference (e.g., purchase id, opname session id). */
+    triggerRefType: text("trigger_ref_type"),
+    triggerRefId: uuid("trigger_ref_id"),
+
+    /** Qty + value yang trigger update (untuk purchase: purchase qty + cost). */
+    changedQty: numeric("changed_qty", { precision: 15, scale: 4 }),
+    changedValue: bigint("changed_value", { mode: "number" }),
+
+    actorId: uuid("actor_id").references(() => users.id),
+    notes: text("notes"),
+
+    changedAt: timestamp("changed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("idx_ingredient_cost_history_ingredient_date").on(
+      t.ingredientId,
+      t.changedAt,
+    ),
+    index("idx_ingredient_cost_history_outlet_date").on(
+      t.outletId,
+      t.changedAt,
+    ),
+    check(
+      "ck_ingredient_cost_history_costs_nonneg",
+      sql`${t.newCostPerUnit} >= 0 AND (${t.oldCostPerUnit} IS NULL OR ${t.oldCostPerUnit} >= 0)`,
+    ),
+  ],
+);
