@@ -129,6 +129,31 @@ ke-run sebelum push, prod bisa deploy dengan UI broken.
 
 ## 3. Improvement plan (sesi AE-97)
 
+### Status execution sesi AE-97
+
+| # | Improvement | Status | Note |
+|---|---|---|---|
+| F3 | Console error collector | ✅ SHIPPED commit `5d48d99` | 12/12 critical pages zero console errors |
+| F4 | Tablet POS coverage (`npm run test:e2e:tablet`) | ✅ SHIPPED commit `5d48d99` | 15 pass + 2 intentional skip di Galaxy A7 Lite 1340×800 |
+| F6 | GitHub Actions Tier 1 smoke | ⏸️ FILE READY (working tree), PUSH BLOCKED | PAT tidak punya `workflow` scope — Rama push manual atau update token |
+
+**F6 follow-up untuk Rama:** File `.github/workflows/e2e-smoke.yml`
+sudah ada di working tree lokal tapi belum ke-push karena
+"refusing to allow a Personal Access Token to create or update workflow without
+`workflow` scope". 2 cara:
+
+1. **Manual add via GitHub UI:** Settings → Developer settings → PAT → Tokens
+   classic → Generate new token (atau edit existing) → centang `workflow`
+   scope → save. Lalu retry push.
+2. **Atau commit file via GitHub web UI:** buka
+   `https://github.com/ramaactivity/mahakan-pos/new/release/phase-1/.github/workflows`
+   → paste isi `e2e-smoke.yml` dari working tree lokal → commit langsung.
+
+Setelah ke-push, workflow auto-trigger di push berikutnya ke `release/phase-1`
+atau `main`.
+
+---
+
 ### Ship dalam sesi ini
 
 **1. Console error collector di auth helper (F3 → P1)**
