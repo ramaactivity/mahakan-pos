@@ -141,14 +141,33 @@ export async function validateSelfieEXIF(
   }
 
   /* Sesi AE-62aa — extract GPS lat/lng kalau phone embed di EXIF. exifr
-   * dengan opsi gps:true return `latitude`+`longitude` sebagai decimal. */
-  const exifGps =
-    typeof parsed.latitude === "number" &&
-    typeof parsed.longitude === "number" &&
-    Number.isFinite(parsed.latitude) &&
-    Number.isFinite(parsed.longitude)
-      ? { lat: parsed.latitude, lng: parsed.longitude }
-      : null;
+   * dengan opsi gps:true return `latitude`+`longitude` sebagai decimal.
+   *
+   * Sesi AE-121 fix — banyak Android (Xiaomi MIUI, Samsung OneUI) embed
+   * GPS tag dengan value (0, 0) saat permission lokasi OFF untuk camera
+   * (tapi browser geolocation tetap jalan via system service). "Null
+   * Island" (0°, 0°) di laut lepas Gulf of Guinea = sentinel for "GPS
+   * tag exists but unset". Treat as null (= "no GPS embedded") supaya
+   * tidak hard-fail karyawan legit yang phone-nya quirky. Real photos
+   * tidak pernah persis di Null Island (radius 1km off-shore Africa). */
+  const lat = parsed.latitude;
+  const lng = parsed.longitude;
+  const hasValidExifGps =
+    typeof lat === "number" &&
+    typeof lng === "number" &&
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    /* Reject Null Island sentinel — exact (0,0) atau within ~1km. */
+    !(Math.abs(lat) < 0.01 && Math.abs(lng) < 0.01) &&
+    /* Sanity: real coords must be in valid range. exifr should already
+     * clamp but be defensive in case GPSLatitudeRef parsing miss. */
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180;
+  const exifGps = hasValidExifGps
+    ? { lat: lat as number, lng: lng as number }
+    : null;
 
   return { ok: true, capturedAt: captured, exifGps };
 }

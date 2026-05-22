@@ -294,8 +294,16 @@ export async function POST(request: Request): Promise<NextResponse> {
    *
    * Trade-off: phone old / privacy mode tidak embed GPS → exifGps null.
    * Tidak hard-fail (false positive risk untuk legit karyawan), tapi
-   * AUDIT FLAG supaya owner punya visibility untuk investigate pattern. */
+   * AUDIT FLAG supaya owner punya visibility untuk investigate pattern.
+   *
+   * Sesi AE-121 — kalau distance > GARBAGE_GPS_DIFF_M, treat as absent
+   * (= EXIF GPS garbage/uninitialized, bukan real spoofing). Threat model
+   * spoofer paling banter dari rumah ~beberapa km dari outlet. >50km
+   * artinya tag GPS phone tidak akurat (e.g. (0,0) Null Island lolos
+   * exif filter, atau cached last-location dari kota lain). Block tetap
+   * relied on PIN + browser GPS radius check sebelumnya. */
   const SUSPECT_GPS_DIFF_M = 200;
+  const GARBAGE_GPS_DIFF_M = 50_000; // 50km
   let exifGpsCheckFlag: "match" | "mismatch" | "absent" = "absent";
   let exifGpsDistance: number | null = null;
   if (exifResult.exifGps) {
@@ -303,7 +311,31 @@ export async function POST(request: Request): Promise<NextResponse> {
       { lat: gpsLat, lng: gpsLng },
       exifResult.exifGps,
     );
-    if (exifGpsDistance > SUSPECT_GPS_DIFF_M) {
+    if (exifGpsDistance > GARBAGE_GPS_DIFF_M) {
+      /* Implausibly far — treat as garbage GPS, not spoofing. Log audit
+       * supaya owner masih visibility kalau ada pattern aneh. */
+      exifGpsCheckFlag = "absent";
+      await logAudit({
+        eventType: "attendance.mobile_rejected",
+        userId: null,
+        entityType: "attendance",
+        entityId: matched.id,
+        payload: {
+          summary: `⚠ ${matched.fullName} EXIF GPS garbage (selisih ${Math.round(exifGpsDistance)}m, treat as absent)`,
+          context: {
+            mode,
+            browserGps: { lat: gpsLat, lng: gpsLng },
+            selfieGps: exifResult.exifGps,
+            distance: exifGpsDistance,
+            note: "Likely phone embed uninitialized GPS (Null Island lookalike) atau cached stale coords. Not blocking.",
+          },
+        },
+        metadata: { outletId: matched.outletId, actorRole: "system" },
+      }).catch((e) =>
+        console.error("[audit attendance gps garbage]", e),
+      );
+      /* Fall through — don't reject. */
+    } else if (exifGpsDistance > SUSPECT_GPS_DIFF_M) {
       exifGpsCheckFlag = "mismatch";
       await logAudit({
         eventType: "attendance.mobile_rejected",
@@ -329,8 +361,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         `Lokasi GPS di selfie tidak cocok dengan lokasi browser (selisih ${Math.round(exifGpsDistance)}m). Pastikan kamu absen dari lokasi kerja, bukan dari rumah.`,
         400,
       );
+    } else {
+      exifGpsCheckFlag = "match";
     }
-    exifGpsCheckFlag = "match";
   }
   /* Catatan: kalau exifGpsCheckFlag === "absent", audit di clock-in/out
    * log di-tag supaya owner bisa filter pattern (mis. karyawan tertentu
