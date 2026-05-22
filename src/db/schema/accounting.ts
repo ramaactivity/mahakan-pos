@@ -231,6 +231,14 @@ export const journalEntries = pgTable(
          * yang baru di-create). Journal: Dr 3101 Modal Owner / Cr 2150
          * Hutang Kreditur senilai principalOriginal. */
         "investor_to_creditor_conversion",
+        /* Sesi AE-116 — COGS period close adjustment.
+         *
+         * Reconcile recognized HPP (pos_sale running) vs actual COGS (WAC
+         * period × consumed qty from opname). Adjustment lines:
+         *   Dr 5101/5102/5103 HPP <section>  (variance, signed)
+         *      Cr 1140/1141/1142 Persediaan <section>
+         * sourceId = cogs_period_closes.id. One entry per (outlet, period). */
+        "cogs_period_close",
       ],
     }).notNull(),
 

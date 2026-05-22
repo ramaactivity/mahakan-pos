@@ -341,3 +341,53 @@ export const ingredientCostHistory = pgTable(
     ),
   ],
 );
+
+/**
+ * Sesi AE-116 — Period close untuk COGS reconciliation.
+ *
+ * Per pos_sale auto-journal sudah post Dr HPP + Cr Persediaan per
+ * transaction (perpetual inventory). Period close compute selisih
+ * antara recognized HPP (pos_sale running) vs actual COGS (WAC period
+ * × consumed qty from opname), lalu post adjustment supaya Income
+ * Statement HPP reflect actual cost.
+ *
+ * Idempotent: unique(outletId, periodYm). Tidak bisa close 2× per bulan.
+ */
+export const cogsPeriodCloses = pgTable(
+  "cogs_period_closes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    outletId: uuid("outlet_id")
+      .notNull()
+      .references(() => outlets.id),
+    /** YYYY-MM format, e.g. "2026-05". */
+    periodYm: text("period_ym").notNull(),
+
+    closedAt: timestamp("closed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    closedBy: uuid("closed_by")
+      .notNull()
+      .references(() => users.id),
+
+    /** Total COGS dari WAC report (Rp). */
+    totalCogs: bigint("total_cogs", { mode: "number" }).notNull(),
+    /** Per-section breakdown JSON: { kitchen, bar, supporting, cleaning, unassigned }. */
+    totalsBySection: text("totals_by_section_json").notNull(),
+
+    /** Net adjustment posted ke journal (Rp, signed).
+     * Positive = COGS actual > recognized (post Dr HPP increment).
+     * Negative = COGS actual < recognized (post Cr HPP reversal). */
+    adjustmentTotal: bigint("adjustment_total", { mode: "number" })
+      .notNull()
+      .default(0),
+    /** FK ke journal_entries row kalau adjustment ke-post. NULL = no adjustment needed. */
+    adjustmentJournalEntryId: uuid("adjustment_journal_entry_id"),
+
+    notes: text("notes"),
+  },
+  (t) => [
+    uniqueIndex("ux_cogs_period_closes_outlet_ym").on(t.outletId, t.periodYm),
+    index("idx_cogs_period_closes_outlet_date").on(t.outletId, t.closedAt),
+  ],
+);

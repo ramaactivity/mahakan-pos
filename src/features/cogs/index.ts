@@ -1,4 +1,6 @@
 export { fetchCogsReport } from "./actions";
+export { closeCogsPeriod, fetchCogsPeriodCloseStatus } from "./close-actions";
+export type { CogsPeriodCloseResult } from "./close-actions";
 export {
   parseMonthlyPeriod,
   previousMonth,

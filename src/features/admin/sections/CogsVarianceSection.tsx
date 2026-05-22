@@ -26,13 +26,18 @@ import {
   toast,
 } from "@/components/ui";
 import {
+  closeCogsPeriod,
+  fetchCogsPeriodCloseStatus,
   fetchCogsReport,
   isOk,
   parseMonthlyPeriod,
   previousMonth,
+  type CogsPeriodCloseResult,
   type CogsReport,
   type IngredientCogsRow,
 } from "@/features/cogs";
+import { Lock, LockOpen } from "lucide-react";
+import { Modal } from "@/components/ui";
 import { currentJakartaMonth } from "@/lib/date";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -44,29 +49,65 @@ export function CogsVarianceSection() {
   const [ym, setYm] = useState<string>(currentJakartaMonth());
   const [tab, setTab] = useState<TabKey>("variance");
   const [report, setReport] = useState<CogsReport | null>(null);
+  const [closeStatus, setCloseStatus] = useState<CogsPeriodCloseResult | null>(
+    null,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
-      const res = await fetchCogsReport(ym);
+      const [reportRes, statusRes] = await Promise.all([
+        fetchCogsReport(ym),
+        fetchCogsPeriodCloseStatus(ym),
+      ]);
       if (cancelled) return;
       setLoading(false);
-      if (!isOk(res)) {
-        setError(res.error.message);
+      if (!isOk(reportRes)) {
+        setError(reportRes.error.message);
         setReport(null);
         return;
       }
-      setReport(res.data);
+      setReport(reportRes.data);
+      if (isOk(statusRes)) {
+        setCloseStatus(statusRes.data);
+      } else {
+        setCloseStatus(null);
+      }
     }
     void load();
     return () => {
       cancelled = true;
     };
-  }, [ym]);
+  }, [ym, refreshKey]);
+
+  async function handleClose() {
+    setClosing(true);
+    const res = await closeCogsPeriod(ym);
+    setClosing(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    if (res.data.alreadyClosed) {
+      toast.info("Periode sudah ditutup sebelumnya");
+    } else {
+      const adj = res.data.adjustmentTotal;
+      toast.success(
+        adj === 0
+          ? `Periode ${ym} ditutup. Tidak ada adjustment (recognized = actual).`
+          : `Periode ${ym} ditutup. Adjustment: ${formatRupiah(adj)} ${adj > 0 ? "(post Dr HPP)" : "(reverse HPP)"}`,
+      );
+    }
+    setCloseOpen(false);
+    setRefreshKey((k) => k + 1);
+  }
 
   /* Month options: current month + 11 previous */
   const monthOptions = useMemo(() => {
@@ -108,8 +149,104 @@ export function CogsVarianceSection() {
               ))}
             </select>
           </div>
+          {closeStatus ? (
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-success-300 bg-success-50 px-3 py-2 text-xs font-medium text-success-700">
+              <Lock className="size-3.5" /> Periode Ditutup
+            </span>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={() => setCloseOpen(true)}
+              disabled={!report || loading}
+              title="Tutup periode COGS: post adjustment journal supaya Income Statement reflect actual COGS"
+            >
+              <LockOpen className="size-4" /> Tutup Periode
+            </Button>
+          )}
         </div>
       </header>
+
+      {/* Close confirmation modal */}
+      <Modal
+        open={closeOpen}
+        onClose={() => !closing && setCloseOpen(false)}
+        title={`Tutup Periode COGS — ${report?.period.label ?? ym}`}
+        description="Adjustment journal akan post selisih antara recognized HPP (running pos_sale) vs actual COGS (WAC × consumed). Action ini IDEMPOTENT — bisa close cuma 1× per bulan."
+        size="md"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setCloseOpen(false)}
+              disabled={closing}
+            >
+              Batal
+            </Button>
+            <Button onClick={handleClose} loading={closing} disabled={closing}>
+              <Lock className="size-4" /> Ya, Tutup Periode
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm">
+          {report ? (
+            <>
+              <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
+                <div className="text-xs text-neutral-500">
+                  Total COGS (actual, WAC × consumed)
+                </div>
+                <div className="text-lg font-bold text-mahakan-green-900">
+                  {formatRupiah(report.summary.total)}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs uppercase tracking-wide text-neutral-500">
+                  Per Section
+                </div>
+                <div className="grid grid-cols-2 gap-1 text-xs">
+                  <div className="flex justify-between rounded bg-neutral-50 px-2 py-1">
+                    <span>Kitchen</span>
+                    <span className="font-mono">
+                      {formatRupiah(report.summary.bySection.kitchen)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between rounded bg-neutral-50 px-2 py-1">
+                    <span>Bar</span>
+                    <span className="font-mono">
+                      {formatRupiah(report.summary.bySection.bar)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between rounded bg-neutral-50 px-2 py-1">
+                    <span>Supporting</span>
+                    <span className="font-mono">
+                      {formatRupiah(report.summary.bySection.supporting)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between rounded bg-neutral-50 px-2 py-1">
+                    <span>Cleaning</span>
+                    <span className="font-mono">
+                      {formatRupiah(report.summary.bySection.cleaning)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              {report.banners.length > 0 ? (
+                <div className="rounded-md border border-warning-300 bg-warning-50 p-2 text-xs text-warning-700">
+                  ⚠️ {report.banners[0]}
+                </div>
+              ) : null}
+              <div className="rounded-md border border-info-300 bg-info-50 p-2 text-xs text-info-700">
+                <strong>Ekspektasi:</strong> Adjustment journal akan post Dr/Cr
+                HPP+Persediaan per section sebesar selisih actual vs recognized.
+                Kalau pos_sale sudah recognized accurate (recipe + WAC tepat),
+                adjustment ~ Rp 0.
+              </div>
+            </>
+          ) : (
+            <div className="text-center text-neutral-500">Loading...</div>
+          )}
+        </div>
+      </Modal>
 
       {/* Banners */}
       {report?.banners && report.banners.length > 0 ? (
