@@ -107,15 +107,18 @@ export async function createPaidTransaction(page: Page): Promise<string | null> 
   await konfirmBtn.click();
 
   /* TransactionSuccessModal render TRX number di receipt — extract dulu
-   * sebelum dismiss supaya caller bisa verify entry akuntansi. */
-  await page.waitForTimeout(2_500);
-
+   * sebelum dismiss supaya caller bisa verify entry akuntansi. Pakai
+   * page.content() + grep supaya tidak depend ke locator timing yang
+   * kadang flaky di success modal. */
   let trxNumber: string | null = null;
-  const trxLocator = page.locator('text=/TRX-\\d{8}-\\d+/').first();
-  if (await trxLocator.isVisible({ timeout: 2_000 }).catch(() => false)) {
-    const text = (await trxLocator.textContent())?.trim() ?? "";
-    const match = text.match(/TRX-\d{8}-\d+/);
-    trxNumber = match ? match[0] : null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await page.waitForTimeout(1_000);
+    const html = await page.content();
+    const match = html.match(/TRX-\d{8}-\d+/);
+    if (match) {
+      trxNumber = match[0];
+      break;
+    }
   }
 
   /* Dismiss modal pakai Escape (paling reliable — multiple action buttons
