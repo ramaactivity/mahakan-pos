@@ -82,6 +82,8 @@ export const AUDIT_EVENT_TYPES = [
   "inventory.preparation.recompute",
   "inventory.cost.cascade",
   "inventory.import.run",
+  // Sesi AE-112 — bulk CSV update di UI (download → edit Sheets → upload)
+  "inventory.ingredient.bulk_update",
   // Inventory — Stock Opname (Sesi N)
   "inventory.opname.start",
   "inventory.opname.submit",

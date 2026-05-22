@@ -52,6 +52,8 @@ import { formatRupiah } from "@/lib/format";
 import { formatStockQty } from "@/lib/stock-decimal";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "../reports/menu-engineering-csv";
+import { exportIngredientsCsv } from "@/features/inventory/csv-actions";
+import { BulkCsvImportModal } from "./BulkCsvImportModal";
 import { IngredientFormModal } from "./IngredientFormModal";
 import { IngredientMovementsModal } from "./IngredientMovementsModal";
 import { StockReceiveModal } from "./StockReceiveModal";
@@ -116,6 +118,8 @@ export function IngredientsList() {
   const [target, setTarget] = useState<ActionTarget>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
   const [lowOnly, setLowOnly] = useState(false);
 
   /* Sesi AE-58 — view mode toggle: snapshot (default) vs pergerakan bulanan
@@ -371,9 +375,41 @@ export function IngredientsList() {
             </>
           ) : null}
           {canCreate ? (
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="size-4" aria-hidden /> Tambah Bahan
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  setExportingCsv(true);
+                  try {
+                    const res = await exportIngredientsCsv();
+                    if (!isOk(res)) {
+                      toast.error(res.error.message);
+                      return;
+                    }
+                    downloadCsv(res.data.filename, res.data.csv);
+                    toast.success(
+                      `Download CSV: ${res.data.rowCount} bahan`,
+                    );
+                  } finally {
+                    setExportingCsv(false);
+                  }
+                }}
+                disabled={exportingCsv}
+                title="Download semua bahan sebagai CSV (untuk bulk edit di Sheets)"
+              >
+                <Download className="size-4" aria-hidden /> Download CSV
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setCsvImportOpen(true)}
+                title="Upload CSV hasil edit (bulk update)"
+              >
+                <PackagePlus className="size-4" aria-hidden /> Upload CSV
+              </Button>
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus className="size-4" aria-hidden /> Tambah Bahan
+              </Button>
+            </>
           ) : null}
         </div>
       </header>
@@ -900,6 +936,14 @@ export function IngredientsList() {
         onSaved={() => {
           setBulkOpen(false);
           clearSelection();
+          refresh();
+        }}
+      />
+
+      <BulkCsvImportModal
+        open={csvImportOpen}
+        onClose={() => setCsvImportOpen(false)}
+        onApplied={() => {
           refresh();
         }}
       />
