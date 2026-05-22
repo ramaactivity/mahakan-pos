@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowDownUp,
   CheckCheck,
   CheckCircle2,
   ClipboardList,
@@ -70,9 +71,15 @@ const STATUS_VARIANT: Record<
   cancelled: "neutral",
 };
 
+type SortOrder = "newest" | "oldest";
+
 export function PurchaseRequestsSection() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<FilterTab>("open");
+  /* Sesi AE-122 — explicit sort. Default newest first (yang baru muncul
+   * paling atas). Owner request supaya konsisten dan bisa toggle ke
+   * oldest (FIFO) kalau perlu prioritize PR lama. */
+  const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
 
   const [receiveTarget, setReceiveTarget] = useState<{
     item: PurchaseRequestItem;
@@ -111,7 +118,7 @@ export function PurchaseRequestsSection() {
   const [pullPrId, setPullPrId] = useState<string | null>(null);
 
   const {
-    data: requests = [],
+    data: requestsRaw = [],
     isLoading: loading,
     error: queryError,
   } = useQuery({
@@ -124,6 +131,18 @@ export function PurchaseRequestsSection() {
   });
   const error =
     queryError instanceof Error ? queryError.message : null;
+
+  /* Sesi AE-122 — client-side sort. Server already returns desc createdAt
+   * tapi force re-sort di sini supaya UX konsisten dengan toggle button
+   * + defense kalau cache order ke-corrupt. */
+  const requests = useMemo(() => {
+    const arr = [...requestsRaw];
+    arr.sort((a, b) => {
+      const diff = b.createdAt.getTime() - a.createdAt.getTime();
+      return sortOrder === "newest" ? diff : -diff;
+    });
+    return arr;
+  }, [requestsRaw, sortOrder]);
 
   // Sesi AE-15 — PR stats dashboard.
   const statsQuery = useQuery({
@@ -417,29 +436,65 @@ export function PurchaseRequestsSection() {
         </div>
       ) : null}
 
-      <div
-        role="tablist"
-        aria-label="Filter status"
-        className="flex flex-wrap gap-1 border-b border-neutral-200"
-      >
-        {FILTERS.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            role="tab"
-            aria-selected={filter === f.key}
-            onClick={() => setFilter(f.key)}
-            className={cn(
-              "border-b-2 px-4 py-2 text-sm font-medium transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
-              filter === f.key
-                ? "border-mahakan-green-700 text-mahakan-green-900"
-                : "border-transparent text-neutral-500 hover:text-neutral-900",
-            )}
-          >
-            {f.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200">
+        <div
+          role="tablist"
+          aria-label="Filter status"
+          className="flex flex-wrap gap-1"
+        >
+          {FILTERS.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              role="tab"
+              aria-selected={filter === f.key}
+              onClick={() => setFilter(f.key)}
+              className={cn(
+                "border-b-2 px-4 py-2 text-sm font-medium transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                filter === f.key
+                  ? "border-mahakan-green-700 text-mahakan-green-900"
+                  : "border-transparent text-neutral-500 hover:text-neutral-900",
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        {/* Sesi AE-122 — sort toggle. Default newest first (terbaru atas). */}
+        <div className="flex items-center gap-1 pb-2">
+          <ArrowDownUp className="size-3.5 text-neutral-400" aria-hidden />
+          <div className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white p-0.5 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setSortOrder("newest")}
+              className={cn(
+                "rounded px-2 py-1 font-medium transition-colors",
+                sortOrder === "newest"
+                  ? "bg-mahakan-green-700 text-white"
+                  : "text-neutral-600 hover:text-neutral-900",
+              )}
+              aria-pressed={sortOrder === "newest"}
+              title="Terbaru di atas"
+            >
+              Terbaru
+            </button>
+            <button
+              type="button"
+              onClick={() => setSortOrder("oldest")}
+              className={cn(
+                "rounded px-2 py-1 font-medium transition-colors",
+                sortOrder === "oldest"
+                  ? "bg-mahakan-green-700 text-white"
+                  : "text-neutral-600 hover:text-neutral-900",
+              )}
+              aria-pressed={sortOrder === "oldest"}
+              title="Terlama di atas (FIFO)"
+            >
+              Terlama
+            </button>
+          </div>
+        </div>
       </div>
 
       {loading ? (

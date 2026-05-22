@@ -29,11 +29,36 @@ import {
 import { listSuppliers, type Supplier } from "@/features/suppliers";
 import { isOk as suppliersIsOk } from "@/features/suppliers";
 import {
+  getPurchaseGroupBlockers,
   groupItemsBySupplier,
   validatePurchaseGroupItems,
   type PrPurchaseItemRow,
 } from "@/features/purchase-requests/group-items-pure";
-import { formatRupiah, parseRupiah } from "@/lib/format";
+import {
+  listAtomicIngredients,
+  type Ingredient,
+  isOk as inventoryIsOk,
+} from "@/features/inventory";
+import { formatRupiah } from "@/lib/format";
+import {
+  convertPurchaseQty,
+  convertQty,
+  resolveUnit,
+  scaleCostOnUnitChange,
+  type IngredientPackConversion,
+} from "@/lib/unit-conversion";
+import {
+  applyQtyChange,
+  applyTotalChange,
+  applyUnitCostChange,
+  buildPurchaseUnitOptions,
+  formatPurchaseQty,
+  parsePurchaseQty,
+  parseRupiahSafe,
+  parseTotalRupiah,
+  todayJakartaIso,
+  type SmartMathInputMode,
+} from "./purchase-line-helpers";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -52,10 +77,27 @@ const PAYMENT_OPTIONS: Array<{ value: PaymentMethod; label: string }> = [
   { value: "top", label: "TOP (kredit)" },
 ];
 
-function todayIso(): string {
-  const d = new Date();
-  const wib = new Date(d.getTime() + 7 * 60 * 60 * 1000);
-  return wib.toISOString().slice(0, 10);
+/* Sesi AE-122 — Extended row type dengan smart math + qty/cost as STRING
+ * (mirror PurchaseFormModal). Original PrPurchaseItemRow di pure helper
+ * pakai number — UI layer ini transform string ↔ number saat submit. */
+interface UiPurchaseRow {
+  purchaseRequestItemId: string;
+  ingredientId: string;
+  ingredientName: string;
+  /** Unit asal dari PR (display only). */
+  prUnit: string;
+  outstandingQty: number;
+  /** Qty input sebagai string (UI flexible decimal). */
+  qty: string;
+  /** Unit override yang dipilih owner. Kalau "" pakai prUnit. */
+  unit: string;
+  /** Harga per unit input sebagai string. */
+  unitCost: string;
+  /** Total bayar (smart math derived atau input langsung). */
+  total: string;
+  inputMode: SmartMathInputMode;
+  supplierId: string | null;
+  selected: boolean;
 }
 
 export function CreatePurchaseFromPrModal({
@@ -67,69 +109,193 @@ export function CreatePurchaseFromPrModal({
   const [step, setStep] = useState<1 | 2>(1);
   const [prList, setPrList] = useState<PrForPurchase[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedPr, setSelectedPr] = useState<PrForPurchase | null>(null);
-  const [items, setItems] = useState<PrPurchaseItemRow[]>([]);
-  const [purchaseDate, setPurchaseDate] = useState(todayIso());
+  const [items, setItems] = useState<UiPurchaseRow[]>([]);
+  const [purchaseDate, setPurchaseDate] = useState(todayJakartaIso());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [submitting, setSubmitting] = useState(false);
+  const [updateCost, setUpdateCost] = useState(true);
+  /* Sesi AE-122 — sort PR list (newest first default). */
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [prRes, supRes] = await Promise.all([
+    const [prRes, supRes, ingRes] = await Promise.all([
       listOpenPurchaseRequestsForPurchase(),
       listSuppliers(),
+      listAtomicIngredients({ activeOnly: true }),
     ]);
     if (prIsOk(prRes)) setPrList(prRes.data);
     else toast.error(prRes.error.message);
     if (suppliersIsOk(supRes)) setSuppliers(supRes.data);
+    if (inventoryIsOk(ingRes)) setIngredients(ingRes.data.items);
     setLoading(false);
   }, []);
 
   // Reset on open
   useEffect(() => {
     if (!open) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    /* eslint-disable react-hooks/set-state-in-effect */
     setStep(1);
     setSelectedPr(null);
     setItems([]);
-    setPurchaseDate(todayIso());
+    setPurchaseDate(todayJakartaIso());
     setPaymentMethod("cash");
+    setUpdateCost(true);
+    setSortOrder("newest");
+    /* eslint-enable react-hooks/set-state-in-effect */
     void loadData();
   }, [open, loadData]);
+
+  const ingredientById = useMemo(() => {
+    const m = new Map<string, Ingredient>();
+    for (const ing of ingredients) m.set(ing.id, ing);
+    return m;
+  }, [ingredients]);
+
+  const handleSelectPr = useCallback(
+    (pr: PrForPurchase) => {
+      setSelectedPr(pr);
+      setItems(
+        pr.items.map((i) => {
+          const ing = i.ingredientId ? ingredientById.get(i.ingredientId) : null;
+          const masterUnit = ing?.unit ?? i.unit;
+          const qty = i.outstandingQty;
+          const cost = i.suggestedUnitCost ?? 0;
+          const total =
+            qty > 0 && cost > 0 ? String(Math.round(qty * cost)) : "";
+          return {
+            purchaseRequestItemId: i.purchaseRequestItemId,
+            ingredientId: i.ingredientId ?? "",
+            ingredientName: i.ingredientName,
+            prUnit: i.unit,
+            outstandingQty: i.outstandingQty,
+            qty: String(qty),
+            /* Default unit = PR snapshot. Kalau ingredient master beda,
+             * owner bisa override via dropdown. */
+            unit: i.unit || masterUnit,
+            unitCost: cost > 0 ? String(cost) : "",
+            total,
+            inputMode: "unit" as SmartMathInputMode,
+            supplierId: i.suggestedSupplierId,
+            selected: true,
+          };
+        }),
+      );
+      setStep(2);
+    },
+    [ingredientById],
+  );
 
   // Auto-select PR kalau prefilled
   useEffect(() => {
     if (!open || !prefilledPrId || prList.length === 0) return;
     const pr = prList.find((p) => p.requestId === prefilledPrId);
-    if (pr) {
-      handleSelectPr(pr);
-    }
-  }, [open, prefilledPrId, prList]);
+    if (pr) handleSelectPr(pr);
+  }, [open, prefilledPrId, prList, handleSelectPr]);
 
-  function handleSelectPr(pr: PrForPurchase) {
-    setSelectedPr(pr);
-    setItems(
-      pr.items.map((i) => ({
-        purchaseRequestItemId: i.purchaseRequestItemId,
-        ingredientId: i.ingredientId ?? "",
-        ingredientName: i.ingredientName,
-        unit: i.unit,
-        outstandingQty: i.outstandingQty,
-        qty: i.outstandingQty,
-        supplierId: i.suggestedSupplierId,
-        unitCost: i.suggestedUnitCost ?? 0,
-        unitOverride: null,
-        selected: true,
-      })),
-    );
-    setStep(2);
-  }
-
-  function updateItem(idx: number, patch: Partial<PrPurchaseItemRow>) {
+  function updateItem(idx: number, patch: Partial<UiPurchaseRow>) {
     setItems((prev) => {
       const next = [...prev];
       next[idx] = { ...next[idx], ...patch };
+      return next;
+    });
+  }
+
+  function setRowQty(idx: number, value: string) {
+    setItems((prev) => {
+      const next = [...prev];
+      const row = next[idx];
+      const result = applyQtyChange(
+        {
+          qty: row.qty,
+          unitCost: row.unitCost,
+          total: row.total,
+          inputMode: row.inputMode,
+        },
+        value,
+      );
+      next[idx] = { ...row, ...result };
+      return next;
+    });
+  }
+
+  function setRowUnitCost(idx: number, value: string) {
+    setItems((prev) => {
+      const next = [...prev];
+      const row = next[idx];
+      const result = applyUnitCostChange(
+        {
+          qty: row.qty,
+          unitCost: row.unitCost,
+          total: row.total,
+          inputMode: row.inputMode,
+        },
+        value,
+      );
+      next[idx] = { ...row, ...result };
+      return next;
+    });
+  }
+
+  function setRowTotal(idx: number, value: string) {
+    setItems((prev) => {
+      const next = [...prev];
+      const row = next[idx];
+      const result = applyTotalChange(
+        {
+          qty: row.qty,
+          unitCost: row.unitCost,
+          total: row.total,
+          inputMode: row.inputMode,
+        },
+        value,
+      );
+      next[idx] = { ...row, ...result };
+      return next;
+    });
+  }
+
+  function setRowUnit(idx: number, newUnit: string) {
+    setItems((prev) => {
+      const next = [...prev];
+      const row = next[idx];
+      /* Sesi AE-63 phase6 — scale harga saat ganti unit (same dimension
+       * like Kg↔gr). Defensive: kalau mode "total", harga = derived
+       * dari total/qty, tidak perlu di-scale terpisah. */
+      if (row.inputMode === "total") {
+        const qtyN = parsePurchaseQty(row.qty);
+        const totalN = parseTotalRupiah(row.total);
+        const newCost =
+          Number.isFinite(qtyN) && qtyN > 0 && totalN >= 0
+            ? String(Math.round(totalN / qtyN))
+            : row.unitCost;
+        next[idx] = { ...row, unit: newUnit, unitCost: newCost };
+        return next;
+      }
+      const scaledRaw = scaleCostOnUnitChange({
+        oldUnit: row.unit,
+        newUnit,
+        oldCost: parseRupiahSafe(row.unitCost),
+      });
+      if (scaledRaw === null) {
+        next[idx] = { ...row, unit: newUnit };
+        return next;
+      }
+      const newCost = String(Math.round(scaledRaw));
+      const qtyN = parsePurchaseQty(row.qty);
+      const newTotal =
+        Number.isFinite(qtyN) && qtyN > 0
+          ? String(Math.round(qtyN * scaledRaw))
+          : row.total;
+      next[idx] = {
+        ...row,
+        unit: newUnit,
+        unitCost: newCost,
+        total: newTotal,
+      };
       return next;
     });
   }
@@ -140,17 +306,46 @@ export function CreatePurchaseFromPrModal({
     return m;
   }, [suppliers]);
 
-  const groups = useMemo(
+  /* Convert UI rows → pure helper rows (for grouping + validation). */
+  const pureRows: PrPurchaseItemRow[] = useMemo(
     () =>
-      groupItemsBySupplier(items, {
-        supplierNameLookup: (id) => (id ? supplierLookup.get(id) ?? null : null),
+      items.map((it) => {
+        const qty = parsePurchaseQty(it.qty);
+        const cost = parseRupiahSafe(it.unitCost);
+        const ing = it.ingredientId ? ingredientById.get(it.ingredientId) : null;
+        const masterUnit = ing?.unit ?? it.prUnit;
+        return {
+          purchaseRequestItemId: it.purchaseRequestItemId,
+          ingredientId: it.ingredientId,
+          ingredientName: it.ingredientName,
+          unit: it.unit || it.prUnit,
+          outstandingQty: it.outstandingQty,
+          qty: Number.isFinite(qty) ? qty : 0,
+          supplierId: it.supplierId,
+          unitCost: Number.isFinite(cost) ? cost : 0,
+          unitOverride:
+            it.unit && it.unit !== masterUnit ? it.unit : null,
+          selected: it.selected,
+        };
       }),
-    [items, supplierLookup],
+    [items, ingredientById],
   );
 
-  const validIssues = useMemo(
-    () => validatePurchaseGroupItems(items),
-    [items],
+  const groups = useMemo(
+    () =>
+      groupItemsBySupplier(pureRows, {
+        supplierNameLookup: (id) => (id ? supplierLookup.get(id) ?? null : null),
+      }),
+    [pureRows, supplierLookup],
+  );
+
+  const allIssues = useMemo(
+    () => validatePurchaseGroupItems(pureRows),
+    [pureRows],
+  );
+  const blockers = useMemo(
+    () => getPurchaseGroupBlockers(allIssues),
+    [allIssues],
   );
 
   const selectedCount = items.filter((i) => i.selected).length;
@@ -167,6 +362,16 @@ export function CreatePurchaseFromPrModal({
     [suppliers],
   );
 
+  /* Sesi AE-122 — apply sort order ke PR list. */
+  const sortedPrList = useMemo(() => {
+    const arr = [...prList];
+    arr.sort((a, b) => {
+      const diff = b.createdAt.getTime() - a.createdAt.getTime();
+      return sortOrder === "newest" ? diff : -diff;
+    });
+    return arr;
+  }, [prList, sortOrder]);
+
   async function handleSubmit() {
     if (!selectedPr) return;
     if (submitting) return;
@@ -174,8 +379,8 @@ export function CreatePurchaseFromPrModal({
       toast.error("Pilih minimal 1 item");
       return;
     }
-    if (validIssues.length > 0) {
-      toast.error(validIssues[0].message);
+    if (blockers.length > 0) {
+      toast.error(blockers[0].message);
       return;
     }
     if (grossGroupsToSubmit.length === 0) {
@@ -194,6 +399,7 @@ export function CreatePurchaseFromPrModal({
         paymentTermDays: paymentMethod === "top" ? 7 : 0,
         notes: `Tarik dari PR ${selectedPr.requestId.slice(0, 8)}`,
         fromPurchaseRequestId: selectedPr.requestId,
+        updateCost,
         items: group.items.map((i) => ({
           ingredientId: i.ingredientId,
           qty: i.qty,
@@ -234,9 +440,9 @@ export function CreatePurchaseFromPrModal({
       description={
         step === 1
           ? "Pilih PR yang ingin di-proses menjadi pembelian"
-          : "Pilih item + supplier. 1 PR bisa split jadi banyak pembelian."
+          : "Atur qty, satuan, dan harga per item. Owner bebas override request staff (lebih atau kurang)."
       }
-      size="2xl"
+      size={step === 1 ? "2xl" : "full"}
       footer={
         step === 1 ? undefined : (
           <>
@@ -260,7 +466,7 @@ export function CreatePurchaseFromPrModal({
               disabled={
                 submitting ||
                 selectedCount === 0 ||
-                validIssues.length > 0 ||
+                blockers.length > 0 ||
                 grossGroupsToSubmit.length === 0
               }
             >
@@ -286,20 +492,32 @@ export function CreatePurchaseFromPrModal({
           <Skeleton className="h-24 w-full" />
         </div>
       ) : step === 1 ? (
-        <Step1Picker prList={prList} onSelect={handleSelectPr} />
+        <Step1Picker
+          prList={sortedPrList}
+          sortOrder={sortOrder}
+          onChangeSort={setSortOrder}
+          onSelect={handleSelectPr}
+        />
       ) : selectedPr ? (
         <Step2Wizard
           pr={selectedPr}
           items={items}
           groups={groups}
-          validIssues={validIssues}
-          suppliers={suppliers}
+          issues={allIssues}
+          ingredients={ingredients}
+          ingredientById={ingredientById}
           supplierComboGroups={supplierComboGroups}
           purchaseDate={purchaseDate}
           paymentMethod={paymentMethod}
+          updateCost={updateCost}
           onUpdateItem={updateItem}
+          onSetRowQty={setRowQty}
+          onSetRowUnitCost={setRowUnitCost}
+          onSetRowTotal={setRowTotal}
+          onSetRowUnit={setRowUnit}
           onPurchaseDate={setPurchaseDate}
           onPaymentMethod={setPaymentMethod}
+          onUpdateCost={setUpdateCost}
         />
       ) : null}
     </Modal>
@@ -308,9 +526,13 @@ export function CreatePurchaseFromPrModal({
 
 function Step1Picker({
   prList,
+  sortOrder,
+  onChangeSort,
   onSelect,
 }: {
   prList: PrForPurchase[];
+  sortOrder: "newest" | "oldest";
+  onChangeSort: (v: "newest" | "oldest") => void;
   onSelect: (pr: PrForPurchase) => void;
 }) {
   if (prList.length === 0) {
@@ -329,9 +551,39 @@ function Step1Picker({
   }
   return (
     <div className="space-y-2">
-      <p className="text-[11px] text-neutral-500">
-        Sort: oldest first (FIFO). {prList.length} PR aktif.
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-neutral-500">
+          {prList.length} PR aktif.
+        </p>
+        <div className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white p-0.5 text-[11px]">
+          <button
+            type="button"
+            onClick={() => onChangeSort("newest")}
+            className={cn(
+              "rounded px-2 py-1 font-medium transition-colors",
+              sortOrder === "newest"
+                ? "bg-mahakan-green-700 text-white"
+                : "text-neutral-600 hover:text-neutral-900",
+            )}
+            aria-pressed={sortOrder === "newest"}
+          >
+            Terbaru
+          </button>
+          <button
+            type="button"
+            onClick={() => onChangeSort("oldest")}
+            className={cn(
+              "rounded px-2 py-1 font-medium transition-colors",
+              sortOrder === "oldest"
+                ? "bg-mahakan-green-700 text-white"
+                : "text-neutral-600 hover:text-neutral-900",
+            )}
+            aria-pressed={sortOrder === "oldest"}
+          >
+            Terlama (FIFO)
+          </button>
+        </div>
+      </div>
       {prList.map((pr) => (
         <button
           key={pr.requestId}
@@ -389,26 +641,40 @@ function Step2Wizard({
   pr,
   items,
   groups,
-  validIssues,
-  suppliers,
+  issues,
+  ingredients,
+  ingredientById,
   supplierComboGroups,
   purchaseDate,
   paymentMethod,
+  updateCost,
   onUpdateItem,
+  onSetRowQty,
+  onSetRowUnitCost,
+  onSetRowTotal,
+  onSetRowUnit,
   onPurchaseDate,
   onPaymentMethod,
+  onUpdateCost,
 }: {
   pr: PrForPurchase;
-  items: PrPurchaseItemRow[];
+  items: UiPurchaseRow[];
   groups: ReturnType<typeof groupItemsBySupplier>;
-  validIssues: ReturnType<typeof validatePurchaseGroupItems>;
-  suppliers: Supplier[];
+  issues: ReturnType<typeof validatePurchaseGroupItems>;
+  ingredients: Ingredient[];
+  ingredientById: Map<string, Ingredient>;
   supplierComboGroups: ComboboxGroup[];
   purchaseDate: string;
   paymentMethod: PaymentMethod;
-  onUpdateItem: (idx: number, patch: Partial<PrPurchaseItemRow>) => void;
+  updateCost: boolean;
+  onUpdateItem: (idx: number, patch: Partial<UiPurchaseRow>) => void;
+  onSetRowQty: (idx: number, value: string) => void;
+  onSetRowUnitCost: (idx: number, value: string) => void;
+  onSetRowTotal: (idx: number, value: string) => void;
+  onSetRowUnit: (idx: number, value: string) => void;
   onPurchaseDate: (v: string) => void;
   onPaymentMethod: (v: PaymentMethod) => void;
+  onUpdateCost: (v: boolean) => void;
 }) {
   const selectedCount = items.filter((i) => i.selected).length;
 
@@ -450,89 +716,57 @@ function Step2Wizard({
         />
       </div>
 
-      {/* Items table */}
-      <div>
-        <div className="mb-1.5 flex items-center justify-between">
+      {/* Items */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
           <p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
             Items ({selectedCount}/{items.length} dipilih)
           </p>
           <p className="text-[11px] text-neutral-500">
-            Centang untuk include. Per row: supplier + qty + harga.
+            Centang untuk include. Owner boleh ubah qty, satuan, atau harga
+            sebelum simpan.
           </p>
         </div>
-        <div className="space-y-2">
-          {items.map((it, idx) => {
-            const issuesForItem = validIssues.filter(
-              (v) => v.itemId === it.purchaseRequestItemId,
-            );
-            return (
-              <div
-                key={it.purchaseRequestItemId}
-                className={cn(
-                  "rounded-md border p-2.5 transition-colors",
-                  it.selected
-                    ? "border-mahakan-green-700 bg-mahakan-green-50/50"
-                    : "border-neutral-200 bg-white",
-                )}
-              >
-                <div className="flex items-start gap-3">
-                  <input
-                    type="checkbox"
-                    checked={it.selected}
-                    onChange={(e) =>
-                      onUpdateItem(idx, { selected: e.target.checked })
-                    }
-                    className="mt-1 size-4 shrink-0"
-                  />
-                  <div className="flex-1 space-y-2">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p className="text-sm font-medium text-neutral-900">
-                        {it.ingredientName}
-                      </p>
-                      <p className="text-[11px] text-neutral-500">
-                        Sisa{" "}
-                        <span className="font-mono">
-                          {it.outstandingQty.toLocaleString("id-ID")} {it.unit}
-                        </span>
-                      </p>
-                    </div>
-                    {it.selected ? (
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[2fr_1fr_1fr]">
-                        <SupplierComboField
-                          value={it.supplierId}
-                          onChange={(v) =>
-                            onUpdateItem(idx, { supplierId: v })
-                          }
-                          groups={supplierComboGroups}
-                          suppliers={suppliers}
-                          suggested={Boolean(it.supplierId)}
-                        />
-                        <QtyField
-                          value={it.qty}
-                          maxQty={it.outstandingQty}
-                          unit={it.unit}
-                          onChange={(v) => onUpdateItem(idx, { qty: v })}
-                        />
-                        <CostField
-                          value={it.unitCost}
-                          onChange={(v) =>
-                            onUpdateItem(idx, { unitCost: v })
-                          }
-                        />
-                      </div>
-                    ) : null}
-                    {issuesForItem.length > 0 ? (
-                      <p className="text-[11px] text-danger-500">
-                        {issuesForItem.map((i) => i.message).join("; ")}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+        <div className="space-y-3">
+          {items.map((it, idx) => (
+            <PurchaseLineRow
+              key={it.purchaseRequestItemId}
+              row={it}
+              idx={idx}
+              issues={issues.filter(
+                (v) => v.itemId === it.purchaseRequestItemId,
+              )}
+              ingredients={ingredients}
+              ingredient={
+                it.ingredientId ? ingredientById.get(it.ingredientId) : null
+              }
+              supplierComboGroups={supplierComboGroups}
+              onUpdateItem={onUpdateItem}
+              onSetRowQty={onSetRowQty}
+              onSetRowUnitCost={onSetRowUnitCost}
+              onSetRowTotal={onSetRowTotal}
+              onSetRowUnit={onSetRowUnit}
+            />
+          ))}
         </div>
       </div>
+
+      {/* Update master cost checkbox */}
+      <label className="flex items-start gap-2 text-sm text-neutral-700">
+        <input
+          type="checkbox"
+          checked={updateCost}
+          onChange={(e) => onUpdateCost(e.target.checked)}
+          className="mt-0.5 size-4 rounded border-neutral-300 text-mahakan-green-700 focus:ring-mahakan-green-700"
+        />
+        <span className="flex-1">
+          <strong>Update harga master bahan (WAC)</strong>
+          <span className="ml-1 text-xs text-neutral-500">
+            — centang kalau harga belanja ini bakal jadi acuan baru. Sistem
+            akan running-average (bukan overwrite).
+          </span>
+        </span>
+      </label>
 
       {/* Groups preview */}
       {selectedCount > 0 && groups.length > 0 ? (
@@ -574,80 +808,330 @@ function Step2Wizard({
   );
 }
 
-function SupplierComboField({
-  value,
-  onChange,
-  groups,
-  suppliers,
-  suggested,
+/* Sesi AE-122 — Per-item row dengan smart math (qty + unit + harga +
+ * total). Mirror PurchaseFormModal pattern supaya owner familiar antara
+ * "Catat Pembelian" manual dan "Tarik ke Pembelian" dari PR. */
+function PurchaseLineRow({
+  row,
+  idx,
+  issues,
+  ingredients,
+  ingredient,
+  supplierComboGroups,
+  onUpdateItem,
+  onSetRowQty,
+  onSetRowUnitCost,
+  onSetRowTotal,
+  onSetRowUnit,
 }: {
-  value: string | null;
-  onChange: (v: string | null) => void;
-  groups: ComboboxGroup[];
-  suppliers: Supplier[];
-  suggested: boolean;
+  row: UiPurchaseRow;
+  idx: number;
+  issues: ReturnType<typeof validatePurchaseGroupItems>;
+  ingredients: Ingredient[];
+  ingredient: Ingredient | null | undefined;
+  supplierComboGroups: ComboboxGroup[];
+  onUpdateItem: (idx: number, patch: Partial<UiPurchaseRow>) => void;
+  onSetRowQty: (idx: number, value: string) => void;
+  onSetRowUnitCost: (idx: number, value: string) => void;
+  onSetRowTotal: (idx: number, value: string) => void;
+  onSetRowUnit: (idx: number, value: string) => void;
 }) {
-  const supplier = value ? suppliers.find((s) => s.id === value) : null;
+  const qtyN = parsePurchaseQty(row.qty);
+  const costN = parseRupiahSafe(row.unitCost);
+  const hasQty = Number.isFinite(qtyN) && qtyN > 0;
+  const lineTotal = hasQty && costN >= 0 ? Math.round(qtyN * costN) : 0;
+  const unit = row.unit || ingredient?.unit || row.prUnit;
+  const masterUnit = ingredient?.unit ?? row.prUnit;
+  const ingredientPacks =
+    (ingredient?.packConversions ??
+      null) as IngredientPackConversion[] | null;
+  const unitOptions = buildPurchaseUnitOptions(masterUnit, ingredientPacks);
+  const masterLabel = ingredient
+    ? (resolveUnit(ingredient.unit)?.label ?? ingredient.unit)
+    : masterUnit;
+  const unitChanged =
+    !!ingredient &&
+    !!unit &&
+    unit !== ingredient.unit &&
+    unit !== masterLabel;
+  const conv =
+    ingredient && hasQty
+      ? convertPurchaseQty({
+          qty: qtyN,
+          fromUnit: unit || ingredient.unit,
+          masterUnit: ingredient.unit,
+          pack: null,
+          ingredientPacks,
+        })
+      : null;
+  const equivCostPerMaster =
+    ingredient && unitChanged && costN > 0
+      ? (() => {
+          const factor = convertQty(1, masterLabel, unit);
+          if (factor === null || factor <= 0) return null;
+          return Math.round(costN * factor);
+        })()
+      : null;
+
+  const errorIssues = issues.filter((i) => i.severity === "error");
+  const warningIssues = issues.filter((i) => i.severity === "warning");
+
   return (
-    <div>
-      <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
-        Supplier{" "}
-        {suggested ? (
-          <span className="inline-flex items-center gap-0.5 rounded bg-info-100 px-1 py-0.5 text-[9px] font-normal text-info-500">
-            <Sparkles className="size-2.5" /> Auto
-          </span>
-        ) : null}
-      </label>
-      <Combobox
-        groups={groups}
-        value={value}
-        onChange={(v) => onChange(v)}
-        placeholder={supplier?.name ?? "Pilih supplier..."}
-      />
+    <div
+      className={cn(
+        "rounded-md border p-2.5 transition-colors",
+        row.selected
+          ? errorIssues.length > 0
+            ? "border-danger-300 bg-danger-50/30"
+            : "border-mahakan-green-700 bg-mahakan-green-50/50"
+          : "border-neutral-200 bg-white",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <input
+          type="checkbox"
+          checked={row.selected}
+          onChange={(e) => onUpdateItem(idx, { selected: e.target.checked })}
+          className="mt-1 size-4 shrink-0"
+          aria-label={`Pilih ${row.ingredientName}`}
+        />
+        <div className="flex-1 space-y-2">
+          <div className="flex items-baseline justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-neutral-900">
+                {row.ingredientName}
+              </p>
+              <p className="text-[11px] text-neutral-500">
+                Request staff:{" "}
+                <span className="font-mono">
+                  {row.outstandingQty.toLocaleString("id-ID")} {row.prUnit}
+                </span>
+              </p>
+            </div>
+          </div>
+
+          {row.selected ? (
+            <>
+              {/* Sesi AE-122 — Row of fields mirror PurchaseFormModal.
+               * Mobile: stack vertical. Desktop: grid 6-col seperti
+               * Catat Pembelian. */}
+              <div className="grid gap-2 md:grid-cols-[1.5fr_90px_110px_160px_160px]">
+                {/* Supplier */}
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                    Supplier{" "}
+                    {row.supplierId ? (
+                      <span className="inline-flex items-center gap-0.5 rounded bg-info-100 px-1 py-0.5 text-[9px] font-normal text-info-500">
+                        <Sparkles className="size-2.5" /> Auto
+                      </span>
+                    ) : null}
+                  </label>
+                  <Combobox
+                    groups={supplierComboGroups}
+                    value={row.supplierId}
+                    onChange={(v) =>
+                      onUpdateItem(idx, { supplierId: v })
+                    }
+                    placeholder="Pilih supplier..."
+                  />
+                </div>
+
+                {/* QTY */}
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                    Qty
+                  </label>
+                  <Input
+                    aria-label={`Qty baris ${idx + 1}`}
+                    placeholder="0"
+                    type="text"
+                    inputMode="decimal"
+                    value={row.qty}
+                    onChange={(e) => onSetRowQty(idx, e.target.value)}
+                  />
+                </div>
+
+                {/* Satuan */}
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                    Satuan
+                  </label>
+                  <Select
+                    ariaLabel={`Satuan baris ${idx + 1}`}
+                    options={unitOptions}
+                    value={unit}
+                    onValueChange={(v) => onSetRowUnit(idx, v)}
+                    disabled={!ingredient}
+                  />
+                </div>
+
+                {/* Harga per satuan */}
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                    Harga / Satuan
+                  </label>
+                  <div className="relative">
+                    <Input
+                      aria-label={`Harga per ${unit || "unit"} baris ${idx + 1}`}
+                      placeholder={row.inputMode === "total" ? "auto" : "0"}
+                      type="text"
+                      inputMode="numeric"
+                      value={row.unitCost}
+                      onChange={(e) => onSetRowUnitCost(idx, e.target.value)}
+                      className={cn(
+                        "pr-14",
+                        row.inputMode === "total" &&
+                          "bg-neutral-100 text-neutral-600",
+                      )}
+                    />
+                    <span
+                      className={cn(
+                        "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                        row.inputMode === "total"
+                          ? "bg-neutral-200 text-neutral-500"
+                          : unit
+                            ? "bg-mahakan-green-100 text-mahakan-green-900"
+                            : "bg-neutral-200 text-neutral-500",
+                      )}
+                      aria-hidden
+                    >
+                      {row.inputMode === "total" ? "auto" : `per ${unit || "—"}`}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Total bayar */}
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                    Total Bayar
+                  </label>
+                  <div className="relative">
+                    <Input
+                      aria-label={`Total bayar baris ${idx + 1}`}
+                      placeholder={row.inputMode === "unit" ? "auto" : "0"}
+                      type="text"
+                      inputMode="numeric"
+                      value={row.total}
+                      onChange={(e) => onSetRowTotal(idx, e.target.value)}
+                      className={cn(
+                        "pr-14",
+                        row.inputMode === "unit" &&
+                          "bg-neutral-100 text-neutral-600",
+                      )}
+                    />
+                    <span
+                      className={cn(
+                        "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                        row.inputMode === "unit"
+                          ? "bg-neutral-200 text-neutral-500"
+                          : "bg-mahakan-green-100 text-mahakan-green-900",
+                      )}
+                      aria-hidden
+                    >
+                      {row.inputMode === "unit" ? "auto" : "total"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Live math echo */}
+              {hasQty && costN > 0 ? (
+                <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-0.5 text-xs text-neutral-700">
+                  <span className="font-mono">
+                    {formatPurchaseQty(qtyN)} {unit || "unit"} ×{" "}
+                    {formatRupiah(costN)} ={" "}
+                    <strong className="text-mahakan-green-900">
+                      {formatRupiah(lineTotal)}
+                    </strong>
+                  </span>
+                  {row.inputMode === "total" ? (
+                    <span className="font-mono text-[11px] text-neutral-500">
+                      ({formatRupiah(parseTotalRupiah(row.total))} ÷{" "}
+                      {formatPurchaseQty(qtyN)} = {formatRupiah(costN)}/
+                      {unit || "unit"})
+                    </span>
+                  ) : null}
+                  {equivCostPerMaster !== null ? (
+                    <span className="font-mono text-[11px] text-neutral-500">
+                      ≈ {formatRupiah(equivCostPerMaster)}/{masterLabel}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* Unit conversion preview */}
+              {conv && unitChanged ? (
+                conv.ok ? (
+                  <div className="rounded-md bg-mahakan-green-100/60 px-2 py-1 text-[11px] text-mahakan-green-900">
+                    ≈ {formatPurchaseQty(conv.qtyMaster)} {masterLabel}{" "}
+                    {conv.mode === "via-pack" ? (
+                      <span className="text-mahakan-green-900/70">
+                        ({conv.explain})
+                      </span>
+                    ) : null}
+                  </div>
+                ) : conv.error === "PACK_UNKNOWN" ? (
+                  <div className="rounded-md bg-warning-100 px-2 py-1 text-[11px] text-warning-500">
+                    ⚠ {conv.message}
+                  </div>
+                ) : (
+                  <div className="rounded-md bg-danger-100 px-2 py-1 text-[11px] text-danger-500">
+                    ⛔ {conv.message}
+                  </div>
+                )
+              ) : null}
+
+              {/* Manual ingredient picker kalau PR item tidak ke-link */}
+              {!ingredient && row.ingredientId === "" ? (
+                <div className="rounded-md bg-warning-50 px-2 py-1.5 text-[11px] text-warning-700">
+                  Item ini di-input manual oleh staff (tidak ke-link ke
+                  master bahan). Pilih bahan master kalau perlu:
+                  <div className="mt-1.5">
+                    <Combobox
+                      groups={[
+                        {
+                          label: "",
+                          options: ingredients.map((i) => ({
+                            value: i.id,
+                            label: i.name,
+                            hint: i.unit,
+                            keywords: [i.section ?? "", i.unit],
+                          })),
+                        } satisfies ComboboxGroup,
+                      ]}
+                      value={row.ingredientId || null}
+                      onChange={(v) => {
+                        if (!v) return;
+                        const newIng = ingredients.find((i) => i.id === v);
+                        if (!newIng) return;
+                        onUpdateItem(idx, {
+                          ingredientId: v,
+                          unit: newIng.unit,
+                        });
+                      }}
+                      placeholder="Cari bahan master..."
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Warning + error messages */}
+              {warningIssues.length > 0 ? (
+                <div className="rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+                  {warningIssues.map((i) => (
+                    <p key={i.field}>⚠ {i.message}</p>
+                  ))}
+                </div>
+              ) : null}
+              {errorIssues.length > 0 ? (
+                <p className="text-[11px] text-danger-500">
+                  {errorIssues.map((i) => i.message).join("; ")}
+                </p>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      </div>
     </div>
-  );
-}
-
-function QtyField({
-  value,
-  maxQty,
-  unit,
-  onChange,
-}: {
-  value: number;
-  maxQty: number;
-  unit: string;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <Input
-      label={`Qty ${unit} (maks ${maxQty})`}
-      type="number"
-      inputMode="decimal"
-      value={String(value)}
-      onChange={(e) => {
-        const n = parseFloat(e.target.value.replace(",", "."));
-        onChange(Number.isFinite(n) ? n : 0);
-      }}
-    />
-  );
-}
-
-function CostField({
-  value,
-  onChange,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <Input
-      label="Harga"
-      type="text"
-      inputMode="numeric"
-      value={value > 0 ? value.toLocaleString("id-ID") : ""}
-      onChange={(e) => onChange(parseRupiah(e.target.value))}
-      placeholder="Rp 0"
-    />
   );
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computePrStatus,
+  getPurchaseGroupBlockers,
   groupItemsBySupplier,
   validatePurchaseGroupItems,
   type PrPurchaseItemRow,
@@ -81,22 +82,29 @@ describe("validatePurchaseGroupItems", () => {
     expect(validatePurchaseGroupItems([row({})])).toEqual([]);
   });
 
-  it("flags missing supplier", () => {
+  it("flags missing supplier as error blocker", () => {
     const issues = validatePurchaseGroupItems([row({ supplierId: null })]);
     expect(issues).toHaveLength(1);
     expect(issues[0].field).toBe("supplier");
+    expect(issues[0].severity).toBe("error");
   });
 
-  it("flags qty > outstanding", () => {
+  it("qty > outstanding is a warning, NOT a blocker (sesi AE-122 — over-receive allowed)", () => {
     const issues = validatePurchaseGroupItems([
       row({ outstandingQty: 5, qty: 8 }),
     ]);
-    expect(issues.some((i) => i.field === "qty")).toBe(true);
+    const qtyIssues = issues.filter((i) => i.field === "qty");
+    expect(qtyIssues).toHaveLength(1);
+    expect(qtyIssues[0].severity).toBe("warning");
+    // Blockers exclude warnings → empty
+    expect(getPurchaseGroupBlockers(issues)).toEqual([]);
   });
 
-  it("flags qty <= 0", () => {
+  it("flags qty <= 0 as error blocker", () => {
     const issues = validatePurchaseGroupItems([row({ qty: 0 })]);
-    expect(issues.some((i) => i.field === "qty")).toBe(true);
+    const qtyIssues = issues.filter((i) => i.field === "qty");
+    expect(qtyIssues.some((i) => i.severity === "error")).toBe(true);
+    expect(getPurchaseGroupBlockers(issues).length).toBeGreaterThan(0);
   });
 
   it("ignores deselected items", () => {
@@ -104,6 +112,15 @@ describe("validatePurchaseGroupItems", () => {
       row({ supplierId: null, selected: false }),
     ]);
     expect(issues).toEqual([]);
+  });
+
+  it("getPurchaseGroupBlockers filters out warnings", () => {
+    const issues = validatePurchaseGroupItems([
+      row({ outstandingQty: 5, qty: 8, supplierId: null }), // qty warning + supplier error
+    ]);
+    const blockers = getPurchaseGroupBlockers(issues);
+    expect(blockers).toHaveLength(1);
+    expect(blockers[0].field).toBe("supplier");
   });
 });
 
