@@ -91,3 +91,4 @@ seed-data/
 # Local install artifacts (skill bundles, downloaded installers)
 /aso-skills/
 *.pkg
+cleanup-report-*.json
