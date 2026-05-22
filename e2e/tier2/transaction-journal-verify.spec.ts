@@ -87,5 +87,44 @@ test.describe("Transaction → Journal Entry verification", () => {
     expect(tableText).toMatch(/11\d{2}.*Kas|Kas.*11\d{2}/i);
     /* Penjualan account — code 4xxx series (revenue). */
     expect(tableText).toMatch(/4\d{3}.*Penjualan|Penjualan/i);
+
+    /* 8. Verify entry status = "Posted" (BUKAN draft). Draft entries
+     * tidak affect laporan keuangan — kalau auto-journal post sebagai
+     * draft, itu silent bug accounting. */
+    const summaryRow = entryDescription.locator("xpath=ancestor::summary[1]");
+    const summaryText = await summaryRow.innerText();
+    expect(summaryText).toContain("Posted");
+    expect(summaryText).not.toContain("Draft");
+
+    /* 9. Verify entry-level total amount displayed. Format: "Rp X.XXX".
+     * Hanya cek presence Rp + angka, tidak compare exact value (cogs +
+     * kategori split bisa beda per branch). */
+    expect(summaryText).toMatch(/Rp\s*\d/);
+
+    /* 10. Verify balanced — sum debit lines = sum credit lines.
+     * Parse table cells dengan ekstrak angka, compare totals. */
+    const cellTexts = await entryRow.locator("td").allInnerTexts();
+    let totalDebit = 0;
+    let totalCredit = 0;
+    /* Table format: 3 columns per row [Akun, Debit, Credit]. */
+    for (let i = 0; i + 2 < cellTexts.length; i += 3) {
+      totalDebit += parseRupiahCell(cellTexts[i + 1]);
+      totalCredit += parseRupiahCell(cellTexts[i + 2]);
+    }
+    expect(
+      totalDebit,
+      `Debit total (${totalDebit}) must equal credit total (${totalCredit})`,
+    ).toBe(totalCredit);
+    expect(totalDebit).toBeGreaterThan(0);
   });
 });
+
+/**
+ * Parse "Rp 1.000" / "Rp 25.500" / "—" → number.
+ */
+function parseRupiahCell(text: string): number {
+  const cleaned = text.replace(/Rp|\.|—|\s/g, "").trim();
+  if (!cleaned) return 0;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
