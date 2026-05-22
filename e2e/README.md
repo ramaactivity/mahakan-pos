@@ -1,5 +1,8 @@
 # E2E Tests — Playwright
 
+> **Lihat juga:** [PLAYWRIGHT_E2E.md](PLAYWRIGHT_E2E.md) — dokumentasi lengkap
+> (setup Neon branch, auth fixture, coverage map, locator gotcha, roadmap).
+
 ## Quick start
 
 ```bash

@@ -1,8 +1,13 @@
 # Tier 2 — Mutation E2E Tests
 
+> **Dokumentasi lengkap:** [../PLAYWRIGHT_E2E.md](../PLAYWRIGHT_E2E.md) —
+> coverage map, locator convention, gotcha, roadmap. File ini hanya quick
+> setup reference.
+
 ## Status
 
-✅ **Live.** 6 tests passing terhadap Neon test branch (sesi AE-85).
+✅ **Live.** 130 tes di 40 file passing terhadap Neon test branch
+(per sesi AE-96, 2026-05-22).
 
 Auto-skipped via `testIgnore: ["**/tier2/**"]` di playwright.config.ts —
 run dengan flag eksplisit (lihat **Run Tests** di bawah).
