@@ -92,7 +92,14 @@ export interface IngredientCogsRow {
 
   // Variance
   theoreticalUsageQty: number;
+  /** Theoretical cost = theoreticalUsageQty × averagePrice (Rp). "Diambil
+   * dari cost menu penjual" — what SHOULD have been spent given recipes
+   * × menu sold. AE-118. */
+  theoreticalUsageCost: number;
   actualUsageQty: number; // = cogsQty
+  /** Actual cost = actualUsageQty × averagePrice (Rp). Real Rp impact dari
+   * stock movement period (= cogsTotal). AE-118. */
+  actualUsageCost: number;
   varianceQty: number; // actualUsageQty - theoreticalUsageQty
   variancePct: number | null; // (variance / theoretical) × 100, null if theoretical=0
   varianceCost: number; // variance × averagePrice (Rp impact)
@@ -187,7 +194,9 @@ export function computeIngredientCogs(
     cogsTotal: round(cogsTotal),
 
     theoreticalUsageQty: round(input.theoreticalUsageQty, 4),
+    theoreticalUsageCost: round(input.theoreticalUsageQty * averagePrice),
     actualUsageQty: round(actualUsageQty, 4),
+    actualUsageCost: round(actualUsageQty * averagePrice),
     varianceQty: round(varianceQty, 4),
     variancePct: variancePct !== null ? round(variancePct, 2) : null,
     varianceCost: round(varianceCost),
