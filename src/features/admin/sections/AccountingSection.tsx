@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, CheckCircle2, Zap } from "lucide-react";
+import { Tab, TabList, TabPanel, Tabs } from "@/components/ui";
 import { CoaView } from "./accounting/CoaView";
 import { FixedAssetsView } from "./accounting/FixedAssetsView";
 import { JournalView } from "./accounting/JournalView";
@@ -42,7 +43,11 @@ export function AccountingSection({ viewerRole }: AccountingSectionProps) {
     outletQuery.data?.settings?.features?.accounting_auto_journal === true;
 
   return (
-    <div className="space-y-4 p-6">
+    <Tabs
+      value={tab}
+      onChange={(v) => setTab(v as AccountingTab)}
+      className="space-y-4 p-6"
+    >
       <header>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="flex items-center gap-2 text-2xl font-bold text-mahakan-green-900">
@@ -92,44 +97,29 @@ export function AccountingSection({ viewerRole }: AccountingSectionProps) {
         </p>
       </header>
 
-      <div
-        role="tablist"
-        aria-label="Akuntansi tabs"
-        className="flex gap-1 overflow-x-auto border-b border-neutral-200"
-      >
+      <TabList ariaLabel="Akuntansi tabs" className="overflow-x-auto">
         {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.key}
-            onClick={() => setTab(t.key)}
-            className={cn(
-              "shrink-0 border-b-2 px-4 py-2 text-sm font-medium transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
-              tab === t.key
-                ? "border-mahakan-green-700 text-mahakan-green-900"
-                : "border-transparent text-neutral-500 hover:text-neutral-900",
-            )}
-          >
+          <Tab key={t.key} value={t.key} className="shrink-0">
             {t.label}
-          </button>
+          </Tab>
         ))}
-      </div>
+      </TabList>
 
-      <div>
-        {tab === "coa" ? (
-          <CoaView viewerRole={viewerRole} />
-        ) : tab === "journal" ? (
-          <JournalView viewerRole={viewerRole} />
-        ) : tab === "periods" ? (
-          <PeriodsView viewerRole={viewerRole} />
-        ) : tab === "reports" ? (
-          <ReportsView />
-        ) : (
-          <FixedAssetsView viewerRole={viewerRole} />
-        )}
-      </div>
-    </div>
+      <TabPanel value="coa">
+        <CoaView viewerRole={viewerRole} />
+      </TabPanel>
+      <TabPanel value="journal">
+        <JournalView viewerRole={viewerRole} />
+      </TabPanel>
+      <TabPanel value="periods">
+        <PeriodsView viewerRole={viewerRole} />
+      </TabPanel>
+      <TabPanel value="reports">
+        <ReportsView />
+      </TabPanel>
+      <TabPanel value="assets">
+        <FixedAssetsView viewerRole={viewerRole} />
+      </TabPanel>
+    </Tabs>
   );
 }

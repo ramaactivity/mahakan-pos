@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Banknote } from "lucide-react";
+import { Tab, TabList, TabPanel, Tabs } from "@/components/ui";
 import { BankSettlementView } from "./finance/BankSettlementView";
 import { CashOnHandTile } from "./finance/CashOnHandTile";
 import { DailySettlementView } from "./finance/DailySettlementView";
@@ -10,7 +11,6 @@ import { ReconciliationView } from "./finance/ReconciliationView";
 import { HutangSurfacingView } from "./finance/HutangSurfacingView";
 import { hasPermission } from "@/lib/auth/rbac";
 import type { Role } from "@/lib/auth/rbac";
-import { cn } from "@/lib/utils";
 
 type FinanceTab =
   | "settlement"
@@ -44,7 +44,11 @@ export function FinanceSection({ viewerRole }: FinanceSectionProps) {
   const canViewDeposits = hasPermission(viewerRole, "cash_deposit.view");
 
   return (
-    <div className="space-y-4 p-6">
+    <Tabs
+      value={tab}
+      onChange={(v) => setTab(v as FinanceTab)}
+      className="space-y-4 p-6"
+    >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold text-mahakan-green-900">
@@ -58,44 +62,29 @@ export function FinanceSection({ viewerRole }: FinanceSectionProps) {
         {canViewDeposits ? <CashOnHandTile /> : null}
       </header>
 
-      <div
-        role="tablist"
-        aria-label="Finance tabs"
-        className="flex gap-1 overflow-x-auto border-b border-neutral-200"
-      >
+      <TabList ariaLabel="Finance tabs" className="overflow-x-auto">
         {visibleTabs.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.key}
-            onClick={() => setTab(t.key)}
-            className={cn(
-              "shrink-0 border-b-2 px-4 py-2 text-sm font-medium transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
-              tab === t.key
-                ? "border-mahakan-green-700 text-mahakan-green-900"
-                : "border-transparent text-neutral-500 hover:text-neutral-900",
-            )}
-          >
+          <Tab key={t.key} value={t.key} className="shrink-0">
             {t.label}
-          </button>
+          </Tab>
         ))}
-      </div>
+      </TabList>
 
-      <div>
-        {tab === "settlement" ? (
-          <DailySettlementView />
-        ) : tab === "bank" ? (
-          <BankSettlementView viewerRole={viewerRole} />
-        ) : tab === "cashflow" ? (
-          <ArusKasView />
-        ) : tab === "reconcile" ? (
-          <ReconciliationView viewerRole={viewerRole} />
-        ) : (
-          <HutangSurfacingView />
-        )}
-      </div>
-    </div>
+      <TabPanel value="settlement">
+        <DailySettlementView />
+      </TabPanel>
+      <TabPanel value="bank">
+        <BankSettlementView viewerRole={viewerRole} />
+      </TabPanel>
+      <TabPanel value="cashflow">
+        <ArusKasView />
+      </TabPanel>
+      <TabPanel value="reconcile">
+        <ReconciliationView viewerRole={viewerRole} />
+      </TabPanel>
+      <TabPanel value="hutang">
+        <HutangSurfacingView />
+      </TabPanel>
+    </Tabs>
   );
 }
