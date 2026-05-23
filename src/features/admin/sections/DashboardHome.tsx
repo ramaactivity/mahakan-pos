@@ -54,9 +54,13 @@ import type { AdminSection } from "@/features/admin/components/AdminLeftNav";
 import { setHrOperationsInitialTab } from "./HrOperationsSection";
 import { setReportsInitialTab } from "./ReportsSection";
 import { OpnameMonthlyBanner } from "./inventory/opname/OpnameMonthlyBanner";
+import { useCashDepositDashboard } from "@/features/finance/useCashDepositDashboard";
+import { hasPermission } from "@/lib/auth/rbac";
+import { cn } from "@/lib/utils";
 
 interface DashboardHomeProps {
-  user: { name: string };
+  /* Sesi AE-123 — accept full user (role dipakai untuk RBAC banner). */
+  user: { name: string; role: string };
   onNavigate?: (section: AdminSection) => void;
 }
 
@@ -227,6 +231,11 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
           onTap={() => onNavigate("employees")}
         />
       ) : null}
+
+      {/* Sesi AE-123 — pending setoran banner. Visible kalau owner punya
+       * verify permission + ada pending. Klik → buka SetoranTunai section. */}
+      <PendingDepositBanner onNavigate={onNavigate} viewerRole={user.role} />
+
 
       {/* Monthly stock opname cadence banner — visible to all roles. */}
       <OpnameMonthlyBanner
@@ -927,6 +936,63 @@ function TargetEmptyCard({ onTap }: { onTap?: () => void }) {
           ) : null}
         </div>
       </div>
+    </button>
+  );
+}
+
+/* Sesi AE-123 — banner pending setoran tunai untuk DashboardHome. Hanya
+ * tampil kalau viewer punya verify permission + ada pending. Klik buka
+ * SetoranTunai section. Auto-refresh tiap 60 detik via shared hook. */
+function PendingDepositBanner({
+  onNavigate,
+  viewerRole,
+}: {
+  onNavigate?: (section: AdminSection) => void;
+  viewerRole: string;
+}) {
+  const canVerify = hasPermission(
+    viewerRole as Parameters<typeof hasPermission>[0],
+    "cash_deposit.verify",
+  );
+  const { data } = useCashDepositDashboard();
+  if (!canVerify) return null;
+  const pendingCount = data?.pendingCount ?? 0;
+  const oldestDays = data?.oldestPendingDays ?? null;
+  if (pendingCount === 0) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => onNavigate?.("setoran_tunai")}
+      className={cn(
+        "group flex w-full items-center gap-3 rounded-md border px-4 py-3 text-left transition-colors",
+        oldestDays !== null && oldestDays >= 3
+          ? "border-danger-300 bg-danger-50 hover:bg-danger-100/50"
+          : "border-warning-300 bg-warning-100/60 hover:bg-warning-200/40",
+      )}
+    >
+      <div
+        className={cn(
+          "flex size-9 shrink-0 items-center justify-center rounded-md",
+          oldestDays !== null && oldestDays >= 3
+            ? "bg-danger-100 text-danger-700"
+            : "bg-warning-200 text-warning-700",
+        )}
+      >
+        <AlertTriangle className="size-5" aria-hidden />
+      </div>
+      <div className="flex-1">
+        <p className="font-semibold text-neutral-900">
+          {pendingCount} setoran tunai menunggu verifikasi
+        </p>
+        <p className="text-xs text-neutral-700">
+          {oldestDays !== null && oldestDays >= 1
+            ? `Tertua: ${oldestDays} hari lalu${oldestDays >= 3 ? " — sudah lewat 3 hari, mohon segera review" : ""}`
+            : "Pending dibuat hari ini"}
+        </p>
+      </div>
+      <span className="text-xs font-medium text-neutral-700 group-hover:underline">
+        Buka →
+      </span>
     </button>
   );
 }

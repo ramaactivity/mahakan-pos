@@ -63,6 +63,9 @@ interface AdminLeftNavProps {
   onLogout: () => void;
   /** Used to hide owner-only sections from manager. */
   role: Role;
+  /** Sesi AE-123 — optional badge counts per section (mis. pending setoran).
+   * Render kalau > 0. Pass dari AdminShell yang fetch via React Query. */
+  badges?: Partial<Record<AdminSection, number>>;
 }
 
 interface NavItem {
@@ -169,6 +172,7 @@ export function AdminLeftNav({
   onChange,
   onLogout,
   role,
+  badges,
 }: AdminLeftNavProps) {
   const visibleGroups = NAV_GROUPS.map((g) => ({
     ...g,
@@ -212,6 +216,7 @@ export function AdminLeftNav({
                 label={item.label}
                 Icon={item.Icon}
                 active={active === item.key}
+                badge={badges?.[item.key]}
                 onClick={() => onChange(item.key)}
               />
             ))}
@@ -229,13 +234,17 @@ function NavLink({
   label,
   Icon,
   active,
+  badge,
   onClick,
 }: {
   label: string;
   Icon: LucideIcon;
   active: boolean;
+  /** Sesi AE-123 — badge count opsional (mis. setoran pending). */
+  badge?: number;
   onClick: () => void;
 }) {
+  const showBadge = typeof badge === "number" && badge > 0;
   return (
     <button
       type="button"
@@ -250,7 +259,20 @@ function NavLink({
       )}
     >
       <Icon className="size-4 shrink-0" aria-hidden />
-      <span>{label}</span>
+      <span className="flex-1 text-left">{label}</span>
+      {showBadge ? (
+        <span
+          aria-label={`${badge} pending`}
+          className={cn(
+            "inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none",
+            active
+              ? "bg-mahakan-green-700 text-white"
+              : "bg-warning-500 text-white",
+          )}
+        >
+          {badge}
+        </span>
+      ) : null}
     </button>
   );
 }

@@ -1,11 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, DatePicker, Input, Modal, Select, toast } from "@/components/ui";
+import {
+  Button,
+  DatePicker,
+  Input,
+  Modal,
+  NumericInput,
+  Select,
+  toast,
+} from "@/components/ui";
 import {
   createIncome,
+  updateIncome,
   isOk,
   type CashPaymentMethod,
+  type Income,
 } from "@/features/cash";
 import {
   formatBankAccountDisplay,
@@ -14,22 +24,26 @@ import {
 } from "@/features/bank-accounts";
 import { fetchAccounts } from "@/features/accounting/actions";
 import type { AccountListRow } from "@/features/accounting";
-import { formatRupiah, parseRupiah } from "@/lib/format";
+import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface IncomeFormModalProps {
   open: boolean;
   /** Kept for callsite compatibility; action derives userId from session. */
   createdBy: string;
+  /** Sesi AE-123 — kalau di-set, modal jadi edit mode dengan pre-fill. */
+  edit?: Income | null;
   onClose: () => void;
   onSaved: () => void;
 }
 
 export function IncomeFormModal({
   open,
+  edit,
   onClose,
   onSaved,
 }: IncomeFormModalProps) {
+  const isEdit = edit != null;
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [description, setDescription] = useState("");
@@ -43,19 +57,33 @@ export function IncomeFormModal({
   const [revenueAccounts, setRevenueAccounts] = useState<AccountListRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /* Sesi AE-123 — track if description was blurred to show live validation
+   * error only after user finishes typing (better UX than red-on-type). */
+  const [descTouched, setDescTouched] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDate(today);
-    setDescription("");
-    setAmount("");
-    setMethod("transfer");
-    setBankAccountId("");
-    setAccountId("");
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (edit) {
+      setDate(edit.incomeDate);
+      setDescription(edit.description);
+      setAmount(String(edit.amount));
+      setMethod(edit.paymentMethod);
+      setBankAccountId(edit.bankAccountId ?? "");
+      setAccountId(edit.accountId ?? "");
+    } else {
+      setDate(today);
+      setDescription("");
+      setAmount("");
+      setMethod("transfer");
+      setBankAccountId("");
+      setAccountId("");
+    }
     setError(null);
+    setDescTouched(false);
     setSubmitting(false);
-  }, [open, today]);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [open, edit, today]);
 
   /* Load bank accounts list saat modal terbuka */
   useEffect(() => {
@@ -91,12 +119,9 @@ export function IncomeFormModal({
     };
   }, [open]);
 
-  let parsedAmount = 0;
-  try {
-    parsedAmount = parseRupiah(amount);
-  } catch {
-    parsedAmount = 0;
-  }
+  const parsedAmount = amount ? Number(amount) : 0;
+  const descEmpty = description.trim().length === 0;
+  const showDescError = descTouched && descEmpty;
 
   async function onSubmit() {
     if (submitting) return;
@@ -104,13 +129,14 @@ export function IncomeFormModal({
       setError("Nominal minimal Rp 1");
       return;
     }
-    if (description.trim().length === 0) {
+    if (descEmpty) {
       setError("Deskripsi wajib diisi");
+      setDescTouched(true);
       return;
     }
     setSubmitting(true);
     setError(null);
-    const res = await createIncome({
+    const payload = {
       incomeDate: date,
       description: description.trim(),
       amount: parsedAmount,
@@ -121,13 +147,20 @@ export function IncomeFormModal({
         method === "cash" || !bankAccountId ? null : bankAccountId,
       /* Sesi AE-71 — revenue account override. Empty = default 4201. */
       accountId: accountId || null,
-    });
+    };
+    const res = isEdit
+      ? await updateIncome(edit!.id, payload)
+      : await createIncome(payload);
     if (!isOk(res)) {
       setError(res.error.message);
       setSubmitting(false);
       return;
     }
-    toast.success(`Pemasukan ${formatRupiah(parsedAmount)} dicatat`);
+    toast.success(
+      isEdit
+        ? `Pemasukan ${formatRupiah(parsedAmount)} diperbarui`
+        : `Pemasukan ${formatRupiah(parsedAmount)} dicatat`,
+    );
     onSaved();
   }
 
@@ -135,8 +168,12 @@ export function IncomeFormModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Tambah Pemasukan Non-POS"
-      description="Sewa ruang event, titip jual, dll. Pemasukan POS otomatis dari transaksi."
+      title={isEdit ? "Edit Pemasukan" : "Tambah Pemasukan Non-POS"}
+      description={
+        isEdit
+          ? "Ubah detail pemasukan. Perubahan akan otomatis update jurnal akuntansi."
+          : "Sewa ruang event, titip jual, dll. Pemasukan POS otomatis dari transaksi."
+      }
       size="2xl"
       footer={
         <>
@@ -144,7 +181,7 @@ export function IncomeFormModal({
             Batal
           </Button>
           <Button onClick={onSubmit} loading={submitting}>
-            Simpan
+            {isEdit ? "Simpan Perubahan" : "Simpan"}
           </Button>
         </>
       }
@@ -161,24 +198,44 @@ export function IncomeFormModal({
             required
             clearable={false}
           />
-          <Input
+          {/* Sesi AE-123 — pakai NumericInput supaya auto-format
+           * thousand-separator (50000 → 50.000) live saat ketik. */}
+          <NumericInput
             label="Nominal"
-            type="text"
-            inputMode="numeric"
+            prefix="Rp"
             value={amount}
-            onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ""))}
-            hint={parsedAmount > 0 ? `Preview: ${formatRupiah(parsedAmount)}` : undefined}
+            onChange={setAmount}
+            placeholder="0"
+            hint={
+              parsedAmount > 0 ? `${formatRupiah(parsedAmount)}` : undefined
+            }
             required
           />
         </div>
-        <Input
-          label="Deskripsi"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Misal: sewa ruang event komunitas fotografi"
-          required
-          maxLength={200}
-        />
+        <div>
+          <Input
+            label="Deskripsi"
+            value={description}
+            onChange={(e) => {
+              setDescription(e.target.value);
+              if (e.target.value.trim().length > 0) setDescTouched(false);
+            }}
+            onBlur={() => setDescTouched(true)}
+            placeholder="Misal: sewa ruang event komunitas fotografi"
+            required
+            maxLength={200}
+            className={
+              showDescError
+                ? "border-danger-500 focus:border-danger-500 focus:ring-danger-500/40"
+                : undefined
+            }
+          />
+          {showDescError ? (
+            <p className="mt-1 text-xs font-medium text-danger-500">
+              Deskripsi wajib diisi
+            </p>
+          ) : null}
+        </div>
         <div className="space-y-1.5">
           <label className="block text-sm font-medium text-neutral-900">
             Metode Terima

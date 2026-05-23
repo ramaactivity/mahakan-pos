@@ -609,6 +609,310 @@ export async function deleteExpense(id: string): Promise<ApiResult<{ id: string 
 }
 
 /**
+ * Sesi AE-123 — `bulkDeleteExpenses` untuk hapus banyak pengeluaran
+ * sekaligus (mis. belanja harian salah input). Loop deleteExpense pattern
+ * tapi optimize: 1 session, 1 lock-check per id, audit log per id.
+ *
+ * Return: counts deleted + array per-id failure messages.
+ */
+export async function bulkDeleteExpenses(
+  ids: string[],
+): Promise<
+  ApiResult<{
+    deleted: number;
+    failed: Array<{ id: string; message: string }>;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "expense.delete")) {
+    return fail("FORBIDDEN", "Hapus pengeluaran hanya untuk Owner");
+  }
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return fail("VALIDATION_ERROR", "Pilih minimal 1 item untuk dihapus");
+  }
+  if (ids.length > 100) {
+    return fail(
+      "VALIDATION_ERROR",
+      "Maks 100 item per batch (split jadi beberapa batch)",
+    );
+  }
+  /* De-dup ids untuk safety. */
+  const uniqueIds = Array.from(new Set(ids));
+
+  let deleted = 0;
+  const failed: Array<{ id: string; message: string }> = [];
+
+  for (const id of uniqueIds) {
+    /* Re-use deleteExpense logic: lock check, refund-protect, audit,
+     * outlet scoping. Pemanggilan langsung supaya audit trail bener-bener
+     * mirror single-delete. */
+    const res = await deleteExpense(id);
+    if (res.success) {
+      deleted++;
+    } else {
+      failed.push({ id, message: res.error.message });
+    }
+  }
+
+  return ok({ deleted, failed });
+}
+
+/**
+ * Sesi AE-123 — `duplicateExpense`. Owner request: belanja harian rutin
+ * (mis. kopi/gula tiap hari) bisa di-template dari 1 expense → N copy
+ * dengan tanggal yang dipilih. Mirip "copy-paste" tapi safer + audit.
+ *
+ * Behavior:
+ *   - Source expense fetched (validate outlet scoping)
+ *   - Untuk setiap targetDate di `dates[]`, create new expense:
+ *     same categoryId, description, amount, paymentMethod, bankAccountId
+ *     receiptImageUrl di-skip (foto per-transaksi, not transferable)
+ *   - Each new expense fires journal hook normal (no special path)
+ *   - Audit log per copy + summary audit log untuk batch
+ *
+ * Return: counts created + array per-date failures.
+ */
+const duplicateExpenseSchema = z.object({
+  sourceId: z.uuid(),
+  dates: z.array(isoDateSchema).min(1).max(60),
+});
+
+export type DuplicateExpenseInput = z.input<typeof duplicateExpenseSchema>;
+
+export async function duplicateExpense(
+  input: DuplicateExpenseInput,
+): Promise<
+  ApiResult<{
+    created: number;
+    failed: Array<{ date: string; message: string }>;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "expense.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak buat pengeluaran");
+  }
+  const parsed = duplicateExpenseSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "");
+  }
+  const v = parsed.data;
+
+  /* Fetch source dengan outlet scope. */
+  const [source] = await db
+    .select()
+    .from(expenses)
+    .where(
+      and(
+        eq(expenses.id, v.sourceId),
+        eq(expenses.outletId, session.user.outletId),
+        isNull(expenses.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!source) {
+    return fail("NOT_FOUND", "Pengeluaran sumber tidak ditemukan");
+  }
+  if (source.refundedTransactionId) {
+    return fail(
+      "BUSINESS_RULE_VIOLATION",
+      "Refund auto tidak bisa di-duplicate",
+    );
+  }
+
+  /* Validate semua targetDate via createExpenseSchema date constraint
+   * (range -30 sd +1 hari). Filter invalid dengan error per-date. */
+  const failed: Array<{ date: string; message: string }> = [];
+  const validDates: string[] = [];
+  for (const d of Array.from(new Set(v.dates))) {
+    if (!refineDateRange(d)) {
+      failed.push({
+        date: d,
+        message: "Tanggal di luar range 30 hari terakhir sampai besok",
+      });
+      continue;
+    }
+    validDates.push(d);
+  }
+
+  let created = 0;
+  for (const targetDate of validDates) {
+    /* Pakai createExpense untuk consistency (lock check, audit, journal). */
+    const res = await createExpense({
+      expenseDate: targetDate,
+      categoryId: source.categoryId,
+      description: source.description,
+      amount: source.amount,
+      paymentMethod: source.paymentMethod,
+      /* receiptImageUrl SENGAJA tidak di-copy — foto per-transaksi. */
+      receiptImageUrl: null,
+      bankAccountId: source.bankAccountId,
+    });
+    if (res.success) {
+      created++;
+    } else {
+      failed.push({ date: targetDate, message: res.error.message });
+    }
+  }
+
+  if (created > 0) {
+    await logAudit({
+      eventType: "expense.create",
+      userId: session.user.id,
+      entityType: "expense",
+      entityId: source.id,
+      payload: {
+        summary: `Duplikat pengeluaran "${source.description}" ke ${created} tanggal (source: ${source.expenseDate})`,
+        context: {
+          sourceId: source.id,
+          datesCreated: validDates.slice(0, created),
+          datesFailed: failed.map((f) => f.date),
+        },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    });
+  }
+
+  return ok({ created, failed });
+}
+
+/**
+ * Sesi AE-123 — `updateIncome` action. Pre-AE-123: income immutable
+ * sekali entry → kalau salah, owner stuck (cuma bisa delete + re-create).
+ * Sekarang owner bisa edit semua field, mirror `updateExpense` pattern.
+ *
+ * RBAC: pakai `income.create` permission (proxy, sama dengan delete).
+ * Lock window check identik dengan updateExpense.
+ */
+const updateIncomeSchema = z.object({
+  incomeDate: isoDateSchema.optional(),
+  description: z.string().trim().min(1).max(200).optional(),
+  amount: z.number().int().min(1).max(999_999_999).optional(),
+  paymentMethod: z.enum(["cash", "transfer", "other"]).optional(),
+  bankAccountId: z.uuid().nullable().optional(),
+  accountId: z.uuid().nullable().optional(),
+});
+
+export type UpdateIncomeInput = z.input<typeof updateIncomeSchema>;
+
+export async function updateIncome(
+  id: string,
+  input: UpdateIncomeInput,
+): Promise<ApiResult<Income>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "income.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak edit pemasukan");
+  }
+
+  const [current] = await db
+    .select()
+    .from(incomes)
+    .where(
+      and(
+        eq(incomes.id, id),
+        eq(incomes.outletId, session.user.outletId),
+        isNull(incomes.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!current) return fail("NOT_FOUND", "Pemasukan tidak ditemukan");
+
+  const parsed = updateIncomeSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  /* Lock window check — current date + new date (kalau di-ubah). Sama
+   * pattern dengan updateExpense supaya tidak bisa "geser" income keluar
+   * shift closed lalu edit. */
+  const checkDate = v.incomeDate ?? current.incomeDate;
+  const lockCheck = await assertNotBlockedByClosedShift({
+    outletId: session.user.outletId,
+    targetDate: checkDate,
+    entityLabel: "pemasukan",
+    userId: session.user.id,
+    userRole: session.user.role,
+    entityType: "income",
+    entityId: id,
+  });
+  if (!lockCheck.success) return lockCheck;
+  if (v.incomeDate && v.incomeDate !== current.incomeDate) {
+    const originalCheck = await assertNotBlockedByClosedShift({
+      outletId: session.user.outletId,
+      targetDate: current.incomeDate,
+      entityLabel: "pemasukan",
+      userId: session.user.id,
+      userRole: session.user.role,
+      entityType: "income",
+      entityId: id,
+    });
+    if (!originalCheck.success) return originalCheck;
+  }
+
+  const updates: Partial<typeof incomes.$inferInsert> = {
+    updatedAt: new Date(),
+    updatedBy: session.user.id,
+  };
+  if (v.incomeDate) updates.incomeDate = v.incomeDate;
+  if (v.description) updates.description = v.description;
+  if (v.amount) updates.amount = v.amount;
+  if (v.paymentMethod) updates.paymentMethod = v.paymentMethod;
+  if (v.bankAccountId !== undefined) updates.bankAccountId = v.bankAccountId;
+  if (v.accountId !== undefined) updates.accountId = v.accountId;
+
+  const [row] = await db
+    .update(incomes)
+    .set(updates)
+    .where(
+      and(
+        eq(incomes.id, id),
+        eq(incomes.outletId, session.user.outletId),
+      ),
+    )
+    .returning();
+
+  const beforeSnap = {
+    incomeDate: current.incomeDate,
+    description: current.description,
+    amount: current.amount,
+    paymentMethod: current.paymentMethod,
+  };
+  const afterSnap = {
+    incomeDate: row.incomeDate,
+    description: row.description,
+    amount: row.amount,
+    paymentMethod: row.paymentMethod,
+  };
+  const diff = diffShallow(beforeSnap, afterSnap);
+  if (diff) {
+    await logAudit({
+      eventType: "income.update",
+      userId: session.user.id,
+      entityType: "income",
+      entityId: row.id,
+      payload: {
+        summary: `Edit pemasukan "${row.description}"`,
+        before: beforeSnap,
+        after: afterSnap,
+        diff,
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    });
+  }
+
+  return ok(row);
+}
+
+/**
  * Sesi AE-49 — `deleteIncome` action baru. Pre-AE-49 income immutable
  * sekali entry → kalau salah, owner stuck. Sekarang soft delete dengan
  * audit trail (deletedBy column ditambah di migration 0039).

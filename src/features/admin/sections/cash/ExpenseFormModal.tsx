@@ -2,7 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ImagePlus, Loader2, X } from "lucide-react";
-import { Button, DatePicker, Input, Modal, Select, toast } from "@/components/ui";
+import {
+  Button,
+  DatePicker,
+  Input,
+  Modal,
+  NumericInput,
+  Select,
+  toast,
+} from "@/components/ui";
 import {
   createExpense,
   isOk,
@@ -16,7 +24,7 @@ import {
   listBankAccounts,
   type BankAccount,
 } from "@/features/bank-accounts";
-import { formatRupiah, parseRupiah } from "@/lib/format";
+import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface ExpenseFormModalProps {
@@ -91,12 +99,8 @@ export function ExpenseFormModal({
     };
   }, [open]);
 
-  let parsedAmount = 0;
-  try {
-    parsedAmount = parseRupiah(amount);
-  } catch {
-    parsedAmount = 0;
-  }
+  /* Sesi AE-123 — pakai NumericInput, value sudah raw digits string. */
+  const parsedAmount = amount ? Number(amount) : 0;
 
   async function onSubmit() {
     if (submitting) return;
@@ -176,13 +180,17 @@ export function ExpenseFormModal({
             required
             clearable={false}
           />
-          <Input
+          {/* Sesi AE-123 — pakai NumericInput supaya auto-format
+           * thousand-separator (50000 → 50.000) live saat ketik. */}
+          <NumericInput
             label="Nominal"
-            type="text"
-            inputMode="numeric"
+            prefix="Rp"
             value={amount}
-            onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ""))}
-            hint={parsedAmount > 0 ? `Preview: ${formatRupiah(parsedAmount)}` : undefined}
+            onChange={setAmount}
+            placeholder="0"
+            hint={
+              parsedAmount > 0 ? `${formatRupiah(parsedAmount)}` : undefined
+            }
             required
           />
         </div>

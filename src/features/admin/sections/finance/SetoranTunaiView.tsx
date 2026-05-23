@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Undo2 } from "lucide-react";
+import { AlertTriangle, Plus, Undo2, Wallet } from "lucide-react";
 import { Badge, Button, Input, Modal, Skeleton, toast } from "@/components/ui";
 import {
   fetchCashDeposits,
@@ -12,6 +12,7 @@ import type {
   CashDeposit,
   CashDepositStatus,
 } from "@/features/finance/types";
+import { useCashDepositDashboard } from "@/features/finance/useCashDepositDashboard";
 import { formatRupiah } from "@/lib/money";
 import { formatIndonesianDate } from "@/lib/date";
 import { hasPermission } from "@/lib/auth/rbac";
@@ -57,6 +58,14 @@ export function SetoranTunaiView({ viewerRole }: Props) {
   const canCreate = hasPermission(viewerRole, "cash_deposit.create");
   const canVerify = hasPermission(viewerRole, "cash_deposit.verify");
 
+  /* Sesi AE-123 — dashboard hook untuk tombol "Setor Semua" + in-app
+   * banner pending. Auto-refresh 60 detik. */
+  const dashboardQuery = useCashDepositDashboard();
+  const dashboard = dashboardQuery.data;
+  const outstandingToDeposit = dashboard?.outstandingToDeposit ?? 0;
+  const pendingCount = dashboard?.pendingCount ?? 0;
+  const oldestPendingDays = dashboard?.oldestPendingDays ?? null;
+
   // Sesi AE-13 — TanStack Query cache. Per-filter key biar switching tab
   // keep cache untuk yang udah di-load.
   const listQuery = useQuery({
@@ -95,6 +104,37 @@ export function SetoranTunaiView({ viewerRole }: Props) {
 
   return (
     <div className="space-y-3">
+      {/* Sesi AE-123 — in-app banner kalau ada setoran pending verify.
+       * Auto-refresh tiap 60 detik. Owner-only (yang punya cash_deposit.verify). */}
+      {canVerify && pendingCount > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-warning-300 bg-warning-100/60 px-4 py-3 text-sm text-warning-700">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <div>
+              <p className="font-semibold">
+                {pendingCount} setoran tunai menunggu verifikasi
+              </p>
+              {oldestPendingDays !== null && oldestPendingDays >= 1 ? (
+                <p className="text-xs">
+                  Tertua: {oldestPendingDays} hari lalu
+                  {oldestPendingDays >= 3
+                    ? " — sudah lewat 3 hari, mohon segera review"
+                    : ""}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setFilter("pending_verification")}
+            className="border-warning-500 text-warning-700"
+          >
+            Tampilkan
+          </Button>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1">
           {filterChips.map((c) => (
@@ -109,10 +149,31 @@ export function SetoranTunaiView({ viewerRole }: Props) {
               }
             >
               {c.label}
+              {c.key === "pending_verification" && pendingCount > 0 ? (
+                <span className="ml-1.5 rounded-full bg-warning-500 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                  {pendingCount}
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
         <div className="ml-auto" />
+        {/* Sesi AE-123 — tombol "Setor Semua" one-click open create modal.
+         * Smart defaults effect di CashDepositModal akan auto-prefill 3
+         * field (amount, coversFromDate, coversToDate) via dashboard.
+         * Tampil hanya kalau ada outstanding cash yang belum disetor. */}
+        {canCreate && outstandingToDeposit > 0 ? (
+          <Button
+            variant="outline"
+            onClick={() => setCreateOpen(true)}
+            title="Setor semua kas yang belum disetor dengan periode auto-prefill"
+          >
+            <Wallet className="size-4" /> Setor Semua{" "}
+            <span className="font-mono">
+              {formatRupiah(outstandingToDeposit)}
+            </span>
+          </Button>
+        ) : null}
         {canCreate ? (
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="size-4" /> Catat Setoran

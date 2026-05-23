@@ -12,6 +12,8 @@ import {
  * → ~200-300KB JS dipakai mount /dashboard walaupun user cuma di dashboard. */
 import { DashboardHome } from "@/features/admin/sections/DashboardHome";
 import { useSession } from "@/features/auth/SessionProvider";
+import { useCashDepositDashboard } from "@/features/finance/useCashDepositDashboard";
+import { hasPermission } from "@/lib/auth/rbac";
 
 /* Helper: convert named export ke lazy-loaded default. Tiap section di-named
  * export (function NamaSection), tapi React.lazy butuh default. */
@@ -214,6 +216,19 @@ export function AdminShell() {
     }
   }, []);
 
+  /* Sesi AE-123 — sidebar badge pending setoran. Hanya fetch kalau user
+   * punya permission verify (owner). Cek session sebelum hook supaya hook
+   * order tetap stabil walau session null. */
+  const canVerifyDeposits = session
+    ? hasPermission(session.user.role, "cash_deposit.verify")
+    : false;
+  const depositDashboardQuery = useCashDepositDashboard();
+  const depositBadges = canVerifyDeposits
+    ? {
+        setoran_tunai: depositDashboardQuery.data?.pendingCount ?? 0,
+      }
+    : undefined;
+
   if (!session) return null;
 
   async function onLogout() {
@@ -227,6 +242,7 @@ export function AdminShell() {
         onChange={setSection}
         onLogout={onLogout}
         role={session.user.role}
+        badges={depositBadges}
       />
       <main className="flex-1 overflow-y-auto">
         {section === "dashboard" ? (

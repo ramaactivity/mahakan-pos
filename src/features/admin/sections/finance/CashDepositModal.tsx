@@ -47,6 +47,74 @@ function addOneDay(iso: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+/* Sesi AE-123 — localStorage draft autosave. Owner request: kalau modal
+ * ke-close accidentally (refresh tab, dll), input tidak hilang.
+ *
+ * Storage key per outlet supaya draft cross-outlet tidak bocor. Photo URL
+ * tidak di-save (transient asset, re-upload simpler). Edit mode tidak
+ * pakai draft (sumber data dari row, draft cuma untuk create). */
+const DRAFT_STORAGE_KEY = "mahakan:cash-deposit-draft:v1";
+
+interface DraftPayload {
+  depositDate: string | null;
+  amount: string;
+  bankDestination: string;
+  accountSelectId: string | null;
+  referenceNo: string;
+  notes: string;
+  coversFromDate: string | null;
+  coversToDate: string | null;
+  savedAt: number;
+}
+
+function loadDraft(): DraftPayload | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DraftPayload;
+    /* Drop draft > 24 jam (stale, kemungkinan owner sudah lupa). */
+    if (Date.now() - parsed.savedAt > 24 * 60 * 60 * 1000) {
+      window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(payload: Omit<DraftPayload, "savedAt">) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      DRAFT_STORAGE_KEY,
+      JSON.stringify({ ...payload, savedAt: Date.now() }),
+    );
+  } catch {
+    /* localStorage might be full/disabled — silently skip. */
+  }
+}
+
+function clearDraft() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function isDraftMeaningful(d: DraftPayload | null): boolean {
+  if (!d) return false;
+  return (
+    d.amount !== "" ||
+    d.bankDestination.trim() !== "" ||
+    d.referenceNo.trim() !== "" ||
+    d.notes.trim() !== ""
+  );
+}
+
 /**
  * Sesi AE-8 redesign — Catat Setoran Tunai with integrated upload + smart
  * defaults. Replaces old URL-paste field dengan proper Drive upload (clone
@@ -76,6 +144,8 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
   // bankDestination remains the saved string (formatted display from account
   // ATAU free-text yang user ketik manual).
   const [accountSelectId, setAccountSelectId] = useState<string | null>(null);
+  /* Sesi AE-123 — draft restoration prompt state. */
+  const [pendingDraft, setPendingDraft] = useState<DraftPayload | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -93,6 +163,7 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
       setNotes(editing.notes ?? "");
       setCoversFromDate(editing.coversFromDate);
       setCoversToDate(editing.coversToDate);
+      setPendingDraft(null);
     } else {
       const t = todayIso();
       setDepositDate(t);
@@ -105,9 +176,71 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
       setNotes("");
       setCoversFromDate(t);
       setCoversToDate(t);
+      /* Sesi AE-123 — check draft autosave. Kalau ada draft meaningful,
+       * tampilkan prompt restore (banner di atas form). User pilih restore
+       * atau diskard via tombol "Hapus draft". */
+      const draft = loadDraft();
+      setPendingDraft(isDraftMeaningful(draft) ? draft : null);
     }
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open, editing]);
+
+  /* Sesi AE-123 — autosave draft saat user ngetik (debounced 500ms).
+   * Hanya untuk create mode (edit mode pakai row data, tidak butuh draft). */
+  useEffect(() => {
+    if (!open || editing) return;
+    const handle = window.setTimeout(() => {
+      const payload = {
+        depositDate,
+        amount,
+        bankDestination,
+        accountSelectId,
+        referenceNo,
+        notes,
+        coversFromDate,
+        coversToDate,
+      };
+      /* Skip save kalau semua field default (no need to clutter storage). */
+      if (
+        amount === "" &&
+        bankDestination.trim() === "" &&
+        referenceNo.trim() === "" &&
+        notes.trim() === ""
+      ) {
+        return;
+      }
+      saveDraft(payload);
+    }, 500);
+    return () => window.clearTimeout(handle);
+  }, [
+    open,
+    editing,
+    depositDate,
+    amount,
+    bankDestination,
+    accountSelectId,
+    referenceNo,
+    notes,
+    coversFromDate,
+    coversToDate,
+  ]);
+
+  function applyDraft(d: DraftPayload) {
+    setDepositDate(d.depositDate);
+    setAmount(d.amount);
+    setBankDestination(d.bankDestination);
+    setAccountSelectId(d.accountSelectId);
+    setReferenceNo(d.referenceNo);
+    setNotes(d.notes);
+    setCoversFromDate(d.coversFromDate);
+    setCoversToDate(d.coversToDate);
+    setPendingDraft(null);
+  }
+
+  function discardDraft() {
+    clearDraft();
+    setPendingDraft(null);
+  }
 
   // Smart defaults effect — separate so it doesn't reset user inputs.
   useEffect(() => {
@@ -220,6 +353,8 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
         ? await updateCashDeposit({ id: editing.id, ...payload })
         : await createCashDeposit(payload);
       if (res.ok) {
+        /* Sesi AE-123 — clear draft autosave saat submit sukses. */
+        if (!editing) clearDraft();
         toast.success(editing ? "Setoran diupdate" : "Setoran dicatat");
         onSaved();
       } else {
@@ -258,6 +393,46 @@ export function CashDepositModal({ open, onClose, onSaved, editing }: Props) {
       }
     >
       <div className="space-y-4">
+        {/* Sesi AE-123 — draft autosave restore banner (create only). Muncul
+         * kalau ada draft di localStorage yang belum di-submit (mis. modal
+         * ke-close accidental, refresh tab). User pilih restore atau diskard. */}
+        {!editing && pendingDraft ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-info-300 bg-info-50 px-3 py-2 text-sm">
+            <div className="flex-1">
+              <p className="font-medium text-info-700">
+                Ada draft setoran sebelumnya
+              </p>
+              <p className="text-[11px] text-neutral-600">
+                Tersimpan{" "}
+                {new Date(pendingDraft.savedAt).toLocaleString("id-ID", {
+                  dateStyle: "short",
+                  timeStyle: "short",
+                })}{" "}
+                ·{" "}
+                {pendingDraft.amount
+                  ? formatRupiah(Number(pendingDraft.amount))
+                  : "—"}
+                {pendingDraft.bankDestination
+                  ? ` → ${pendingDraft.bankDestination}`
+                  : ""}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={discardDraft}
+                aria-label="Buang draft"
+              >
+                Buang
+              </Button>
+              <Button size="sm" onClick={() => applyDraft(pendingDraft)}>
+                Restore
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         {/* Cash on hand context (create only) */}
         {!editing && cashOnHand !== null ? (
           <div
