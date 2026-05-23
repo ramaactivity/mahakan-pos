@@ -73,6 +73,12 @@ export interface CreateIngredientInput {
   isPreparation?: boolean;
   preparationYield?: number | null;
   section?: IngredientSection | null;
+  /** Sesi AE-130 — multi-unit tier opsional. NULL/kosong = pakai
+   * `unit` (COGS) apa adanya. Per_cogs > 0 wajib kalau label di-set. */
+  unitTracking?: string | null;
+  unitTrackingPerCogs?: number | null;
+  unitBelanja?: string | null;
+  unitBelanjaPerCogs?: number | null;
 }
 
 export interface UpdateIngredientInput {
@@ -84,6 +90,11 @@ export interface UpdateIngredientInput {
   isActive?: boolean;
   preparationYield?: number | null;
   section?: IngredientSection | null;
+  /** Sesi AE-130 — multi-unit tier opsional. */
+  unitTracking?: string | null;
+  unitTrackingPerCogs?: number | null;
+  unitBelanja?: string | null;
+  unitBelanjaPerCogs?: number | null;
 }
 
 export interface BulkAssignSectionInput {

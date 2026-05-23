@@ -133,6 +133,12 @@ export async function fetchSessionDetail(
         section: ingredients.section,
         /* Sesi AE-62y — pack conversions diteruskan ke UI untuk picker. */
         packConversions: ingredients.packConversions,
+        /* Sesi AE-130 — multi-unit tier (Anisa feedback). Opname mobile
+         * pakai untuk picker + tracking preview. */
+        unitTracking: ingredients.unitTracking,
+        unitTrackingPerCogs: ingredients.unitTrackingPerCogs,
+        unitBelanja: ingredients.unitBelanja,
+        unitBelanjaPerCogs: ingredients.unitBelanjaPerCogs,
       },
     })
     .from(stockOpnameLines)

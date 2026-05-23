@@ -255,6 +255,17 @@ export async function createIngredient(
           isPreparation: v.isPreparation ?? false,
           preparationYield: v.preparationYield ?? null,
           section: v.section ?? null,
+          /* Sesi AE-130 — multi-unit tier. Label kosong → NULL = disabled. */
+          unitTracking: v.unitTracking?.trim() || null,
+          unitTrackingPerCogs:
+            v.unitTrackingPerCogs != null
+              ? v.unitTrackingPerCogs.toFixed(4)
+              : null,
+          unitBelanja: v.unitBelanja?.trim() || null,
+          unitBelanjaPerCogs:
+            v.unitBelanjaPerCogs != null
+              ? v.unitBelanjaPerCogs.toFixed(4)
+              : null,
           createdBy: session.user.id,
           updatedBy: session.user.id,
         })
@@ -336,13 +347,43 @@ export async function updateIngredient(
     // commit atomically. Advisory lock inside cascadeCostUpdate serializes
     // concurrent edits per outlet.
     const result = await db.transaction(async (tx) => {
+      /* Sesi AE-130 — numeric → string coercion. Drizzle numeric column
+       * di .set() expect string atau SQL. Explicit destructure supaya
+       * unit_tracking_per_cogs + unit_belanja_per_cogs di-serialize
+       * benar (4 decimal precision), plus normalize label kosong → NULL. */
+      const {
+        unitTracking,
+        unitTrackingPerCogs,
+        unitBelanja,
+        unitBelanjaPerCogs,
+        ...rest
+      } = v;
+      const setValues: Record<string, unknown> = {
+        ...rest,
+        updatedAt: new Date(),
+        updatedBy: session.user.id,
+      };
+      if (unitTracking !== undefined) {
+        setValues.unitTracking = unitTracking?.trim() || null;
+      }
+      if (unitTrackingPerCogs !== undefined) {
+        setValues.unitTrackingPerCogs =
+          unitTrackingPerCogs == null
+            ? null
+            : unitTrackingPerCogs.toFixed(4);
+      }
+      if (unitBelanja !== undefined) {
+        setValues.unitBelanja = unitBelanja?.trim() || null;
+      }
+      if (unitBelanjaPerCogs !== undefined) {
+        setValues.unitBelanjaPerCogs =
+          unitBelanjaPerCogs == null
+            ? null
+            : unitBelanjaPerCogs.toFixed(4);
+      }
       const [updated] = await tx
         .update(ingredients)
-        .set({
-          ...v,
-          updatedAt: new Date(),
-          updatedBy: session.user.id,
-        })
+        .set(setValues)
         .where(eq(ingredients.id, id))
         .returning();
 

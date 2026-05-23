@@ -23,6 +23,15 @@ export interface OpnameLineWithIngredient extends OpnameLine {
      * Diteruskan ke EditUnitModal + opname unit picker untuk auto-convert
      * input "1 packs" → "20 pcs". */
     packConversions: Array<{ unitLabel: string; qtyPerBase: number }> | null;
+    /** Sesi AE-130 — multi-unit tier (Anisa feedback).
+     *  Opname mobile pakai untuk:
+     *    1. Extend unit picker dengan tier labels (tracking + belanja)
+     *    2. Tampilkan tracking preview "≈ N Kotak" sebagai sanity check
+     *  NULL = tier disabled, fallback ke `unit` (COGS) apa adanya. */
+    unitTracking: string | null;
+    unitTrackingPerCogs: string | null;
+    unitBelanja: string | null;
+    unitBelanjaPerCogs: string | null;
   };
 }
 

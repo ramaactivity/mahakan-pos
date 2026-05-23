@@ -103,6 +103,30 @@ function todayJakartaIso(): string {
   }).format(new Date());
 }
 
+/** Sesi AE-130 — Merge two pack-conversion arrays, dedup by lowercase
+ *  label. Existing entries (from ingredient.packConversions JSONB) take
+ *  precedence over tier-derived ones supaya manual override-able. */
+function mergePackConversions(
+  primary: Array<{ unitLabel: string; qtyPerBase: number }>,
+  fallback: Array<{ unitLabel: string; qtyPerBase: number }>,
+): Array<{ unitLabel: string; qtyPerBase: number }> {
+  const seen = new Set<string>();
+  const out: Array<{ unitLabel: string; qtyPerBase: number }> = [];
+  for (const p of primary) {
+    const lc = p.unitLabel.trim().toLowerCase();
+    if (lc.length === 0 || seen.has(lc)) continue;
+    seen.add(lc);
+    out.push(p);
+  }
+  for (const p of fallback) {
+    const lc = p.unitLabel.trim().toLowerCase();
+    if (lc.length === 0 || seen.has(lc)) continue;
+    seen.add(lc);
+    out.push(p);
+  }
+  return out;
+}
+
 function addDaysIso(iso: string, days: number): string {
   const d = new Date(iso + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + days);
@@ -258,17 +282,43 @@ export async function createPurchase(
        * loop write berikut. */
       const resolved = v.items.map((item) => {
         const ing = ingById.get(item.ingredientId)!;
+        /* Sesi AE-130 — multi-unit tier (Anisa feedback). Merge
+         * ingredient.unitBelanja & unitTracking sebagai SYNTHETIC pack
+         * entries supaya convertPurchaseQty bisa resolve label custom
+         * (mis. "Kotak", "Karung") tanpa harus duplicate ke packConversions
+         * jsonb. Same-dimension labels (L, Kg) tetap auto-handled via
+         * UNIT_TABLE; ini extension untuk discrete tier labels. */
+        const existingPacks =
+          (ing.packConversions as
+            | Array<{ unitLabel: string; qtyPerBase: number }>
+            | null) ?? [];
+        const tierPacks: Array<{ unitLabel: string; qtyPerBase: number }> = [];
+        if (ing.unitBelanja && ing.unitBelanjaPerCogs) {
+          const per = parseFloat(ing.unitBelanjaPerCogs);
+          if (Number.isFinite(per) && per > 0) {
+            tierPacks.push({
+              unitLabel: ing.unitBelanja,
+              qtyPerBase: per,
+            });
+          }
+        }
+        if (ing.unitTracking && ing.unitTrackingPerCogs) {
+          const per = parseFloat(ing.unitTrackingPerCogs);
+          if (Number.isFinite(per) && per > 0) {
+            tierPacks.push({
+              unitLabel: ing.unitTracking,
+              qtyPerBase: per,
+            });
+          }
+        }
+        const mergedPacks = mergePackConversions(existingPacks, tierPacks);
+
         const res = convertPurchaseQty({
           qty: item.qty,
           fromUnit: item.unit ?? ing.unit,
           masterUnit: ing.unit,
           pack: packMap.get(item.ingredientId) ?? null,
-          /* Sesi AE-62af — server juga honor ingredient-scoped packs supaya
-           * client convert valid lewat di server re-validate path. */
-          ingredientPacks:
-            (ing.packConversions as
-              | Array<{ unitLabel: string; qtyPerBase: number }>
-              | null) ?? null,
+          ingredientPacks: mergedPacks,
         });
         if (!res.ok) {
           throw new Error(`UNIT_ERROR:${ing.name}:${res.message}`);

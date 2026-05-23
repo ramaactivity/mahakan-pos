@@ -26,9 +26,12 @@ import type {
 } from "@/features/stock-opname/types";
 import { AddOpnameItemModal } from "@/features/admin/sections/inventory/opname/AddOpnameItemModal";
 import {
+  cogsToTracking,
   compatibleUnitsFor,
   convertQtyWithIngredientPacks,
   resolveUnit,
+  type IngredientPackConversion,
+  type IngredientUnitTiers,
 } from "@/lib/unit-conversion";
 import { cn } from "@/lib/utils";
 
@@ -536,10 +539,51 @@ function LineRow({
     if (Number.isFinite(p) && p >= 0) parsedActual = p;
   }
 
-  // Sesi AE-20 → AE-62y — convert input → master unit untuk diff calc +
-  // preview. Pakai convertQtyWithIngredientPacks supaya pack conversions
-  // (1 packs = 20 pcs) ikut ke-respect di preview live.
-  const ingredientPacks = line.ingredient.packConversions ?? null;
+  /* Sesi AE-130 — extend ingredientPacks dengan tier labels (tracking +
+   * belanja) supaya staff bisa pilih label "Kotak"/"Karung"/"L" di
+   * unit picker tanpa harus duplicate ke packConversions JSONB. */
+  const basePacks = (line.ingredient.packConversions ??
+    null) as IngredientPackConversion[] | null;
+  const tierPacks: IngredientPackConversion[] = [];
+  if (
+    line.ingredient.unitTracking &&
+    line.ingredient.unitTrackingPerCogs
+  ) {
+    const per = parseFloat(line.ingredient.unitTrackingPerCogs);
+    if (Number.isFinite(per) && per > 0) {
+      tierPacks.push({
+        unitLabel: line.ingredient.unitTracking,
+        qtyPerBase: per,
+      });
+    }
+  }
+  if (line.ingredient.unitBelanja && line.ingredient.unitBelanjaPerCogs) {
+    const per = parseFloat(line.ingredient.unitBelanjaPerCogs);
+    if (Number.isFinite(per) && per > 0) {
+      tierPacks.push({
+        unitLabel: line.ingredient.unitBelanja,
+        qtyPerBase: per,
+      });
+    }
+  }
+  const ingredientPacks: IngredientPackConversion[] | null = (() => {
+    const merged: IngredientPackConversion[] = [];
+    const seen = new Set<string>();
+    for (const p of basePacks ?? []) {
+      const lc = p.unitLabel.trim().toLowerCase();
+      if (!lc || seen.has(lc)) continue;
+      seen.add(lc);
+      merged.push(p);
+    }
+    for (const p of tierPacks) {
+      const lc = p.unitLabel.trim().toLowerCase();
+      if (!lc || seen.has(lc)) continue;
+      seen.add(lc);
+      merged.push(p);
+    }
+    return merged.length > 0 ? merged : null;
+  })();
+
   let convertedToMaster: number | null = parsedActual;
   if (parsedActual !== null && inputUnit !== masterUnit) {
     const r = convertQtyWithIngredientPacks(
@@ -557,6 +601,19 @@ function LineRow({
 
   const fmt = (n: number) =>
     new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(n);
+
+  /* Sesi AE-130 — tracking preview (Anisa: "untuk sisa pakai satuan
+   * terbesar"). Saat ingredient punya unit_tracking + per_cogs, tampilkan
+   * input dalam tracking unit sebagai sanity check buat staff. */
+  const tiers: IngredientUnitTiers = {
+    cogsUnit: masterUnit,
+    trackingUnit: line.ingredient.unitTracking,
+    trackingPerCogs: line.ingredient.unitTrackingPerCogs,
+  };
+  const trackingPreview =
+    convertedToMaster !== null && line.ingredient.unitTracking
+      ? cogsToTracking(convertedToMaster, tiers)
+      : null;
 
   // Sesi AE-62y — unit options include ingredient pack alternatives.
   // Untuk ingredient yang punya pack mapping (mis. "packs" 20 pcs untuk
@@ -636,6 +693,19 @@ function LineRow({
           ={" "}
           <span className="font-mono">{fmt(convertedToMaster)}</span>{" "}
           {masterUnit}
+        </p>
+      ) : null}
+      {/* Sesi AE-130 — tracking preview (Anisa: "untuk sisa pakai satuan
+          terbesar"). Tampil saat ingredient punya unit_tracking yang scale-nya
+          beda dari unit yang sedang di-input, sebagai sanity check. */}
+      {trackingPreview !== null &&
+      line.ingredient.unitTracking &&
+      line.ingredient.unitTracking !== inputUnit &&
+      line.ingredient.unitTracking !== masterUnit ? (
+        <p className="mt-0.5 text-[11px] text-mahakan-green-700">
+          ≈{" "}
+          <span className="font-mono">{fmt(trackingPreview)}</span>{" "}
+          {line.ingredient.unitTracking}
         </p>
       ) : null}
       {diff !== null && diff !== 0 ? (

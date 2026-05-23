@@ -47,6 +47,13 @@ export function IngredientFormModal({
   const [section, setSection] = useState<IngredientSection | "__none">(
     "__none",
   );
+  /* Sesi AE-130 — multi-unit tier inputs (Anisa feedback). Empty string =
+   * tier disabled, fallback ke unit utama. Per_cogs = berapa unit utama
+   * per 1 satuan ini. */
+  const [unitTracking, setUnitTracking] = useState("");
+  const [unitTrackingPerCogs, setUnitTrackingPerCogs] = useState("");
+  const [unitBelanja, setUnitBelanja] = useState("");
+  const [unitBelanjaPerCogs, setUnitBelanjaPerCogs] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,6 +71,14 @@ export function IngredientFormModal({
       setNotes(edit.notes ?? "");
       setIsActive(edit.isActive);
       setSection(edit.section ?? "__none");
+      setUnitTracking(edit.unitTracking ?? "");
+      setUnitTrackingPerCogs(
+        edit.unitTrackingPerCogs ? String(parseFloat(edit.unitTrackingPerCogs)) : "",
+      );
+      setUnitBelanja(edit.unitBelanja ?? "");
+      setUnitBelanjaPerCogs(
+        edit.unitBelanjaPerCogs ? String(parseFloat(edit.unitBelanjaPerCogs)) : "",
+      );
     } else {
       setName("");
       setUnit("g");
@@ -73,6 +88,10 @@ export function IngredientFormModal({
       setNotes("");
       setIsActive(true);
       setSection("__none");
+      setUnitTracking("");
+      setUnitTrackingPerCogs("");
+      setUnitBelanja("");
+      setUnitBelanjaPerCogs("");
     }
     setError(null);
     setSubmitting(false);
@@ -118,12 +137,42 @@ export function IngredientFormModal({
       return;
     }
 
+    /* Sesi AE-130 — parse 3-unit tier inputs (Anisa feedback).
+     * Validasi: kalau label di-set, per_cogs WAJIB positif. Kalau label
+     * kosong, per_cogs di-ignore (tier disabled). */
+    const trackingLabel = unitTracking.trim();
+    const trackingPer = parseDecimalOrNull(unitTrackingPerCogs);
+    if (trackingLabel.length > 0 && (trackingPer === null || trackingPer <= 0)) {
+      setError(
+        `Konversi satuan terbesar harus diisi (mis. 1 ${trackingLabel} = ? ${unit || "satuan utama"})`,
+      );
+      return;
+    }
+    const belanjaLabel = unitBelanja.trim();
+    const belanjaPer = parseDecimalOrNull(unitBelanjaPerCogs);
+    if (belanjaLabel.length > 0 && (belanjaPer === null || belanjaPer <= 0)) {
+      setError(
+        `Konversi satuan belanja harus diisi (mis. 1 ${belanjaLabel} = ? ${unit || "satuan utama"})`,
+      );
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
 
     const trimmedNotes = notes.trim();
     const sectionValue =
       section === "__none" ? null : (section as IngredientSection);
+    /* Sesi AE-130 — payload tier: kalau label kosong → null untuk wipe.
+     * Per_cogs juga null kalau label null (tier disabled). */
+    const trackingPayload = {
+      unitTracking: trackingLabel.length > 0 ? trackingLabel : null,
+      unitTrackingPerCogs: trackingLabel.length > 0 ? trackingPer : null,
+    };
+    const belanjaPayload = {
+      unitBelanja: belanjaLabel.length > 0 ? belanjaLabel : null,
+      unitBelanjaPerCogs: belanjaLabel.length > 0 ? belanjaPer : null,
+    };
     const res = edit
       ? await updateIngredient(edit.id, {
           name: name.trim(),
@@ -133,6 +182,8 @@ export function IngredientFormModal({
           notes: trimmedNotes.length > 0 ? trimmedNotes : null,
           isActive,
           section: sectionValue,
+          ...trackingPayload,
+          ...belanjaPayload,
         })
       : await createIngredient({
           name: name.trim(),
@@ -142,6 +193,8 @@ export function IngredientFormModal({
           reorderThreshold: threshold,
           notes: trimmedNotes.length > 0 ? trimmedNotes : null,
           section: sectionValue,
+          ...trackingPayload,
+          ...belanjaPayload,
         });
 
     if (!isOk(res)) {
@@ -269,6 +322,97 @@ export function IngredientFormModal({
            * yang familiar di operasi gudang Indonesia. */
         />
 
+        {/* Sesi AE-130 — Satuan Lainnya (Anisa feedback). Optional tier
+            untuk tracking display + belanja default. Kalau staff tidak
+            mau pakai, biarkan kosong; semua flow tetap pakai unit utama. */}
+        <details className="rounded-md border border-neutral-200 bg-neutral-50/40">
+          <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-neutral-900">
+            Satuan Lainnya (opsional)
+          </summary>
+          <div className="space-y-3 border-t border-neutral-200 px-3 py-3">
+            <p className="text-xs text-neutral-600 leading-relaxed">
+              Tambahkan satuan beda untuk display di Inventory (mis.
+              &ldquo;Kotak&rdquo;) atau saat Catat Pembelian (mis.
+              &ldquo;L&rdquo;), sambil tetap pakai{" "}
+              <strong>{unit || "satuan utama"}</strong> sebagai dasar
+              perhitungan resep + cost. Kosongkan kalau tidak perlu.
+            </p>
+
+            {/* Tracking tier — satuan terbesar untuk tampilan Inventory list */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-neutral-800">
+                Satuan Tampilan / Tracking
+              </label>
+              <div className="flex items-center gap-2">
+                <Input
+                  aria-label="Label satuan tracking"
+                  placeholder="mis. Kotak / Karung / Btl"
+                  value={unitTracking}
+                  onChange={(e) => setUnitTracking(e.target.value)}
+                  className="flex-1"
+                />
+                <span className="shrink-0 text-xs text-neutral-500">
+                  = berisi
+                </span>
+                <Input
+                  aria-label="Jumlah unit utama per 1 satuan tracking"
+                  placeholder="1000"
+                  value={unitTrackingPerCogs}
+                  onChange={(e) => setUnitTrackingPerCogs(e.target.value)}
+                  type="text"
+                  inputMode="decimal"
+                  className="w-24"
+                  disabled={unitTracking.trim().length === 0}
+                />
+                <span className="shrink-0 text-xs text-neutral-500">
+                  {unit || "satuan utama"}
+                </span>
+              </div>
+              <p className="text-[11px] text-neutral-500">
+                Mis. susu: 1 Kotak = 1000 ml. Inventory akan tampilkan
+                &ldquo;2 Kotak&rdquo; alih-alih &ldquo;2000 ml&rdquo;
+                supaya lebih mudah dibaca.
+              </p>
+            </div>
+
+            {/* Belanja tier — default unit saat Catat Pembelian */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-neutral-800">
+                Satuan Belanja / PR
+              </label>
+              <div className="flex items-center gap-2">
+                <Input
+                  aria-label="Label satuan belanja"
+                  placeholder="mis. L / Kg / Pack"
+                  value={unitBelanja}
+                  onChange={(e) => setUnitBelanja(e.target.value)}
+                  className="flex-1"
+                />
+                <span className="shrink-0 text-xs text-neutral-500">
+                  = berisi
+                </span>
+                <Input
+                  aria-label="Jumlah unit utama per 1 satuan belanja"
+                  placeholder="1000"
+                  value={unitBelanjaPerCogs}
+                  onChange={(e) => setUnitBelanjaPerCogs(e.target.value)}
+                  type="text"
+                  inputMode="decimal"
+                  className="w-24"
+                  disabled={unitBelanja.trim().length === 0}
+                />
+                <span className="shrink-0 text-xs text-neutral-500">
+                  {unit || "satuan utama"}
+                </span>
+              </div>
+              <p className="text-[11px] text-neutral-500">
+                Mis. susu beli per L (1 L = 1000 ml). Form Catat Pembelian
+                otomatis pakai &ldquo;L&rdquo; sebagai default.
+              </p>
+            </div>
+          </div>
+        </details>
+
         <div className="space-y-1.5">
           <label className="block text-sm font-medium text-neutral-900">
             Catatan (opsional)
@@ -326,4 +470,14 @@ function parseRupiahSafe(s: string): number {
 function parseIntOrZeroSafe(s: string): number {
   const n = parseInt(s, 10);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** Sesi AE-130 — parse decimal (accept koma OR titik separator).
+ *  Returns null untuk empty/invalid/non-positive. */
+function parseDecimalOrNull(s: string): number | null {
+  const cleaned = s.trim().replace(/\s/g, "").replace(",", ".");
+  if (cleaned.length === 0) return null;
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return null;
+  return n;
 }

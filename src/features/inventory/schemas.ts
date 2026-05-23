@@ -39,6 +39,29 @@ const sectionEnum = z
   .nullable()
   .optional();
 
+/** Sesi AE-130 — Multi-unit tier (Anisa feedback).
+ *
+ * Validasi triple satuan opsional:
+ *  - unitTracking + unitTrackingPerCogs: display human-friendly terbesar
+ *  - unitBelanja + unitBelanjaPerCogs: default saat Catat Pembelian / PR
+ *
+ * Semantik: label kosong (NULL/"") = tier disabled, fallback ke `unit`
+ * (COGS unit). per_cogs > 0 wajib kalau di-set; tidak boleh 0 (divide
+ * by zero) atau negatif. */
+const unitTierLabel = z
+  .string()
+  .trim()
+  .min(1)
+  .max(UNIT_MAX)
+  .nullable()
+  .optional();
+const unitTierPerCogs = z
+  .number()
+  .positive("Konversi unit harus > 0")
+  .max(10_000_000_000)
+  .nullable()
+  .optional();
+
 export const createIngredientSchema = z
   .object({
     name: z.string().trim().min(NAME_MIN).max(NAME_MAX),
@@ -50,6 +73,11 @@ export const createIngredientSchema = z
     isPreparation: z.boolean().optional().default(false),
     preparationYield: qtyPositive.nullable().optional(),
     section: sectionEnum,
+    /** Sesi AE-130 — multi-unit tier opsional. */
+    unitTracking: unitTierLabel,
+    unitTrackingPerCogs: unitTierPerCogs,
+    unitBelanja: unitTierLabel,
+    unitBelanjaPerCogs: unitTierPerCogs,
   })
   .refine(
     (v) => !v.isPreparation || (v.preparationYield != null),
@@ -95,6 +123,12 @@ export const updateIngredientSchema = z
     section: sectionEnum,
     /** Sesi AE-62y — opt-in pack conversion mappings. Null = wipe. */
     packConversions: packConversionsSchema.nullable().optional(),
+    /** Sesi AE-130 — multi-unit tier opsional. NULL = tier disabled
+     * (fallback ke `unit`). */
+    unitTracking: unitTierLabel,
+    unitTrackingPerCogs: unitTierPerCogs,
+    unitBelanja: unitTierLabel,
+    unitBelanjaPerCogs: unitTierPerCogs,
   })
   .refine(
     (v) => Object.keys(v).length > 0,

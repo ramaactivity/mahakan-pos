@@ -1334,6 +1334,12 @@ export async function addOpnameItemAdHoc(
         /* Sesi AE-62y — new ad-hoc ingredient lewat opname tidak punya
          * pack conversions; owner bisa add later via Edit Satuan modal. */
         packConversions: null,
+        /* Sesi AE-130 — ad-hoc ingredient juga belum punya tier mapping;
+         * owner set later via IngredientFormModal. NULL = tier disabled. */
+        unitTracking: null,
+        unitTrackingPerCogs: null,
+        unitBelanja: null,
+        unitBelanjaPerCogs: null,
       },
     };
     return ok(lineWithIng);

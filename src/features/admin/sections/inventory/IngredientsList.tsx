@@ -50,6 +50,11 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { currentJakartaMonth } from "@/lib/date";
 import { formatRupiah } from "@/lib/format";
 import { formatStockQty } from "@/lib/stock-decimal";
+import {
+  cogsToTracking,
+  effectiveTrackingUnit,
+  type IngredientUnitTiers,
+} from "@/lib/unit-conversion";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "../reports/menu-engineering-csv";
 import { exportIngredientsCsv } from "@/features/inventory/csv-actions";
@@ -800,12 +805,15 @@ export function IngredientsList() {
                             i.currentStock < 0 ? "text-danger-700" : "",
                           )}
                         >
-                          {formatStockQty(
-                            i.currentStock,
-                            i.currentStockDecimal ?? null,
-                          )}
+                          {/* Sesi AE-130 — display dalam tracking unit
+                              kalau set (Anisa: "untuk sisa pakai satuan
+                              terbesar"). COGS breakdown subtle di bawah
+                              supaya tidak hilang info presisi. */}
+                          <StockDisplay ingredient={i} />
                         </td>
-                        <td className="px-4 py-3 text-neutral-700">{i.unit}</td>
+                        <td className="px-4 py-3 text-neutral-700">
+                          {i.unitTracking?.trim() || i.unit}
+                        </td>
                         {/* Sesi AE-130 — Cost/Unit per-row dihilangkan (lihat
                          * header comment). Tab Bahan = fokus stok, bukan harga. */}
                         <td className="px-4 py-3 text-right font-mono text-xs">
@@ -1344,4 +1352,76 @@ function FlowQtyCell({
       <div className="text-[10px] text-neutral-500">{formatRupiah(cost)}</div>
     </td>
   );
+}
+
+/**
+ * Sesi AE-130 — Stock display dengan multi-unit tier (Anisa feedback).
+ * Kalau ingredient punya unit_tracking + per_cogs aktif, render dalam
+ * tracking unit (mis. "2,5 Kotak") dengan COGS breakdown subtle di
+ * bawah ("2.500 ml"). Tanpa tier → render apa adanya.
+ */
+function StockDisplay({
+  ingredient,
+}: {
+  ingredient: {
+    currentStock: number;
+    currentStockDecimal: string | null;
+    unit: string;
+    unitTracking: string | null;
+    unitTrackingPerCogs: string | null;
+  };
+}) {
+  const qtyCogs =
+    ingredient.currentStockDecimal !== null
+      ? parseFloat(ingredient.currentStockDecimal)
+      : ingredient.currentStock;
+
+  const tiers: IngredientUnitTiers = {
+    cogsUnit: ingredient.unit,
+    trackingUnit: ingredient.unitTracking,
+    trackingPerCogs: ingredient.unitTrackingPerCogs,
+  };
+  const trackingLabel = ingredient.unitTracking?.trim();
+  const hasActiveTier =
+    Boolean(trackingLabel) &&
+    Boolean(ingredient.unitTrackingPerCogs) &&
+    Number(ingredient.unitTrackingPerCogs) > 0;
+
+  const fmt = (n: number) =>
+    new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(n);
+
+  if (!hasActiveTier) {
+    return (
+      <>
+        {formatStockQty(
+          ingredient.currentStock,
+          ingredient.currentStockDecimal ?? null,
+        )}
+      </>
+    );
+  }
+
+  const tracking = cogsToTracking(qtyCogs, tiers);
+  return (
+    <div className="flex flex-col items-end leading-tight">
+      <span>{fmt(tracking)}</span>
+      <span className="text-[10px] text-neutral-500">
+        {fmt(qtyCogs)} {ingredient.unit}
+      </span>
+    </div>
+  );
+}
+
+/** Sesi AE-130 — expose effective unit (tracking kalau aktif, COGS fallback)
+ *  untuk consumer di file ini. Re-export untuk konsistensi pakai helper. */
+export function ingredientEffectiveUnit(ingredient: {
+  unit: string;
+  unitTracking: string | null;
+  unitTrackingPerCogs: string | null;
+}): string {
+  return effectiveTrackingUnit({
+    cogsUnit: ingredient.unit,
+    trackingUnit: ingredient.unitTracking,
+    trackingPerCogs: ingredient.unitTrackingPerCogs,
+  });
 }

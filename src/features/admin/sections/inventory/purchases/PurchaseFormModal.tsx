@@ -670,18 +670,39 @@ export function PurchaseFormModal({
     if (!ing) return;
     const row = items.find((r) => r.id === rowId);
     const patch: Partial<ItemRow> = { ingredientId };
+
+    /* Sesi AE-130 — multi-unit tier (Anisa feedback). Kalau ingredient
+     * punya unit_belanja yang di-set, prefer itu sebagai default untuk
+     * Catat Pembelian — sesuai concept "belanja per L, simpan per ml".
+     * Cost juga di-scale supaya angka yang muncul = Rp per belanja-unit
+     * (mis. Rp 12000 per L), bukan Rp per COGS-unit (Rp 12 per ml).
+     *
+     * Kalau belanja tier disabled (NULL), fallback ke COGS unit + cost
+     * apa adanya (perilaku lama). Server tetap source-of-truth: dia
+     * convert qty + cost ke COGS unit saat write. */
+    const belanjaUnit = ing.unitBelanja?.trim() || null;
+    const belanjaPerCogs = ing.unitBelanjaPerCogs
+      ? parseFloat(ing.unitBelanjaPerCogs)
+      : null;
+    const defaultUnit = belanjaUnit || ing.unit;
+    const costScale =
+      belanjaUnit && belanjaPerCogs && belanjaPerCogs > 0
+        ? belanjaPerCogs
+        : 1;
+    const defaultCost = Math.round(ing.costPerUnit * costScale);
+
     // Auto-fill unit cost from master kalau row kosong.
-    if (row && row.unitCost.trim() === "" && ing.costPerUnit > 0) {
-      patch.unitCost = String(ing.costPerUnit);
+    if (row && row.unitCost.trim() === "" && defaultCost > 0) {
+      patch.unitCost = String(defaultCost);
       /* Sesi AE-78 — sync total kalau qty sudah ada (mirror existing math). */
       const qtyN = row ? parseQtyDecimal(row.qty) : NaN;
       if (Number.isFinite(qtyN) && qtyN > 0) {
-        patch.total = String(Math.round(qtyN * ing.costPerUnit));
+        patch.total = String(Math.round(qtyN * defaultCost));
       }
     }
     // Auto-fill unit dari master kalau staff belum pilih.
     if (row && !row.unit) {
-      patch.unit = ing.unit;
+      patch.unit = defaultUnit;
     }
     updateRow(rowId, patch);
     // Sesi AE-21 — kalau supplier sudah dipilih, lookup market list price
