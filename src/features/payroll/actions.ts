@@ -727,6 +727,28 @@ export async function finalizePayrollPeriod(
     },
   }).catch((e) => console.error("[audit payroll.finalize]", e));
 
+  /* Sesi AE-124 — push notif HR + Finance bahwa payroll siap kirim slip.
+   * Honor quiet hours + snooze. Fire-and-forget. */
+  void (async () => {
+    try {
+      const { sendCategorizedPush } = await import(
+        "@/features/push-notifications/server"
+      );
+      await sendCategorizedPush(
+        "payroll",
+        session.user.outletId,
+        {
+          title: `Payroll ${row.label} di-finalize`,
+          body: `Siap untuk Mark Paid + kirim slip ke karyawan.`,
+          url: "/dashboard#hr_operations",
+          tag: `payroll-finalize-${row.id.slice(0, 8)}`,
+        },
+      );
+    } catch (e) {
+      console.error("[push] payroll.finalize notif fail:", e);
+    }
+  })();
+
   return ok(row);
 }
 

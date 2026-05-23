@@ -1510,5 +1510,34 @@ export function fireJournalHook(
         console.error(`[journal:${label}] retry-queue enqueue failure`, queueErr);
       }
     }
+
+    /* Sesi AE-124 — push notif ke kategori system (urgent → bypass quiet
+     * hours, Rama dev) + finance_close (Inab non-urgent). Honor preferences
+     * lain. Fire-and-forget, tidak block source action. */
+    if (context?.outletId) {
+      try {
+        const { sendCategorizedPush } = await import(
+          "@/features/push-notifications/server"
+        );
+        const errMsg = e instanceof Error ? e.message : String(e);
+        const shortMsg = errMsg.slice(0, 100);
+        const payload = {
+          title: `Journal hook gagal: ${label}`,
+          body: `Source ${context.sourceId?.slice(0, 8) ?? "?"}: ${shortMsg}${retrySpec ? " (auto-retry enabled)" : ""}`,
+          url: "/dashboard#journal_retry",
+          tag: `journal-error-${label}`,
+        };
+        /* System urgent (bypass quiet hours) — kirim ke Rama dev. */
+        await sendCategorizedPush("system", context.outletId, payload);
+        /* finance_close non-urgent — kirim ke Inab + Sekal kalau jam kerja. */
+        await sendCategorizedPush(
+          "finance_close",
+          context.outletId,
+          payload,
+        );
+      } catch (pushErr) {
+        console.error(`[journal:${label}] push notif fail`, pushErr);
+      }
+    }
   });
 }

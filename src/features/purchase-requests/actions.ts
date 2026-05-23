@@ -322,6 +322,29 @@ export async function createPurchaseRequest(
     },
   }).catch((e) => console.error("[audit purchase_request.create]", e));
 
+  /* Sesi AE-124 — push notif ke user yang subscribed kategori "inventory"
+   * di outlet (default: Cacil, plus Rama+Sekal). Honor quiet hours + snooze.
+   * Fire-and-forget. */
+  void (async () => {
+    try {
+      const { sendCategorizedPush } = await import(
+        "@/features/push-notifications/server"
+      );
+      await sendCategorizedPush(
+        "inventory",
+        session.user.outletId,
+        {
+          title: "Permintaan belanja baru",
+          body: `${session.user.name} request ${result.itemCount} item${input.notes ? ` · ${input.notes.slice(0, 60)}` : ""}`,
+          url: "/dashboard#purchase_requests",
+          tag: `pr-new-${result.id.slice(0, 8)}`,
+        },
+      );
+    } catch (e) {
+      console.error("[push] purchase_request.create notif fail:", e);
+    }
+  })();
+
   return ok(result);
 }
 

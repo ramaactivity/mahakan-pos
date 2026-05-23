@@ -469,6 +469,33 @@ export async function closeShift(
     }
   }
 
+  /* Sesi AE-124 — push notif Finance + Manager kalau variance significant.
+   * Threshold 50.000 (lebih kecil dari itu = noise normal). Fire-and-forget.
+   * Honor quiet hours + snooze via sendCategorizedPush. */
+  if (Math.abs(variance) >= 50_000) {
+    void (async () => {
+      try {
+        const { sendCategorizedPush } = await import(
+          "@/features/push-notifications/server"
+        );
+        const sign = variance > 0 ? "+" : "−";
+        const absVar = Math.abs(variance).toLocaleString("id-ID");
+        await sendCategorizedPush(
+          "shift",
+          session.user.outletId,
+          {
+            title: `Shift variance Rp ${sign}${absVar}`,
+            body: `Shift ${updated.id.slice(0, 8)} closed dengan variance signifikan. Mohon review balance.`,
+            url: "/dashboard#shifts",
+            tag: `shift-variance-${updated.id.slice(0, 8)}`,
+          },
+        );
+      } catch (e) {
+        console.error("[push] shift.variance notif fail:", e);
+      }
+    })();
+  }
+
   return ok({
     shift: updated,
     summary: {
