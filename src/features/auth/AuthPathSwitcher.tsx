@@ -33,18 +33,22 @@ function AuthPathSwitcherInner() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams?.get("callbackUrl") ?? "";
-  /* Sesi AE-127 — `?next=` ditambah oleh RequireAuth saat redirect dari
-   * /dashboard atau /pos. Kalau ada `next`, anggap user sudah punya
-   * target spesifik → hide switcher (langsung tampilkan form). */
+  /* Sesi AE-127 — `?next=` ditambah oleh RequireAuth (client-side
+   * fallback), `?callbackUrl=` ditambah oleh proxy.ts middleware
+   * (Next.js 16 rename of middleware.ts). KEDUANYA signal "user
+   * sudah ke arah tertentu, tidak perlu pilih lagi". */
   const nextParam = searchParams?.get("next") ?? "";
-  const isStaffContext = callbackUrl.startsWith("/m");
+  const redirectContext = nextParam || callbackUrl;
+  const isStaffContext = redirectContext.startsWith("/m");
   const isPin = pathname?.startsWith("/pin") ?? false;
   const isLogin = pathname?.startsWith("/login") ?? false;
 
   /* Sesi AE-127 — user di-redirect dari context spesifik (/dashboard, /pos).
    * Hide switcher karena user tidak butuh pilih lagi — URL tujuan sudah
-   * jelas. Mereka pasti owner (kalau dari /dashboard) atau kasir (dari /pos). */
-  if (nextParam) return null;
+   * jelas. Mereka pasti owner (kalau dari /dashboard) atau kasir (dari /pos).
+   * Exception: kalau staff context (/m), tetap pakai badge "Login Karyawan"
+   * (logic di bawah). */
+  if (redirectContext && !isStaffContext) return null;
 
   // Sesi AE-17 — staff context: render single badge instead of switcher.
   if (isStaffContext && isPin) {

@@ -38,14 +38,16 @@ function LoginContent() {
   const [submitting, setSubmitting] = useState(false);
   const [shake, setShake] = useState(false);
 
-  /* Sesi AE-127 — kalau RequireAuth append `?next=<path>` saat redirect,
-   * pakai itu sebagai destination setelah login sukses. Default
-   * role-based: staff → /pos, lainnya → /dashboard. */
-  const nextParam = params.get("next") ?? "";
+  /* Sesi AE-127 — Destination setelah login sukses, prefer:
+   *   1. `?next=` (dari RequireAuth client-side)
+   *   2. `?callbackUrl=` (dari proxy.ts middleware Next.js 16)
+   *   3. role-based default (staff → /pos, lainnya → /dashboard)
+   *
+   * Safety: hanya accept relative path yang valid (start with /,
+   * bukan //... untuk prevent open redirect). */
+  const nextRaw = params.get("next") ?? params.get("callbackUrl") ?? "";
   const safeNext =
-    nextParam.startsWith("/") && !nextParam.startsWith("//")
-      ? nextParam
-      : null;
+    nextRaw.startsWith("/") && !nextRaw.startsWith("//") ? nextRaw : null;
 
   useEffect(() => {
     if (status === "authenticated" && session) {
