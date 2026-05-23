@@ -408,15 +408,16 @@ export async function createCashDeposit(
     },
   }).catch((e) => console.error("[audit cash_deposit.create]", e));
 
-  /* Sesi AE-123 — push notif ke verifier (owner) di outlet. Gracefully
-   * no-op kalau VAPID env tidak di-set. Fire-and-forget supaya tidak
-   * blocking response. */
+  /* Sesi AE-123+124 — push notif ke user yang subscribed ke kategori
+   * finance_payment di outlet. Honor quiet hours + snooze. Gracefully
+   * no-op kalau VAPID env tidak di-set. Fire-and-forget. */
   void (async () => {
     try {
-      const { sendPushToOutletVerifiers } = await import(
+      const { sendCategorizedPush } = await import(
         "@/features/push-notifications/server"
       );
-      const result = await sendPushToOutletVerifiers(
+      const result = await sendCategorizedPush(
+        "finance_payment",
         session.user.outletId,
         {
           title: "Setoran tunai baru menunggu verifikasi",
@@ -424,11 +425,10 @@ export async function createCashDeposit(
           url: "/dashboard#setoran_tunai",
           tag: "setoran-pending",
         },
-        { roles: ["owner"] },
       );
-      if (result.sent > 0) {
+      if (result.sent > 0 || result.skippedQuiet > 0 || result.skippedSnooze > 0) {
         console.info(
-          `[push] setoran-pending sent to ${result.sent} subscription(s)`,
+          `[push:finance_payment] sent=${result.sent} skipQuiet=${result.skippedQuiet} skipSnooze=${result.skippedSnooze} skipOptOut=${result.skippedOptOut}`,
         );
       }
     } catch (e) {

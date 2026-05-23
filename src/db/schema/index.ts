@@ -45,3 +45,5 @@ export * from "./share_transactions";
 export * from "./withdrawal_requests";
 /* Sesi AE-123 — Web Push subscription registry untuk notif setoran pending. */
 export * from "./push_subscriptions";
+/* Sesi AE-124 — Per-user notification category subscription. */
+export * from "./user_notification_subscriptions";

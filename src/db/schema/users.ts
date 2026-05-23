@@ -34,6 +34,19 @@ export const users = pgTable(
     failedAttempts: integer("failed_attempts").notNull().default(0),
     lockedUntil: timestamp("locked_until", { withTimezone: true }),
 
+    /* Sesi AE-124 — quiet hours global per user untuk web push notif.
+     * Stored sebagai minutes-of-day di WIB (0-1439). Default:
+     *   start = 22:00 = 1320, end = 06:00 = 360.
+     * Kalau start > end (mis. 22:00-06:00), window wrap melewati midnight.
+     * Selama jam ini, sendCategorizedPush no-op (kecuali category SYSTEM
+     * urgent — defined di helper). User bisa custom via Settings. */
+    notificationQuietStartMin: integer("notification_quiet_start_min")
+      .notNull()
+      .default(1320),
+    notificationQuietEndMin: integer("notification_quiet_end_min")
+      .notNull()
+      .default(360),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

@@ -31,6 +31,7 @@ import { ApprovalCodesPanel } from "./settings/ApprovalCodesPanel";
 import { BankAccountsCard } from "./settings/BankAccountsCard";
 import { ResetMockupDataCard } from "./settings/ResetMockupDataCard";
 import { PushNotificationToggle } from "@/features/push-notifications/PushNotificationToggle";
+import { NotificationPreferencesPanel } from "@/features/push-notifications/NotificationPreferencesPanel";
 
 type OperationalHours = NonNullable<Outlet["operationalHours"]>;
 
@@ -209,22 +210,38 @@ export function SettingsSection() {
         </CardContent>
       </Card>
 
-      {/* Sesi AE-123 — Push Notification subscription card. Per-browser
-       * (kalau owner pakai 2 device, subscribe 2x). VAPID env wajib di
-       * server supaya tombol enable. */}
+      {/* Sesi AE-123+124 — Notifikasi: 2 card.
+       *   1. Aktivasi push per-device (subscribe browser → server).
+       *   2. Preferences per-user (category toggles + quiet hours + snooze). */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Bell className="size-5" aria-hidden /> Notifikasi Setoran
+            <Bell className="size-5" aria-hidden /> Aktivasi Notifikasi (Per Device)
           </CardTitle>
           <CardDescription>
-            Aktifkan supaya browser kasih notif real-time saat ada setoran
-            tunai baru menunggu verifikasi (walau tab tidak terbuka). Per
-            device — aktifkan di tiap browser/device yang sering kamu pakai.
+            Aktifkan supaya browser ini bisa terima notif real-time
+            (walau tab tidak terbuka). <strong>Per browser/device</strong> —
+            aktifkan di tiap perangkat yang sering kamu pakai (HP + laptop).
           </CardDescription>
         </CardHeader>
         <CardContent>
           <PushNotificationToggle />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Bell className="size-5" aria-hidden /> Preferensi Notifikasi
+          </CardTitle>
+          <CardDescription>
+            Pilih kategori notif yang mau kamu terima + atur jam hening
+            supaya tidak ke-ganggu. Aplikasi sudah set default cerdas
+            sesuai peran kamu — boleh customize sesuka hati.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <NotificationPreferencesPanel />
         </CardContent>
       </Card>
 

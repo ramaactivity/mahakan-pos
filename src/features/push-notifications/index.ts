@@ -1,23 +1,41 @@
 /**
- * Sesi AE-123 — Web Push notification module.
+ * Sesi AE-123 + AE-124 — Web Push notification module.
  *
- * Pengaturan:
+ * Pengaturan VAPID (sekali setup):
  *   - VAPID keys di Vercel env: NEXT_PUBLIC_VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY
  *   - VAPID subject (mailto:) di env VAPID_SUBJECT
- *   - Kalau env tidak di-set, semua function gracefully no-op (server log
- *     warning). UI subscribe tetap tampil tapi tombol disabled.
  *
- * Untuk generate VAPID keys (Rama jalankan di terminal-nya, sekali saja):
- *   npx web-push generate-vapid-keys
- *   → publicKey, privateKey (catat keduanya)
- *   → Vercel env NEXT_PUBLIC_VAPID_PUBLIC_KEY = publicKey
- *   → Vercel env VAPID_PRIVATE_KEY = privateKey
- *   → Vercel env VAPID_SUBJECT = "mailto:owner@mahakan.local" (atau email valid)
- *   → Redeploy supaya env diakses build.
+ * Pengaturan per-user (Settings → Notifikasi):
+ *   - Toggle per category (attendance, payroll, shift, inventory, dll)
+ *   - Quiet hours (default 22:00-06:00 WIB, customizable)
+ *   - Snooze per category (1h, 8h, 24h, 1 week)
  */
 export {
   sendPushToUser,
   sendPushToOutletVerifiers,
+  sendCategorizedPush,
   isWebPushConfigured,
 } from "./server";
 export type { PushPayload } from "./server";
+
+export {
+  NOTIFICATION_CATEGORIES,
+  CATEGORY_META,
+  URGENT_CATEGORIES,
+  getDefaultCategoriesForUser,
+  isInQuietWindow,
+  formatMinutesOfDay,
+  parseMinutesOfDay,
+} from "./categories";
+export type { NotificationCategory, CategoryMeta } from "./categories";
+
+export {
+  fetchOwnNotificationSettings,
+  setNotificationCategoryEnabled,
+  setNotificationCategorySnooze,
+  setNotificationQuietHours,
+} from "./preferences-actions";
+export type {
+  UserNotificationPreference,
+  UserNotificationSettings,
+} from "./preferences-actions";
