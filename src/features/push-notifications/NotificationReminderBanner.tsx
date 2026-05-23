@@ -38,6 +38,11 @@ type Status =
 const SNOOZE_KEY = "mahakan:push-reminder-snooze";
 const SNOOZE_LATER_MS = 3 * 24 * 60 * 60 * 1000; // 3 hari
 const SNOOZE_SUBSCRIBED_MS = 30 * 24 * 60 * 60 * 1000; // 30 hari
+/* Sesi AE-134 — auto-cooldown setelah failure berulang, supaya banner
+ * tidak nag terus saat Google Play Services / FCM lagi tidak reachable. */
+const SNOOZE_AFTER_FAILURE_MS = 4 * 60 * 60 * 1000; // 4 jam
+const FAILURE_COUNT_KEY = "mahakan:push-reminder-fail-count";
+const FAILURE_RESET_AFTER_MS = 24 * 60 * 60 * 1000; // reset counter setelah 1 hari clean
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -65,6 +70,57 @@ function writeSnooze(ms: number) {
     window.localStorage.setItem(SNOOZE_KEY, String(Date.now() + ms));
   } catch {
     /* localStorage disabled — silently skip */
+  }
+}
+
+/* Sesi AE-134 — failure counter dipakai untuk eskalasi pesan + auto-cooldown.
+ * Counter ditulis sebagai JSON {count, lastAt}; di-reset kalau gap > 1 hari
+ * (sehingga user yang berhasil di session lain tidak ke-carry). */
+interface FailureRecord {
+  count: number;
+  lastAt: number;
+}
+
+function readFailureRecord(): FailureRecord {
+  if (typeof window === "undefined") return { count: 0, lastAt: 0 };
+  try {
+    const raw = window.localStorage.getItem(FAILURE_COUNT_KEY);
+    if (!raw) return { count: 0, lastAt: 0 };
+    const parsed = JSON.parse(raw) as Partial<FailureRecord>;
+    if (
+      typeof parsed.count !== "number" ||
+      typeof parsed.lastAt !== "number"
+    ) {
+      return { count: 0, lastAt: 0 };
+    }
+    /* Auto-reset kalau gap > 1 hari supaya counter tidak permanen. */
+    if (Date.now() - parsed.lastAt > FAILURE_RESET_AFTER_MS) {
+      return { count: 0, lastAt: 0 };
+    }
+    return { count: parsed.count, lastAt: parsed.lastAt };
+  } catch {
+    return { count: 0, lastAt: 0 };
+  }
+}
+
+function bumpFailureRecord(): number {
+  if (typeof window === "undefined") return 0;
+  const rec = readFailureRecord();
+  const next: FailureRecord = { count: rec.count + 1, lastAt: Date.now() };
+  try {
+    window.localStorage.setItem(FAILURE_COUNT_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+  return next.count;
+}
+
+function resetFailureRecord() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(FAILURE_COUNT_KEY);
+  } catch {
+    /* ignore */
   }
 }
 
@@ -152,8 +208,7 @@ export function NotificationReminderBanner() {
 
   async function handleSubscribe() {
     /* Sesi AE-133 — extra guard: kalau session belum authenticated,
-     * jangan mulai subscribe flow. Banner sudah hidden di useEffect tapi
-     * defense-in-depth supaya gak ada race window. */
+     * jangan mulai subscribe flow. */
     if (sessionStatus !== "authenticated") {
       toast.error("Login dulu sebelum aktifkan notifikasi.");
       return;
@@ -173,20 +228,74 @@ export function NotificationReminderBanner() {
         return;
       }
       const reg = await navigator.serviceWorker.ready;
-      let sub: PushSubscription;
+
+      /* Sesi AE-134 — DEFENSIVE: cek subscription existing dulu.
+       *
+       * Kalau ada subscription lama dengan VAPID key BERBEDA (mis. dari
+       * sesi sebelumnya saat owner rotate key, atau sub stuck dari
+       * percobaan gagal kemarin), browser akan throw `InvalidStateError`
+       * saat subscribe() dengan key baru. Solusi: unsubscribe paksa dulu,
+       * baru subscribe fresh. Aman walaupun tidak ada existing sub —
+       * `getSubscription()` return null + unsubscribe() no-op.
+       */
+      try {
+        const existing = await reg.pushManager.getSubscription();
+        if (existing) {
+          await existing.unsubscribe();
+        }
+      } catch {
+        /* best-effort — abaikan error cleanup */
+      }
+
+      const appKey = urlBase64ToUint8Array(vapidPublic);
+
+      /* Sesi AE-134 — subscribe dengan retry sekali setelah delay 1.5s.
+       * Xiaomi MIUI + beberapa Android sering balikin "push service
+       * error" di attempt pertama (Google Play Services warming up /
+       * FCM connection bootstrap), tapi attempt ke-2 sukses. */
+      let sub: PushSubscription | null = null;
+      let firstError: unknown = null;
       try {
         sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapidPublic),
+          applicationServerKey: appKey,
         });
       } catch (pushErr) {
-        /* Sesi AE-133 — map raw FCM/autopush errors ke pesan actionable. */
-        const raw =
-          pushErr instanceof Error ? pushErr.message : "Push subscribe gagal";
-        setStatus("ready");
-        toast.error(mapPushSubscribeError(raw));
-        return;
+        firstError = pushErr;
       }
+      if (!sub) {
+        await new Promise((r) => setTimeout(r, 1500));
+        try {
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: appKey,
+          });
+        } catch (pushErr) {
+          /* Kalau attempt ke-2 juga gagal, tampilkan pesan dengan
+           * eskalasi: setelah 3x failure, auto-snooze 4 jam supaya banner
+           * tidak nag terus-terusan. */
+          const raw =
+            pushErr instanceof Error
+              ? pushErr.message
+              : "Push subscribe gagal";
+          const failCount = bumpFailureRecord();
+          const friendly = mapPushSubscribeError(raw, failCount);
+          if (failCount >= 3) {
+            writeSnooze(SNOOZE_AFTER_FAILURE_MS);
+            setStatus("snoozed");
+            toast.error(friendly);
+          } else {
+            setStatus("ready");
+            toast.error(friendly);
+          }
+          console.warn(
+            "[push:subscribe] failed twice",
+            { firstError, secondError: pushErr, failCount },
+          );
+          return;
+        }
+      }
+
       const subJson = sub.toJSON();
       const res = await fetch("/api/v1/push/subscribe", {
         method: "POST",
@@ -197,10 +306,7 @@ export function NotificationReminderBanner() {
         }),
       });
       if (!res.ok) {
-        /* Sesi AE-133 — cleanup local subscription kalau server tolak.
-         * Sebelumnya: jika server return 401, browser tetap simpan
-         * subscription "ghost" yang tidak ke-track di DB → push gak
-         * pernah nyampe. */
+        /* Cleanup local subscription kalau server tolak. */
         try {
           await sub.unsubscribe();
         } catch {
@@ -219,6 +325,7 @@ export function NotificationReminderBanner() {
         }
         return;
       }
+      resetFailureRecord();
       writeSnooze(SNOOZE_SUBSCRIBED_MS);
       setStatus("hidden");
       toast.success(
@@ -233,15 +340,22 @@ export function NotificationReminderBanner() {
   }
 
   /**
-   * Sesi AE-133 — Map raw browser push-subscribe error ke pesan
+   * Sesi AE-133/134 — Map raw browser push-subscribe error ke pesan
    * actionable. FCM (Android Chrome) + Mozilla autopush (Firefox) suka
    * lempar string mentah seperti "Registration failed - push service
    * error" yang tidak informatif.
+   *
+   * failCount > 0 = retry sudah dilakukan + tetap gagal → eskalasi
+   * pesan supaya user tahu ini bukan transient + langkah lanjutan
+   * lebih konkret. Pada failCount >= 3 caller auto-snooze 4 jam.
    */
-  function mapPushSubscribeError(raw: string): string {
+  function mapPushSubscribeError(raw: string, failCount = 0): string {
     const lower = raw.toLowerCase();
-    if (lower.includes("push service")) {
-      return "Push service Google sedang gagal. Cek koneksi internet tablet, atau tutup-buka tab dan coba lagi.";
+    if (lower.includes("push service") || lower.includes("registration")) {
+      if (failCount >= 3) {
+        return "Push service Google masih gagal setelah beberapa kali coba. Banner di-snooze 4 jam. Coba: (1) cek koneksi internet stabil, (2) update Google Play Services, (3) ulang dari Settings → Notifikasi.";
+      }
+      return "Push service Google gagal merespon. Pastikan internet stabil + Google Play Services up-to-date, lalu tap Aktifkan lagi.";
     }
     if (lower.includes("permission")) {
       return "Browser blokir izin notifikasi. Buka Settings browser → Notifications → unblock untuk situs ini.";
@@ -251,6 +365,9 @@ export function NotificationReminderBanner() {
       lower.includes("not available")
     ) {
       return "Browser tidak support push notification. Pakai Chrome/Edge versi terbaru.";
+    }
+    if (lower.includes("invalidstate") || lower.includes("invalid state")) {
+      return "Ada subscription lama yang konflik. Tutup tab, buka lagi, tap Aktifkan ulang.";
     }
     if (lower.includes("network")) {
       return "Jaringan terputus saat daftar notifikasi. Cek WiFi / data dan coba lagi.";

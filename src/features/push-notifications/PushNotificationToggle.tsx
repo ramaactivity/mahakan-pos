@@ -95,17 +95,52 @@ export function PushNotificationToggle() {
         return;
       }
       const reg = await navigator.serviceWorker.ready;
-      let sub: PushSubscription;
+
+      /* Sesi AE-134 — defensive: bersihin subscription lama dulu kalau
+       * ada (handle stale VAPID key + leftover failed attempt). */
+      try {
+        const existing = await reg.pushManager.getSubscription();
+        if (existing) {
+          await existing.unsubscribe();
+        }
+      } catch {
+        /* best-effort */
+      }
+
+      const appKey = urlBase64ToUint8Array(vapidPublic);
+
+      /* Retry sekali setelah delay 1.5s — Xiaomi MIUI + Android tertentu
+       * sering balikin push-service error di attempt pertama. */
+      let sub: PushSubscription | null = null;
       try {
         sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapidPublic),
+          applicationServerKey: appKey,
         });
-      } catch (pushErr) {
-        const raw =
-          pushErr instanceof Error ? pushErr.message : "Push subscribe gagal";
+      } catch (firstErr) {
+        await new Promise((r) => setTimeout(r, 1500));
+        try {
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: appKey,
+          });
+        } catch (secondErr) {
+          const raw =
+            secondErr instanceof Error
+              ? secondErr.message
+              : "Push subscribe gagal";
+          setStatus("idle");
+          toast.error(mapPushSubscribeError(raw));
+          console.warn("[push:toggle] subscribe failed twice", {
+            firstErr,
+            secondErr,
+          });
+          return;
+        }
+      }
+      if (!sub) {
         setStatus("idle");
-        toast.error(mapPushSubscribeError(raw));
+        toast.error("Subscribe push gagal. Coba lagi.");
         return;
       }
       const subJson = sub.toJSON();
@@ -154,8 +189,8 @@ export function PushNotificationToggle() {
    */
   function mapPushSubscribeError(raw: string): string {
     const lower = raw.toLowerCase();
-    if (lower.includes("push service")) {
-      return "Push service Google sedang gagal. Cek koneksi internet, atau tutup-buka tab dan coba lagi.";
+    if (lower.includes("push service") || lower.includes("registration")) {
+      return "Push service Google gagal merespon. Pastikan internet stabil + Google Play Services up-to-date, lalu tap Aktifkan lagi.";
     }
     if (lower.includes("permission")) {
       return "Browser blokir izin notifikasi. Buka Settings browser → Notifications → unblock.";
@@ -165,6 +200,9 @@ export function PushNotificationToggle() {
       lower.includes("not available")
     ) {
       return "Browser tidak support push notification. Pakai Chrome/Edge versi terbaru.";
+    }
+    if (lower.includes("invalidstate") || lower.includes("invalid state")) {
+      return "Ada subscription lama yang konflik. Tutup tab, buka lagi, tap Aktifkan ulang.";
     }
     if (lower.includes("network")) {
       return "Jaringan terputus saat daftar notifikasi. Cek koneksi dan coba lagi.";
