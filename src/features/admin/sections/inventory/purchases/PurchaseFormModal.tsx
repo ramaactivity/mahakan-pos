@@ -45,6 +45,10 @@ interface PurchaseFormModalProps {
   onSaved: () => void;
 }
 
+/** Sesi AE-129 — cap multi-nota di 5. Cukup untuk skenario worst-case
+ * Anisa (belanja 3-4 toko sekaligus) tapi cegah abuse Drive folder. */
+const MAX_RECEIPTS = 5;
+
 const PAYMENT_OPTIONS: Array<{ value: PaymentMethod; label: string }> = [
   { value: "cash", label: "Cash" },
   { value: "transfer_bca", label: "Transfer BCA" },
@@ -100,6 +104,107 @@ const COMMON_UNITS = [
   "Sdt",
   "Karton",
 ] as const;
+
+/* Sesi AE-129 — localStorage draft autosave. Anisa feedback: saat sedang
+ * catat pembelian sering perlu keluar modal untuk tambah ingredient ke
+ * Market List dulu — data form ke-reset semua. Draft autosave (debounced
+ * 500ms) supaya kalau modal ke-close (Esc, click backdrop, refresh tab),
+ * data tetap di-restore saat reopen.
+ *
+ * Storage scope: per browser (localStorage). Per outlet pelan-pelan kita
+ * tambahkan kalau perlu — saat ini staff Mahakan masing-masing per device
+ * jadi cukup. Edit mode tidak ada (form ini create-only). */
+const DRAFT_STORAGE_KEY = "mahakan:purchase-draft:v1";
+const DRAFT_TTL_MS = 24 * 60 * 60 * 1000; // 24h — kemungkinan staff sudah lupa
+
+interface PurchaseDraftPayload {
+  supplierId: string | null;
+  directMode: boolean;
+  directPlace: string;
+  purchaseDate: string;
+  paymentMethod: PaymentMethod;
+  paymentTerm: string;
+  invoiceNo: string;
+  notes: string;
+  receipts: Array<{ url: string; name: string }>;
+  updateCost: boolean;
+  createKas: boolean;
+  items: ItemRow[];
+  savedAt: number;
+}
+
+function loadDraft(): PurchaseDraftPayload | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PurchaseDraftPayload;
+    /* Drop draft > 24 jam (stale, kemungkinan staff sudah lupa). */
+    if (Date.now() - parsed.savedAt > DRAFT_TTL_MS) {
+      window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(payload: Omit<PurchaseDraftPayload, "savedAt">) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      DRAFT_STORAGE_KEY,
+      JSON.stringify({ ...payload, savedAt: Date.now() }),
+    );
+  } catch {
+    /* localStorage full/disabled — silently skip (draft is best-effort). */
+  }
+}
+
+function clearDraft() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/* Treshold "ada isinya" — minimal 1 item dengan ingredient ter-pilih ATAU
+ * field metadata di-set (invoice / place / notes / receipts). Tanpa ini,
+ * draft kosong (modal di-open lalu di-close tanpa input) akan muncul
+ * banner restore yang membingungkan. */
+function isDraftMeaningful(d: PurchaseDraftPayload | null): boolean {
+  if (!d) return false;
+  const hasItem = d.items.some(
+    (i) =>
+      i.ingredientId.trim() !== "" ||
+      i.qty.trim() !== "" ||
+      i.unitCost.trim() !== "",
+  );
+  return (
+    hasItem ||
+    d.invoiceNo.trim() !== "" ||
+    d.notes.trim() !== "" ||
+    d.directPlace.trim() !== "" ||
+    d.receipts.length > 0
+  );
+}
+
+/* Ringkasan singkat untuk display di banner restore. */
+function draftSummary(d: PurchaseDraftPayload): string {
+  const itemsWithIngredient = d.items.filter(
+    (i) => i.ingredientId.trim() !== "",
+  ).length;
+  const parts: string[] = [];
+  if (itemsWithIngredient > 0) parts.push(`${itemsWithIngredient} item`);
+  if (d.receipts.length > 0) parts.push(`${d.receipts.length} nota`);
+  if (d.invoiceNo.trim()) parts.push(`invoice ${d.invoiceNo.trim()}`);
+  if (d.directMode && d.directPlace.trim())
+    parts.push(`@ ${d.directPlace.trim()}`);
+  return parts.length > 0 ? parts.join(" · ") : "draft kosong";
+}
 
 function buildUnitOptions(
   masterUnit: string | undefined,
@@ -175,8 +280,15 @@ export function PurchaseFormModal({
   const [notes, setNotes] = useState("");
   // Receipt upload (sesi AA #2). PDF allowed in addition to image —
   // bank/aggregator receipts often arrive as PDF.
-  const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
-  const [receiptFileName, setReceiptFileName] = useState<string | null>(null);
+  //
+  // Sesi AE-129 — multi-nota (Anisa request). Staff sering belanja dari
+  // beberapa toko, jadi satu purchase bisa punya >1 nota. Store sebagai
+  // array of {url, name}; UI cap di MAX_RECEIPTS (5). Server tetap mirror
+  // item pertama ke kolom legacy receiptImageUrl untuk backward compat
+  // dengan list/detail views lama.
+  const [receipts, setReceipts] = useState<
+    Array<{ url: string; name: string }>
+  >([]);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [updateCost, setUpdateCost] = useState(true);
@@ -191,6 +303,11 @@ export function PurchaseFormModal({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /* Sesi AE-129 — draft autosave (Anisa feedback). pendingDraft = draft di
+   * localStorage yang siap di-restore saat user pilih "Restore" di banner. */
+  const [pendingDraft, setPendingDraft] = useState<PurchaseDraftPayload | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -205,8 +322,7 @@ export function PurchaseFormModal({
     setPaymentTerm("0");
     setInvoiceNo("");
     setNotes("");
-    setReceiptUrl(null);
-    setReceiptFileName(null);
+    setReceipts([]);
     setUploading(false);
     setUpdateCost(true);
     setCreateKas(true);
@@ -214,6 +330,10 @@ export function PurchaseFormModal({
     setPackByIngredient(new Map());
     setError(null);
     setSubmitting(false);
+    /* Sesi AE-129 — cek apakah ada draft tersimpan. Banner restore akan
+     * tampil di atas form kalau draft meaningful. */
+    const draft = loadDraft();
+    setPendingDraft(isDraftMeaningful(draft) ? draft : null);
     /* eslint-enable react-hooks/set-state-in-effect */
     void (async () => {
       const [ingRes, supRes] = await Promise.all([
@@ -229,6 +349,77 @@ export function PurchaseFormModal({
       cancelled = true;
     };
   }, [open]);
+
+  /* Sesi AE-129 — autosave draft saat user ngetik (debounced 500ms). Tidak
+   * save kalau form kosong (no meaningful input) supaya banner restore tidak
+   * muncul untuk modal yang sekedar di-open lalu di-close tanpa interaksi.
+   *
+   * Note: tidak save juga saat modal closed (`open=false`) supaya save action
+   * tidak race dengan unmount/close.
+   *
+   * Snapshot dipakai untuk restore — termasuk receipts (URL Drive, bukan
+   * file blob, jadi aman di-serialize) supaya staff tidak perlu re-upload
+   * nota yang sudah masuk Drive. */
+  useEffect(() => {
+    if (!open) return;
+    const handle = window.setTimeout(() => {
+      const payload: Omit<PurchaseDraftPayload, "savedAt"> = {
+        supplierId,
+        directMode,
+        directPlace,
+        purchaseDate,
+        paymentMethod,
+        paymentTerm,
+        invoiceNo,
+        notes,
+        receipts,
+        updateCost,
+        createKas,
+        items,
+      };
+      // Use isDraftMeaningful with savedAt placeholder for check only.
+      if (!isDraftMeaningful({ ...payload, savedAt: 0 })) return;
+      saveDraft(payload);
+    }, 500);
+    return () => window.clearTimeout(handle);
+  }, [
+    open,
+    supplierId,
+    directMode,
+    directPlace,
+    purchaseDate,
+    paymentMethod,
+    paymentTerm,
+    invoiceNo,
+    notes,
+    receipts,
+    updateCost,
+    createKas,
+    items,
+  ]);
+
+  /* Restore draft ke form state. Tidak refetch ingredient/supplier list —
+   * sudah di-load di reset effect. */
+  function applyDraft(d: PurchaseDraftPayload) {
+    setSupplierId(d.supplierId);
+    setDirectMode(d.directMode);
+    setDirectPlace(d.directPlace);
+    setPurchaseDate(d.purchaseDate);
+    setPaymentMethod(d.paymentMethod);
+    setPaymentTerm(d.paymentTerm);
+    setInvoiceNo(d.invoiceNo);
+    setNotes(d.notes);
+    setReceipts(d.receipts);
+    setUpdateCost(d.updateCost);
+    setCreateKas(d.createKas);
+    setItems(d.items);
+    setPendingDraft(null);
+  }
+
+  function discardDraft() {
+    clearDraft();
+    setPendingDraft(null);
+  }
 
   // When supplier changes, suggest default term + auto-switch payment method.
   useEffect(() => {
@@ -611,7 +802,7 @@ export function PurchaseFormModal({
       paymentTermDays: paymentMethod === "top" ? term : 0,
       invoiceNo: invoiceNo.trim() || null,
       notes: composedNotes || null,
-      receiptImageUrl: receiptUrl,
+      receiptImageUrls: receipts.length > 0 ? receipts.map((r) => r.url) : null,
       updateCost,
       createKasEntry: createKas,
       items: validItems,
@@ -622,6 +813,10 @@ export function PurchaseFormModal({
       setError(res.error.message);
       return;
     }
+
+    /* Sesi AE-129 — submit sukses, hapus draft autosave supaya next open
+     * mulai dari blank state (bukan banner restore data yang sudah saved). */
+    clearDraft();
 
     toast.success(
       `Purchase tercatat — ${res.data.movementsCreated} bahan, total ${formatRupiah(res.data.totalAmount)}`,
@@ -651,6 +846,46 @@ export function PurchaseFormModal({
         <p className="text-sm text-neutral-500">Memuat data…</p>
       ) : (
         <div className="space-y-4">
+          {/* Sesi AE-129 — banner draft autosave restore. Muncul kalau ada
+              draft di localStorage yang belum di-submit (mis. modal ke-close
+              accidental, refresh tab, atau staff keluar buat tambah item ke
+              Market List dulu — Anisa feedback). User pilih restore atau
+              buang. Banner self-dismiss setelah salah satu di-tap. */}
+          {pendingDraft ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-info-300 bg-info-50 px-3 py-2.5 text-sm">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-info-700">
+                  Ada draft pembelian sebelumnya
+                </p>
+                <p className="mt-0.5 text-[11px] text-neutral-700">
+                  Tersimpan{" "}
+                  {new Date(pendingDraft.savedAt).toLocaleString("id-ID", {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })}{" "}
+                  · {draftSummary(pendingDraft)}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={discardDraft}
+                  aria-label="Buang draft pembelian"
+                >
+                  Buang
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => applyDraft(pendingDraft)}
+                  aria-label="Restore draft pembelian"
+                >
+                  Lanjutkan
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
           <div
             role="radiogroup"
             aria-label="Tipe pembelian"
@@ -1109,41 +1344,61 @@ export function PurchaseFormModal({
             />
           </div>
 
-          {/* Receipt / bukti transfer upload (sesi AA #2). Allows JPG/PNG/WebP
-              (foto nota) + PDF (bank/aggregator e-receipt). Stored di Vercel
-              Blob, file di-rename otomatis dengan timestamp + nama original. */}
+          {/* Receipt / bukti transfer upload (sesi AA #2 + AE-129 multi-nota).
+              Allows JPG/PNG/WebP (foto nota) + PDF (bank/aggregator e-receipt).
+              Stored di Google Drive, file di-rename otomatis dengan timestamp +
+              nama original. Sesi AE-129 — Anisa feedback: belanja dari beberapa
+              toko dalam satu run, jadi support multi-upload (max 5). */}
           <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-neutral-900">
-              Bukti Pembelian / Transfer (opsional)
-            </label>
-            {receiptUrl ? (
-              <div className="flex items-center justify-between gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-2">
-                <a
-                  href={receiptUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex flex-1 items-center gap-2 text-xs text-mahakan-green-900 hover:underline min-w-0"
-                >
-                  <FileText className="size-4 shrink-0" />
-                  <span className="truncate">
-                    {receiptFileName ?? "Lihat di Google Drive"}
-                  </span>
-                </a>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setReceiptUrl(null);
-                    setReceiptFileName(null);
-                  }}
-                  disabled={submitting || uploading}
-                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-neutral-500 hover:bg-danger-100 hover:text-danger-500"
-                  aria-label="Hapus bukti dari form (file tetap di Drive)"
-                  title="Hapus dari form. File yang sudah di Drive tidak ikut terhapus — hapus manual via Drive kalau perlu."
-                >
-                  <X className="size-3.5" />
-                </button>
-              </div>
-            ) : (
+            <div className="flex items-baseline justify-between gap-2">
+              <label className="block text-sm font-medium text-neutral-900">
+                Bukti Pembelian / Transfer (opsional)
+              </label>
+              {receipts.length > 0 ? (
+                <span className="text-xs text-neutral-500">
+                  {receipts.length} / {MAX_RECEIPTS} nota
+                </span>
+              ) : null}
+            </div>
+
+            {/* List existing receipts. Each row: link + filename + delete X. */}
+            {receipts.length > 0 ? (
+              <ul className="space-y-1.5">
+                {receipts.map((r, idx) => (
+                  <li
+                    key={`${r.url}-${idx}`}
+                    className="flex items-center justify-between gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-2"
+                  >
+                    <a
+                      href={r.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex flex-1 items-center gap-2 text-xs text-mahakan-green-900 hover:underline min-w-0"
+                    >
+                      <FileText className="size-4 shrink-0" />
+                      <span className="truncate">{r.name}</span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReceipts((prev) =>
+                          prev.filter((_, i) => i !== idx),
+                        );
+                      }}
+                      disabled={submitting || uploading}
+                      className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-neutral-500 hover:bg-danger-100 hover:text-danger-500"
+                      aria-label={`Hapus nota ${idx + 1} dari form (file tetap di Drive)`}
+                      title="Hapus dari form. File yang sudah di Drive tidak ikut terhapus — hapus manual via Drive kalau perlu."
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+
+            {/* Add-button + helper. Hidden ketika sudah capai cap. */}
+            {receipts.length < MAX_RECEIPTS ? (
               <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50/50 p-3">
                 <input
                   ref={fileInputRef}
@@ -1178,8 +1433,17 @@ export function PurchaseFormModal({
                       if (!json.success) {
                         throw new Error(json.error.message);
                       }
-                      setReceiptUrl(json.data.url);
-                      setReceiptFileName(file.name);
+                      // Sesi AE-129 — append ke list (multi-nota). Defensive
+                      // cap di sini juga supaya kalau race condition (user
+                      // double-tap saat ada di list 4), tetap di-clamp.
+                      setReceipts((prev) =>
+                        prev.length >= MAX_RECEIPTS
+                          ? prev
+                          : [
+                              ...prev,
+                              { url: json.data.url, name: file.name },
+                            ],
+                      );
                       toast.success(
                         `Bukti tersimpan di Drive · ${json.data.folderPath}`,
                       );
@@ -1204,6 +1468,10 @@ export function PurchaseFormModal({
                     <>
                       <Loader2 className="size-4 animate-spin" /> Uploading…
                     </>
+                  ) : receipts.length > 0 ? (
+                    <>
+                      <Plus className="size-4" /> Tambah Nota Lain
+                    </>
                   ) : (
                     <>
                       <ImagePlus className="size-4" /> Upload Foto / PDF
@@ -1211,11 +1479,18 @@ export function PurchaseFormModal({
                   )}
                 </Button>
                 <p className="mt-1 text-xs text-neutral-500">
-                  JPG / PNG / WebP / PDF, max 5 MB. Tersimpan otomatis di
-                  Google Drive Anda — folder <strong>NOTA MAHAKAN</strong>{" "}
-                  → tahun → bulan, sesuai struktur lama.
+                  JPG / PNG / WebP / PDF, max 5 MB per file. Bisa upload
+                  sampai <strong>{MAX_RECEIPTS} nota</strong> (mis. belanja
+                  dari beberapa toko). Tersimpan otomatis di Google Drive
+                  Anda — folder <strong>NOTA MAHAKAN</strong> → tahun →
+                  bulan, sesuai struktur lama.
                 </p>
               </div>
+            ) : (
+              <p className="rounded-md border border-info-200 bg-info-50 p-2 text-xs text-info-700">
+                Sudah {MAX_RECEIPTS} nota — hapus salah satu kalau mau
+                ganti.
+              </p>
             )}
           </div>
 

@@ -1,0 +1,1 @@
+ALTER TABLE "purchases" ADD COLUMN "receipt_image_urls" jsonb;

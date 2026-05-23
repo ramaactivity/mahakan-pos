@@ -324,6 +324,24 @@ export async function createPurchase(
         total += Math.round(item.qty * item.unitCost);
       }
 
+      // Sesi AE-129 — multi-nota. UI baru kirim `receiptImageUrls`. Legacy
+       // single URL field di-mirror dengan item pertama dari array supaya
+       // existing list/detail views (yang masih baca receiptImageUrl) tetap
+       // work tanpa migrasi data. Kalau cuma `receiptImageUrl` legacy yang
+       // dikirim (client lama), wrap jadi single-element array.
+      const urlsRaw = v.receiptImageUrls ?? null;
+      const legacyUrl = v.receiptImageUrl ?? null;
+      const receiptImageUrls =
+        urlsRaw && urlsRaw.length > 0
+          ? urlsRaw
+          : legacyUrl
+            ? [legacyUrl]
+            : null;
+      const receiptImageUrl =
+        receiptImageUrls && receiptImageUrls.length > 0
+          ? receiptImageUrls[0]
+          : null;
+
       // Insert header.
       const [created] = await tx
         .insert(purchases)
@@ -336,7 +354,8 @@ export async function createPurchase(
           dueDate,
           invoiceNo: v.invoiceNo ?? null,
           notes: v.notes ?? null,
-          receiptImageUrl: v.receiptImageUrl ?? null,
+          receiptImageUrl,
+          receiptImageUrls,
           status: isTop ? "pending_payment" : "paid",
           totalAmount: total,
           paidAt: isTop ? null : new Date(),

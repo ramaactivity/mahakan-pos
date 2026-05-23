@@ -26,8 +26,12 @@ export interface CreatePurchaseInput {
   paymentTermDays?: number;
   invoiceNo?: string | null;
   notes?: string | null;
-  /** Vercel Blob URL ke foto nota / bukti transfer (sesi AA #2). */
+  /** Vercel Blob URL ke foto nota / bukti transfer (sesi AA #2). Legacy
+   * single URL; UI baru pakai `receiptImageUrls` (multi). Saat keduanya
+   * dikirim, server prefer `receiptImageUrls[0]` untuk mirror legacy. */
   receiptImageUrl?: string | null;
+  /** Sesi AE-129 — multi-nota URLs (Anisa request). Max 5. */
+  receiptImageUrls?: string[] | null;
   /** Whether to update each ingredient.cost_per_unit master from this
    * purchase's unit cost. Default true. */
   updateCost?: boolean;

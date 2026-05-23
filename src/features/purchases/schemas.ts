@@ -63,8 +63,19 @@ export const createPurchaseSchema = z
     notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
     /** Vercel Blob URL ke foto nota / bukti transfer (sesi AA #2).
      * URL boundary check only — actual upload + content-type enforcement
-     * di /api/v1/purchase-receipts/upload route. */
+     * di /api/v1/purchase-receipts/upload route.
+     *
+     * LEGACY (pre-AE-129) — biarkan untuk backward compat client lama; server
+     * akan mirror item pertama `receiptImageUrls` ke field ini saat write. */
     receiptImageUrl: z.url().max(500).nullable().optional(),
+    /** Sesi AE-129 — multi-nota (Anisa request). Max 5 URLs supaya tidak
+     * abuse Drive folder. Tiap URL di-validate (z.url) + length cap. Empty
+     * array atau undefined = belum upload nota. */
+    receiptImageUrls: z
+      .array(z.url().max(500))
+      .max(5, "Maksimal 5 foto nota per pembelian")
+      .nullable()
+      .optional(),
     updateCost: z.boolean().optional().default(true),
     createKasEntry: z.boolean().optional(),
     /** Sesi AE-57 — metadata: dari PR mana purchase ini ditarik. Digunakan

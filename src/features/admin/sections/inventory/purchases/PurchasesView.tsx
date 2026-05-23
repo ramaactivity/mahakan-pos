@@ -645,18 +645,53 @@ function PurchaseDetailModal({
               <strong>Catatan:</strong> {detail.notes}
             </p>
           ) : null}
-          {detail.receiptImageUrl ? (
-            <a
-              href={detail.receiptImageUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-2 text-xs text-mahakan-green-900 hover:bg-mahakan-green-100/40"
-            >
-              <span className="font-medium">
-                📄 Lihat bukti pembelian di Google Drive
-              </span>
-            </a>
-          ) : null}
+          {(() => {
+            // Sesi AE-129 — prefer `receiptImageUrls` (multi-nota array)
+            // kalau ada, fallback ke legacy single `receiptImageUrl` untuk
+            // purchases lama yang belum migrated.
+            const urls: string[] =
+              detail.receiptImageUrls && detail.receiptImageUrls.length > 0
+                ? detail.receiptImageUrls
+                : detail.receiptImageUrl
+                  ? [detail.receiptImageUrl]
+                  : [];
+            if (urls.length === 0) return null;
+            if (urls.length === 1) {
+              return (
+                <a
+                  href={urls[0]}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-2 text-xs text-mahakan-green-900 hover:bg-mahakan-green-100/40"
+                >
+                  <span className="font-medium">
+                    📄 Lihat bukti pembelian di Google Drive
+                  </span>
+                </a>
+              );
+            }
+            return (
+              <div className="rounded-md border border-neutral-200 bg-neutral-50 p-2">
+                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-600">
+                  📄 {urls.length} Bukti Pembelian
+                </p>
+                <ul className="space-y-1">
+                  {urls.map((u, i) => (
+                    <li key={`${u}-${i}`}>
+                      <a
+                        href={u}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block truncate rounded px-1.5 py-0.5 text-xs text-mahakan-green-900 hover:bg-mahakan-green-100/40"
+                      >
+                        Nota #{i + 1} — buka di Drive
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
           {detail.cancelReason ? (
             <p className="rounded-md bg-neutral-50 p-2 text-xs text-neutral-700">
               <strong>Alasan batal:</strong> {detail.cancelReason}

@@ -10,6 +10,7 @@ import {
   date,
   index,
   check,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { outlets } from "./outlets";
 import { users } from "./users";
@@ -80,8 +81,21 @@ export const purchases = pgTable(
     /** Vercel Blob URL ke foto nota / bukti transfer (sesi AA #2).
      * Free-text URL field — file rename + path konvensi diatur di
      * client (purchase-receipts/{outletId}/{ts}-{filename}). NULL = belum
-     * di-upload. JPG/PNG/WebP/PDF max 5MB enforced di /api/v1/purchase-receipts/upload. */
+     * di-upload. JPG/PNG/WebP/PDF max 5MB enforced di /api/v1/purchase-receipts/upload.
+     *
+     * LEGACY (pre-AE-129): single URL. Sesi AE-129 menambah `receiptImageUrls`
+     * (jsonb array) untuk multi-nota — staff sering belanja dari beberapa toko.
+     * Untuk backward compat, kolom ini di-mirror dengan item pertama dari
+     * `receiptImageUrls` saat ada. Read-path lama yang baca `receiptImageUrl`
+     * tetap work tanpa perubahan. */
     receiptImageUrl: text("receipt_image_url"),
+
+    /** Sesi AE-129 — array URL foto nota (multi-toko). Anisa request: belanja
+     * sering dari beberapa toko, jadi satu purchase bisa punya >1 nota. Array
+     * of strings (URL Google Drive). NULL atau [] = belum upload. Max 5 enforced
+     * di client; tidak ada server-side cap (defensive client cap cukup karena
+     * tidak ada cost server side per-URL — upload sudah throttled di endpoint). */
+    receiptImageUrls: jsonb("receipt_image_urls").$type<string[]>(),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
