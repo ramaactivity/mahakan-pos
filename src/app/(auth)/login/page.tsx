@@ -38,11 +38,21 @@ function LoginContent() {
   const [submitting, setSubmitting] = useState(false);
   const [shake, setShake] = useState(false);
 
+  /* Sesi AE-127 — kalau RequireAuth append `?next=<path>` saat redirect,
+   * pakai itu sebagai destination setelah login sukses. Default
+   * role-based: staff → /pos, lainnya → /dashboard. */
+  const nextParam = params.get("next") ?? "";
+  const safeNext =
+    nextParam.startsWith("/") && !nextParam.startsWith("//")
+      ? nextParam
+      : null;
+
   useEffect(() => {
     if (status === "authenticated" && session) {
-      router.replace(session.user.role === "staff" ? "/pos" : "/dashboard");
+      const fallback = session.user.role === "staff" ? "/pos" : "/dashboard";
+      router.replace(safeNext ?? fallback);
     }
-  }, [status, session, router]);
+  }, [status, session, router, safeNext]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

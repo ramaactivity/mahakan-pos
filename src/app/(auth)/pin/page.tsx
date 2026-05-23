@@ -97,7 +97,11 @@ function PinLoginFallback() {
 function PinLoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = safeCallback(searchParams?.get("callbackUrl") ?? null);
+  /* Sesi AE-127 — `next` (RequireAuth) > `callbackUrl` (legacy/external)
+   * untuk destination setelah PIN login sukses. */
+  const callbackUrl =
+    safeCallback(searchParams?.get("next") ?? null) ??
+    safeCallback(searchParams?.get("callbackUrl") ?? null);
   // Sesi AE-17 — staff context kalau callback dari /m. Swap title +
   // description supaya UI ga ambigu antara "Login Kasir" vs "Login
   // Karyawan".

@@ -33,9 +33,18 @@ function AuthPathSwitcherInner() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams?.get("callbackUrl") ?? "";
+  /* Sesi AE-127 — `?next=` ditambah oleh RequireAuth saat redirect dari
+   * /dashboard atau /pos. Kalau ada `next`, anggap user sudah punya
+   * target spesifik → hide switcher (langsung tampilkan form). */
+  const nextParam = searchParams?.get("next") ?? "";
   const isStaffContext = callbackUrl.startsWith("/m");
   const isPin = pathname?.startsWith("/pin") ?? false;
   const isLogin = pathname?.startsWith("/login") ?? false;
+
+  /* Sesi AE-127 — user di-redirect dari context spesifik (/dashboard, /pos).
+   * Hide switcher karena user tidak butuh pilih lagi — URL tujuan sudah
+   * jelas. Mereka pasti owner (kalau dari /dashboard) atau kasir (dari /pos). */
+  if (nextParam) return null;
 
   // Sesi AE-17 — staff context: render single badge instead of switcher.
   if (isStaffContext && isPin) {
