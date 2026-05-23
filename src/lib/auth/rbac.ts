@@ -144,6 +144,23 @@ export const permissions = {
   "audit.view.all": ["owner"],
   "audit.view.staff_actions": ["owner", "manager", "supervisor"],
 
+  /* Sesi AE-131 — Operasional checklist module.
+   * Owner+Manager mengelola template tugas dari back office.
+   * Staff & Supervisor melakukan ceklist + late-mark + WA export. */
+  "operasional.task.template.manage": ["owner", "manager"],
+  "operasional.task.checklist.do": [
+    "owner",
+    "manager",
+    "supervisor",
+    "staff",
+  ],
+  "operasional.task.checklist.view": [
+    "owner",
+    "manager",
+    "supervisor",
+    "staff",
+  ],
+
   // HR — Employee management (Sesi C-6). Supervisor view-only.
   "employee.view": ["owner", "manager", "supervisor"],
   "employee.create": ["owner", "manager"],

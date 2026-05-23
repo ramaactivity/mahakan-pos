@@ -30,11 +30,20 @@ import {
   users,
 } from "@/db/schema";
 import { sendCategorizedPush } from "@/features/push-notifications/server";
+import {
+  currentPeriodKey,
+  formatPeriodLabel,
+} from "@/features/operasional-tasks/period";
+import { getCompletionProgress } from "@/features/operasional-tasks/queries";
 
 export type CronJob =
   | "attendance-morning"
   | "low-stock-scan"
-  | "daily-digest";
+  | "daily-digest"
+  /* Sesi AE-131 — Operasional Checklist reminders. */
+  | "operasional-daily-closing"
+  | "operasional-weekly-sunday"
+  | "operasional-monthly-day28";
 
 export interface CronJobResult {
   job: CronJob;
@@ -260,16 +269,213 @@ function todayWibIso(): string {
   }).format(new Date());
 }
 
+/* ============================================================
+ * Sesi AE-131 — Operasional Checklist reminders.
+ *
+ * Tiga reminder slot:
+ *  - daily-closing (21:00 WIB): scoped ke staff scheduled today & tidak
+ *    day-off. Tujuan: closing reminder kalau daily ceklist < 100%.
+ *  - weekly-sunday (Sun 19:00 WIB): broadcast ke operasional subscribers
+ *    kalau weekly ceklist < 100%.
+ *  - monthly-day28 (tgl 28, 10:00 WIB): broadcast ke operasional subs
+ *    kalau monthly ceklist < 100% — cukup awal untuk dikejar.
+ *
+ * Anti-noise: tag-based dedup (per period_key) + category push respect
+ * user opt-out + quiet hours.
+ * ============================================================ */
+
 /**
- * Determine which job to run based on current WIB hour.
+ * Job: operasional-daily-closing.
+ * Cek progress daily — push ke staff yang scheduled today (tidak day-off).
+ * Yang libur tidak diganggu (per directive owner Rama, sesi AE-131).
+ */
+export async function runOperasionalDailyClosingJob(): Promise<CronJobResult> {
+  const result: CronJobResult = {
+    job: "operasional-daily-closing",
+    outletsProcessed: 0,
+    notifSent: 0,
+    errors: [],
+  };
+  try {
+    const todayWib = todayWibIso();
+    const outletList = await db
+      .select({ id: outlets.id })
+      .from(outlets)
+      .where(isNull(outlets.deletedAt));
+    for (const outlet of outletList) {
+      result.outletsProcessed++;
+      try {
+        const progress = await getCompletionProgress(outlet.id, "daily");
+        if (progress.total === 0) continue;
+        if (progress.done >= progress.total) continue; // 100% — no nag
+
+        /* Cek apakah ada minimal 1 staff yang scheduled today (tidak off).
+         * Kalau semua libur (mis. weekly off), skip push — hari ini emang
+         * tidak ada operator. */
+        const [scheduledCount] = await db
+          .select({ c: sql<number>`count(*)::int` })
+          .from(employeeSchedules)
+          .innerJoin(
+            employees,
+            eq(employees.id, employeeSchedules.employeeId),
+          )
+          .where(
+            and(
+              eq(employees.outletId, outlet.id),
+              eq(employeeSchedules.scheduleDate, todayWib),
+              eq(employeeSchedules.dayOff, false),
+            ),
+          );
+        if ((scheduledCount?.c ?? 0) === 0) continue;
+
+        const missing = progress.total - progress.done;
+        const push = await sendCategorizedPush(
+          "operasional",
+          outlet.id,
+          {
+            title: `Checklist harian: ${progress.done}/${progress.total}`,
+            body: `${missing} tugas belum dicentang. Selesaikan sebelum tutup.`,
+            url: "/m/checklist",
+            tag: `op-daily-${todayWib}`,
+          },
+        );
+        result.notifSent += push.sent;
+      } catch (e) {
+        result.errors.push(
+          `outlet ${outlet.id}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+  } catch (e) {
+    result.errors.push(e instanceof Error ? e.message : String(e));
+  }
+  return result;
+}
+
+/**
+ * Job: operasional-weekly-sunday.
+ * Broadcast Sunday 19:00 WIB. Push ke operasional subs (Owner+Manager+
+ * Supervisor+Staff yang sub). Tidak filter schedule — weekly tasks
+ * boleh dikerjain siapa saja yang shift selama minggu itu.
+ */
+export async function runOperasionalWeeklyJob(): Promise<CronJobResult> {
+  const result: CronJobResult = {
+    job: "operasional-weekly-sunday",
+    outletsProcessed: 0,
+    notifSent: 0,
+    errors: [],
+  };
+  try {
+    const outletList = await db
+      .select({ id: outlets.id })
+      .from(outlets)
+      .where(isNull(outlets.deletedAt));
+    const periodKey = currentPeriodKey("weekly");
+    const periodLabel = formatPeriodLabel("weekly", periodKey);
+    for (const outlet of outletList) {
+      result.outletsProcessed++;
+      try {
+        const progress = await getCompletionProgress(
+          outlet.id,
+          "weekly",
+          periodKey,
+        );
+        if (progress.total === 0) continue;
+        if (progress.done >= progress.total) continue;
+        const missing = progress.total - progress.done;
+        const push = await sendCategorizedPush(
+          "operasional",
+          outlet.id,
+          {
+            title: `Checklist mingguan: ${progress.done}/${progress.total}`,
+            body: `${periodLabel} — sisa ${missing} tugas. Tutup minggu dengan bersih.`,
+            url: "/m/checklist",
+            tag: `op-weekly-${periodKey}`,
+          },
+        );
+        result.notifSent += push.sent;
+      } catch (e) {
+        result.errors.push(
+          `outlet ${outlet.id}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+  } catch (e) {
+    result.errors.push(e instanceof Error ? e.message : String(e));
+  }
+  return result;
+}
+
+/**
+ * Job: operasional-monthly-day28.
+ * Push reminder tanggal 28 jam 10:00 WIB kalau monthly < 100%. Diberi
+ * window 3 hari supaya bisa dikejar sebelum akhir bulan.
+ */
+export async function runOperasionalMonthlyJob(): Promise<CronJobResult> {
+  const result: CronJobResult = {
+    job: "operasional-monthly-day28",
+    outletsProcessed: 0,
+    notifSent: 0,
+    errors: [],
+  };
+  try {
+    const outletList = await db
+      .select({ id: outlets.id })
+      .from(outlets)
+      .where(isNull(outlets.deletedAt));
+    const periodKey = currentPeriodKey("monthly");
+    const periodLabel = formatPeriodLabel("monthly", periodKey);
+    for (const outlet of outletList) {
+      result.outletsProcessed++;
+      try {
+        const progress = await getCompletionProgress(
+          outlet.id,
+          "monthly",
+          periodKey,
+        );
+        if (progress.total === 0) continue;
+        if (progress.done >= progress.total) continue;
+        const missing = progress.total - progress.done;
+        const push = await sendCategorizedPush(
+          "operasional",
+          outlet.id,
+          {
+            title: `Checklist bulanan: ${progress.done}/${progress.total}`,
+            body: `${periodLabel} — sisa ${missing} tugas. Sisa ~3 hari sebelum tutup bulan.`,
+            url: "/m/checklist",
+            tag: `op-monthly-${periodKey}`,
+          },
+        );
+        result.notifSent += push.sent;
+      } catch (e) {
+        result.errors.push(
+          `outlet ${outlet.id}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+  } catch (e) {
+    result.errors.push(e instanceof Error ? e.message : String(e));
+  }
+  return result;
+}
+
+/**
+ * Determine which job to run based on current WIB time.
  * Return null kalau jam ini bukan slot job.
  */
 export function getJobForCurrentHour(): CronJob | null {
   const now = new Date();
-  const wibHour = (now.getUTCHours() + 7) % 24;
+  const wibMs = now.getTime() + 7 * 60 * 60 * 1000;
+  const wibDate = new Date(wibMs);
+  const wibHour = wibDate.getUTCHours();
+  const wibDay = wibDate.getUTCDate(); // 1..31
+  const wibDow = wibDate.getUTCDay(); // 0=Sun ... 6=Sat
   if (wibHour === 6) return "attendance-morning";
   if (wibHour === 8) return "low-stock-scan";
+  if (wibHour === 10 && wibDay === 28) return "operasional-monthly-day28";
+  if (wibHour === 19 && wibDow === 0) return "operasional-weekly-sunday";
   if (wibHour === 20) return "daily-digest";
+  if (wibHour === 21) return "operasional-daily-closing";
   return null;
 }
 
@@ -281,5 +487,11 @@ export async function runJob(job: CronJob): Promise<CronJobResult> {
       return runLowStockScanJob();
     case "daily-digest":
       return runDailyDigestJob();
+    case "operasional-daily-closing":
+      return runOperasionalDailyClosingJob();
+    case "operasional-weekly-sunday":
+      return runOperasionalWeeklyJob();
+    case "operasional-monthly-day28":
+      return runOperasionalMonthlyJob();
   }
 }

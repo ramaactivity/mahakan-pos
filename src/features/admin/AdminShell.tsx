@@ -133,6 +133,11 @@ const SuppliersSection = lazy(() =>
     default: m.SuppliersSection,
   })),
 );
+const OperasionalChecklistSection = lazy(() =>
+  import("@/features/admin/sections/OperasionalChecklistSection").then((m) => ({
+    default: m.OperasionalChecklistSection,
+  })),
+);
 
 /* Sesi AE-63 polish-2 — daftar AdminSection valid untuk hash-routing
  * validation (filter invalid hash dari URL). */
@@ -159,6 +164,7 @@ const VALID_SECTIONS: ReadonlySet<AdminSection> = new Set([
   "audit",
   "journal_retry",
   "investors",
+  "operasional_checklist",
   "settings",
 ]);
 
@@ -364,6 +370,8 @@ export function AdminShell() {
               <JournalRetryQueueSection />
             ) : section === "investors" ? (
               <InvestorsSection viewerRole={session.user.role} />
+            ) : section === "operasional_checklist" ? (
+              <OperasionalChecklistSection viewerRole={session.user.role} />
             ) : section === "settings" ? (
               <SettingsSection />
             ) : null}

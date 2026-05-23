@@ -22,6 +22,10 @@ const VALID_JOBS: ReadonlyArray<CronJob> = [
   "attendance-morning",
   "low-stock-scan",
   "daily-digest",
+  /* Sesi AE-131 — Operasional checklist reminders. */
+  "operasional-daily-closing",
+  "operasional-weekly-sunday",
+  "operasional-monthly-day28",
 ];
 
 export async function GET(request: NextRequest) {

@@ -47,3 +47,5 @@ export * from "./withdrawal_requests";
 export * from "./push_subscriptions";
 /* Sesi AE-124 — Per-user notification category subscription. */
 export * from "./user_notification_subscriptions";
+/* Sesi AE-131 — Operasional checklist (daily/weekly/monthly tugas staff). */
+export * from "./operasional_tasks";

@@ -6,6 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import {
   CalendarDays,
+  CheckSquare,
   ChevronRight,
   ClipboardList,
   Fingerprint,
@@ -55,6 +56,14 @@ const MODULES: ModuleCard[] = [
     description:
       "Buat permintaan belanja saat bahan menipis. Owner approve via WhatsApp.",
     icon: <ClipboardList className="size-6" aria-hidden />,
+    status: "live",
+  },
+  {
+    href: "/m/checklist",
+    title: "Checklist Operasional",
+    description:
+      "Ceklist tugas harian, mingguan, dan bulanan. Bisa dikerjakan bareng + kirim ringkasan ke WA grup.",
+    icon: <CheckSquare className="size-6" aria-hidden />,
     status: "live",
   },
 ];

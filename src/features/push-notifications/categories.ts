@@ -14,6 +14,9 @@ export const NOTIFICATION_CATEGORIES = [
   "finance_payment",
   "marketing",
   "system",
+  /* Sesi AE-131 — Operasional checklist reminders (daily evening,
+   * weekly Sunday, monthly day-28). */
+  "operasional",
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
@@ -82,6 +85,13 @@ export const CATEGORY_META: Record<NotificationCategory, CategoryMeta> = {
       "Error aplikasi, aktivitas mencurigakan, deployment, security alert.",
     group: "lainnya",
   },
+  operasional: {
+    key: "operasional",
+    label: "Checklist Operasional",
+    description:
+      "Reminder ceklist harian/mingguan/bulanan (kebersihan, prep, opname).",
+    group: "operasi",
+  },
 };
 
 /**
@@ -121,14 +131,15 @@ const EMAIL_DEFAULTS: Record<string, NotificationCategory[]> = {
     "finance_payment",
     "marketing",
     "system",
+    "operasional",
   ],
 };
 
 const ROLE_DEFAULTS: Record<string, NotificationCategory[]> = {
-  owner: ["finance_close", "finance_payment", "system"],
-  manager: ["shift", "inventory", "attendance"],
-  supervisor: ["shift", "inventory"],
-  staff: ["payroll", "attendance"],
+  owner: ["finance_close", "finance_payment", "system", "operasional"],
+  manager: ["shift", "inventory", "attendance", "operasional"],
+  supervisor: ["shift", "inventory", "operasional"],
+  staff: ["payroll", "attendance", "operasional"],
 };
 
 /**

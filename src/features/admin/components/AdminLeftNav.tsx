@@ -8,6 +8,7 @@ import {
   BookOpen,
   Briefcase,
   Calculator,
+  CheckSquare,
   ClipboardList,
   Clock,
   Coffee,
@@ -55,6 +56,7 @@ export type AdminSection =
   | "audit"
   | "journal_retry"
   | "investors"
+  | "operasional_checklist"
   | "settings";
 
 interface AdminLeftNavProps {
@@ -124,6 +126,13 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "staff", label: "Staff", Icon: Users },
       { key: "employees", label: "Karyawan", Icon: Briefcase },
       { key: "hr_operations", label: "HR Operations", Icon: Clock },
+      /* Sesi AE-131 — Owner/Manager mengelola daftar tugas operasional
+       * (daily/weekly/monthly) untuk staff. */
+      {
+        key: "operasional_checklist",
+        label: "Checklist Operasional",
+        Icon: CheckSquare,
+      },
     ],
   },
   {

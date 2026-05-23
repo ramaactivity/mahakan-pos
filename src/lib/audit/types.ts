@@ -55,6 +55,15 @@ export const AUDIT_EVENT_TYPES = [
   "user.reactivate",
   "user.role_change",
   "user.reset_pin",
+  // Operasional Checklist (sesi AE-131)
+  "operasional.task.template.create",
+  "operasional.task.template.update",
+  "operasional.task.template.archive",
+  "operasional.task.template.restore_default",
+  "operasional.task.check",
+  "operasional.task.check_late",
+  "operasional.task.uncheck",
+  "operasional.task.wa_export",
   // Cash
   "expense.create",
   "expense.update",
@@ -373,7 +382,11 @@ export type AuditEntityType =
   | "fixed_asset"
   | "bank_account"
   | "historical_daily_summary"
-  | "historical_expense";
+  | "historical_expense"
+  /* Sesi AE-131 — Operasional checklist. */
+  | "operasional_task_template"
+  | "operasional_task_completion"
+  | "operasional_task_wa_export";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */
