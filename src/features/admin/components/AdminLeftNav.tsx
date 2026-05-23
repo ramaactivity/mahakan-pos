@@ -182,7 +182,10 @@ export function AdminLeftNav({
   return (
     <nav
       aria-label="Navigasi back office"
-      className="flex w-44 shrink-0 flex-col border-r border-neutral-200 bg-white py-3 sm:w-48 lg:w-56"
+      // Sesi AE-131 — fix scroll bug: drawer wrapper di AdminShell (post AE-126)
+      // memutus auto-stretch flex parent, jadi nav perlu h-full eksplisit supaya
+      // flex-1 overflow-y-auto di bawah punya height constraint dan bisa scroll.
+      className="flex h-full w-44 shrink-0 flex-col border-r border-neutral-200 bg-white py-3 sm:w-48 lg:w-56"
     >
       <div className="mb-2 flex shrink-0 items-center gap-2 px-4 py-1">
         <div className="flex size-8 items-center justify-center rounded-md bg-mahakan-green-700 text-xs font-bold text-white">
