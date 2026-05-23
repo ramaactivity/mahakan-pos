@@ -307,12 +307,14 @@ function CategoryRow({
       </div>
       <div className="flex items-center gap-2">
         {pref.enabled && !snoozeActive ? (
+          /* Radix Select disallow empty-string value (akan crash dengan
+           * "Select.Item must have a value prop that is not empty string").
+           * Pakai value=undefined supaya placeholder muncul, dan reset
+           * value via setKey trick saat selection berubah. */
           <Select
-            options={[
-              { value: "", label: "Snooze…" },
-              ...SNOOZE_OPTIONS,
-            ]}
-            value=""
+            options={SNOOZE_OPTIONS}
+            value={undefined}
+            placeholder="Snooze…"
             onValueChange={(v) => {
               if (v) onSnooze(pref.category, v);
             }}
