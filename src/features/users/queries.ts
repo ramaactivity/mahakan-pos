@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { users } from "@/db/schema";
+import { pushSubscriptions, users } from "@/db/schema";
 import type { Role } from "@/lib/auth";
 import type {
   ListUsersOptions,
@@ -10,7 +10,13 @@ import type {
   User,
 } from "./types";
 
-function toPublicUser(u: User): PublicUser {
+function toPublicUser(
+  u: User,
+  pushExtras: { pushDeviceCount: number; pushLatestSubscribedAt: Date | null } = {
+    pushDeviceCount: 0,
+    pushLatestSubscribedAt: null,
+  },
+): PublicUser {
   return {
     id: u.id,
     outletId: u.outletId,
@@ -27,6 +33,8 @@ function toPublicUser(u: User): PublicUser {
     updatedBy: u.updatedBy,
     hasPasswordSet: u.passwordHash !== null,
     hasPinSet: u.pinHash !== null,
+    pushDeviceCount: pushExtras.pushDeviceCount,
+    pushLatestSubscribedAt: pushExtras.pushLatestSubscribedAt,
   };
 }
 
@@ -45,14 +53,28 @@ export async function fetchUsers(
   // Manager can only see Staff (per docs/05-ROLES-RBAC §3)
   if (viewerRole === "manager") conds.push(eq(users.role, "staff"));
 
+  /* Sesi AE-134 — LEFT JOIN aggregate push_subscriptions supaya staff
+   * management bisa nampilkan kolom Notif (device count + last subscribed
+   * timestamp). GROUP BY semua user kolom karena postgres strict. */
   const rows = await db
-    .select()
+    .select({
+      user: users,
+      pushDeviceCount: sql<number>`count(${pushSubscriptions.id})::int`,
+      pushLatestSubscribedAt: sql<Date | null>`max(${pushSubscriptions.createdAt})`,
+    })
     .from(users)
+    .leftJoin(pushSubscriptions, eq(pushSubscriptions.userId, users.id))
     .where(and(...conds))
+    .groupBy(users.id)
     .orderBy(users.role, users.name);
 
   return {
-    items: rows.map(toPublicUser),
+    items: rows.map((r) =>
+      toPublicUser(r.user, {
+        pushDeviceCount: r.pushDeviceCount ?? 0,
+        pushLatestSubscribedAt: r.pushLatestSubscribedAt,
+      }),
+    ),
     total: rows.length,
   };
 }

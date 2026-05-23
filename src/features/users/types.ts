@@ -22,6 +22,11 @@ export interface PublicUser {
   updatedBy: string | null;
   hasPasswordSet: boolean;
   hasPinSet: boolean;
+  /** Sesi AE-134 — jumlah device browser yang masih subscribe push.
+   * 0 = belum aktifkan / sudah revoke. >0 = aktif di X device. */
+  pushDeviceCount: number;
+  /** Sesi AE-134 — timestamp subscribe terakhir (untuk display "X jam lalu"). */
+  pushLatestSubscribedAt: Date | null;
 }
 
 export type ApiResult<T> =

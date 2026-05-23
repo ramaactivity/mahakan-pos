@@ -2,7 +2,16 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Pencil, Plus, Power, RotateCcw, Users } from "lucide-react";
+import {
+  Bell,
+  BellOff,
+  KeyRound,
+  Pencil,
+  Plus,
+  Power,
+  RotateCcw,
+  Users,
+} from "lucide-react";
 import {
   Badge,
   Button,
@@ -328,6 +337,12 @@ function staffColumns(viewerUserId: string): ResponsiveColumn<PublicUser>[] {
       ),
     },
     {
+      key: "notif",
+      label: "Notif",
+      align: "center",
+      render: (u) => <NotifBadge user={u} />,
+    },
+    {
       key: "status",
       label: "Status",
       align: "center",
@@ -339,4 +354,53 @@ function staffColumns(viewerUserId: string): ResponsiveColumn<PublicUser>[] {
         ),
     },
   ];
+}
+
+function NotifBadge({ user }: { user: PublicUser }) {
+  if (user.pushDeviceCount > 0) {
+    const last = user.pushLatestSubscribedAt
+      ? formatRelativeShort(user.pushLatestSubscribedAt)
+      : null;
+    const label =
+      user.pushDeviceCount === 1
+        ? "Aktif"
+        : `${user.pushDeviceCount} device`;
+    return (
+      <div
+        className="inline-flex items-center justify-center gap-1"
+        title={
+          last ? `Subscribe terakhir: ${last}` : "Notifikasi push aktif"
+        }
+      >
+        <Bell className="size-3.5 text-mahakan-green-700" aria-hidden />
+        <Badge variant="success">{label}</Badge>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="inline-flex items-center justify-center gap-1"
+      title="Belum aktifkan notifikasi. Minta user buka /m atau /dashboard lalu tap Aktifkan."
+    >
+      <BellOff className="size-3.5 text-neutral-400" aria-hidden />
+      <span className="text-xs text-neutral-500">Belum</span>
+    </div>
+  );
+}
+
+function formatRelativeShort(date: Date): string {
+  const ms = Date.now() - date.getTime();
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return "baru saja";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} menit lalu`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} jam lalu`;
+  const days = Math.floor(hr / 24);
+  if (days < 7) return `${days} hari lalu`;
+  return date.toLocaleDateString("id-ID", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
