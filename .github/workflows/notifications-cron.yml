@@ -1,0 +1,66 @@
+name: notifications-cron
+
+# Sesi AE-125 — Hit endpoint /api/cron/notifications dari GitHub Actions
+# secara berkala. Endpoint server auto-determine job berdasarkan jam WIB:
+#
+#   06:00 WIB (23:00 UTC sebelumnya) → attendance-morning
+#   08:00 WIB (01:00 UTC) → low-stock-scan
+#   20:00 WIB (13:00 UTC) → daily-digest
+#
+# Workflow ini jalan setiap jam at minute :05 (avoid peak top-of-hour
+# load di GitHub Actions queue). Jam-jam selain di atas → endpoint return
+# `skipped: true` (no-op).
+#
+# Required repo secret:
+#   CRON_SECRET — string acak, sama dengan Vercel env CRON_SECRET.
+#   Generate: openssl rand -hex 32
+
+on:
+  schedule:
+    # Top of each hour, +5 menit buffer
+    - cron: "5 * * * *"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Override job name (untuk manual testing)"
+        required: false
+        type: choice
+        default: ""
+        options:
+          - ""
+          - "attendance-morning"
+          - "low-stock-scan"
+          - "daily-digest"
+
+permissions:
+  contents: read
+
+jobs:
+  fire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Determine endpoint URL
+        id: url
+        run: |
+          if [ -n "${{ inputs.job }}" ]; then
+            echo "url=https://mahakan-pos.vercel.app/api/cron/notifications?job=${{ inputs.job }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "url=https://mahakan-pos.vercel.app/api/cron/notifications" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fire cron endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::Repo secret CRON_SECRET kosong. Tambah di Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          set -euxo pipefail
+          # -s = silent, -S = show error, --fail-with-body biar curl exit !=0 kalau http error
+          response=$(curl -sS --fail-with-body \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Accept: application/json" \
+            "${{ steps.url.outputs.url }}")
+          echo "$response"
