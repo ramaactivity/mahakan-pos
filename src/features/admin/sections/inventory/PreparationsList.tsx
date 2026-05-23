@@ -105,6 +105,17 @@ export function PreparationsList() {
         ) : null}
       </header>
 
+      {/* Sesi AE-138 — clarify no-stock-tracking model. Owner sempat
+       * bingung "stok prep di mana" — sebenarnya prep tidak ditrack,
+       * sale-time auto-expand ke bahan baku underlying. */}
+      <div className="rounded-md border border-info-300 bg-info-50 px-3 py-2.5 text-xs text-info-700">
+        💡 <strong>Stok preparation tidak ditrack.</strong> Saat menu yang
+        pakai prep terjual, sistem auto-deduct bahan baku underlying-nya
+        (sesuai resep × qty menu, lalu dibagi yield + Q Factor). Prep cuma
+        definisi cost + bulk recipe untuk efisiensi — bukan inventory
+        physical.
+      </div>
+
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-end gap-3">

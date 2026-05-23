@@ -24,7 +24,7 @@ import {
   type RecipeWithIngredients,
 } from "@/features/inventory";
 import type { MenuItem } from "@/features/menu";
-import { formatRupiah } from "@/lib/format";
+import { formatRupiah, parseIndonesianInt } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Variant = "hot" | "iced" | null;
@@ -217,7 +217,7 @@ export function RecipeEditorModal({
         return;
       }
       ingredientIds.add(l.ingredientId!);
-      const q = parseInt(l.qty, 10);
+      const q = parseIndonesianInt(l.qty);
       if (!Number.isFinite(q) || q <= 0) {
         setError("Jumlah harus angka > 0");
         return;
@@ -237,7 +237,7 @@ export function RecipeEditorModal({
       wasteFactorPct: wasteVal,
       ingredients: filledLines.map((l) => ({
         ingredientId: l.ingredientId!,
-        qty: parseInt(l.qty, 10),
+        qty: parseIndonesianInt(l.qty),
       })),
     };
 
@@ -288,7 +288,7 @@ export function RecipeEditorModal({
     let total = 0;
     for (const l of form.lines) {
       if (!l.ingredientId) continue;
-      const q = parseInt(l.qty, 10);
+      const q = parseIndonesianInt(l.qty);
       if (!Number.isFinite(q) || q <= 0) continue;
       const ing = ingredientById.get(l.ingredientId);
       if (!ing) continue;
@@ -428,8 +428,8 @@ export function RecipeEditorModal({
                             ? ingredientById.get(line.ingredientId)
                             : null;
                           const lineCost =
-                            ing && Number.isFinite(parseInt(line.qty, 10))
-                              ? parseInt(line.qty, 10) * ing.costPerUnit
+                            ing && Number.isFinite(parseIndonesianInt(line.qty))
+                              ? parseIndonesianInt(line.qty) * ing.costPerUnit
                               : 0;
                           return (
                             <li

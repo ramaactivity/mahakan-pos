@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Info, Plus, Trash2 } from "lucide-react";
 import {
   Button,
   Combobox,
@@ -25,7 +25,11 @@ import {
   type Ingredient,
   type RecipeIngredientLine,
 } from "@/features/inventory";
-import { formatRupiah, parseRupiah } from "@/lib/format";
+import {
+  formatRupiah,
+  parseIndonesianInt,
+  parseRupiah,
+} from "@/lib/format";
 
 interface PreparationFormModalProps {
   open: boolean;
@@ -171,7 +175,7 @@ export function PreparationFormModal({
   const filledLines = lines
     .map((l) => {
       if (!l.ingredientId) return null;
-      const q = parseInt(l.qty, 10);
+      const q = parseIndonesianInt(l.qty);
       if (!Number.isFinite(q) || q <= 0) return null;
       const ing = ingredientById(l.ingredientId);
       if (!ing) return null;
@@ -179,8 +183,8 @@ export function PreparationFormModal({
     })
     .filter((x): x is { qty: number; costPerUnit: number; ing: Ingredient } => x !== null);
 
-  const yieldNum = parseInt(preparationYield, 10);
-  const wasteNum = parseInt(wasteFactorPct, 10);
+  const yieldNum = parseIndonesianInt(preparationYield);
+  const wasteNum = parseIndonesianInt(wasteFactorPct);
   const previewCostPerUnit =
     filledLines.length > 0 &&
     Number.isFinite(yieldNum) &&
@@ -215,12 +219,12 @@ export function PreparationFormModal({
       setError("Unit wajib diisi");
       return;
     }
-    const yieldVal = parseInt(preparationYield, 10);
+    const yieldVal = parseIndonesianInt(preparationYield);
     if (!Number.isFinite(yieldVal) || yieldVal <= 0) {
       setError("Yield harus angka > 0");
       return;
     }
-    const wasteVal = parseInt(wasteFactorPct, 10);
+    const wasteVal = parseIndonesianInt(wasteFactorPct);
     if (!Number.isFinite(wasteVal) || wasteVal < 0 || wasteVal > 200) {
       setError("Q Factor harus 0-200");
       return;
@@ -241,7 +245,7 @@ export function PreparationFormModal({
         return;
       }
       ingIds.add(l.ingredientId!);
-      const q = parseInt(l.qty, 10);
+      const q = parseIndonesianInt(l.qty);
       if (!Number.isFinite(q) || q <= 0) {
         setError("Jumlah bahan harus angka > 0");
         return;
@@ -294,7 +298,7 @@ export function PreparationFormModal({
         wasteFactorPct: wasteVal,
         ingredients: validLines.map((l) => ({
           ingredientId: l.ingredientId!,
-          qty: parseInt(l.qty, 10),
+          qty: parseIndonesianInt(l.qty),
         })),
       };
 
@@ -356,7 +360,9 @@ export function PreparationFormModal({
       onClose={onClose}
       title={edit ? "Edit Preparation" : "Tambah Preparation"}
       description="Sub-resep dengan yield + Q Factor. Cost auto-computed dari resep + cascade ke menu yang merefer."
-      size="lg"
+      /* Sesi AE-138 — widen xl supaya recipe builder + cost preview muat
+       * lebih nyaman di tablet dan desktop. */
+      size="xl"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -369,6 +375,17 @@ export function PreparationFormModal({
       }
     >
       <div className="space-y-4">
+        {/* Sesi AE-138 — explanatory banner: prep bukan stok yang ditrack,
+         * sale-time auto-expand ke bahan baku underlying. */}
+        <div className="flex items-start gap-2 rounded-md border border-info-300 bg-info-50 px-3 py-2.5 text-xs text-info-700">
+          <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <p>
+            <strong>Stok preparation tidak ditrack.</strong> Saat menu yang
+            pakai prep ini terjual, sistem langsung deduct bahan baku
+            underlying-nya (sesuai resep × qty menu, lalu dibagi yield).
+            Prep cuma definisi cost + bulk-recipe untuk efisiensi.
+          </p>
+        </div>
         <div className="grid gap-3 md:grid-cols-2">
           <Input
             label="Nama Preparation"
@@ -424,7 +441,8 @@ export function PreparationFormModal({
               inputMode="numeric"
             />
             <p className="mt-1 text-xs text-neutral-500">
-              Jumlah unit yang dihasilkan dari 1× resep
+              Jumlah unit dari 1× resep. Pakai titik untuk ribuan (mis.
+              1.000).
             </p>
           </div>
           <div>
