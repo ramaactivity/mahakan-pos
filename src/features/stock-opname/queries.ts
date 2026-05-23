@@ -274,6 +274,46 @@ export async function fetchActiveIngredientsForSnapshot(
     .orderBy(ingredients.name);
 }
 
+/**
+ * Sesi AE-130 — Last finalized opname per outlet (Anisa anti-double-count).
+ *
+ * Dipakai oleh purchase flow untuk detect backdated entry: kalau purchase
+ * date < lastFinalizedAt date, staff sudah hitung fisik termasuk belanja
+ * tsb, jadi add lagi via Catat Pembelian = double-count.
+ *
+ * Returns null kalau outlet belum pernah punya opname finalized
+ * (fresh setup; backdate logic dormant sampai baseline pertama dibuat).
+ */
+export async function fetchLastFinalizedOpname(
+  outletId: string,
+): Promise<{
+  sessionId: string;
+  finalizedAt: Date;
+  periodLabel: string;
+} | null> {
+  const [row] = await db
+    .select({
+      sessionId: stockOpnameSessions.id,
+      finalizedAt: stockOpnameSessions.finalizedAt,
+      periodLabel: stockOpnameSessions.periodLabel,
+    })
+    .from(stockOpnameSessions)
+    .where(
+      and(
+        eq(stockOpnameSessions.outletId, outletId),
+        eq(stockOpnameSessions.status, "completed"),
+      ),
+    )
+    .orderBy(desc(stockOpnameSessions.finalizedAt))
+    .limit(1);
+  if (!row || !row.finalizedAt) return null;
+  return {
+    sessionId: row.sessionId,
+    finalizedAt: row.finalizedAt,
+    periodLabel: row.periodLabel,
+  };
+}
+
 export async function countSessionLines(sessionId: string): Promise<number> {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })

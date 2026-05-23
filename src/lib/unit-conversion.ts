@@ -433,3 +433,191 @@ export function convertPurchaseQty(input: {
     message: `Tidak bisa konversi ${fromUnit} ke ${masterUnit}. Edit master bahan atau pilih unit sejenis (Kg/gr untuk berat, L/ml untuk volume).`,
   };
 }
+
+/**
+ * Sesi AE-130 — Multi-unit tier helpers (Anisa feedback).
+ *
+ * Model: 1 ingredient punya 3 satuan untuk konteks berbeda:
+ *   - COGS (= `ingredients.unit`): satuan terkecil, authoritative untuk
+ *     stock + cost + recipe + movement. Semua kalkulasi internal pakai ini.
+ *   - TRACKING (`ingredients.unit_tracking` + `unit_tracking_per_cogs`):
+ *     satuan terbesar untuk display human-friendly di Inventory list /
+ *     low-stock card. Optional — kalau NULL pakai COGS unit apa adanya.
+ *   - BELANJA (`ingredients.unit_belanja` + `unit_belanja_per_cogs`):
+ *     satuan default saat staff Catat Pembelian / Permintaan Belanja.
+ *     Optional — kalau NULL pakai COGS unit apa adanya.
+ *
+ * Per_cogs = berapa unit COGS per 1 unit tier (mis. 1 Kotak = 1000 ml →
+ * unit_tracking_per_cogs = 1000). DEcimal-precision aware: simpan
+ * sebagai numeric(15,4) di DB, parse jadi number di sini.
+ *
+ * Semantic NULL handling:
+ *   - Label NULL atau kosong → tier "disabled" untuk ingredient ini,
+ *     fallback ke COGS unit.
+ *   - Label set tapi per_cogs NULL → treat 1:1 (cuma rename label, no
+ *     scaling). Useful kalau staff mau pakai term "Kg" alih-alih "kg"
+ *     dengan magnitude sama.
+ *   - Label + per_cogs set → full multi-unit aktif.
+ */
+
+export interface IngredientUnitTiers {
+  /** Master COGS unit (`ingredients.unit`). Always present (NOT NULL). */
+  cogsUnit: string;
+  /** Tracking display tier. NULL = fallback ke cogsUnit. */
+  trackingUnit?: string | null;
+  /** COGS units per 1 tracking unit. NULL = 1:1 identity. */
+  trackingPerCogs?: number | string | null;
+  /** Belanja entry tier. NULL = fallback ke cogsUnit. */
+  belanjaUnit?: string | null;
+  /** COGS units per 1 belanja unit. NULL = 1:1 identity. */
+  belanjaPerCogs?: number | string | null;
+}
+
+/** Coerce numeric|string|null jadi number positif atau null. */
+function coercePerCogs(v: number | string | null | undefined): number | null {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === "string" ? Number(v) : v;
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+/** Effective tracking unit label. Returns cogsUnit kalau tracking disabled. */
+export function effectiveTrackingUnit(tiers: IngredientUnitTiers): string {
+  const t = tiers.trackingUnit?.trim();
+  return t && t.length > 0 ? t : tiers.cogsUnit;
+}
+
+/** Effective belanja unit label. Returns cogsUnit kalau belanja disabled. */
+export function effectiveBelanjaUnit(tiers: IngredientUnitTiers): string {
+  const b = tiers.belanjaUnit?.trim();
+  return b && b.length > 0 ? b : tiers.cogsUnit;
+}
+
+/** Convert qty dalam COGS unit → tracking unit (untuk display).
+ *  Kalau tracking disabled atau identity, return qty apa adanya. */
+export function cogsToTracking(
+  qtyInCogs: number,
+  tiers: IngredientUnitTiers,
+): number {
+  const tracking = tiers.trackingUnit?.trim();
+  if (!tracking) return qtyInCogs;
+  const per = coercePerCogs(tiers.trackingPerCogs);
+  if (per === null) return qtyInCogs; // identity (label only rename)
+  return qtyInCogs / per;
+}
+
+/** Convert qty dalam tracking unit → COGS unit (untuk storage). */
+export function trackingToCogs(
+  qtyInTracking: number,
+  tiers: IngredientUnitTiers,
+): number {
+  const tracking = tiers.trackingUnit?.trim();
+  if (!tracking) return qtyInTracking;
+  const per = coercePerCogs(tiers.trackingPerCogs);
+  if (per === null) return qtyInTracking;
+  return qtyInTracking * per;
+}
+
+/** Convert qty dalam belanja unit → COGS unit (saat Catat Pembelian save). */
+export function belanjaToCogs(
+  qtyInBelanja: number,
+  tiers: IngredientUnitTiers,
+): number {
+  const belanja = tiers.belanjaUnit?.trim();
+  if (!belanja) return qtyInBelanja;
+  const per = coercePerCogs(tiers.belanjaPerCogs);
+  if (per === null) return qtyInBelanja;
+  return qtyInBelanja * per;
+}
+
+/** Convert qty dalam COGS unit → belanja unit (untuk display di history). */
+export function cogsToBelanja(
+  qtyInCogs: number,
+  tiers: IngredientUnitTiers,
+): number {
+  const belanja = tiers.belanjaUnit?.trim();
+  if (!belanja) return qtyInCogs;
+  const per = coercePerCogs(tiers.belanjaPerCogs);
+  if (per === null) return qtyInCogs;
+  return qtyInCogs / per;
+}
+
+/** Format display: kalau tracking aktif, tampilkan "2 Kotak (2000 ml)".
+ *  Kalau disabled, cukup "2000 ml". Locale-aware Indonesian thousands. */
+export function formatStockDisplay(
+  qtyInCogs: number,
+  tiers: IngredientUnitTiers,
+  opts?: { showCogsBreakdown?: boolean; maxDecimals?: number },
+): string {
+  const tracking = tiers.trackingUnit?.trim();
+  const per = coercePerCogs(tiers.trackingPerCogs);
+  const maxDec = opts?.maxDecimals ?? 4;
+  const fmt = (n: number) =>
+    new Intl.NumberFormat("id-ID", {
+      maximumFractionDigits: maxDec,
+    }).format(n);
+
+  if (!tracking) return `${fmt(qtyInCogs)} ${tiers.cogsUnit}`;
+  if (per === null) return `${fmt(qtyInCogs)} ${tracking}`;
+
+  const qtyTracking = qtyInCogs / per;
+  const main = `${fmt(qtyTracking)} ${tracking}`;
+  if (opts?.showCogsBreakdown) {
+    return `${main} (${fmt(qtyInCogs)} ${tiers.cogsUnit})`;
+  }
+  return main;
+}
+
+/**
+ * Sesi AE-130 — Backdate detection helper (Anisa anti-double-count).
+ *
+ * Tentukan apakah purchase dengan `purchase_date` (YYYY-MM-DD) seharusnya
+ * SKIP stock update karena sudah ter-cover di opname terakhir yang
+ * finalized.
+ *
+ * Convention: opname finalized di hari X jam Y → stock fisik di-anggap
+ * mencakup semua aktivitas di tanggal X dan sebelumnya. Purchase dengan
+ * tanggal < X = backdated, sudah counted di opname → SKIP stock update.
+ * Purchase dengan tanggal = X = AMBIGUOUS (mungkin counted, mungkin belum,
+ * tergantung jam belanja vs jam opname). Default: SKIP juga + warn user.
+ * Purchase > X = NORMAL additive.
+ *
+ * Asia/Jakarta timezone-aware: finalizedAt UTC timestamp di-format ke
+ * Jakarta date untuk perbandingan dengan purchase_date (yang interpreted
+ * sebagai tanggal Jakarta business day).
+ *
+ * Returns:
+ *  - "after": purchase setelah opname → normal additive
+ *  - "same": purchase sama hari dengan opname → ambiguous, SKIP + warn
+ *  - "before": purchase sebelum opname → DEFINITELY backdated, SKIP + warn
+ *  - "no_baseline": tidak ada opname finalized → normal (fresh setup)
+ */
+export type BackdateStatus = "after" | "same" | "before" | "no_baseline";
+
+export function classifyPurchaseAgainstOpname(args: {
+  purchaseDateIso: string; // YYYY-MM-DD (Jakarta business day)
+  lastOpnameFinalizedAt: Date | null;
+}): BackdateStatus {
+  if (!args.lastOpnameFinalizedAt) return "no_baseline";
+  const opnameDateIso = jakartaDateIso(args.lastOpnameFinalizedAt);
+  if (args.purchaseDateIso > opnameDateIso) return "after";
+  if (args.purchaseDateIso === opnameDateIso) return "same";
+  return "before";
+}
+
+/** Should stock update be skipped untuk purchase ini? True kalau before/same
+ *  (defensive: same-day ambiguous treated as backdated supaya tidak risk
+ *  double-count). */
+export function shouldSkipStockUpdate(status: BackdateStatus): boolean {
+  return status === "before" || status === "same";
+}
+
+/** Format Date sebagai YYYY-MM-DD di Asia/Jakarta timezone. */
+export function jakartaDateIso(d: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}

@@ -39,6 +39,7 @@ export {
   addOpnameItemAdHoc,
   listOpnameSessions,
   getActiveOpname,
+  getLastFinalizedOpname,
   getMonthlyCadence,
   getOpnameDetail,
   getOpnameInventoryFlow,

@@ -28,12 +28,17 @@ import {
   type Supplier,
 } from "@/features/suppliers";
 import { lookupMarketPriceForPurchase } from "@/features/market-list";
+import { getLastFinalizedOpname } from "@/features/stock-opname";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import {
+  classifyPurchaseAgainstOpname,
   convertPurchaseQty,
   convertQty,
+  jakartaDateIso,
   resolveUnit,
   scaleCostOnUnitChange,
+  shouldSkipStockUpdate,
+  type BackdateStatus,
   type IngredientPackConversion,
   type PackInfo,
 } from "@/lib/unit-conversion";
@@ -308,6 +313,16 @@ export function PurchaseFormModal({
   const [pendingDraft, setPendingDraft] = useState<PurchaseDraftPayload | null>(
     null,
   );
+  /* Sesi AE-130 — anti-double-count (Anisa feedback). Fetch opname terakhir
+   * yang finalized supaya banner peringatan bisa muncul saat user pilih
+   * tanggal belanja yang BACKDATED relative ke opname. Saat null (fresh
+   * setup, Mahakan baru 3 minggu) → banner tidak pernah muncul, normal
+   * additive behavior. */
+  const [lastOpname, setLastOpname] = useState<{
+    finalizedAtDate: Date;
+    finalizedAtIso: string;
+    periodLabel: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -336,13 +351,29 @@ export function PurchaseFormModal({
     setPendingDraft(isDraftMeaningful(draft) ? draft : null);
     /* eslint-enable react-hooks/set-state-in-effect */
     void (async () => {
-      const [ingRes, supRes] = await Promise.all([
+      const [ingRes, supRes, opnameRes] = await Promise.all([
         listAtomicIngredients({ activeOnly: true }),
         listSuppliers({ activeOnly: true }),
+        getLastFinalizedOpname(),
       ]);
       if (cancelled) return;
       if (inventoryIsOk(ingRes)) setIngredientList(ingRes.data.items);
       if (suppliersIsOk(supRes)) setSupplierList(supRes.data);
+      /* Sesi AE-130 — surface last opname info supaya banner backdate
+       * bisa kompute di-client. opnameRes pakai ApiResult shape dari
+       * stock-opname feature; success path. */
+      if (opnameRes && "success" in opnameRes && opnameRes.success) {
+        const data = opnameRes.data;
+        if (data) {
+          setLastOpname({
+            finalizedAtDate: new Date(data.finalizedAtIso),
+            finalizedAtIso: data.finalizedAtIso,
+            periodLabel: data.periodLabel,
+          });
+        } else {
+          setLastOpname(null);
+        }
+      }
       setLoadingMaster(false);
     })();
     return () => {
@@ -463,6 +494,20 @@ export function PurchaseFormModal({
     }
     return t;
   }, [items]);
+
+  /* Sesi AE-130 — backdate detection (Anisa anti-double-count).
+   * Re-classify saat user ganti tanggal belanja atau modal baru fetch
+   * opname terbaru. Status di-pass ke banner di body form supaya staff
+   * paham implikasi sebelum klik Simpan. */
+  const backdateStatus: BackdateStatus = useMemo(
+    () =>
+      classifyPurchaseAgainstOpname({
+        purchaseDateIso: purchaseDate,
+        lastOpnameFinalizedAt: lastOpname?.finalizedAtDate ?? null,
+      }),
+    [purchaseDate, lastOpname],
+  );
+  const willSkipStockUpdate = shouldSkipStockUpdate(backdateStatus);
 
   function updateRow(id: string, patch: Partial<ItemRow>) {
     setItems((prev) =>
@@ -818,9 +863,18 @@ export function PurchaseFormModal({
      * mulai dari blank state (bukan banner restore data yang sudah saved). */
     clearDraft();
 
-    toast.success(
-      `Purchase tercatat — ${res.data.movementsCreated} bahan, total ${formatRupiah(res.data.totalAmount)}`,
-    );
+    /* Sesi AE-130 — feedback eksplisit untuk backdated purchase. Server
+     * sudah klasifikasi + skip stock update; UI cuma narasikan supaya
+     * staff aware. Untuk normal additive, toast as usual. */
+    if (res.data.skippedStockUpdate) {
+      toast.success(
+        `Pembelian dicatat (${res.data.movementsCreated} bahan, ${formatRupiah(res.data.totalAmount)}). Stock tidak ditambah — sudah ter-cover di opname terakhir.`,
+      );
+    } else {
+      toast.success(
+        `Purchase tercatat — ${res.data.movementsCreated} bahan, total ${formatRupiah(res.data.totalAmount)}`,
+      );
+    }
     onSaved();
   }
 
@@ -883,6 +937,39 @@ export function PurchaseFormModal({
                   Lanjutkan
                 </Button>
               </div>
+            </div>
+          ) : null}
+
+          {/* Sesi AE-130 — anti-double-count banner (Anisa feedback).
+              Muncul saat tanggal belanja <= tanggal opname terakhir yang
+              finalized. Stock fisik di opname sudah include belanja
+              tersebut, jadi tambah lagi = double-count. Server akan SKIP
+              update stock untuk pembelian ini; entry tetap masuk laporan
+              keuangan + COGS reporting. */}
+          {willSkipStockUpdate && lastOpname ? (
+            <div className="rounded-md border border-warning-500/50 bg-warning-100/40 px-3 py-2.5 text-sm">
+              <p className="font-semibold text-warning-500">
+                ⚠️ Tanggal belanja {backdateStatus === "same" ? "sama dengan" : "sebelum"} opname terakhir
+              </p>
+              <p className="mt-1 text-[12px] leading-relaxed text-neutral-800">
+                Opname terakhir di-finalize{" "}
+                <strong>
+                  {jakartaDateIso(lastOpname.finalizedAtDate)} (
+                  {lastOpname.periodLabel})
+                </strong>
+                . Stock fisik saat itu sudah mencakup belanja ini, jadi
+                kami <strong>tidak akan menambah stock lagi</strong>{" "}
+                supaya tidak double-count. Entry tetap tersimpan untuk
+                laporan kas + COGS.
+              </p>
+              <p className="mt-1 text-[11px] text-neutral-600">
+                Kalau memang belanja ini SETELAH opname, ubah tanggal di
+                atas ke{" "}
+                <strong>
+                  &gt; {jakartaDateIso(lastOpname.finalizedAtDate)}
+                </strong>
+                .
+              </p>
             </div>
           ) : null}
 

@@ -28,6 +28,7 @@ import {
 import {
   fetchActiveIngredientsForSnapshot,
   fetchActiveSession,
+  fetchLastFinalizedOpname,
   fetchMonthlyCadenceStatus,
   fetchSessionDetail,
   fetchSessions,
@@ -95,6 +96,39 @@ export async function getMonthlyCadence(): Promise<
   return ok(
     await fetchMonthlyCadenceStatus(session.user.outletId, new Date()),
   );
+}
+
+/**
+ * Sesi AE-130 — Last finalized opname info untuk UI Catat Pembelian.
+ *
+ * Dipakai PurchaseFormModal supaya bisa tampilkan banner warning saat
+ * user pilih tanggal yang backdated relative ke opname terakhir.
+ * Server-side classify lewat helper di lib/unit-conversion.
+ *
+ * Returns null kalau outlet belum punya opname finalized (fresh setup —
+ * banner tidak muncul, normal additive behavior).
+ *
+ * Permission: purchase.create (yang punya hak Catat Pembelian boleh
+ * tahu opname status untuk feedback context).
+ */
+export async function getLastFinalizedOpname(): Promise<
+  ApiResult<{
+    sessionId: string;
+    finalizedAtIso: string;
+    periodLabel: string;
+  } | null>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat opname");
+  }
+  const last = await fetchLastFinalizedOpname(session.user.outletId);
+  if (!last) return ok(null);
+  return ok({
+    sessionId: last.sessionId,
+    finalizedAtIso: last.finalizedAt.toISOString(),
+    periodLabel: last.periodLabel,
+  });
 }
 
 export async function getOpnameDetail(

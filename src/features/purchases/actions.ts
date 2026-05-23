@@ -17,6 +17,7 @@ import {
 import { computeNewWac } from "@/features/cogs/cogs-calc";
 import { cascadeCostUpdate } from "@/features/inventory/preparation-flow";
 import { computePrStatus } from "@/features/purchase-requests/group-items-pure";
+import { fetchLastFinalizedOpname } from "@/features/stock-opname/queries";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
@@ -27,7 +28,10 @@ import {
   resolveStockDecimal,
 } from "@/lib/stock-decimal";
 import {
+  classifyPurchaseAgainstOpname,
   convertPurchaseQty,
+  shouldSkipStockUpdate,
+  type BackdateStatus,
   type PackInfo,
 } from "@/lib/unit-conversion";
 import {
@@ -147,7 +151,18 @@ export async function listTopOutstanding(): Promise<
 
 export async function createPurchase(
   input: CreatePurchaseInput,
-): Promise<ApiResult<{ id: string; totalAmount: number; movementsCreated: number }>> {
+): Promise<
+  ApiResult<{
+    id: string;
+    totalAmount: number;
+    movementsCreated: number;
+    /** Sesi AE-130 — backdate status untuk feedback ke UI. Kalau
+     * "before" atau "same", stock TIDAK ditambah karena sudah ter-cover
+     * di opname terakhir; UI tampilkan toast info supaya staff tahu. */
+    backdateStatus: BackdateStatus;
+    skippedStockUpdate: boolean;
+  }>
+> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "purchase.create")) {
     return fail("FORBIDDEN", "Tidak punya hak buat pembelian");
@@ -173,6 +188,10 @@ export async function createPurchase(
   let resultId: string;
   let totalAmount = 0;
   let movementsCreated = 0;
+  /* Sesi AE-130 — captured in TX, surfaced di return supaya UI bisa
+   * tampilkan banner/toast khusus untuk backdated purchase. */
+  let backdateStatusOut: BackdateStatus = "no_baseline";
+  let skippedStockUpdateOut = false;
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -324,6 +343,30 @@ export async function createPurchase(
         total += Math.round(item.qty * item.unitCost);
       }
 
+      /* Sesi AE-130 — anti-double-count detection (Anisa feedback).
+       *
+       * Fetch opname finalized terakhir di outlet ini. Kalau purchase_date
+       * <= opname.finalizedAt date (Jakarta TZ), berarti stock fisik sudah
+       * include belanja ini → SKIP per-item stock + WAC update untuk
+       * mencegah double-count. Movement tetap di-record dengan flag
+       * `skippedStockUpdate=true` supaya audit trail jelas + COGS report
+       * tetap show purchase qty/value periode.
+       *
+       * Fallback aman: kalau outlet belum punya opname finalized (Mahakan
+       * baru 3 minggu — sesi AE-130 launch context), classify returns
+       * "no_baseline" → normal additive behavior, no warning. Begitu
+       * opname pertama finalized, logic kick-in otomatis. */
+      const lastOpname = await fetchLastFinalizedOpname(
+        session.user.outletId,
+      );
+      const backdateStatus: BackdateStatus = classifyPurchaseAgainstOpname({
+        purchaseDateIso: v.purchaseDate,
+        lastOpnameFinalizedAt: lastOpname?.finalizedAt ?? null,
+      });
+      const skipStockUpdate = shouldSkipStockUpdate(backdateStatus);
+      backdateStatusOut = backdateStatus;
+      skippedStockUpdateOut = skipStockUpdate;
+
       // Sesi AE-129 — multi-nota. UI baru kirim `receiptImageUrls`. Legacy
        // single URL field di-mirror dengan item pertama dari array supaya
        // existing list/detail views (yang masih baca receiptImageUrl) tetap
@@ -416,7 +459,7 @@ export async function createPurchase(
         const totalCostMaster = Math.round(qtyMaster * unitCostMaster);
 
         let newWacCost = oldCostBefore;
-        if (v.updateCost) {
+        if (v.updateCost && !skipStockUpdate) {
           const wac = computeNewWac({
             oldQty: oldQtyDecimal,
             oldCost: oldCostBefore,
@@ -425,24 +468,36 @@ export async function createPurchase(
           });
           newWacCost = wac.newCost;
         }
-        const costChanged = v.updateCost && newWacCost !== oldCostBefore;
+        const costChanged =
+          v.updateCost && !skipStockUpdate && newWacCost !== oldCostBefore;
 
-        const updateValues: Record<string, unknown> = {
-          currentStock: newStock.bigint,
-          currentStockDecimal: newStock.decimal,
-          updatedAt: new Date(),
-          updatedBy: session.user.id,
-        };
-        if (v.updateCost) {
-          updateValues.costPerUnit = newWacCost;
-          if (costChanged) {
-            updateValues.costLastChangedAt = new Date();
+        /* Sesi AE-130 — kalau backdated (skipStockUpdate=true): JANGAN
+         * touch currentStock/currentStockDecimal/costPerUnit. Stock fisik
+         * sudah ter-cover di opname terakhir; nambah lagi = double count.
+         * WAC juga skipped — kalau update tanpa update stock, formula
+         * (oldValue + newValue) / (oldQty + newQty) jadi tidak konsisten.
+         * Audit tetap full: cost history + movement keep ter-record.
+         *
+         * updatedAt/updatedBy juga di-skip — ingredient state effectively
+         * tidak berubah dari sisi domain. */
+        if (!skipStockUpdate) {
+          const updateValues: Record<string, unknown> = {
+            currentStock: newStock.bigint,
+            currentStockDecimal: newStock.decimal,
+            updatedAt: new Date(),
+            updatedBy: session.user.id,
+          };
+          if (v.updateCost) {
+            updateValues.costPerUnit = newWacCost;
+            if (costChanged) {
+              updateValues.costLastChangedAt = new Date();
+            }
           }
+          await tx
+            .update(ingredients)
+            .set(updateValues)
+            .where(eq(ingredients.id, item.ingredientId));
         }
-        await tx
-          .update(ingredients)
-          .set(updateValues)
-          .where(eq(ingredients.id, item.ingredientId));
 
         // Insert cost history (audit trail) — only kalau cost berubah.
         // Cascade ke preparation recipes yang depend on this ingredient
@@ -476,7 +531,10 @@ export async function createPurchase(
           }
         }
 
-        // Movement.
+        // Movement. Sesi AE-130 — flag skippedStockUpdate kalau backdated,
+        // supaya audit + COGS report bisa membedakan "purchase yang
+        // mempengaruhi stock" vs "purchase yang sudah ter-cover di opname"
+        // tanpa kehilangan transactional history.
         const [movement] = await tx
           .insert(inventoryMovements)
           .values({
@@ -489,8 +547,13 @@ export async function createPurchase(
             referenceType: "manual",
             referenceId: created.id,
             reason: v.invoiceNo
-              ? `Purchase ${v.invoiceNo}`
-              : `Purchase ${created.id.slice(0, 8)}`,
+              ? skipStockUpdate
+                ? `Purchase ${v.invoiceNo} (backdate, no stock add)`
+                : `Purchase ${v.invoiceNo}`
+              : skipStockUpdate
+                ? `Purchase ${created.id.slice(0, 8)} (backdate, no stock add)`
+                : `Purchase ${created.id.slice(0, 8)}`,
+            skippedStockUpdate: skipStockUpdate,
             createdBy: session.user.id,
           })
           .returning({ id: inventoryMovements.id });
@@ -784,7 +847,13 @@ export async function createPurchase(
     );
   }
 
-  return ok({ id: resultId, totalAmount, movementsCreated });
+  return ok({
+    id: resultId,
+    totalAmount,
+    movementsCreated,
+    backdateStatus: backdateStatusOut,
+    skippedStockUpdate: skippedStockUpdateOut,
+  });
 }
 
 // ============================================================================
