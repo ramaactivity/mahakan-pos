@@ -64,6 +64,14 @@ export const AUDIT_EVENT_TYPES = [
   "operasional.task.check_late",
   "operasional.task.uncheck",
   "operasional.task.wa_export",
+  // Arsip Nota (sesi AE-132)
+  "nota_archive.create",
+  "nota_archive.update",
+  "nota_archive.review",
+  "nota_archive.flag",
+  "nota_archive.delete",
+  "nota_archive.file.add",
+  "nota_archive.file.delete",
   // Cash
   "expense.create",
   "expense.update",
@@ -386,7 +394,10 @@ export type AuditEntityType =
   /* Sesi AE-131 — Operasional checklist. */
   | "operasional_task_template"
   | "operasional_task_completion"
-  | "operasional_task_wa_export";
+  | "operasional_task_wa_export"
+  /* Sesi AE-132 — Arsip Nota. */
+  | "nota_archive"
+  | "nota_archive_file";
 
 export type AuditPayload = {
   /** human summary line — will be shown in viewer table */

@@ -138,6 +138,11 @@ const OperasionalChecklistSection = lazy(() =>
     default: m.OperasionalChecklistSection,
   })),
 );
+const NotaArchiveSection = lazy(() =>
+  import("@/features/admin/sections/NotaArchiveSection").then((m) => ({
+    default: m.NotaArchiveSection,
+  })),
+);
 
 /* Sesi AE-63 polish-2 — daftar AdminSection valid untuk hash-routing
  * validation (filter invalid hash dari URL). */
@@ -165,6 +170,7 @@ const VALID_SECTIONS: ReadonlySet<AdminSection> = new Set([
   "journal_retry",
   "investors",
   "operasional_checklist",
+  "nota_archive",
   "settings",
 ]);
 
@@ -372,6 +378,8 @@ export function AdminShell() {
               <InvestorsSection viewerRole={session.user.role} />
             ) : section === "operasional_checklist" ? (
               <OperasionalChecklistSection viewerRole={session.user.role} />
+            ) : section === "nota_archive" ? (
+              <NotaArchiveSection viewerRole={session.user.role} />
             ) : section === "settings" ? (
               <SettingsSection />
             ) : null}

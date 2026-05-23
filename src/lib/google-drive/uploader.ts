@@ -60,6 +60,8 @@ const MODULE_ROOT_FOLDER: Record<UploadModule, string> = {
   expense: "STRUK PENGELUARAN",
   attendance: "ABSENSI",
   setoran: "BUKTI SETORAN",
+  /* Sesi AE-132 — Arsip dokumentasi nota staff. */
+  nota_archive: "ARSIP NOTA",
 };
 
 export type UploadModule =
@@ -67,7 +69,8 @@ export type UploadModule =
   | "hr"
   | "expense"
   | "attendance"
-  | "setoran";
+  | "setoran"
+  | "nota_archive";
 
 let _drive: drive_v3.Drive | null = null;
 
@@ -192,8 +195,9 @@ async function resolveTargetFolder(
     };
   }
 
-  // purchase + expense + setoran: year/month structure
-  if (!ctx.date) throw new Error("date wajib untuk purchase/expense/setoran");
+  // purchase + expense + setoran + nota_archive: year/month structure
+  if (!ctx.date)
+    throw new Error("date wajib untuk purchase/expense/setoran/nota_archive");
   const m = ctx.date.match(/^(\d{4})-(\d{2})-\d{2}$/);
   if (!m) throw new Error("date harus YYYY-MM-DD");
   const yyyy = m[1];
@@ -203,7 +207,9 @@ async function resolveTargetFolder(
       ? `NOTA MAHAKAN ${yyyy}`
       : module === "setoran"
         ? `BUKTI SETORAN ${yyyy}`
-        : yyyy;
+        : module === "nota_archive"
+          ? `ARSIP NOTA ${yyyy}`
+          : yyyy;
   const monthFolderName = MONTH_LABELS_ID[monthIdx];
 
   const yearFolder = await findOrCreateFolder(d, yearFolderName, moduleRoot);
@@ -212,10 +218,51 @@ async function resolveTargetFolder(
     monthFolderName,
     yearFolder,
   );
+
+  /* Sesi AE-132 — nota_archive subfolder per kategori biar Owner gampang
+   * navigate ke jenis nota tertentu (mis. ARSIP NOTA/2026/05. MEI/
+   * OPERASIONAL/). */
+  if (module === "nota_archive") {
+    if (!ctx.category)
+      throw new Error("category wajib untuk nota_archive");
+    const catFolderName = formatNotaArchiveCategoryFolder(ctx.category);
+    const catFolder = await findOrCreateFolder(d, catFolderName, monthFolder);
+    return {
+      folderId: catFolder,
+      pathLabel: `${moduleRootName}/${yearFolderName}/${monthFolderName}/${catFolderName}`,
+    };
+  }
+
   return {
     folderId: monthFolder,
     pathLabel: `${moduleRootName}/${yearFolderName}/${monthFolderName}`,
   };
+}
+
+/** Pretty folder names per kategori (uppercase, no underscore). */
+function formatNotaArchiveCategoryFolder(category: string): string {
+  switch (category) {
+    case "pembelian_cash":
+      return "PEMBELIAN CASH";
+    case "pembayaran_top":
+      return "PEMBAYARAN TOP";
+    case "operasional":
+      return "OPERASIONAL";
+    case "maintenance":
+      return "MAINTENANCE";
+    case "marketing":
+      return "MARKETING";
+    case "pajak_admin":
+      return "PAJAK & ADMIN";
+    case "gaji_thr":
+      return "GAJI & THR";
+    case "aset":
+      return "ASET & EQUIPMENT";
+    case "lainnya":
+      return "LAINNYA";
+    default:
+      return "LAINNYA";
+  }
 }
 
 interface UploadContext {
@@ -225,6 +272,8 @@ interface UploadContext {
   employeeId?: string;
   /** Required for HR — folder labelled with this. */
   employeeName?: string;
+  /** Required for nota_archive — drives kategori subfolder name. */
+  category?: string;
 }
 
 export interface UploadOpts {

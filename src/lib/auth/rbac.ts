@@ -161,6 +161,15 @@ export const permissions = {
     "staff",
   ],
 
+  /* Sesi AE-132 — Arsip Nota (dokumentasi).
+   * Semua role bisa upload (terutama staff saat manager/owner tidak di
+   * lapangan). Review/flag/delete khusus Owner+Manager. */
+  "nota_archive.create": ["owner", "manager", "supervisor", "staff"],
+  "nota_archive.view.all": ["owner", "manager", "supervisor"],
+  "nota_archive.view.own": ["owner", "manager", "supervisor", "staff"],
+  "nota_archive.review": ["owner", "manager"],
+  "nota_archive.delete": ["owner", "manager"],
+
   // HR — Employee management (Sesi C-6). Supervisor view-only.
   "employee.view": ["owner", "manager", "supervisor"],
   "employee.create": ["owner", "manager"],

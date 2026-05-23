@@ -49,3 +49,5 @@ export * from "./push_subscriptions";
 export * from "./user_notification_subscriptions";
 /* Sesi AE-131 — Operasional checklist (daily/weekly/monthly tugas staff). */
 export * from "./operasional_tasks";
+/* Sesi AE-132 — Arsip Nota (dokumentasi nota cash/TOP/operasional). */
+export * from "./nota_archives";

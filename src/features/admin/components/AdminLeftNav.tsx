@@ -12,6 +12,7 @@ import {
   ClipboardList,
   Clock,
   Coffee,
+  FileText,
   Heart,
   Landmark,
   LayoutDashboard,
@@ -57,6 +58,7 @@ export type AdminSection =
   | "journal_retry"
   | "investors"
   | "operasional_checklist"
+  | "nota_archive"
   | "settings";
 
 interface AdminLeftNavProps {
@@ -118,6 +120,9 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "setoran_tunai", label: "Setoran Tunai", Icon: Landmark },
       { key: "cash", label: "Kas", Icon: Wallet },
+      /* Sesi AE-132 — Arsip foto nota staff (dokumentasi murni, tidak
+       * terikat finance). Cashflow group karena overlap konseptual. */
+      { key: "nota_archive", label: "Arsip Nota", Icon: FileText },
     ],
   },
   {

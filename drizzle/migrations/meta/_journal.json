@@ -512,6 +512,13 @@
       "when": 1779542913465,
       "tag": "0072_operasional_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1779545325676,
+      "tag": "0073_nota_archives",
+      "breakpoints": true
     }
   ]
 }

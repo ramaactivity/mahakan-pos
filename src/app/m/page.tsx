@@ -9,6 +9,7 @@ import {
   CheckSquare,
   ChevronRight,
   ClipboardList,
+  FileText,
   Fingerprint,
   LogOut,
   PackageSearch,
@@ -64,6 +65,14 @@ const MODULES: ModuleCard[] = [
     description:
       "Ceklist tugas harian, mingguan, dan bulanan. Bisa dikerjakan bareng + kirim ringkasan ke WA grup.",
     icon: <CheckSquare className="size-6" aria-hidden />,
+    status: "live",
+  },
+  {
+    href: "/m/nota",
+    title: "Arsip Nota",
+    description:
+      "Upload foto nota cash, TOP supplier, listrik, dan operasional lain. Otomatis tersimpan rapi di Drive owner.",
+    icon: <FileText className="size-6" aria-hidden />,
     status: "live",
   },
 ];
