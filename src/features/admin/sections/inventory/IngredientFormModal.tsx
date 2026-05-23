@@ -114,7 +114,7 @@ export function IngredientFormModal({
         ? null
         : parseIntOrZero(reorderThreshold);
     if (threshold !== null && threshold < 0) {
-      setError("Threshold tidak boleh negatif");
+      setError("Stok minimum tidak boleh negatif");
       return;
     }
 
@@ -257,12 +257,16 @@ export function IngredientFormModal({
         ) : null}
 
         <Input
-          label={`Threshold Stok Rendah (${unit || "unit"}, opsional)`}
+          label={`Stok Minimum (${unit || "unit"}, opsional)`}
           placeholder="kosongkan kalau tidak mau alert"
           value={reorderThreshold}
           onChange={(e) => setReorderThreshold(e.target.value)}
           type="text"
           inputMode="numeric"
+          /* Sesi AE-130 — rename "Threshold Stok Rendah" → "Stok Minimum"
+           * (Anisa feedback: istilah Threshold bikin staff bingung).
+           * "Stok Minimum" = batas terendah sebelum perlu re-order, bahasa
+           * yang familiar di operasi gudang Indonesia. */
         />
 
         <div className="space-y-1.5">

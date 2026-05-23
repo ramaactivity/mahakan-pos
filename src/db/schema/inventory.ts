@@ -91,6 +91,46 @@ export const ingredients = pgTable(
      * untuk Opname + future modules. */
     packConversions: jsonb("pack_conversions"),
 
+    /** Sesi AE-130 — Multi-unit 3-tier (Anisa feedback).
+     *
+     * Konsep: 1 ingredient bisa punya 3 satuan berbeda untuk konteks
+     * yang berbeda, sambil tetap pakai `unit` (di atas) sebagai SATUAN
+     * COGS / TERKECIL / AUTHORITATIVE. Semua kalkulasi internal (stock,
+     * cost, recipe, movement) tetap di-store dalam `unit`. Kolom-kolom
+     * baru ini hanya MAPPING display + entry preference:
+     *
+     *  - unit_tracking + unit_tracking_per_cogs:
+     *    Satuan terbesar untuk DISPLAY di Inventory list (human friendly).
+     *    Misal: 1 Kotak susu = 1000 ml (`unit`=ml, unitTracking="Kotak",
+     *    unitTrackingPerCogs=1000). UI tampilkan "2 Kotak" instead of
+     *    "2000 ml" supaya owner/staff baca lebih natural. NULL = pakai
+     *    `unit` apa adanya (no separate tracking display).
+     *
+     *  - unit_belanja + unit_belanja_per_cogs:
+     *    Satuan default saat Catat Pembelian / Permintaan Belanja. Misal:
+     *    susu master ml, beli per L (1 L = 1000 ml). Saat staff buka
+     *    form purchase untuk ingredient ini, default unit picker = "L"
+     *    + auto convert ke ml saat save. NULL = pakai `unit` apa adanya.
+     *
+     * Stock opname (per Anisa): tetap input dalam `unit` (terkecil) untuk
+     * akurasi, tapi UI tampilkan auto-convert ke unit_tracking sebagai
+     * preview ("2500 ml = 2.5 Kotak").
+     *
+     * Validasi: kalau unit_*_per_cogs di-set, harus > 0 (tidak boleh 0
+     * atau negatif — divide-by-zero hazard). Kalau label di-set tanpa
+     * per_cogs, treat as identity (1:1 — staff cuma re-label tanpa
+     * konversi). */
+    unitTracking: text("unit_tracking"),
+    unitTrackingPerCogs: numeric("unit_tracking_per_cogs", {
+      precision: 15,
+      scale: 4,
+    }),
+    unitBelanja: text("unit_belanja"),
+    unitBelanjaPerCogs: numeric("unit_belanja_per_cogs", {
+      precision: 15,
+      scale: 4,
+    }),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -119,6 +159,15 @@ export const ingredients = pgTable(
     check(
       "ck_ingredients_prep_yield_pos",
       sql`${t.preparationYield} IS NULL OR ${t.preparationYield} > 0`,
+    ),
+    /* Sesi AE-130 — divide-by-zero guard untuk konversi unit. */
+    check(
+      "ck_ingredients_unit_tracking_per_cogs_pos",
+      sql`${t.unitTrackingPerCogs} IS NULL OR ${t.unitTrackingPerCogs} > 0`,
+    ),
+    check(
+      "ck_ingredients_unit_belanja_per_cogs_pos",
+      sql`${t.unitBelanjaPerCogs} IS NULL OR ${t.unitBelanjaPerCogs} > 0`,
     ),
   ],
 );
@@ -252,6 +301,24 @@ export const inventoryMovements = pgTable(
     }),
     referenceId: uuid("reference_id"),
     reason: text("reason"),
+
+    /** Sesi AE-130 — Anti-double-count flag (Anisa feedback).
+     *
+     * Saat staff input pembelian dengan tanggal SEBELUM opname finalized
+     * yang lebih recent, stock fisik sudah include belanja tsb (Anisa
+     * skenario: opname jam 20:00 = 100, lalu input bon belanja siang
+     * jam 22:00 → kalau additive jadi 150, padahal fisik 100).
+     *
+     * Saat true:
+     *  - Movement TIDAK update ingredient.currentStock + currentStockDecimal
+     *  - Tetap masuk laporan COGS / Pergerakan untuk audit periode
+     *  - UI Catat Pembelian tampilkan warning saat staff pilih tanggal
+     *    < lastOpname.finalizedAt
+     *
+     * Default false untuk semua movement lain (sale_deduct, adjust, dst). */
+    skippedStockUpdate: boolean("skipped_stock_update")
+      .notNull()
+      .default(false),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

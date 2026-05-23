@@ -462,21 +462,31 @@ export function IngredientsList() {
         />
       </div>
 
-      {/* Sesi AE-52 — Stok rendah compact list (top 12 deficit terbesar)
-       * + collapse toggle. Replace pill chip wall dengan readable list. */}
+      {/* Sesi AE-130 (Anisa polish) — Card stok rendah redesign:
+       *  - Title lebih tegas + count langsung di badge
+       *  - Kolom "Stok Min" diganti dengan defisit yang lebih visual
+       *    (sisa / min dalam 1 cell pakai "/" — hemat horizontal space
+       *    + clear visual hierarchy)
+       *  - Aksi default mobile-friendly: tombol "Terima" pakai full label,
+       *    bukan icon kecil. Tap target lebih besar.
+       *  - Toggle filter dipindah ke bawah supaya CTA utama (Terima) lebih
+       *    prominent. Title bar lebih ringkas. */}
       {lowStock.length > 0 ? (
         <Card className="border-warning-500/40 bg-warning-100/30">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-warning-500">
               <AlertTriangle className="size-4" aria-hidden />
-              Stok Rendah — perlu reorder ({lowStock.length})
+              Perlu Re-Order
+              <Badge variant="warning" className="ml-1">
+                {lowStock.length}
+              </Badge>
             </h3>
             <Button
-              variant={lowOnly ? "primary" : "outline"}
+              variant={lowOnly ? "primary" : "ghost"}
               size="sm"
               onClick={() => setLowOnly((v) => !v)}
             >
-              {lowOnly ? "Tampilkan semua bahan" : "Filter di table bawah"}
+              {lowOnly ? "Lihat semua bahan" : "Filter ke tabel bawah"}
             </Button>
           </CardHeader>
           <CardContent className="pt-0">
@@ -487,14 +497,14 @@ export function IngredientsList() {
                     <th className="px-3 py-1.5 text-left font-medium">
                       Bahan
                     </th>
-                    <th className="px-3 py-1.5 text-right font-medium">
-                      Sisa
+                    <th
+                      className="px-3 py-1.5 text-right font-medium"
+                      title="Sisa stok saat ini dibanding stok minimum"
+                    >
+                      Sisa / Min
                     </th>
                     <th className="px-3 py-1.5 text-right font-medium">
-                      Threshold
-                    </th>
-                    <th className="px-3 py-1.5 text-right font-medium">
-                      Defisit
+                      Kurang
                     </th>
                     {canReceive ? (
                       <th className="px-3 py-1.5 text-right font-medium">
@@ -514,7 +524,7 @@ export function IngredientsList() {
                     const isNegative = i.currentStock < 0;
                     return (
                       <tr key={i.id} className="hover:bg-warning-100/30">
-                        <td className="px-3 py-1.5">
+                        <td className="px-3 py-2">
                           <span className="font-medium text-neutral-900">
                             {i.name}
                           </span>
@@ -524,30 +534,35 @@ export function IngredientsList() {
                             </Badge>
                           ) : null}
                         </td>
-                        <td
-                          className={cn(
-                            "px-3 py-1.5 text-right font-mono tabular-nums",
-                            isNegative
-                              ? "text-danger-500 font-semibold"
-                              : "text-neutral-900",
-                          )}
-                        >
-                          {sisa} {i.unit}
+                        <td className="px-3 py-2 text-right">
+                          <span
+                            className={cn(
+                              "font-mono tabular-nums",
+                              isNegative
+                                ? "text-danger-500 font-semibold"
+                                : "text-neutral-900",
+                            )}
+                          >
+                            {sisa}
+                          </span>
+                          <span className="font-mono tabular-nums text-neutral-400">
+                            {" / "}
+                            {i.reorderThreshold}
+                          </span>{" "}
+                          <span className="text-neutral-500">{i.unit}</span>
                         </td>
-                        <td className="px-3 py-1.5 text-right font-mono tabular-nums text-neutral-500">
-                          {i.reorderThreshold} {i.unit}
-                        </td>
-                        <td className="px-3 py-1.5 text-right font-mono tabular-nums text-warning-500">
-                          {deficit} {i.unit}
+                        <td className="px-3 py-2 text-right font-mono tabular-nums font-medium text-warning-500">
+                          +{deficit} {i.unit}
                         </td>
                         {canReceive ? (
-                          <td className="px-3 py-1.5 text-right">
+                          <td className="px-3 py-2 text-right">
                             <Button
                               size="sm"
                               variant="outline"
                               onClick={() =>
                                 setTarget({ kind: "receive", ingredient: i })
                               }
+                              aria-label={`Terima stok ${i.name}`}
                             >
                               <PackagePlus
                                 className="size-3.5"
@@ -710,17 +725,13 @@ export function IngredientsList() {
                       label="Unit"
                       sort={sort}
                     />
-                    {canSeeCost ? (
-                      <SortableHeader
-                        columnKey="costPerUnit"
-                        label="Cost / Unit"
-                        sort={sort}
-                        align="right"
-                      />
-                    ) : null}
+                    {/* Sesi AE-130 — Cost/Unit dihilangkan dari tab Bahan
+                     * (Anisa feedback): di tab ini staff fokus ke sisa
+                     * persediaan, bukan harga. Info Cost/Unit tetap tersedia
+                     * di tab COGS & Variance. */}
                     <SortableHeader
                       columnKey="reorderThreshold"
-                      label="Threshold"
+                      label="Stok Minimum"
                       sort={sort}
                       align="right"
                     />
@@ -795,11 +806,8 @@ export function IngredientsList() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-neutral-700">{i.unit}</td>
-                        {canSeeCost ? (
-                          <td className="px-4 py-3 text-right font-mono text-xs">
-                            {formatRupiah(i.costPerUnit)}
-                          </td>
-                        ) : null}
+                        {/* Sesi AE-130 — Cost/Unit per-row dihilangkan (lihat
+                         * header comment). Tab Bahan = fokus stok, bukan harga. */}
                         <td className="px-4 py-3 text-right font-mono text-xs">
                           {i.reorderThreshold !== null ? (
                             i.reorderThreshold.toLocaleString("id-ID")

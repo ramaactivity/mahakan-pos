@@ -498,6 +498,13 @@
       "when": 1779524707402,
       "tag": "0070_quick_swarm",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1779530613277,
+      "tag": "0071_wealthy_roulette",
+      "breakpoints": true
     }
   ]
 }
