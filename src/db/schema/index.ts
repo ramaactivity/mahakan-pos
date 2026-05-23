@@ -43,3 +43,5 @@ export * from "./creditors";
 export * from "./creditor_repayments";
 export * from "./share_transactions";
 export * from "./withdrawal_requests";
+/* Sesi AE-123 — Web Push subscription registry untuk notif setoran pending. */
+export * from "./push_subscriptions";

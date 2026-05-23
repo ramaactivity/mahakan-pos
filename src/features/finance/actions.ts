@@ -408,6 +408,34 @@ export async function createCashDeposit(
     },
   }).catch((e) => console.error("[audit cash_deposit.create]", e));
 
+  /* Sesi AE-123 — push notif ke verifier (owner) di outlet. Gracefully
+   * no-op kalau VAPID env tidak di-set. Fire-and-forget supaya tidak
+   * blocking response. */
+  void (async () => {
+    try {
+      const { sendPushToOutletVerifiers } = await import(
+        "@/features/push-notifications/server"
+      );
+      const result = await sendPushToOutletVerifiers(
+        session.user.outletId,
+        {
+          title: "Setoran tunai baru menunggu verifikasi",
+          body: `Rp ${row.amount.toLocaleString("id-ID")} ke ${row.bankDestination} (${row.depositDate})`,
+          url: "/dashboard#setoran_tunai",
+          tag: "setoran-pending",
+        },
+        { roles: ["owner"] },
+      );
+      if (result.sent > 0) {
+        console.info(
+          `[push] setoran-pending sent to ${result.sent} subscription(s)`,
+        );
+      }
+    } catch (e) {
+      console.error("[push] setoran-pending notif fail:", e);
+    }
+  })();
+
   return ok(row);
 }
 

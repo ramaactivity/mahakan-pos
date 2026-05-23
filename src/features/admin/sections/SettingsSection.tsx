@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Bell,
   Bluetooth,
   Building2,
   Clock,
@@ -29,6 +30,7 @@ import { SettingsTunablesModal } from "./settings/SettingsTunablesModal";
 import { ApprovalCodesPanel } from "./settings/ApprovalCodesPanel";
 import { BankAccountsCard } from "./settings/BankAccountsCard";
 import { ResetMockupDataCard } from "./settings/ResetMockupDataCard";
+import { PushNotificationToggle } from "@/features/push-notifications/PushNotificationToggle";
 
 type OperationalHours = NonNullable<Outlet["operationalHours"]>;
 
@@ -204,6 +206,25 @@ export function SettingsSection() {
         </CardHeader>
         <CardContent>
           <PrinterControls />
+        </CardContent>
+      </Card>
+
+      {/* Sesi AE-123 — Push Notification subscription card. Per-browser
+       * (kalau owner pakai 2 device, subscribe 2x). VAPID env wajib di
+       * server supaya tombol enable. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Bell className="size-5" aria-hidden /> Notifikasi Setoran
+          </CardTitle>
+          <CardDescription>
+            Aktifkan supaya browser kasih notif real-time saat ada setoran
+            tunai baru menunggu verifikasi (walau tab tidak terbuka). Per
+            device — aktifkan di tiap browser/device yang sering kamu pakai.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <PushNotificationToggle />
         </CardContent>
       </Card>
 
