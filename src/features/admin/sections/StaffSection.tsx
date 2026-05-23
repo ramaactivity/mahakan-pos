@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Pencil, Plus, Power, Users } from "lucide-react";
+import { KeyRound, Pencil, Plus, Power, RotateCcw, Users } from "lucide-react";
 import {
   Badge,
   Button,
@@ -22,6 +22,7 @@ import {
   deactivateUser,
   isOk,
   listUsers,
+  reactivateUser,
   type PublicUser,
 } from "@/features/users";
 import type { Role } from "@/lib/auth";
@@ -31,7 +32,7 @@ interface StaffSectionProps {
   viewerUserId: string;
 }
 
-type FormMode = { kind: "create" } | { kind: "edit"; userId: string; name: string };
+type FormMode = { kind: "create" } | { kind: "edit"; user: PublicUser };
 
 export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
   const queryClient = useQueryClient();
@@ -52,6 +53,8 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
   const [pendingDeactivate, setPendingDeactivate] = useState<PublicUser | null>(
     null,
   );
+  const [pendingReactivate, setPendingReactivate] =
+    useState<PublicUser | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const refresh = () =>
@@ -68,6 +71,21 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
     }
     toast.success(`${pendingDeactivate.name} dinonaktifkan`);
     setPendingDeactivate(null);
+    setSubmitting(false);
+    void refresh();
+  }
+
+  async function handleReactivate() {
+    if (!pendingReactivate || submitting) return;
+    setSubmitting(true);
+    const res = await reactivateUser(pendingReactivate.id);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      setSubmitting(false);
+      return;
+    }
+    toast.success(`${pendingReactivate.name} diaktifkan kembali`);
+    setPendingReactivate(null);
     setSubmitting(false);
     void refresh();
   }
@@ -121,13 +139,7 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() =>
-                        setFormMode({
-                          kind: "edit",
-                          userId: u.id,
-                          name: u.name,
-                        })
-                      }
+                      onClick={() => setFormMode({ kind: "edit", user: u })}
                       aria-label={`Edit ${u.name}`}
                     >
                       <Pencil className="size-4" aria-hidden />
@@ -151,6 +163,16 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
                         className="text-danger-500 hover:bg-danger-100"
                       >
                         <Power className="size-4" aria-hidden />
+                      </Button>
+                    ) : u.status === "inactive" ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setPendingReactivate(u)}
+                        aria-label={`Aktifkan ${u.name}`}
+                        className="text-mahakan-green-900 hover:bg-mahakan-green-100"
+                      >
+                        <RotateCcw className="size-4" aria-hidden />
                       </Button>
                     ) : null}
                   </div>
@@ -217,6 +239,37 @@ export function StaffSection({ viewerRole, viewerUserId }: StaffSectionProps) {
         <p className="text-sm text-neutral-700">
           User bisa diaktifkan kembali via aksi yang sama (tampil di list).
           Last-Owner protected — Owner terakhir tidak bisa dinonaktifkan.
+        </p>
+      </Modal>
+
+      <Modal
+        open={pendingReactivate !== null}
+        onClose={() => setPendingReactivate(null)}
+        title="Aktifkan kembali user?"
+        description={
+          pendingReactivate
+            ? `${pendingReactivate.name} akan bisa login lagi sesuai role-nya.`
+            : undefined
+        }
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setPendingReactivate(null)}
+              disabled={submitting}
+            >
+              Batal
+            </Button>
+            <Button onClick={handleReactivate} loading={submitting}>
+              Aktifkan
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-neutral-700">
+          Auth (password/PIN) yang tersimpan tetap berlaku. Pastikan user masih
+          berhak akses sistem.
         </p>
       </Modal>
     </div>

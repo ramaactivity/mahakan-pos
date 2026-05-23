@@ -86,6 +86,16 @@ export interface UpdateUserInput {
   id: string;
   name?: string;
   status?: UserStatus;
+  /** Set / change login email. Pass empty string to clear (only allowed if role becomes PIN-only). */
+  email?: string | null;
+  /** Promote/demote role. Owner-only; honors canActOnRole + Last-Owner. */
+  role?: Role;
+  /** New password (will be hashed). Pass empty string to clear — only allowed if role becomes PIN-only. */
+  password?: string | null;
+  /** New PIN (4-6 digits). */
+  pin?: string;
+  /** Set to true to remove existing PIN (only allowed if user has password). */
+  clearPin?: boolean;
 }
 
 export interface ResetPinInput {

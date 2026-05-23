@@ -22,6 +22,7 @@ export {
   deactivateUser,
   getUser,
   listUsers,
+  reactivateUser,
   resetPin,
   updateUser,
 } from "./actions";

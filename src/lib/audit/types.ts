@@ -52,6 +52,8 @@ export const AUDIT_EVENT_TYPES = [
   "user.create",
   "user.update",
   "user.deactivate",
+  "user.reactivate",
+  "user.role_change",
   "user.reset_pin",
   // Cash
   "expense.create",
