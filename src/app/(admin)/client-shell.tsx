@@ -6,6 +6,7 @@ import { WorkspaceSwitcher } from "@/components/ui/WorkspaceSwitcher";
 import { RequireAuth } from "@/features/auth/RequireAuth";
 import { useSession } from "@/features/auth/SessionProvider";
 import { QueryProvider } from "@/features/_shared/QueryProvider";
+import { NotificationReminderBanner } from "@/features/push-notifications/NotificationReminderBanner";
 
 /**
  * Sesi AE-126 — Client shell untuk admin route group. Sebelumnya inline
@@ -51,6 +52,9 @@ function AdminOuterShell({ children }: { children: ReactNode }) {
           <WorkspaceSwitcher current="admin" role={session.user.role} />
         </div>
       </header>
+      {/* Sesi AE-128 — push notif reminder banner. Self-managed visibility
+       * (hide kalau sudah subscribed / snoozed / browser unsupported). */}
+      <NotificationReminderBanner />
       {children}
     </div>
   );

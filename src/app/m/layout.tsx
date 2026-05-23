@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import type { ReactNode } from "react";
+import { NotificationReminderBanner } from "@/features/push-notifications/NotificationReminderBanner";
 
 export const metadata: Metadata = {
   title: "Mahakan Staff — Tools Karyawan",
@@ -68,6 +69,10 @@ export default function MobileLayout({
         `}
       </Script>
       <div className="mx-auto w-full max-w-md px-4 py-6 sm:max-w-lg sm:py-8">
+        {/* Sesi AE-128 — push notif reminder banner untuk staff. Self-
+         * managed visibility (hide kalau sudah subscribed / snoozed /
+         * browser unsupported / iOS belum install PWA). */}
+        <NotificationReminderBanner />
         {children}
       </div>
     </div>
