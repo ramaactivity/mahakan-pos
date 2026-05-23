@@ -726,11 +726,10 @@ export function IngredientsList() {
                       sort={sort}
                       align="right"
                     />
-                    <SortableHeader
-                      columnKey="unit"
-                      label="Unit"
-                      sort={sort}
-                    />
+                    {/* Sesi AE-136 — kolom Unit jadi 2: Purchase + Recipe.
+                     * Purchase di-show prominent, Recipe sebagai caption kecil
+                     * untuk konsistensi dengan konvensi 2-unit. */}
+                    <th className="px-4 py-2 text-left font-medium">Unit</th>
                     {/* Sesi AE-130 — Cost/Unit dihilangkan dari tab Bahan
                      * (Anisa feedback): di tab ini staff fokus ke sisa
                      * persediaan, bukan harga. Info Cost/Unit tetap tersedia
@@ -812,14 +811,11 @@ export function IngredientsList() {
                               supaya tidak hilang info presisi. */}
                           <StockDisplay ingredient={i} />
                         </td>
-                        <td className="px-4 py-3 text-neutral-700">
-                          {/* Sesi AE-136 — prefer Purchase Unit (unitBelanja)
-                           * sebagai display unit. Fallback ke unitTracking
-                           * (legacy data sebelum konvensi 2-unit), lalu unit
-                           * recipe sebagai default. */}
-                          {i.unitBelanja?.trim() ||
-                            i.unitTracking?.trim() ||
-                            i.unit}
+                        <td className="px-4 py-3">
+                          {/* Sesi AE-136 — Purchase (top) + Recipe (caption).
+                           * Kalau bahan belum punya Purchase Unit, fallback
+                           * tampilkan Recipe saja. */}
+                          <UnitDisplay ingredient={i} />
                         </td>
                         {/* Sesi AE-130 — Cost/Unit per-row dihilangkan (lihat
                          * header comment). Tab Bahan = fokus stok, bukan harga. */}
@@ -1367,6 +1363,44 @@ function FlowQtyCell({
  * tracking unit (mis. "2,5 Kotak") dengan COGS breakdown subtle di
  * bawah ("2.500 ml"). Tanpa tier → render apa adanya.
  */
+/* Sesi AE-136 — UnitDisplay: kolom Unit menampilkan Purchase Unit
+ * sebagai label utama + Recipe Unit sebagai caption dengan rasio.
+ * Bahan yang belum punya Purchase Unit → fallback tampilkan Recipe
+ * Unit saja. */
+function UnitDisplay({
+  ingredient,
+}: {
+  ingredient: {
+    unit: string;
+    unitBelanja: string | null;
+    unitBelanjaPerCogs: string | null;
+  };
+}) {
+  const belanja = ingredient.unitBelanja?.trim();
+  const per = ingredient.unitBelanjaPerCogs
+    ? parseFloat(ingredient.unitBelanjaPerCogs)
+    : null;
+  if (belanja && per !== null && per > 0) {
+    const fmt = new Intl.NumberFormat("id-ID", {
+      maximumFractionDigits: 4,
+    });
+    return (
+      <div className="flex flex-col leading-tight">
+        <span className="font-medium text-neutral-900">{belanja}</span>
+        <span className="text-[10px] text-neutral-500">
+          1 = {fmt.format(per)} {ingredient.unit}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col leading-tight">
+      <span className="text-neutral-700">{ingredient.unit}</span>
+      <span className="text-[10px] text-neutral-400">recipe unit</span>
+    </div>
+  );
+}
+
 function StockDisplay({
   ingredient,
 }: {

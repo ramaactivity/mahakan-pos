@@ -97,6 +97,9 @@ export async function listMarketItems(
       ingredientId: supplierIngredients.ingredientId,
       ingredientName: ingredients.name,
       ingredientUnit: ingredients.unit,
+      /* Sesi AE-136 — surface purchase unit + ratio untuk display. */
+      ingredientPurchaseUnit: ingredients.unitBelanja,
+      ingredientPurchasePerRecipe: ingredients.unitBelanjaPerCogs,
       ingredientSection: ingredients.section,
       unitCost: supplierIngredients.unitCost,
       packSize: supplierIngredients.packSize,
@@ -129,6 +132,10 @@ export async function listMarketItems(
       ingredientId: r.ingredientId,
       ingredientName: r.ingredientName,
       ingredientUnit: r.ingredientUnit,
+      ingredientPurchaseUnit: r.ingredientPurchaseUnit?.trim() || null,
+      ingredientPurchasePerRecipe: r.ingredientPurchasePerRecipe
+        ? parseFloat(r.ingredientPurchasePerRecipe)
+        : null,
       ingredientSection: r.ingredientSection,
       unitCost: r.unitCost,
       packSize: packSizeNum,

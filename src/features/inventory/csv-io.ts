@@ -20,11 +20,23 @@
 const SECTIONS = ["kitchen", "bar", "supporting", "cleaning"] as const;
 export type Section = (typeof SECTIONS)[number] | null;
 
+/* Sesi AE-136 — auto-inference rasio purchase→recipe untuk pasangan
+ * umum. Owner CSV biasanya isi unit lengkap tapi skip kolom ratio. */
+const AUTO_INFER_RATIO: Record<string, number> = {
+  "kg|g": 1000,
+  "l|ml": 1000,
+};
+
 export interface IngredientCsvRow {
   id: string | null;
   name: string;
   section: Section;
-  unit: string;
+  /** Recipe Unit — satuan terkecil untuk perhitungan resep + storage. */
+  recipeUnit: string;
+  /** Purchase Unit — untuk display Inventory + opname + belanja. NULL = pakai recipe unit. */
+  purchaseUnit: string | null;
+  /** Konversi: 1 purchase unit = X recipe unit. NULL = identity (1:1). */
+  purchasePerRecipe: number | null;
   costPerUnit: number;
   currentStock: number; // display only (read on export, ignored on import)
   threshold: number | null;
@@ -60,7 +72,12 @@ export interface IngredientForExport {
   id: string;
   name: string;
   section: string | null;
+  /** Recipe Unit (alias of legacy `unit` column). */
   unit: string;
+  /** Purchase Unit — NULL kalau belum diset. */
+  unitBelanja: string | null;
+  /** Konversi 1 unitBelanja = X unit. NULL/identity = 1:1. */
+  unitBelanjaPerCogs: string | null;
   costPerUnit: number;
   currentStockDecimal: string; // "1.0000" etc
   reorderThreshold: number | null;
@@ -93,13 +110,24 @@ export function serializeIngredientsCsv(
   lines.push(
     `# Empty 'id' creates a new bahan. Matching 'id' updates existing.`,
   );
-  // Data header
+  /* Sesi AE-136 — kolom unit di-split jadi 2:
+   * - purchase_unit = satuan belanja (kg, L, btl, pack). Boleh kosong.
+   * - recipe_unit   = satuan terkecil untuk resep (g, ml, pcs).
+   * - purchase_per_recipe = 1 purchase = X recipe. Kosong = pakai default
+   *   (kg+g=1000, L+ml=1000, recipe==purchase=1, else WAJIB isi). */
+  lines.push(
+    `# purchase_unit/recipe_unit/purchase_per_recipe: 1 kg = 1000 g, 1 L = 1000 ml. Kalau identik (recipe = purchase) ratio = 1.`,
+  );
+  // Data header — kolom baru (Sesi AE-136). Backward-compat: parser masih
+  // accept legacy "unit" column kalau CSV lama di-upload.
   lines.push(
     [
       "id",
       "name",
       "section",
-      "unit",
+      "purchase_unit",
+      "recipe_unit",
+      "purchase_per_recipe",
       "cost_per_unit",
       "current_stock",
       "threshold",
@@ -108,12 +136,20 @@ export function serializeIngredientsCsv(
   );
 
   for (const r of sorted) {
+    const purchaseUnit = r.unitBelanja?.trim() ?? "";
+    const ratio =
+      r.unitBelanjaPerCogs && r.unitBelanjaPerCogs.trim().length > 0
+        ? /* Trim trailing zeros from decimal: "1000.0000" → "1000" */
+          String(parseFloat(r.unitBelanjaPerCogs))
+        : "";
     lines.push(
       [
         r.id,
         csvEscape(r.name),
         r.section ?? "",
+        csvEscape(purchaseUnit),
         csvEscape(r.unit),
+        ratio,
         String(r.costPerUnit),
         // Show decimal stock (read-only)
         r.currentStockDecimal,
@@ -168,21 +204,31 @@ export function parseIngredientsCsv(text: string): ParseResult {
     return { rows: [], errorCount: 0, headers: [] };
   }
 
-  const headers = parseCsvLine(dataLines[0].line).map((h) => h.trim());
+  /* Sesi AE-136 — case-insensitive header normalization karena owner
+   * suka edit di Excel/Sheets yang capitalize column names. */
+  const headers = parseCsvLine(dataLines[0].line).map((h) =>
+    h.trim().toLowerCase().replace(/\s+/g, "_"),
+  );
 
   const expectedHeaders = [
     "id",
     "name",
     "section",
-    "unit",
+    "purchase_unit",
+    "recipe_unit",
+    "purchase_per_recipe",
     "cost_per_unit",
     "current_stock",
     "threshold",
     "notes",
   ];
 
-  // Check required headers (name, unit minimum)
-  if (!headers.includes("name") || !headers.includes("unit")) {
+  /* Backward-compat: CSV lama hanya punya "unit" (= recipe unit).
+   * Baru: "recipe_unit" + "purchase_unit" + "purchase_per_recipe".
+   * Acceptable: name + (recipe_unit ATAU unit) minimum. */
+  const hasRecipeUnit =
+    headers.includes("recipe_unit") || headers.includes("unit");
+  if (!headers.includes("name") || !hasRecipeUnit) {
     return {
       rows: [
         {
@@ -192,7 +238,7 @@ export function parseIngredientsCsv(text: string): ParseResult {
           errors: [
             {
               field: "header",
-              message: `CSV header missing required columns. Expected: ${expectedHeaders.join(", ")}`,
+              message: `CSV header missing required columns. Expected: ${expectedHeaders.join(", ")}. Minimum: name + recipe_unit (atau legacy "unit").`,
             },
           ],
           existingId: null,
@@ -223,13 +269,77 @@ export function parseIngredientsCsv(text: string): ParseResult {
       errors.push({ field: "name", message: "name maksimal 200 karakter" });
     }
 
-    // Required: unit
-    const unit = raw.unit ?? "";
-    if (unit.length === 0) {
-      errors.push({ field: "unit", message: "unit wajib diisi" });
-    } else if (unit.length > 20) {
-      errors.push({ field: "unit", message: "unit maksimal 20 karakter" });
+    /* Sesi AE-136 — recipe_unit (atau legacy unit) + purchase_unit +
+     * purchase_per_recipe parsing. */
+    const recipeUnit = (raw.recipe_unit ?? raw.unit ?? "").trim();
+    if (recipeUnit.length === 0) {
+      errors.push({
+        field: "recipe_unit",
+        message: "recipe_unit wajib diisi (kolom legacy 'unit' juga diterima)",
+      });
+    } else if (recipeUnit.length > 20) {
+      errors.push({
+        field: "recipe_unit",
+        message: "recipe_unit maksimal 20 karakter",
+      });
     }
+
+    /* Purchase unit + ratio — optional dengan smart defaults. */
+    const purchaseUnitRaw = (raw.purchase_unit ?? "").trim();
+    const purchasePerRecipeRaw = (raw.purchase_per_recipe ?? "").trim();
+    let purchaseUnit: string | null = null;
+    let purchasePerRecipe: number | null = null;
+
+    if (purchaseUnitRaw.length > 0) {
+      if (purchaseUnitRaw.length > 20) {
+        errors.push({
+          field: "purchase_unit",
+          message: "purchase_unit maksimal 20 karakter",
+        });
+      } else {
+        purchaseUnit = purchaseUnitRaw;
+        /* Resolve ratio: explicit > inferred > error */
+        if (purchasePerRecipeRaw.length > 0) {
+          /* User explicit set ratio — parse Indonesian (koma desimal). */
+          const cleaned = purchasePerRecipeRaw
+            .replace(/\./g, "") // strip thousand separator
+            .replace(",", ".");
+          const n = Number(cleaned);
+          if (!Number.isFinite(n) || n <= 0) {
+            errors.push({
+              field: "purchase_per_recipe",
+              message: `purchase_per_recipe harus angka positif (got '${purchasePerRecipeRaw}')`,
+            });
+          } else {
+            purchasePerRecipe = n;
+          }
+        } else {
+          /* Auto-infer dari pasangan unit umum. */
+          const pairKey = `${purchaseUnit.toLowerCase()}|${recipeUnit.toLowerCase()}`;
+          const inferred = AUTO_INFER_RATIO[pairKey];
+          if (inferred !== undefined) {
+            purchasePerRecipe = inferred;
+          } else if (
+            purchaseUnit.toLowerCase() === recipeUnit.toLowerCase()
+          ) {
+            purchasePerRecipe = 1; // identity
+          } else {
+            errors.push({
+              field: "purchase_per_recipe",
+              message: `purchase_per_recipe wajib untuk pair ${purchaseUnit}→${recipeUnit} (tidak ada default). Mis. 1 ${purchaseUnit} = ? ${recipeUnit}.`,
+            });
+          }
+        }
+      }
+    } else if (purchasePerRecipeRaw.length > 0) {
+      /* User isi ratio tapi tidak isi purchase_unit — invalid. */
+      errors.push({
+        field: "purchase_per_recipe",
+        message: "purchase_per_recipe tidak boleh diisi kalau purchase_unit kosong",
+      });
+    }
+    /* Fallback alias supaya rest of code masih jalan. */
+    const unit = recipeUnit;
 
     // section optional, but must be enum if provided
     let section: Section = null;
@@ -294,7 +404,9 @@ export function parseIngredientsCsv(text: string): ParseResult {
             id,
             name,
             section,
-            unit,
+            recipeUnit: unit,
+            purchaseUnit,
+            purchasePerRecipe,
             costPerUnit: cost,
             currentStock: 0, // read-only — ignored on import
             threshold,
@@ -367,7 +479,10 @@ export interface ExistingIngredientLite {
   id: string;
   name: string;
   section: string | null;
-  unit: string;
+  unit: string; // recipe unit
+  /** Sesi AE-136 — Purchase unit + ratio untuk diff comparison. */
+  unitBelanja: string | null;
+  unitBelanjaPerCogs: string | null;
   costPerUnit: number;
   reorderThreshold: number | null;
   notes: string | null;
@@ -457,7 +572,17 @@ export function computeDiff(
     const changed: string[] = [];
     if (ex.name !== r.parsed.name) changed.push("name");
     if (ex.section !== r.parsed.section) changed.push("section");
-    if (ex.unit !== r.parsed.unit) changed.push("unit");
+    if (ex.unit !== r.parsed.recipeUnit) changed.push("recipe_unit");
+    /* Sesi AE-136 — diff purchase unit + ratio. Empty string === null
+     * untuk konsistensi (kolom kosong di CSV = clear). */
+    const exPurchase = ex.unitBelanja?.trim() || null;
+    const newPurchase = r.parsed.purchaseUnit?.trim() || null;
+    if (exPurchase !== newPurchase) changed.push("purchase_unit");
+    const exRatio = ex.unitBelanjaPerCogs
+      ? parseFloat(ex.unitBelanjaPerCogs)
+      : null;
+    const newRatio = r.parsed.purchasePerRecipe ?? null;
+    if (exRatio !== newRatio) changed.push("purchase_per_recipe");
     if (ex.costPerUnit !== r.parsed.costPerUnit) changed.push("cost_per_unit");
     if ((ex.reorderThreshold ?? null) !== (r.parsed.threshold ?? null))
       changed.push("threshold");

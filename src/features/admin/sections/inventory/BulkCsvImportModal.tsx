@@ -355,8 +355,12 @@ function RowItem({ row }: { row: RowDiff }) {
           </div>
         ) : row.action === "create" ? (
           <div className="text-neutral-700">
-            New: {row.parsed?.section ?? "(no section)"} ·{" "}
-            {row.parsed?.unit} · Rp {row.parsed?.costPerUnit.toLocaleString("id-ID")}/unit
+            New: {row.parsed?.section ?? "(no section)"} · Recipe{" "}
+            {row.parsed?.recipeUnit}
+            {row.parsed?.purchaseUnit
+              ? ` · Purchase ${row.parsed.purchaseUnit} (1=${row.parsed.purchasePerRecipe ?? 1})`
+              : ""}{" "}
+            · Rp {row.parsed?.costPerUnit.toLocaleString("id-ID")}/recipe unit
           </div>
         ) : (
           <div className="text-neutral-500">No changes</div>

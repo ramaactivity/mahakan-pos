@@ -69,6 +69,9 @@ export async function exportIngredientsCsv(): Promise<
       name: r.name,
       section: r.section,
       unit: r.unit,
+      /* Sesi AE-136 — export purchase unit + ratio columns. */
+      unitBelanja: r.unitBelanja,
+      unitBelanjaPerCogs: r.unitBelanjaPerCogs,
       costPerUnit: r.costPerUnit,
       currentStockDecimal: r.currentStockDecimal ?? "0.0000",
       reorderThreshold: r.reorderThreshold,
@@ -128,6 +131,8 @@ export async function previewIngredientsBulkUpdate(
       name: ingredients.name,
       section: ingredients.section,
       unit: ingredients.unit,
+      unitBelanja: ingredients.unitBelanja,
+      unitBelanjaPerCogs: ingredients.unitBelanjaPerCogs,
       costPerUnit: ingredients.costPerUnit,
       reorderThreshold: ingredients.reorderThreshold,
       notes: ingredients.notes,
@@ -145,6 +150,8 @@ export async function previewIngredientsBulkUpdate(
     name: e.name,
     section: e.section,
     unit: e.unit,
+    unitBelanja: e.unitBelanja,
+    unitBelanjaPerCogs: e.unitBelanjaPerCogs,
     costPerUnit: e.costPerUnit,
     reorderThreshold: e.reorderThreshold,
     notes: e.notes,
@@ -187,6 +194,8 @@ export async function applyIngredientsBulkUpdate(
       name: ingredients.name,
       section: ingredients.section,
       unit: ingredients.unit,
+      unitBelanja: ingredients.unitBelanja,
+      unitBelanjaPerCogs: ingredients.unitBelanjaPerCogs,
       costPerUnit: ingredients.costPerUnit,
       reorderThreshold: ingredients.reorderThreshold,
       notes: ingredients.notes,
@@ -204,6 +213,8 @@ export async function applyIngredientsBulkUpdate(
     name: e.name,
     section: e.section,
     unit: e.unit,
+    unitBelanja: e.unitBelanja,
+    unitBelanjaPerCogs: e.unitBelanjaPerCogs,
     costPerUnit: e.costPerUnit,
     reorderThreshold: e.reorderThreshold,
     notes: e.notes,
@@ -249,7 +260,13 @@ export async function applyIngredientsBulkUpdate(
               outletId: session.user.outletId,
               name: row.parsed.name,
               section: row.parsed.section,
-              unit: row.parsed.unit,
+              unit: row.parsed.recipeUnit,
+              /* Sesi AE-136 — purchase unit + ratio. */
+              unitBelanja: row.parsed.purchaseUnit,
+              unitBelanjaPerCogs:
+                row.parsed.purchasePerRecipe !== null
+                  ? String(row.parsed.purchasePerRecipe)
+                  : null,
               costPerUnit: row.parsed.costPerUnit,
               currentStock: 0,
               currentStockDecimal: "0.0000",
@@ -271,7 +288,13 @@ export async function applyIngredientsBulkUpdate(
             .set({
               name: row.parsed.name,
               section: row.parsed.section,
-              unit: row.parsed.unit,
+              unit: row.parsed.recipeUnit,
+              /* Sesi AE-136 — purchase unit + ratio. */
+              unitBelanja: row.parsed.purchaseUnit,
+              unitBelanjaPerCogs:
+                row.parsed.purchasePerRecipe !== null
+                  ? String(row.parsed.purchasePerRecipe)
+                  : null,
               costPerUnit: row.parsed.costPerUnit,
               reorderThreshold: row.parsed.threshold,
               notes: row.parsed.notes,

@@ -13,6 +13,11 @@ export interface MarketListItem {
   ingredientId: string;
   ingredientName: string;
   ingredientUnit: string;
+  /** Sesi AE-136 — purchase unit + ratio untuk display di Market List header
+   * supaya owner langsung tau "Recipe g, Purchase kg (1000)" tanpa
+   * harus buka Bahan tab. */
+  ingredientPurchaseUnit: string | null;
+  ingredientPurchasePerRecipe: number | null;
   ingredientSection: string | null;
   /** Harga total per pack (Rp). */
   unitCost: number;

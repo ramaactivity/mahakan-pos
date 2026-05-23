@@ -13,6 +13,8 @@ const SAMPLE: IngredientForExport[] = [
     name: "Susu Full Cream",
     section: "bar",
     unit: "ml",
+    unitBelanja: "L",
+    unitBelanjaPerCogs: "1000",
     costPerUnit: 4500,
     currentStockDecimal: "15000.0000",
     reorderThreshold: 5000,
@@ -23,6 +25,8 @@ const SAMPLE: IngredientForExport[] = [
     name: "Beans Houseblend",
     section: "bar",
     unit: "g",
+    unitBelanja: "kg",
+    unitBelanjaPerCogs: "1000",
     costPerUnit: 200,
     currentStockDecimal: "731.5000",
     reorderThreshold: 2000,
@@ -40,8 +44,10 @@ describe("serializeIngredientsCsv", () => {
     expect(csv.charCodeAt(0)).toBe(0xfeff);
     // Comment line
     expect(csv).toContain("# Generated 2026-05-22");
-    // Data header
-    expect(csv).toContain("id,name,section,unit,cost_per_unit");
+    // Data header (Sesi AE-136 — split unit ke recipe + purchase + ratio)
+    expect(csv).toContain(
+      "id,name,section,purchase_unit,recipe_unit,purchase_per_recipe,cost_per_unit",
+    );
     // Data rows
     expect(csv).toContain("Susu Full Cream");
     expect(csv).toContain("Beans Houseblend");
@@ -68,7 +74,7 @@ describe("serializeIngredientsCsv", () => {
 });
 
 describe("parseIngredientsCsv", () => {
-  it("parses valid CSV correctly", () => {
+  it("parses valid CSV correctly (legacy 'unit' column)", () => {
     const csv =
       "id,name,section,unit,cost_per_unit,current_stock,threshold,notes\n" +
       ",Susu Test,bar,ml,4500,0,5000,Tes brand\n";
@@ -79,12 +85,99 @@ describe("parseIngredientsCsv", () => {
       id: null,
       name: "Susu Test",
       section: "bar",
-      unit: "ml",
+      recipeUnit: "ml",
+      purchaseUnit: null,
+      purchasePerRecipe: null,
       costPerUnit: 4500,
       currentStock: 0,
       threshold: 5000,
       notes: "Tes brand",
     });
+  });
+
+  it("parses new CSV with recipe_unit + purchase_unit + purchase_per_recipe", () => {
+    const csv =
+      "id,name,section,purchase_unit,recipe_unit,purchase_per_recipe,cost_per_unit,current_stock,threshold,notes\n" +
+      ",Susu Test,bar,L,ml,1000,4500,0,5000,Tes brand\n";
+    const result = parseIngredientsCsv(csv);
+    expect(result.errorCount).toBe(0);
+    expect(result.rows[0].parsed).toEqual({
+      id: null,
+      name: "Susu Test",
+      section: "bar",
+      recipeUnit: "ml",
+      purchaseUnit: "L",
+      purchasePerRecipe: 1000,
+      costPerUnit: 4500,
+      currentStock: 0,
+      threshold: 5000,
+      notes: "Tes brand",
+    });
+  });
+
+  it("auto-infers ratio for common pairs kg→g (1000) when ratio kosong", () => {
+    const csv =
+      "id,name,section,purchase_unit,recipe_unit,purchase_per_recipe,cost_per_unit,current_stock,threshold,notes\n" +
+      ",Beans,bar,kg,g,,200,0,2000,\n";
+    const result = parseIngredientsCsv(csv);
+    expect(result.errorCount).toBe(0);
+    expect(result.rows[0].parsed?.purchasePerRecipe).toBe(1000);
+  });
+
+  it("auto-infers ratio L→ml (1000)", () => {
+    const csv =
+      "id,name,section,purchase_unit,recipe_unit,purchase_per_recipe,cost_per_unit,current_stock,threshold,notes\n" +
+      ",Sirup,bar,L,ml,,150,0,500,\n";
+    const result = parseIngredientsCsv(csv);
+    expect(result.errorCount).toBe(0);
+    expect(result.rows[0].parsed?.purchasePerRecipe).toBe(1000);
+  });
+
+  it("identity 1:1 when purchase == recipe", () => {
+    const csv =
+      "id,name,section,purchase_unit,recipe_unit,purchase_per_recipe,cost_per_unit,current_stock,threshold,notes\n" +
+      ",Telur,kitchen,pcs,pcs,,3000,0,30,\n";
+    const result = parseIngredientsCsv(csv);
+    expect(result.errorCount).toBe(0);
+    expect(result.rows[0].parsed?.purchasePerRecipe).toBe(1);
+  });
+
+  it("flags missing ratio for non-default pair", () => {
+    const csv =
+      "id,name,section,purchase_unit,recipe_unit,purchase_per_recipe,cost_per_unit,current_stock,threshold,notes\n" +
+      ",Dimsum,kitchen,pack,pcs,,2500,0,20,\n";
+    const result = parseIngredientsCsv(csv);
+    expect(result.errorCount).toBe(1);
+    expect(result.rows[0].errors[0].field).toBe("purchase_per_recipe");
+  });
+
+  it("explicit ratio with Indonesian decimal (koma)", () => {
+    const csv =
+      "id,name,section,purchase_unit,recipe_unit,purchase_per_recipe,cost_per_unit,current_stock,threshold,notes\n" +
+      ",Bubuk,kitchen,pack,g,250,180,0,10,\n";
+    const result = parseIngredientsCsv(csv);
+    expect(result.errorCount).toBe(0);
+    expect(result.rows[0].parsed?.purchasePerRecipe).toBe(250);
+  });
+
+  it("flags ratio without purchase_unit", () => {
+    const csv =
+      "id,name,section,purchase_unit,recipe_unit,purchase_per_recipe,cost_per_unit,current_stock,threshold,notes\n" +
+      ",Bad,kitchen,,g,1000,180,0,10,\n";
+    const result = parseIngredientsCsv(csv);
+    expect(result.errorCount).toBe(1);
+    expect(result.rows[0].errors[0].field).toBe("purchase_per_recipe");
+  });
+
+  it("case-insensitive header normalization", () => {
+    const csv =
+      "ID,Name,Section,Purchase Unit,Recipe Unit,Purchase Per Recipe,Cost Per Unit,Current Stock,Threshold,Notes\n" +
+      ",Beans,bar,kg,g,1000,200,0,2000,\n";
+    const result = parseIngredientsCsv(csv);
+    expect(result.errorCount).toBe(0);
+    expect(result.rows[0].parsed?.purchaseUnit).toBe("kg");
+    expect(result.rows[0].parsed?.recipeUnit).toBe("g");
+    expect(result.rows[0].parsed?.purchasePerRecipe).toBe(1000);
   });
 
   it("ignores comment lines (#)", () => {
@@ -177,6 +270,8 @@ describe("computeDiff", () => {
       name: "Susu Full Cream",
       section: "bar",
       unit: "ml",
+      unitBelanja: null,
+      unitBelanjaPerCogs: null,
       costPerUnit: 4500,
       reorderThreshold: 5000,
       notes: "Indomilk 1L",
@@ -253,6 +348,8 @@ describe("roundtrip export → parse", () => {
       name: s.name,
       section: s.section,
       unit: s.unit,
+      unitBelanja: s.unitBelanja,
+      unitBelanjaPerCogs: s.unitBelanjaPerCogs,
       costPerUnit: s.costPerUnit,
       reorderThreshold: s.reorderThreshold,
       notes: s.notes,

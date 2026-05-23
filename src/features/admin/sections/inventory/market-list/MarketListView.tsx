@@ -80,7 +80,13 @@ export function MarketListView() {
   const grouped = useMemo(() => {
     const map = new Map<
       string,
-      { ingredientName: string; ingredientUnit: string; rows: MarketListItem[] }
+      {
+        ingredientName: string;
+        ingredientUnit: string;
+        ingredientPurchaseUnit: string | null;
+        ingredientPurchasePerRecipe: number | null;
+        rows: MarketListItem[];
+      }
     >();
     for (const it of items) {
       const key = it.ingredientId;
@@ -88,6 +94,8 @@ export function MarketListView() {
         map.set(key, {
           ingredientName: it.ingredientName,
           ingredientUnit: it.ingredientUnit,
+          ingredientPurchaseUnit: it.ingredientPurchaseUnit,
+          ingredientPurchasePerRecipe: it.ingredientPurchasePerRecipe,
           rows: [],
         });
       }
@@ -261,9 +269,25 @@ export function MarketListView() {
                     {group.ingredientName}
                   </h3>
                   <p className="text-[11px] text-neutral-500">
-                    Unit master:{" "}
-                    <span className="font-mono">{group.ingredientUnit}</span>{" "}
-                    · {group.rows.length} supplier
+                    {/* Sesi AE-136 — show Recipe + Purchase Unit kalau set,
+                     * fallback Recipe-only kalau belum migrate. */}
+                    Recipe:{" "}
+                    <span className="font-mono">{group.ingredientUnit}</span>
+                    {group.ingredientPurchaseUnit &&
+                    group.ingredientPurchasePerRecipe ? (
+                      <>
+                        {" · Purchase: "}
+                        <span className="font-mono">
+                          {group.ingredientPurchaseUnit}
+                        </span>{" "}
+                        <span className="text-neutral-400">
+                          (1 = {group.ingredientPurchasePerRecipe}{" "}
+                          {group.ingredientUnit})
+                        </span>
+                      </>
+                    ) : null}
+                    {" · "}
+                    {group.rows.length} supplier
                   </p>
                 </div>
                 <Badge
