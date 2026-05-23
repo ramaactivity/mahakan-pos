@@ -319,8 +319,10 @@ export function IngredientFormModal({
             <div className="w-28">
               <Select
                 ariaLabel="Purchase unit preset"
+                /* Sesi AE-136 HOTFIX — Radix Select.Item tolak value="".
+                 * Pakai sentinel "__none" + map ke string kosong di state. */
                 options={[
-                  { value: "", label: "—" },
+                  { value: "__none", label: "—" },
                   ...COMMON_PURCHASE_UNITS.map((u) => ({
                     value: u,
                     label: u,
@@ -329,13 +331,16 @@ export function IngredientFormModal({
                 ]}
                 value={
                   unitBelanja === ""
-                    ? ""
+                    ? "__none"
                     : COMMON_PURCHASE_UNITS.includes(unitBelanja)
                       ? unitBelanja
                       : "__custom"
                 }
                 onValueChange={(v) => {
-                  if (v === "__custom") {
+                  if (v === "__none") {
+                    setUnitBelanja("");
+                    setUnitBelanjaPerCogs("");
+                  } else if (v === "__custom") {
                     if (COMMON_PURCHASE_UNITS.includes(unitBelanja))
                       setUnitBelanja("");
                   } else {
