@@ -33,6 +33,7 @@ type Status =
   | "snoozed"
   | "ready" /* siap subscribe — tampil banner CTA */
   | "ios-install-hint" /* Safari iOS sebelum install PWA */
+  | "blocked" /* permission denied — guide user ke browser settings */
   | "loading"; /* lagi subscribe-process */
 
 const SNOOZE_KEY = "mahakan:push-reminder-snooze";
@@ -46,6 +47,13 @@ const SNOOZE_SUBSCRIBED_MS = 30 * 24 * 60 * 60 * 1000; // 30 hari (sukses subscr
  * di-track untuk diagnostic logging tapi tidak trigger snooze. */
 const FAILURE_COUNT_KEY = "mahakan:push-reminder-fail-count";
 const FAILURE_RESET_AFTER_MS = 24 * 60 * 60 * 1000;
+/* Sesi AE-135 — bump kalau perlu force-reset semua snooze + failure
+ * record di device user (one-time per deploy). Migration cek kalau
+ * stored version != current → clear semua state + tulis version baru.
+ * Owner yang sudah subscribed tidak terganggu (banner cek subscription
+ * existing dulu sebelum tampil). */
+const MIGRATION_VERSION_KEY = "mahakan:push-reminder-migration";
+const MIGRATION_VERSION_CURRENT = "ae135-force-banner";
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -171,27 +179,38 @@ export function NotificationReminderBanner() {
         setStatus("hidden");
         return;
       }
+      /* Sesi AE-135 — sebelumnya: denied = hidden silent. Sekarang: show
+       * banner khusus "blocked" supaya user tahu cara unblock di Settings
+       * browser, tidak salah kaprah "sistem kasih notif tapi gak nyampe". */
       if (Notification.permission === "denied") {
-        setStatus("hidden");
+        setStatus("blocked");
         return;
       }
-      /* Sesi AE-135 — clear stale auto-cooldown snooze dari release
-       * sebelumnya (AE-134 punya 4 jam auto-cooldown setelah 3 fail
-       * yang sekarang dihapus). Caranya: kalau ada failure record
-       * historis + snooze masih aktif, anggap snooze itu dari
-       * auto-cooldown lama dan clear. Snooze "Nanti" eksplisit yang
-       * di-set tanpa failure record tidak ke-clear. */
-      const failRec = readFailureRecord();
-      const snoozeUntil = readSnooze();
-      if (failRec.count > 0 && snoozeUntil > Date.now()) {
-        /* Asumsi: snooze ini berasal dari auto-cooldown bug lama. Clear. */
-        try {
+      /* Sesi AE-135 — one-time migration: cek versi migration stored
+       * vs current. Beda → clear semua state push reminder (snooze +
+       * failure record) supaya semua user staff yang stuck (entah karena
+       * auto-cooldown bug AE-134 atau klik "Nanti" sebelumnya) dapet
+       * fresh chance subscribe. Owner yang sudah subscribed AMAN karena
+       * check `getSubscription()` di bawah akan return non-null → status
+       * "hidden". */
+      try {
+        const storedMig = window.localStorage.getItem(MIGRATION_VERSION_KEY);
+        if (storedMig !== MIGRATION_VERSION_CURRENT) {
           window.localStorage.removeItem(SNOOZE_KEY);
-        } catch {
-          /* ignore */
+          window.localStorage.removeItem(FAILURE_COUNT_KEY);
+          window.localStorage.setItem(
+            MIGRATION_VERSION_KEY,
+            MIGRATION_VERSION_CURRENT,
+          );
         }
-        resetFailureRecord();
-      } else if (snoozeUntil > Date.now()) {
+      } catch {
+        /* localStorage disabled — proceed without migration */
+      }
+
+      /* Snooze active? (sekarang hanya muncul kalau user klik "Nanti"
+       * SETELAH migration, jadi murni user-controlled. */
+      const snoozeUntil = readSnooze();
+      if (snoozeUntil > Date.now()) {
         setStatus("snoozed");
         return;
       }
@@ -371,7 +390,7 @@ export function NotificationReminderBanner() {
     const lower = raw.toLowerCase();
     if (lower.includes("push service") || lower.includes("registration")) {
       if (failCount >= 3) {
-        return "Push service Google masih gagal setelah beberapa kali coba. Banner di-snooze 4 jam. Coba: (1) cek koneksi internet stabil, (2) update Google Play Services, (3) ulang dari Settings → Notifikasi.";
+        return "Push service Google masih gagal setelah beberapa kali coba. Coba: (1) cek koneksi internet stabil, (2) update Google Play Services di Play Store, (3) restart browser, (4) coba dari device lain. Banner tetap muncul biar bisa retry kapan saja.";
       }
       return "Push service Google gagal merespon. Pastikan internet stabil + Google Play Services up-to-date, lalu tap Aktifkan lagi.";
     }
@@ -422,6 +441,40 @@ export function NotificationReminderBanner() {
           type="button"
           onClick={handleSnooze}
           className="shrink-0 rounded p-1 text-info-700/70 hover:bg-info-100 hover:text-info-700"
+          aria-label="Tutup banner reminder"
+        >
+          <X className="size-4" aria-hidden />
+        </button>
+      </div>
+    );
+  }
+
+  /* Sesi AE-135 — Permission "denied" banner: kasih panduan unblock
+   * supaya staff tidak silently kehilangan opsi notifikasi. */
+  if (status === "blocked") {
+    return (
+      <div className="mx-3 mt-3 flex flex-wrap items-start gap-3 rounded-md border border-warning-500/40 bg-warning-100/50 px-3 py-2.5 text-sm md:mx-4">
+        <Bell
+          className="mt-0.5 size-4 shrink-0 text-warning-500"
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-warning-500">
+            Notifikasi di-blokir browser
+          </p>
+          <p className="text-xs text-neutral-700">
+            Buka Chrome → tap titik tiga di kanan atas →{" "}
+            <strong>Settings → Site settings → Notifications</strong> → cari{" "}
+            <code className="rounded bg-neutral-100 px-1 text-[10px]">
+              mahakan-pos.vercel.app
+            </code>{" "}
+            → ubah ke <strong>Allow</strong>. Lalu reload halaman ini.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleSnooze}
+          className="shrink-0 rounded p-1 text-warning-500/70 hover:bg-warning-100"
           aria-label="Tutup banner reminder"
         >
           <X className="size-4" aria-hidden />

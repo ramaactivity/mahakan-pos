@@ -16,7 +16,7 @@ declare const self: ServiceWorkerGlobalScope;
 // dari pre-AD-12). Mengubah konstanta ini = sw.js byte-diff = forced
 // reinstall di client → activate listener jalan → entries ke-/m + ke-/login
 // di-delete dari semua runtime cache.
-const SW_TAG = "ae25-manifest-bypass-fix";
+const SW_TAG = "ae135-push-banner-reset";
 const STALE_PATH_PATTERNS = [
   /\/m(\/|$|\?)/,
   /\/login(\/|$|\?)/,
