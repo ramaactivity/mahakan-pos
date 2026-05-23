@@ -33,6 +33,7 @@ import {
   type IngredientPackConversion,
   type IngredientUnitTiers,
 } from "@/lib/unit-conversion";
+import { parseIndonesianNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type SectionFilter = "all" | "bar" | "kitchen" | "supporting" | "cleaning" | "other";
@@ -194,7 +195,9 @@ function OpnameView() {
     const trimmed = raw.trim();
     let actualQty: number | null = null;
     if (trimmed.length > 0) {
-      const parsed = parseFloat(trimmed.replace(",", "."));
+      /* Sesi AE-136 — strict Indonesian parser: koma desimal, titik
+       * ribuan. Tolak format Inggris ("0.5" → NaN). */
+      const parsed = parseIndonesianNumber(trimmed);
       if (!Number.isFinite(parsed) || parsed < 0) {
         setDrafts((d) => ({
           ...d,
@@ -202,7 +205,8 @@ function OpnameView() {
             input: raw,
             inputUnit,
             status: "error",
-            errorMsg: "Angka tidak valid",
+            errorMsg:
+              "Format angka invalid. Pakai koma untuk desimal (mis. 0,5 bukan 0.5).",
           },
         }));
         return;
@@ -535,7 +539,8 @@ function LineRow({
   let parsedActual: number | null = null;
   const trimmed = inputValue.trim();
   if (trimmed.length > 0) {
-    const p = parseFloat(trimmed.replace(",", "."));
+    /* Sesi AE-136 — strict Indonesian parser. */
+    const p = parseIndonesianNumber(trimmed);
     if (Number.isFinite(p) && p >= 0) parsedActual = p;
   }
 

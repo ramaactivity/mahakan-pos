@@ -40,6 +40,7 @@ import {
   type PurchaseRequestStatus,
   type PurchaseRequestWithItems,
 } from "@/features/purchase-requests/types";
+import { parseIndonesianNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PurchaseRequestDetailModal } from "./PurchaseRequestDetailModal";
 import { CreatePurchaseFromPrModal } from "./inventory/purchases/CreatePurchaseFromPrModal";
@@ -267,9 +268,12 @@ export function PurchaseRequestsSection() {
     for (const it of bulkTarget.items) {
       if (!bulkChecked[it.id]) continue;
       const raw = bulkQtys[it.id] ?? "0";
-      const n = parseFloat(raw.replace(",", "."));
+      /* Sesi AE-136 — strict Indonesian parser. */
+      const n = parseIndonesianNumber(raw);
       if (!Number.isFinite(n) || n < 0) {
-        toast.error(`Qty tidak valid untuk ${it.ingredientNameSnapshot}`);
+        toast.error(
+          `Qty invalid untuk ${it.ingredientNameSnapshot}. Pakai koma untuk desimal (mis. 0,5).`,
+        );
         return;
       }
       // Over-receive di-allow di backend per AE-62s. UI tampilkan badge saja.
@@ -644,9 +648,7 @@ export function PurchaseRequestsSection() {
                 let overCount = 0;
                 for (const it of bulkTarget.items) {
                   if (!bulkChecked[it.id]) continue;
-                  const n = parseFloat(
-                    (bulkQtys[it.id] ?? "0").replace(",", "."),
-                  );
+                  const n = parseIndonesianNumber(bulkQtys[it.id] ?? "0");
                   if (Number.isFinite(n)) {
                     const over = n - Number(it.requestedQty);
                     if (over > 0) {

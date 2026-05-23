@@ -25,6 +25,7 @@ import {
   type PurchaseRequestWithItems,
 } from "@/features/purchase-requests/types";
 import { formatIndonesianDate } from "@/lib/date";
+import { parseIndonesianNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface ItemDraft {
@@ -214,9 +215,12 @@ function PoView() {
         toast.error("Nama bahan tidak boleh kosong");
         return;
       }
-      const qty = parseFloat(it.qty.replace(",", "."));
+      /* Sesi AE-136 — strict Indonesian parser. */
+      const qty = parseIndonesianNumber(it.qty);
       if (!Number.isFinite(qty) || qty <= 0) {
-        toast.error(`Qty untuk ${name} tidak valid`);
+        toast.error(
+          `Qty untuk ${name} invalid. Pakai koma untuk desimal (mis. 0,5).`,
+        );
         return;
       }
       validatedItems.push({

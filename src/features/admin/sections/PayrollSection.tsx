@@ -45,7 +45,11 @@ import {
   updatePayrollSettings,
 } from "@/features/outlets";
 import type { Role } from "@/lib/auth";
-import { formatRupiah, parseRupiah } from "@/lib/format";
+import {
+  formatRupiah,
+  parseIndonesianNumber,
+  parseRupiah,
+} from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
@@ -163,10 +167,11 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
       | { minMinutes: number; bonusType: "fixed" | "multiplier"; bonusValue: number }
       | null = null;
     if (dsEnabled) {
-      const hrs = parseFloat(dsMinHours.replace(",", "."));
-      const val = parseFloat(dsBonusValue.replace(",", "."));
+      /* Sesi AE-136 — strict Indonesian parser. */
+      const hrs = parseIndonesianNumber(dsMinHours);
+      const val = parseIndonesianNumber(dsBonusValue);
       if (!Number.isFinite(hrs) || hrs < 1 || hrs > 24) {
-        toast.error("Min jam double-shift harus 1-24");
+        toast.error("Min jam double-shift harus 1-24 (pakai koma untuk desimal)");
         return;
       }
       if (!Number.isFinite(val) || val <= 0) {
