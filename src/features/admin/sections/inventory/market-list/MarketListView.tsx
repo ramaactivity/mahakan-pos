@@ -382,6 +382,22 @@ export function MarketListView() {
                               /{row.ingredientUnit}
                             </span>
                           </div>
+                          {/* Sesi AE-137 — kalau bahan punya purchase unit
+                           * dengan ratio !=1, tampilkan juga Rp/purchase
+                           * supaya owner cepat banding dengan harga supplier
+                           * lain yang quote per purchase unit. */}
+                          {row.ingredientPurchaseUnit &&
+                          row.ingredientPurchasePerRecipe &&
+                          row.ingredientPurchasePerRecipe !== 1 ? (
+                            <div className="text-[10px] font-normal text-neutral-500">
+                              ={" "}
+                              {formatRupiah(
+                                row.effectiveCostPerUnit *
+                                  row.ingredientPurchasePerRecipe,
+                              )}
+                              /{row.ingredientPurchaseUnit}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
 

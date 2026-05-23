@@ -33,18 +33,37 @@ import {
   parseIndonesianNumber,
 } from "@/lib/format";
 
+/* Sesi AE-137 — Expand pack unit preset selaras dengan Purchase Unit
+ * di IngredientFormModal supaya owner minim ke "lainnya". Case
+ * di-preserve sesuai display Indonesian Excel/Sheets (Kg, Btl, Pack)
+ * tapi pack unit ke-resolve berbasis case-insensitive di
+ * computeEffectiveCost via resolveUnit. */
 const COMMON_PACK_UNITS = [
-  "Kg",
   "gr",
-  "L",
+  "g",
   "ml",
-  "Pcs",
+  "Kg",
+  "L",
   "Btl",
+  "galon",
+  "kaleng",
   "Pack",
-  "Bks",
-  "Krat",
-  "Lusin",
   "Karton",
+  "dus",
+  "sachet",
+  "renceng",
+  "Pcs",
+  "Lusin",
+  "ikat",
+  "kotak",
+  "Bks",
+  "bal",
+  "pail",
+  "tabung",
+  "set",
+  "roll",
+  "pax",
+  "Krat",
   "Box",
 ];
 
@@ -246,7 +265,9 @@ export function MarketItemFormModal({
       onClose={onClose}
       title={target ? "Edit Market Item" : "Tambah Market Item"}
       description="Catat harga belanja per bahan dari supplier. Kalau supplier ini Primary, harga akan otomatis update master cost + COGS."
-      size="md"
+      /* Sesi AE-137 — widen lg supaya form pricing (Harga + Pack Size +
+       * Pack Unit) muat 3-kolom dengan dropdown lebih lebar. */
+      size="lg"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>

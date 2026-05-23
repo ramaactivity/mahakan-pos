@@ -22,18 +22,44 @@ interface IngredientFormModalProps {
   onSaved: () => void;
 }
 
+/* Sesi AE-137 — Expand preset purchase units supaya owner minim
+ * pilih "...lainnya". Daftar lengkap pattern umum Mahakan: liquid (L,
+ * btl, galon, kaleng), powder/biji (kg, pack, dus, sachet, renceng),
+ * counted (pcs, lusin, ikat, kotak, bks), bulk (karton, bal, pail,
+ * tabung, set, roll, pax). */
 const COMMON_RECIPE_UNITS = ["g", "ml", "pcs"];
-const COMMON_PURCHASE_UNITS = ["kg", "L", "btl", "pack", "karton", "pcs"];
-/* Sesi AE-136 — backward compat: COMMON_UNITS dipakai oleh recipe unit
- * picker yang masih punya banyak preset. Recipe unit umumnya satuan
- * terkecil (g/ml/pcs); kg/L disediakan kalau ada bahan yang memang
- * jualan per kilo tanpa breakdown. */
+const COMMON_PURCHASE_UNITS = [
+  "kg",
+  "L",
+  "btl",
+  "galon",
+  "kaleng",
+  "pack",
+  "karton",
+  "dus",
+  "sachet",
+  "renceng",
+  "pcs",
+  "lusin",
+  "ikat",
+  "kotak",
+  "bks",
+  "bal",
+  "pail",
+  "tabung",
+  "set",
+  "roll",
+  "pax",
+];
+/* Recipe unit picker masih perlu kg/L/pack untuk bahan-bahan yang
+ * tidak di-breakdown lebih kecil (mis. Hand Gloves recipe = pack). */
 const COMMON_UNITS = [
   ...COMMON_RECIPE_UNITS,
   "kg",
   "L",
   "pack",
   "btl",
+  "set",
 ];
 
 const SECTION_OPTIONS: Array<{
@@ -232,7 +258,9 @@ export function IngredientFormModal({
       open={open}
       onClose={onClose}
       title={edit ? "Edit Bahan" : "Tambah Bahan"}
-      size="md"
+      /* Sesi AE-137 — widen lg supaya 2-kolom layout (Recipe + Purchase
+       * side-by-side) muat tanpa scrolling horizontal di tablet. */
+      size="lg"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -244,26 +272,28 @@ export function IngredientFormModal({
         </>
       }
     >
-      <div className="space-y-3">
-        <Input
-          label="Nama Bahan"
-          placeholder="mis. Susu Full Cream"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          autoFocus
-        />
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Input
+            label="Nama Bahan"
+            placeholder="mis. Susu Full Cream"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+          />
 
-        <Select
-          label="Section"
-          options={SECTION_OPTIONS.map((o) => ({
-            value: o.value,
-            label: o.label,
-          }))}
-          value={section}
-          onValueChange={(v) =>
-            setSection(v as IngredientSection | "__none")
-          }
-        />
+          <Select
+            label="Section"
+            options={SECTION_OPTIONS.map((o) => ({
+              value: o.value,
+              label: o.label,
+            }))}
+            value={section}
+            onValueChange={(v) =>
+              setSection(v as IngredientSection | "__none")
+            }
+          />
+        </div>
 
         {/* Sesi AE-136 — Konsep 2-unit: Recipe Unit (storage + resep,
          * satuan terkecil) + Purchase Unit (display + belanja + opname).

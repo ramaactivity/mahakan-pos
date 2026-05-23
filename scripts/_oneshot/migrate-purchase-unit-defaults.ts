@@ -47,6 +47,17 @@ interface MigrationRule {
 const RULES: MigrationRule[] = [
   { fromUnit: "g", toBelanjaUnit: "kg", perCogs: 1000 },
   { fromUnit: "ml", toBelanjaUnit: "L", perCogs: 1000 },
+  /* Sesi AE-137 — identity rules: kalau recipe sudah bermakna sebagai
+   * purchase unit (pcs, pack, L, kg, set), assign Purchase = Recipe
+   * dengan ratio 1. Bahan yang benar-benar perlu konversi custom (mis.
+   * pack 24 pcs) owner override manual via Edit Bahan. */
+  { fromUnit: "pcs", toBelanjaUnit: "pcs", perCogs: 1 },
+  { fromUnit: "pack", toBelanjaUnit: "pack", perCogs: 1 },
+  { fromUnit: "L", toBelanjaUnit: "L", perCogs: 1 },
+  { fromUnit: "kg", toBelanjaUnit: "kg", perCogs: 1 },
+  { fromUnit: "set", toBelanjaUnit: "set", perCogs: 1 },
+  { fromUnit: "tabung", toBelanjaUnit: "tabung", perCogs: 1 },
+  { fromUnit: "roll", toBelanjaUnit: "roll", perCogs: 1 },
 ];
 
 async function main() {
