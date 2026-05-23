@@ -1,49 +1,44 @@
-"use client";
-
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { OfflineBanner } from "@/components/ui/OfflineBanner";
-import { WorkspaceSwitcher } from "@/components/ui/WorkspaceSwitcher";
-import { RequireAuth } from "@/features/auth/RequireAuth";
-import { useSession } from "@/features/auth/SessionProvider";
-import { QueryProvider } from "@/features/_shared/QueryProvider";
+import { AdminClientShell } from "./client-shell";
+
+/**
+ * Sesi AE-126 — Server layout untuk admin route group supaya metadata
+ * (manifest, app name, icon) bisa di-override. Sebelumnya layout client-only
+ * → tidak bisa export metadata → fallback ke /manifest.webmanifest (POS).
+ *
+ * Owner install Mahakan POS dari URL /dashboard (atau mahakan-pos.vercel.app
+ * yang redirect ke /dashboard untuk owner) → manifest-admin.webmanifest
+ * dipakai → home screen icon → klik buka → start_url /dashboard.
+ */
+export const metadata: Metadata = {
+  title: "Mahakan POS — Back Office",
+  description:
+    "Back office Mahakan Coffee & Space: dashboard, keuangan, inventory, HR, laporan.",
+  manifest: "/manifest-admin.webmanifest",
+  applicationName: "Mahakan Admin",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Mahakan Admin",
+  },
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/icon-512.png",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#3D7557",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
-  return (
-    <RequireAuth allowRoles={["owner", "manager", "supervisor"]}>
-      <QueryProvider>
-        <AdminOuterShell>{children}</AdminOuterShell>
-      </QueryProvider>
-    </RequireAuth>
-  );
-}
-
-function AdminOuterShell({ children }: { children: ReactNode }) {
-  const { session } = useSession();
-  if (!session) return null;
-
-  return (
-    <div className="flex h-screen flex-col bg-neutral-50">
-      <OfflineBanner />
-      <header className="flex h-16 items-center justify-between border-b border-neutral-200 bg-white px-6 shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="text-lg font-bold text-mahakan-green-900">
-            Mahakan POS
-          </span>
-          <span className="rounded-md bg-mahakan-green-100 px-2 py-0.5 text-xs font-medium uppercase tracking-wider text-mahakan-green-800">
-            Back Office
-          </span>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-neutral-700">
-            {session.user.name}{" "}
-            <span className="text-neutral-500 capitalize">
-              ({session.user.role})
-            </span>
-          </span>
-          <WorkspaceSwitcher current="admin" role={session.user.role} />
-        </div>
-      </header>
-      {children}
-    </div>
-  );
+  return <AdminClientShell>{children}</AdminClientShell>;
 }

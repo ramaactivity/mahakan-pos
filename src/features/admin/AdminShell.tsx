@@ -1,11 +1,12 @@
 "use client";
 
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Menu, X } from "lucide-react";
 import {
   AdminLeftNav,
   type AdminSection,
 } from "@/features/admin/components/AdminLeftNav";
+import { cn } from "@/lib/utils";
 /* Sesi AE-63 phase2 P2.1 — DashboardHome eager (entry point most-visited).
  * 21 section lain di-lazy-load supaya initial bundle parse jauh lebih ringan
  * di Mac browser + tablet. Pre-fix: AdminShell import all 22 section static
@@ -184,6 +185,10 @@ function SectionFallback() {
 export function AdminShell() {
   const { session, logout } = useSession();
   const [section, setSectionState] = useState<AdminSection>("dashboard");
+  /* Sesi AE-126 — sidebar drawer state untuk mobile. Default closed di
+   * mobile (drawer di-hide), default open behavior di desktop (sidebar
+   * static lewat CSS md: breakpoint). */
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   /* Sesi AE-63 polish-2 — Section state persist via URL hash.
    * Owner directive: refresh harus stay di section yang sama (sebelumnya
@@ -205,6 +210,9 @@ export function AdminShell() {
 
   const setSection = useCallback((next: AdminSection) => {
     setSectionState(next);
+    /* Sesi AE-126 — auto-close drawer di mobile saat user pilih section.
+     * Di desktop sidebar static, state ini tidak berpengaruh. */
+    setSidebarOpen(false);
     if (typeof window !== "undefined") {
       /* History.replaceState supaya tidak menumpuk entries setiap klik
        * nav. User pakai back-button balik ke halaman previous (login/POS)
@@ -215,6 +223,19 @@ export function AdminShell() {
       }
     }
   }, []);
+
+  /* Sesi AE-126 — Lock body scroll saat drawer open di mobile supaya
+   * tidak ada double-scroll (sidebar list + page content). */
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (sidebarOpen) {
+      const previous = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = previous;
+      };
+    }
+  }, [sidebarOpen]);
 
   /* Sesi AE-123 — sidebar badge pending setoran. Hanya fetch kalau user
    * punya permission verify (owner). Cek session sebelum hook supaya hook
@@ -236,15 +257,62 @@ export function AdminShell() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] overflow-hidden bg-neutral-50">
-      <AdminLeftNav
-        active={section}
-        onChange={setSection}
-        onLogout={onLogout}
-        role={session.user.role}
-        badges={depositBadges}
-      />
-      <main className="flex-1 overflow-y-auto">
+    <div className="relative flex h-[calc(100vh-4rem)] overflow-hidden bg-neutral-50">
+      {/* Sesi AE-126 — Mobile hamburger toggle, fixed di top-left
+       * content area, hidden di tablet+ (md:hidden). Pakai background
+       * tegas + shadow supaya tetap visible di atas content apa pun. */}
+      <button
+        type="button"
+        onClick={() => setSidebarOpen(true)}
+        className={cn(
+          "fixed left-3 top-[4.5rem] z-30 inline-flex size-10 items-center justify-center rounded-full border border-neutral-300 bg-white shadow-md transition-opacity md:hidden",
+          sidebarOpen ? "pointer-events-none opacity-0" : "opacity-100",
+        )}
+        aria-label="Buka menu"
+      >
+        <Menu className="size-5 text-neutral-700" aria-hidden />
+      </button>
+
+      {/* Sesi AE-126 — Backdrop overlay saat drawer open di mobile. */}
+      {sidebarOpen ? (
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 top-16 z-30 bg-black/40 md:hidden"
+          aria-label="Tutup menu"
+        />
+      ) : null}
+
+      {/* Sesi AE-126 — Sidebar drawer di mobile (fixed, slide-in dari
+       * kiri), static di tablet+ (md:relative). */}
+      <div
+        className={cn(
+          "fixed left-0 top-16 z-40 h-[calc(100vh-4rem)] transform transition-transform md:relative md:top-0 md:z-0 md:h-full md:translate-x-0",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        {/* Close button di top-right drawer, mobile only. */}
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(false)}
+          className="absolute right-2 top-2 z-10 inline-flex size-8 items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 md:hidden"
+          aria-label="Tutup menu"
+        >
+          <X className="size-4" aria-hidden />
+        </button>
+        <AdminLeftNav
+          active={section}
+          onChange={setSection}
+          onLogout={onLogout}
+          role={session.user.role}
+          badges={depositBadges}
+        />
+      </div>
+      {/* Sesi AE-126 — main content. Padding-top adaptif: di mobile
+       * tambah pt-14 supaya hamburger button (top-[4.5rem]) tidak overlap
+       * judul section. Di tablet+ no extra padding (sidebar visible,
+       * no hamburger). */}
+      <main className="flex-1 overflow-y-auto pt-14 md:pt-0">
         {section === "dashboard" ? (
           <DashboardHome user={session.user} onNavigate={setSection} />
         ) : (

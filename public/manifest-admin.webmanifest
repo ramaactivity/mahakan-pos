@@ -1,0 +1,63 @@
+{
+  "id": "mahakan-admin",
+  "name": "Mahakan POS — Back Office",
+  "short_name": "Mahakan Admin",
+  "description": "Back office Mahakan Coffee & Space: dashboard, keuangan, inventory, HR, laporan.",
+  "start_url": "/dashboard?source=pwa",
+  "scope": "/dashboard",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#fafaf7",
+  "theme_color": "#3D7557",
+  "lang": "id",
+  "dir": "ltr",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Setoran Tunai",
+      "short_name": "Setoran",
+      "url": "/dashboard?source=pwa-shortcut#setoran_tunai",
+      "icons": [
+        { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }
+      ]
+    },
+    {
+      "name": "Keuangan",
+      "short_name": "Keuangan",
+      "url": "/dashboard?source=pwa-shortcut#finance",
+      "icons": [
+        { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }
+      ]
+    },
+    {
+      "name": "Permintaan Belanja",
+      "short_name": "PR",
+      "url": "/dashboard?source=pwa-shortcut#purchase_requests",
+      "icons": [
+        { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }
+      ]
+    }
+  ],
+  "prefer_related_applications": false
+}

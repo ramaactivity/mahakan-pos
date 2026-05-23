@@ -1,46 +1,39 @@
-"use client";
-
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { OfflineBanner } from "@/components/ui/OfflineBanner";
-import { WorkspaceSwitcher } from "@/components/ui/WorkspaceSwitcher";
-import { RequireAuth } from "@/features/auth/RequireAuth";
-import { useSession } from "@/features/auth/SessionProvider";
-import { FullscreenToggle } from "@/features/pos/components/FullscreenToggle";
-import { QueryProvider } from "@/features/_shared/QueryProvider";
+import { PosClientShell } from "./client-shell";
+
+/**
+ * Sesi AE-126 — Server layout untuk POS route group. Metadata override
+ * supaya install dari /pos pakai manifest.webmanifest (POS tablet).
+ */
+export const metadata: Metadata = {
+  title: "Mahakan POS — Kasir",
+  description:
+    "Sistem POS Mahakan Coffee & Space untuk kasir tablet (Galaxy A7 Lite).",
+  manifest: "/manifest.webmanifest",
+  applicationName: "Mahakan POS",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Mahakan POS",
+  },
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/icon-512.png",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#3D7557",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
 
 export default function PosLayout({ children }: { children: ReactNode }) {
-  return (
-    <RequireAuth allowRoles={["owner", "manager", "supervisor", "staff"]} loginRedirect="/pin">
-      <QueryProvider>
-        <PosOuterShell>{children}</PosOuterShell>
-      </QueryProvider>
-    </RequireAuth>
-  );
-}
-
-function PosOuterShell({ children }: { children: ReactNode }) {
-  const { session } = useSession();
-  if (!session) return null;
-
-  return (
-    <div className="flex h-screen flex-col bg-neutral-50">
-      <OfflineBanner />
-      <header className="flex h-16 items-center justify-between border-b border-neutral-200 bg-white px-6 shadow-sm touch:h-14 touch:px-4">
-        <span className="text-lg font-bold text-mahakan-green-900 touch:text-base">
-          Mahakan POS
-        </span>
-        <div className="flex items-center gap-3 touch:gap-2">
-          <span className="text-sm text-neutral-700 touch:text-xs">
-            {session.user.name}{" "}
-            <span className="text-neutral-500 capitalize">
-              ({session.user.role})
-            </span>
-          </span>
-          <WorkspaceSwitcher current="pos" role={session.user.role} />
-          <FullscreenToggle />
-        </div>
-      </header>
-      {children}
-    </div>
-  );
+  return <PosClientShell>{children}</PosClientShell>;
 }
