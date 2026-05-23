@@ -55,12 +55,18 @@ export async function fetchUsers(
 
   /* Sesi AE-134 — LEFT JOIN aggregate push_subscriptions supaya staff
    * management bisa nampilkan kolom Notif (device count + last subscribed
-   * timestamp). GROUP BY semua user kolom karena postgres strict. */
+   * timestamp). GROUP BY semua user kolom karena postgres strict.
+   *
+   * Sesi AE-135 HOTFIX — postgres `max(timestamp_with_tz)` lewat raw
+   * `sql` template return STRING dari neon-serverless driver (bukan Date
+   * object seperti kalau column di-select langsung). Tanpa konversi
+   * eksplisit, downstream call `.getTime()` crash di client. Parse
+   * manual ke Date di sini supaya PublicUser kontrak tetap Date | null. */
   const rows = await db
     .select({
       user: users,
       pushDeviceCount: sql<number>`count(${pushSubscriptions.id})::int`,
-      pushLatestSubscribedAt: sql<Date | null>`max(${pushSubscriptions.createdAt})`,
+      pushLatestSubscribedAtRaw: sql<Date | string | null>`max(${pushSubscriptions.createdAt})`,
     })
     .from(users)
     .leftJoin(pushSubscriptions, eq(pushSubscriptions.userId, users.id))
@@ -72,11 +78,18 @@ export async function fetchUsers(
     items: rows.map((r) =>
       toPublicUser(r.user, {
         pushDeviceCount: r.pushDeviceCount ?? 0,
-        pushLatestSubscribedAt: r.pushLatestSubscribedAt,
+        pushLatestSubscribedAt: coerceToDate(r.pushLatestSubscribedAtRaw),
       }),
     ),
     total: rows.length,
   };
+}
+
+function coerceToDate(v: Date | string | null | undefined): Date | null {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return v;
+  const parsed = new Date(v);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
 }
 
 export async function fetchUserById(

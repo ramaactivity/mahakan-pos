@@ -358,9 +358,9 @@ function staffColumns(viewerUserId: string): ResponsiveColumn<PublicUser>[] {
 
 function NotifBadge({ user }: { user: PublicUser }) {
   if (user.pushDeviceCount > 0) {
-    const last = user.pushLatestSubscribedAt
-      ? formatRelativeShort(user.pushLatestSubscribedAt)
-      : null;
+    /* Sesi AE-135 HOTFIX — defensive: nilai bisa Date | string | null
+     * dari serialization, jangan asumsi instanceof Date. */
+    const last = formatRelativeShort(user.pushLatestSubscribedAt);
     const label =
       user.pushDeviceCount === 1
         ? "Aktif"
@@ -388,7 +388,10 @@ function NotifBadge({ user }: { user: PublicUser }) {
   );
 }
 
-function formatRelativeShort(date: Date): string {
+function formatRelativeShort(raw: Date | string | null | undefined): string | null {
+  if (!raw) return null;
+  const date = raw instanceof Date ? raw : new Date(raw);
+  if (!Number.isFinite(date.getTime())) return null;
   const ms = Date.now() - date.getTime();
   const sec = Math.floor(ms / 1000);
   if (sec < 60) return "baru saja";

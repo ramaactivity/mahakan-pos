@@ -36,13 +36,16 @@ type Status =
   | "loading"; /* lagi subscribe-process */
 
 const SNOOZE_KEY = "mahakan:push-reminder-snooze";
-const SNOOZE_LATER_MS = 3 * 24 * 60 * 60 * 1000; // 3 hari
-const SNOOZE_SUBSCRIBED_MS = 30 * 24 * 60 * 60 * 1000; // 30 hari
-/* Sesi AE-134 — auto-cooldown setelah failure berulang, supaya banner
- * tidak nag terus saat Google Play Services / FCM lagi tidak reachable. */
-const SNOOZE_AFTER_FAILURE_MS = 4 * 60 * 60 * 1000; // 4 jam
+const SNOOZE_LATER_MS = 3 * 24 * 60 * 60 * 1000; // 3 hari (klik "Nanti")
+const SNOOZE_SUBSCRIBED_MS = 30 * 24 * 60 * 60 * 1000; // 30 hari (sukses subscribe)
+/* Sesi AE-135 — REMOVED auto-cooldown after failures (sebelumnya 4 jam).
+ * Owner laporan: staff Charlotte cs banner ke-snooze otomatis setelah 3
+ * fail → tidak bisa coba lagi sampai 4 jam. Behavior owner-page (yang
+ * jalan normal) tidak punya cooldown ini. Selaraskan: banner persist
+ * sampai sukses subscribe atau user klik "Nanti" eksplisit. Counter tetap
+ * di-track untuk diagnostic logging tapi tidak trigger snooze. */
 const FAILURE_COUNT_KEY = "mahakan:push-reminder-fail-count";
-const FAILURE_RESET_AFTER_MS = 24 * 60 * 60 * 1000; // reset counter setelah 1 hari clean
+const FAILURE_RESET_AFTER_MS = 24 * 60 * 60 * 1000;
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -172,9 +175,23 @@ export function NotificationReminderBanner() {
         setStatus("hidden");
         return;
       }
-      /* Snooze active? */
+      /* Sesi AE-135 — clear stale auto-cooldown snooze dari release
+       * sebelumnya (AE-134 punya 4 jam auto-cooldown setelah 3 fail
+       * yang sekarang dihapus). Caranya: kalau ada failure record
+       * historis + snooze masih aktif, anggap snooze itu dari
+       * auto-cooldown lama dan clear. Snooze "Nanti" eksplisit yang
+       * di-set tanpa failure record tidak ke-clear. */
+      const failRec = readFailureRecord();
       const snoozeUntil = readSnooze();
-      if (snoozeUntil > Date.now()) {
+      if (failRec.count > 0 && snoozeUntil > Date.now()) {
+        /* Asumsi: snooze ini berasal dari auto-cooldown bug lama. Clear. */
+        try {
+          window.localStorage.removeItem(SNOOZE_KEY);
+        } catch {
+          /* ignore */
+        }
+        resetFailureRecord();
+      } else if (snoozeUntil > Date.now()) {
         setStatus("snoozed");
         return;
       }
@@ -278,16 +295,17 @@ export function NotificationReminderBanner() {
             pushErr instanceof Error
               ? pushErr.message
               : "Push subscribe gagal";
+          /* Sesi AE-135 — counter masih di-track untuk diagnostic +
+           * eskalasi pesan (ke-3 dst pesannya lebih spesifik), TAPI
+           * tidak lagi auto-snooze. Sebelumnya cooldown 4 jam bikin
+           * banner hilang dari staff Charlotte cs → mereka tidak bisa
+           * coba lagi sampai 4 jam. Sekarang banner persist sampai user
+           * sukses subscribe atau klik "Nanti" eksplisit (sama dengan
+           * behavior owner page yang jalan normal). */
           const failCount = bumpFailureRecord();
           const friendly = mapPushSubscribeError(raw, failCount);
-          if (failCount >= 3) {
-            writeSnooze(SNOOZE_AFTER_FAILURE_MS);
-            setStatus("snoozed");
-            toast.error(friendly);
-          } else {
-            setStatus("ready");
-            toast.error(friendly);
-          }
+          setStatus("ready");
+          toast.error(friendly);
           console.warn(
             "[push:subscribe] failed twice",
             { firstError, secondError: pushErr, failCount },
