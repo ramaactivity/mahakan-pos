@@ -43,7 +43,7 @@ export function PrinterControls() {
       await getPrinterClient().pair();
       toast.success("Printer di-pair");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Pair gagal");
+      handlePairError(e);
     } finally {
       setBusy(false);
     }
@@ -55,10 +55,44 @@ export function PrinterControls() {
       await getPrinterClient().pairAcceptAll();
       toast.success("Printer di-pair");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Pair gagal");
+      handlePairError(e);
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * Sesi AE-133 — map raw Web Bluetooth error ke pesan actionable.
+   * "User cancelled" = no-op (user batal sengaja, jangan trigger toast).
+   */
+  function handlePairError(e: unknown) {
+    const raw = e instanceof Error ? e.message : String(e);
+    const lower = raw.toLowerCase();
+    if (
+      lower.includes("user cancelled") ||
+      lower.includes("user canceled") ||
+      lower.includes("chooser cancelled") ||
+      lower.includes("nodevice")
+    ) {
+      return; // silent — user batal dialog
+    }
+    if (lower.includes("bluetooth adapter")) {
+      toast.error(
+        "Bluetooth tablet mati / tidak tersedia. Aktifkan Bluetooth lalu coba lagi.",
+      );
+      return;
+    }
+    if (lower.includes("user gesture")) {
+      toast.error("Browser butuh tap langsung di tombol. Tap lagi tombol Pair.");
+      return;
+    }
+    if (lower.includes("not supported")) {
+      toast.error(
+        "Browser tidak support Web Bluetooth. Pakai Chrome/Edge di Android.",
+      );
+      return;
+    }
+    toast.error(raw.length > 100 ? raw.slice(0, 100) + "…" : raw);
   }
 
   async function onTestPrint() {

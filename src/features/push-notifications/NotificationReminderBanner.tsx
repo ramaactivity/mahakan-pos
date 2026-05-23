@@ -24,6 +24,7 @@
 import { useEffect, useState } from "react";
 import { Bell, X } from "lucide-react";
 import { Button, toast } from "@/components/ui";
+import { useSession } from "@/features/auth/SessionProvider";
 import { cn } from "@/lib/utils";
 
 type Status =
@@ -84,9 +85,21 @@ function isStandalone(): boolean {
 export function NotificationReminderBanner() {
   const [status, setStatus] = useState<Status>("checking");
   const vapidPublic = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
+  /* Sesi AE-133 — gate banner di auth check. Sebelumnya banner muncul
+   * di /m/login (pre-auth) → user tap "Aktifkan" → /api/v1/push/subscribe
+   * return 401 "Sesi expired" karena belum login. */
+  const sessionCtx = useSession();
+  const sessionStatus = sessionCtx.status;
 
   useEffect(() => {
     let cancelled = false;
+    /* Gate: jangan render banner sebelum auth terkonfirmasi. */
+    if (sessionStatus !== "authenticated") {
+      /* eslint-disable react-hooks/set-state-in-effect */
+      setStatus("hidden");
+      /* eslint-enable react-hooks/set-state-in-effect */
+      return;
+    }
     void (async () => {
       if (typeof window === "undefined") return;
       /* eslint-disable react-hooks/set-state-in-effect */
@@ -135,9 +148,16 @@ export function NotificationReminderBanner() {
     return () => {
       cancelled = true;
     };
-  }, [vapidPublic]);
+  }, [vapidPublic, sessionStatus]);
 
   async function handleSubscribe() {
+    /* Sesi AE-133 — extra guard: kalau session belum authenticated,
+     * jangan mulai subscribe flow. Banner sudah hidden di useEffect tapi
+     * defense-in-depth supaya gak ada race window. */
+    if (sessionStatus !== "authenticated") {
+      toast.error("Login dulu sebelum aktifkan notifikasi.");
+      return;
+    }
     setStatus("loading");
     try {
       const perm = await Notification.requestPermission();
@@ -153,10 +173,20 @@ export function NotificationReminderBanner() {
         return;
       }
       const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapidPublic),
-      });
+      let sub: PushSubscription;
+      try {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidPublic),
+        });
+      } catch (pushErr) {
+        /* Sesi AE-133 — map raw FCM/autopush errors ke pesan actionable. */
+        const raw =
+          pushErr instanceof Error ? pushErr.message : "Push subscribe gagal";
+        setStatus("ready");
+        toast.error(mapPushSubscribeError(raw));
+        return;
+      }
       const subJson = sub.toJSON();
       const res = await fetch("/api/v1/push/subscribe", {
         method: "POST",
@@ -167,10 +197,27 @@ export function NotificationReminderBanner() {
         }),
       });
       if (!res.ok) {
+        /* Sesi AE-133 — cleanup local subscription kalau server tolak.
+         * Sebelumnya: jika server return 401, browser tetap simpan
+         * subscription "ghost" yang tidak ke-track di DB → push gak
+         * pernah nyampe. */
+        try {
+          await sub.unsubscribe();
+        } catch {
+          /* best-effort */
+        }
         const j = (await res.json().catch(() => null)) as {
           error?: { message?: string };
         } | null;
-        throw new Error(j?.error?.message ?? "Subscribe gagal");
+        const msg = j?.error?.message ?? "Subscribe gagal";
+        if (res.status === 401) {
+          setStatus("hidden");
+          toast.error("Sesi sudah habis. Login ulang lalu coba lagi.");
+        } else {
+          setStatus("ready");
+          toast.error(msg);
+        }
+        return;
       }
       writeSnooze(SNOOZE_SUBSCRIBED_MS);
       setStatus("hidden");
@@ -183,6 +230,32 @@ export function NotificationReminderBanner() {
         e instanceof Error ? e.message : "Gagal aktifkan notifikasi",
       );
     }
+  }
+
+  /**
+   * Sesi AE-133 — Map raw browser push-subscribe error ke pesan
+   * actionable. FCM (Android Chrome) + Mozilla autopush (Firefox) suka
+   * lempar string mentah seperti "Registration failed - push service
+   * error" yang tidak informatif.
+   */
+  function mapPushSubscribeError(raw: string): string {
+    const lower = raw.toLowerCase();
+    if (lower.includes("push service")) {
+      return "Push service Google sedang gagal. Cek koneksi internet tablet, atau tutup-buka tab dan coba lagi.";
+    }
+    if (lower.includes("permission")) {
+      return "Browser blokir izin notifikasi. Buka Settings browser → Notifications → unblock untuk situs ini.";
+    }
+    if (
+      lower.includes("not supported") ||
+      lower.includes("not available")
+    ) {
+      return "Browser tidak support push notification. Pakai Chrome/Edge versi terbaru.";
+    }
+    if (lower.includes("network")) {
+      return "Jaringan terputus saat daftar notifikasi. Cek WiFi / data dan coba lagi.";
+    }
+    return `Gagal daftar notifikasi (${raw}). Coba refresh tab + ulangi.`;
   }
 
   function handleSnooze() {

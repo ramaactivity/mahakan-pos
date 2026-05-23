@@ -214,22 +214,84 @@ class PrinterClient {
 
       this.setStatus({ state: "connected" });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Connect gagal";
+      const raw = e instanceof Error ? e.message : "Connect gagal";
+      const message = /not found|no device|gatt server is disconnected/i.test(
+        raw,
+      )
+        ? "Printer tidak ketemu. Cek printer on + Bluetooth tablet aktif."
+        : `Gagal connect ke printer (${truncate(raw, 80)})`;
       this.setStatus({ state: "error", error: message });
-      throw e;
+      throw new Error(message);
     }
   }
 
   /**
    * Send raw bytes. Auto-connects if not yet connected. Chunks at
    * CHUNK_SIZE because BLE writes have an MTU ceiling.
+   *
+   * Sesi AE-133 — Retry once kalau GATT operation gagal mid-stream.
+   * Penyebab umum: tablet sleep beberapa menit → OS-level drop GATT
+   * tanpa firing `gattserverdisconnected` reliably → `writeValue()`
+   * throw "GATT operation failed for unknown reason". Force re-connect
+   * + ulang dari awal stream lebih reliable daripada lempar error ke
+   * kasir. Total cost extra: 1-3 detik reconnect saat connection stale.
    */
   async send(bytes: Uint8Array): Promise<void> {
     if (!this.characteristic || !this.device?.gatt?.connected) {
       await this.connect();
     }
     if (!this.characteristic) {
-      throw new Error("Printer characteristic tidak tersedia");
+      throw new Error(friendlyPrinterError("characteristic_missing"));
+    }
+    try {
+      await this.writeChunked(bytes);
+    } catch (e) {
+      const original = e instanceof Error ? e : new Error(String(e));
+      const looksStale =
+        /gatt|disconnected|not connected|in progress|operation failed/i.test(
+          original.message ?? "",
+        );
+      if (!looksStale) {
+        throw new Error(friendlyPrinterError("write_failed", original.message));
+      }
+      /* Reset state and reconnect — kemungkinan besar BLE link sudah
+       * silently drop. */
+      this.characteristic = null;
+      try {
+        if (this.device?.gatt?.connected) this.device.gatt.disconnect();
+      } catch {
+        /* ignore — best-effort cleanup */
+      }
+      this.setStatus({ state: "idle", error: null });
+      try {
+        await this.connect();
+      } catch (connectErr) {
+        throw new Error(
+          friendlyPrinterError(
+            "reconnect_failed",
+            connectErr instanceof Error ? connectErr.message : undefined,
+          ),
+        );
+      }
+      if (!this.characteristic) {
+        throw new Error(friendlyPrinterError("characteristic_missing"));
+      }
+      try {
+        await this.writeChunked(bytes);
+      } catch (retryErr) {
+        throw new Error(
+          friendlyPrinterError(
+            "retry_failed",
+            retryErr instanceof Error ? retryErr.message : undefined,
+          ),
+        );
+      }
+    }
+  }
+
+  private async writeChunked(bytes: Uint8Array): Promise<void> {
+    if (!this.characteristic) {
+      throw new Error("Characteristic tidak tersedia");
     }
     for (let off = 0; off < bytes.length; off += CHUNK_SIZE) {
       const chunk = bytes.slice(off, off + CHUNK_SIZE);
@@ -287,4 +349,37 @@ let _client: PrinterClient | null = null;
 export function getPrinterClient(): PrinterClient {
   if (!_client) _client = new PrinterClient();
   return _client;
+}
+
+/**
+ * Sesi AE-133 — Map raw browser GATT errors (yang biasanya tidak
+ * actionable buat kasir SMA) ke pesan Bahasa Indonesia yang jelas +
+ * langkah tindak lanjut.
+ */
+type PrinterErrorKind =
+  | "characteristic_missing"
+  | "write_failed"
+  | "reconnect_failed"
+  | "retry_failed";
+
+function friendlyPrinterError(kind: PrinterErrorKind, detail?: string): string {
+  switch (kind) {
+    case "characteristic_missing":
+      return "Printer belum siap. Tutup tab POS, buka lagi, dan tap Print.";
+    case "write_failed":
+      return `Gagal kirim data ke printer${detail ? ` (${truncate(detail, 80)})` : ""}.`;
+    case "reconnect_failed":
+      return `Koneksi printer putus dan gagal connect ulang. Cek printer on + tidak ke-pair device lain. ${
+        detail ? `Detail: ${truncate(detail, 80)}` : ""
+      }`.trim();
+    case "retry_failed":
+      return `Printer terhubung tapi data masih gagal masuk. Coba: matikan printer 5 detik, nyalakan lagi, tap Print. ${
+        detail ? `Detail: ${truncate(detail, 80)}` : ""
+      }`.trim();
+  }
+}
+
+function truncate(s: string, n: number): string {
+  if (s.length <= n) return s;
+  return `${s.slice(0, n - 1)}…`;
 }

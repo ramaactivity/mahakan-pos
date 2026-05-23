@@ -506,7 +506,23 @@ function ActStep({
       }
       onDone(json.data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Submit gagal");
+      /* Sesi AE-133 — map raw browser/network errors ke pesan ringkas
+       * yang membantu karyawan tahu langkah berikutnya. */
+      const raw = e instanceof Error ? e.message : "Submit gagal";
+      const lower = raw.toLowerCase();
+      let msg = raw;
+      if (
+        lower.includes("failed to fetch") ||
+        lower.includes("network") ||
+        lower.includes("typeerror: networkerror")
+      ) {
+        msg = "Koneksi terputus saat submit. Cek WiFi/data lalu coba lagi.";
+      } else if (lower.includes("aborted")) {
+        msg = "Submit dibatalkan. Coba lagi.";
+      } else if (raw.length > 150) {
+        msg = raw.slice(0, 150) + "…";
+      }
+      setError(msg);
       setErrorCode(null);
       setSubmitting(false);
     }

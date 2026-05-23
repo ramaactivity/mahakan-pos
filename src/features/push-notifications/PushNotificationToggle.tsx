@@ -95,10 +95,19 @@ export function PushNotificationToggle() {
         return;
       }
       const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapidPublic),
-      });
+      let sub: PushSubscription;
+      try {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidPublic),
+        });
+      } catch (pushErr) {
+        const raw =
+          pushErr instanceof Error ? pushErr.message : "Push subscribe gagal";
+        setStatus("idle");
+        toast.error(mapPushSubscribeError(raw));
+        return;
+      }
       const subJson = sub.toJSON();
       const res = await fetch("/api/v1/push/subscribe", {
         method: "POST",
@@ -109,10 +118,25 @@ export function PushNotificationToggle() {
         }),
       });
       if (!res.ok) {
+        /* Sesi AE-133 — cleanup local push subscription kalau server tolak,
+         * supaya tidak ada "ghost" subscription yang di-broadcast tapi tidak
+         * ke-track di DB. */
+        try {
+          await sub.unsubscribe();
+        } catch {
+          /* best-effort */
+        }
         const j = (await res.json().catch(() => null)) as {
           error?: { message?: string };
         } | null;
-        throw new Error(j?.error?.message ?? "Subscribe ke server gagal");
+        const msg = j?.error?.message ?? "Subscribe ke server gagal";
+        setStatus("idle");
+        toast.error(
+          res.status === 401
+            ? "Sesi sudah habis. Login ulang lalu coba lagi."
+            : msg,
+        );
+        return;
       }
       setStatus("subscribed");
       toast.success("Notifikasi aktif. Kamu akan terima alert saat ada setoran pending.");
@@ -122,6 +146,30 @@ export function PushNotificationToggle() {
         e instanceof Error ? e.message : "Gagal aktifkan notifikasi",
       );
     }
+  }
+
+  /**
+   * Sesi AE-133 — Map raw browser push-subscribe error ke pesan
+   * actionable Bahasa Indonesia. Mirroring NotificationReminderBanner.
+   */
+  function mapPushSubscribeError(raw: string): string {
+    const lower = raw.toLowerCase();
+    if (lower.includes("push service")) {
+      return "Push service Google sedang gagal. Cek koneksi internet, atau tutup-buka tab dan coba lagi.";
+    }
+    if (lower.includes("permission")) {
+      return "Browser blokir izin notifikasi. Buka Settings browser → Notifications → unblock.";
+    }
+    if (
+      lower.includes("not supported") ||
+      lower.includes("not available")
+    ) {
+      return "Browser tidak support push notification. Pakai Chrome/Edge versi terbaru.";
+    }
+    if (lower.includes("network")) {
+      return "Jaringan terputus saat daftar notifikasi. Cek koneksi dan coba lagi.";
+    }
+    return `Gagal daftar notifikasi (${raw}). Coba refresh tab + ulangi.`;
   }
 
   async function handleUnsubscribe() {
