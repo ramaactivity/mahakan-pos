@@ -133,17 +133,27 @@ function OpnameView() {
       setDetail(detailRes.data);
       // Pre-fill drafts from existing actualQty values. Sesi AE-15 — prefer
       // decimal mirror kalau ada (precise, e.g. "2.5" not "3").
+      // Sesi AE-136 — restored value di-convert dari master/recipe unit ke
+      // purchase unit (kalau ingredient punya unitBelanja set) supaya
+      // konsisten dengan default input unit baru.
       const initialDrafts: Record<string, LineDraft> = {};
       for (const line of detailRes.data.lines) {
         if (line.actualQty !== null) {
-          const rawValue =
+          const masterQty =
             line.actualQtyDecimal !== null
-              ? // Trim trailing zeros for display: "2.5000" → "2.5"
-                String(parseFloat(line.actualQtyDecimal))
-              : String(line.actualQty);
+              ? parseFloat(line.actualQtyDecimal)
+              : line.actualQty;
+          const preferred = preferredInputUnit(line.ingredient);
+          const displayQty = convertMasterToPreferred(
+            masterQty,
+            line.ingredient,
+          );
+          /* Tampilkan format Indonesian (koma desimal) supaya konsisten
+           * dengan parser strict. */
+          const rawValue = formatQtyForInput(displayQty);
           initialDrafts[line.ingredientId] = {
             input: rawValue,
-            inputUnit: line.ingredient.unit,
+            inputUnit: preferred,
             status: "saved",
           };
         }
@@ -426,7 +436,10 @@ function OpnameView() {
         <ul className="space-y-2">
           {filteredLines.map((line) => {
             const draft = drafts[line.ingredientId];
-            const inputUnit = draft?.inputUnit ?? line.ingredient.unit;
+            /* Sesi AE-136 — default ke purchase unit kalau set, fallback
+             * ke recipe unit. */
+            const inputUnit =
+              draft?.inputUnit ?? preferredInputUnit(line.ingredient);
             return (
               <LineRow
                 key={line.id}
@@ -502,7 +515,8 @@ function OpnameView() {
             ...d,
             [newLine.ingredientId]: {
               input: decimalStr,
-              inputUnit: newLine.ingredient.unit,
+              /* Sesi AE-136 — default ke purchase unit kalau set. */
+              inputUnit: preferredInputUnit(newLine.ingredient),
               status: "saved",
             },
           }));
@@ -735,6 +749,52 @@ function LineRow({
       ) : null}
     </li>
   );
+}
+
+/* ============================================================
+ * Sesi AE-136 — Unit preference helpers untuk opname.
+ *
+ * Konvensi 2-unit baru: input + display pakai Purchase Unit (kg/L/btl)
+ * kalau ingredient punya unitBelanja set, fallback ke Recipe Unit (g/ml)
+ * untuk legacy data. Internal storage tetap di Recipe Unit untuk presisi
+ * — konversi di-handle di handleSaveLine via convertQtyWithIngredientPacks.
+ * ============================================================ */
+
+interface IngredientWithTiers {
+  unit: string;
+  unitBelanja: string | null;
+  unitBelanjaPerCogs: string | null;
+}
+
+/** Pilih input unit default: purchase kalau set valid, recipe sebagai fallback. */
+function preferredInputUnit(ing: IngredientWithTiers): string {
+  const b = ing.unitBelanja?.trim();
+  if (!b) return ing.unit;
+  const per = parseFloat(ing.unitBelanjaPerCogs ?? "");
+  if (!Number.isFinite(per) || per <= 0) return ing.unit;
+  return b;
+}
+
+/** Convert qty dari master/recipe unit ke preferred display unit. */
+function convertMasterToPreferred(
+  qtyMaster: number,
+  ing: IngredientWithTiers,
+): number {
+  const b = ing.unitBelanja?.trim();
+  if (!b) return qtyMaster;
+  const per = parseFloat(ing.unitBelanjaPerCogs ?? "");
+  if (!Number.isFinite(per) || per <= 0) return qtyMaster;
+  return qtyMaster / per;
+}
+
+/** Format qty untuk input field — Indonesian (koma desimal), trim
+ * trailing zeros. "2.5000" → "2,5", "100" → "100". */
+function formatQtyForInput(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  /* Round-trip through toFixed(4) lalu trim trailing zeros + dot. */
+  const fixed = n.toFixed(4);
+  const trimmed = fixed.replace(/\.?0+$/, "");
+  return trimmed.replace(".", ",");
 }
 
 function StatusIcon({ status }: { status: LineDraft["status"] }) {

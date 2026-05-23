@@ -9,7 +9,11 @@ import {
   type Ingredient,
   type IngredientSection,
 } from "@/features/inventory";
-import { formatRupiah, parseRupiah } from "@/lib/format";
+import {
+  formatRupiah,
+  parseIndonesianNumber,
+  parseRupiah,
+} from "@/lib/format";
 
 interface IngredientFormModalProps {
   open: boolean;
@@ -18,7 +22,19 @@ interface IngredientFormModalProps {
   onSaved: () => void;
 }
 
-const COMMON_UNITS = ["g", "kg", "ml", "L", "pcs", "pack", "btl"];
+const COMMON_RECIPE_UNITS = ["g", "ml", "pcs"];
+const COMMON_PURCHASE_UNITS = ["kg", "L", "btl", "pack", "karton", "pcs"];
+/* Sesi AE-136 — backward compat: COMMON_UNITS dipakai oleh recipe unit
+ * picker yang masih punya banyak preset. Recipe unit umumnya satuan
+ * terkecil (g/ml/pcs); kg/L disediakan kalau ada bahan yang memang
+ * jualan per kilo tanpa breakdown. */
+const COMMON_UNITS = [
+  ...COMMON_RECIPE_UNITS,
+  "kg",
+  "L",
+  "pack",
+  "btl",
+];
 
 const SECTION_OPTIONS: Array<{
   value: IngredientSection | "__none";
@@ -249,54 +265,129 @@ export function IngredientFormModal({
           }
         />
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-neutral-900">
-              Unit
-            </label>
-            <div className="flex gap-1">
-              <div className="w-24">
-                <Select
-                  ariaLabel="Unit preset"
-                  options={[
-                    ...COMMON_UNITS.map((u) => ({ value: u, label: u })),
-                    { value: "__custom", label: "…lainnya" },
-                  ]}
-                  value={COMMON_UNITS.includes(unit) ? unit : "__custom"}
-                  onValueChange={(v) => {
-                    if (v === "__custom") {
-                      if (COMMON_UNITS.includes(unit)) setUnit("");
-                    } else {
-                      setUnit(v);
-                    }
-                  }}
-                  size="sm"
-                />
-              </div>
-              {!COMMON_UNITS.includes(unit) ? (
-                <input
-                  type="text"
-                  placeholder="custom"
-                  value={unit}
-                  onChange={(e) => setUnit(e.target.value)}
-                  className="h-10 flex-1 rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
-                />
-              ) : null}
+        {/* Sesi AE-136 — Konsep 2-unit: Recipe Unit (storage + resep,
+         * satuan terkecil) + Purchase Unit (display + belanja + opname).
+         * Tracking Unit di-deprecate dari UI, masih kept di schema untuk
+         * legacy backward-compat. */}
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-neutral-900">
+            Recipe Unit <span className="text-danger-500">*</span>
+          </label>
+          <div className="flex gap-1">
+            <div className="w-28">
+              <Select
+                ariaLabel="Recipe unit preset"
+                options={[
+                  ...COMMON_UNITS.map((u) => ({ value: u, label: u })),
+                  { value: "__custom", label: "…lainnya" },
+                ]}
+                value={COMMON_UNITS.includes(unit) ? unit : "__custom"}
+                onValueChange={(v) => {
+                  if (v === "__custom") {
+                    if (COMMON_UNITS.includes(unit)) setUnit("");
+                  } else {
+                    setUnit(v);
+                  }
+                }}
+                size="sm"
+              />
             </div>
-            <p className="text-xs text-neutral-500">
-              Satuan terkecil yang dipakai (mis. gram untuk biji kopi)
-            </p>
+            {!COMMON_UNITS.includes(unit) ? (
+              <input
+                type="text"
+                placeholder="custom"
+                value={unit}
+                onChange={(e) => setUnit(e.target.value)}
+                className="h-10 flex-1 rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
+              />
+            ) : null}
           </div>
-
-          <Input
-            label="Cost per Unit (Rp)"
-            placeholder="200"
-            value={costPerUnit}
-            onChange={(e) => setCostPerUnit(e.target.value)}
-            type="text"
-            inputMode="numeric"
-          />
+          <p className="text-xs text-neutral-500">
+            Satuan terkecil untuk perhitungan resep + storage internal
+            (mis. <strong>g</strong> untuk bahan dapur, <strong>ml</strong>{" "}
+            untuk cairan, <strong>pcs</strong> untuk barang biji).
+          </p>
         </div>
+
+        {/* Purchase Unit — utama untuk display Inventory + opname + belanja.
+         * Dipajang di luar collapsible supaya jelas konsep 2-unit. */}
+        <div className="space-y-1.5 rounded-md border border-mahakan-green-700/20 bg-mahakan-green-50/40 p-3">
+          <label className="block text-sm font-medium text-mahakan-green-900">
+            Purchase Unit
+          </label>
+          <div className="flex items-center gap-2">
+            <div className="w-28">
+              <Select
+                ariaLabel="Purchase unit preset"
+                options={[
+                  { value: "", label: "—" },
+                  ...COMMON_PURCHASE_UNITS.map((u) => ({
+                    value: u,
+                    label: u,
+                  })),
+                  { value: "__custom", label: "…lainnya" },
+                ]}
+                value={
+                  unitBelanja === ""
+                    ? ""
+                    : COMMON_PURCHASE_UNITS.includes(unitBelanja)
+                      ? unitBelanja
+                      : "__custom"
+                }
+                onValueChange={(v) => {
+                  if (v === "__custom") {
+                    if (COMMON_PURCHASE_UNITS.includes(unitBelanja))
+                      setUnitBelanja("");
+                  } else {
+                    setUnitBelanja(v);
+                  }
+                }}
+                size="sm"
+              />
+            </div>
+            {unitBelanja !== "" &&
+            !COMMON_PURCHASE_UNITS.includes(unitBelanja) ? (
+              <input
+                type="text"
+                placeholder="custom"
+                value={unitBelanja}
+                onChange={(e) => setUnitBelanja(e.target.value)}
+                className="h-10 flex-1 rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
+              />
+            ) : null}
+            <span className="shrink-0 text-xs text-neutral-600">= berisi</span>
+            <Input
+              aria-label="Jumlah recipe unit per 1 satuan purchase"
+              placeholder="1000"
+              value={unitBelanjaPerCogs}
+              onChange={(e) => setUnitBelanjaPerCogs(e.target.value)}
+              type="text"
+              inputMode="decimal"
+              className="w-24"
+              disabled={unitBelanja.trim().length === 0}
+            />
+            <span className="shrink-0 text-xs text-neutral-600">
+              {unit || "recipe unit"}
+            </span>
+          </div>
+          <p className="text-[11px] text-mahakan-green-900/80 leading-relaxed">
+            Satuan untuk display di Inventory + opname + belanja. Mis.{" "}
+            <strong>1 kg = 1000 g</strong>, atau <strong>1 L = 1000 ml</strong>.
+            Pakai koma untuk desimal (mis. 0,5). Kosongkan kalau bahan
+            cuma dipakai dalam recipe unit (mis. plastik).
+          </p>
+        </div>
+
+        <Input
+          label={`Cost per ${unit || "Recipe Unit"} (Rp)`}
+          placeholder="200"
+          value={costPerUnit}
+          onChange={(e) => setCostPerUnit(e.target.value)}
+          type="text"
+          inputMode="numeric"
+          hint="Harga modal per recipe unit. Otomatis ter-update saat catat pembelian."
+        />
+
 
         {!edit ? (
           <Input
@@ -322,31 +413,24 @@ export function IngredientFormModal({
            * yang familiar di operasi gudang Indonesia. */
         />
 
-        {/* Sesi AE-130 — Satuan Lainnya (Anisa feedback). Optional tier
-            untuk tracking display + belanja default. Kalau staff tidak
-            mau pakai, biarkan kosong; semua flow tetap pakai unit utama. */}
-        <details className="rounded-md border border-neutral-200 bg-neutral-50/40">
-          <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-neutral-900">
-            Satuan Lainnya (opsional)
-          </summary>
-          <div className="space-y-3 border-t border-neutral-200 px-3 py-3">
-            <p className="text-xs text-neutral-600 leading-relaxed">
-              Tambahkan satuan beda untuk display di Inventory (mis.
-              &ldquo;Kotak&rdquo;) atau saat Catat Pembelian (mis.
-              &ldquo;L&rdquo;), sambil tetap pakai{" "}
-              <strong>{unit || "satuan utama"}</strong> sebagai dasar
-              perhitungan resep + cost. Kosongkan kalau tidak perlu.
-            </p>
-
-            {/* Tracking tier — satuan terbesar untuk tampilan Inventory list */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-neutral-800">
-                Satuan Tampilan / Tracking
-              </label>
+        {/* Sesi AE-136 — Tracking Unit di-deprecate dari UI (legacy data
+         * tetap di schema). Owner masih bisa edit legacy ingredient yang
+         * masih punya unitTracking via collapsible advanced. */}
+        {unitTracking.trim().length > 0 ? (
+          <details className="rounded-md border border-neutral-200 bg-neutral-50/40">
+            <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-neutral-700">
+              Legacy: Tracking Unit (deprecated)
+            </summary>
+            <div className="space-y-2 border-t border-neutral-200 px-3 py-3">
+              <p className="text-[11px] text-neutral-600">
+                Bahan ini punya Tracking Unit lama dari sebelum konvensi
+                2-unit. Disarankan: pindah info-nya ke Purchase Unit di
+                atas, lalu kosongkan field ini.
+              </p>
               <div className="flex items-center gap-2">
                 <Input
                   aria-label="Label satuan tracking"
-                  placeholder="mis. Kotak / Karung / Btl"
+                  placeholder="mis. Kotak / Karung"
                   value={unitTracking}
                   onChange={(e) => setUnitTracking(e.target.value)}
                   className="flex-1"
@@ -355,7 +439,7 @@ export function IngredientFormModal({
                   = berisi
                 </span>
                 <Input
-                  aria-label="Jumlah unit utama per 1 satuan tracking"
+                  aria-label="Jumlah recipe unit per 1 satuan tracking"
                   placeholder="1000"
                   value={unitTrackingPerCogs}
                   onChange={(e) => setUnitTrackingPerCogs(e.target.value)}
@@ -365,53 +449,23 @@ export function IngredientFormModal({
                   disabled={unitTracking.trim().length === 0}
                 />
                 <span className="shrink-0 text-xs text-neutral-500">
-                  {unit || "satuan utama"}
+                  {unit || "recipe unit"}
                 </span>
               </div>
-              <p className="text-[11px] text-neutral-500">
-                Mis. susu: 1 Kotak = 1000 ml. Inventory akan tampilkan
-                &ldquo;2 Kotak&rdquo; alih-alih &ldquo;2000 ml&rdquo;
-                supaya lebih mudah dibaca.
-              </p>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setUnitTracking("");
+                  setUnitTrackingPerCogs("");
+                }}
+                className="text-xs"
+              >
+                Kosongkan
+              </Button>
             </div>
-
-            {/* Belanja tier — default unit saat Catat Pembelian */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-neutral-800">
-                Satuan Belanja / PR
-              </label>
-              <div className="flex items-center gap-2">
-                <Input
-                  aria-label="Label satuan belanja"
-                  placeholder="mis. L / Kg / Pack"
-                  value={unitBelanja}
-                  onChange={(e) => setUnitBelanja(e.target.value)}
-                  className="flex-1"
-                />
-                <span className="shrink-0 text-xs text-neutral-500">
-                  = berisi
-                </span>
-                <Input
-                  aria-label="Jumlah unit utama per 1 satuan belanja"
-                  placeholder="1000"
-                  value={unitBelanjaPerCogs}
-                  onChange={(e) => setUnitBelanjaPerCogs(e.target.value)}
-                  type="text"
-                  inputMode="decimal"
-                  className="w-24"
-                  disabled={unitBelanja.trim().length === 0}
-                />
-                <span className="shrink-0 text-xs text-neutral-500">
-                  {unit || "satuan utama"}
-                </span>
-              </div>
-              <p className="text-[11px] text-neutral-500">
-                Mis. susu beli per L (1 L = 1000 ml). Form Catat Pembelian
-                otomatis pakai &ldquo;L&rdquo; sebagai default.
-              </p>
-            </div>
-          </div>
-        </details>
+          </details>
+        ) : null}
 
         <div className="space-y-1.5">
           <label className="block text-sm font-medium text-neutral-900">
@@ -472,12 +526,12 @@ function parseIntOrZeroSafe(s: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Sesi AE-130 — parse decimal (accept koma OR titik separator).
- *  Returns null untuk empty/invalid/non-positive. */
+/** Sesi AE-136 — parse decimal pakai strict Indonesian parser
+ *  (koma desimal, titik ribuan, tolak format Inggris).
+ *  Returns null untuk empty/invalid. */
 function parseDecimalOrNull(s: string): number | null {
-  const cleaned = s.trim().replace(/\s/g, "").replace(",", ".");
-  if (cleaned.length === 0) return null;
-  const n = Number(cleaned);
+  if (s.trim().length === 0) return null;
+  const n = parseIndonesianNumber(s);
   if (!Number.isFinite(n)) return null;
   return n;
 }

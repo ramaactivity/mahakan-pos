@@ -51,6 +51,7 @@ import { currentJakartaMonth } from "@/lib/date";
 import { formatRupiah } from "@/lib/format";
 import { formatStockQty } from "@/lib/stock-decimal";
 import {
+  cogsToBelanja,
   cogsToTracking,
   effectiveTrackingUnit,
   type IngredientUnitTiers,
@@ -812,7 +813,13 @@ export function IngredientsList() {
                           <StockDisplay ingredient={i} />
                         </td>
                         <td className="px-4 py-3 text-neutral-700">
-                          {i.unitTracking?.trim() || i.unit}
+                          {/* Sesi AE-136 — prefer Purchase Unit (unitBelanja)
+                           * sebagai display unit. Fallback ke unitTracking
+                           * (legacy data sebelum konvensi 2-unit), lalu unit
+                           * recipe sebagai default. */}
+                          {i.unitBelanja?.trim() ||
+                            i.unitTracking?.trim() ||
+                            i.unit}
                         </td>
                         {/* Sesi AE-130 — Cost/Unit per-row dihilangkan (lihat
                          * header comment). Tab Bahan = fokus stok, bukan harga. */}
@@ -1369,6 +1376,8 @@ function StockDisplay({
     unit: string;
     unitTracking: string | null;
     unitTrackingPerCogs: string | null;
+    unitBelanja: string | null;
+    unitBelanjaPerCogs: string | null;
   };
 }) {
   const qtyCogs =
@@ -1376,39 +1385,67 @@ function StockDisplay({
       ? parseFloat(ingredient.currentStockDecimal)
       : ingredient.currentStock;
 
-  const tiers: IngredientUnitTiers = {
-    cogsUnit: ingredient.unit,
-    trackingUnit: ingredient.unitTracking,
-    trackingPerCogs: ingredient.unitTrackingPerCogs,
-  };
-  const trackingLabel = ingredient.unitTracking?.trim();
-  const hasActiveTier =
-    Boolean(trackingLabel) &&
-    Boolean(ingredient.unitTrackingPerCogs) &&
-    Number(ingredient.unitTrackingPerCogs) > 0;
-
   const fmt = (n: number) =>
     new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(n);
 
-  if (!hasActiveTier) {
+  /* Sesi AE-136 — prefer Purchase Unit (unitBelanja) untuk display.
+   * Owner directive: "untuk current stok gunakan satuan purchase unit".
+   * Fallback ke unitTracking (legacy, deprecated UI) lalu unit (recipe)
+   * supaya data lama tidak rusak. */
+  const belanjaLabel = ingredient.unitBelanja?.trim();
+  const hasBelanjaTier =
+    Boolean(belanjaLabel) &&
+    Boolean(ingredient.unitBelanjaPerCogs) &&
+    Number(ingredient.unitBelanjaPerCogs) > 0;
+
+  if (hasBelanjaTier) {
+    const tiers: IngredientUnitTiers = {
+      cogsUnit: ingredient.unit,
+      belanjaUnit: ingredient.unitBelanja,
+      belanjaPerCogs: ingredient.unitBelanjaPerCogs,
+    };
+    const purchase = cogsToBelanja(qtyCogs, tiers);
     return (
-      <>
-        {formatStockQty(
-          ingredient.currentStock,
-          ingredient.currentStockDecimal ?? null,
-        )}
-      </>
+      <div className="flex flex-col items-end leading-tight">
+        <span>{fmt(purchase)}</span>
+        <span className="text-[10px] text-neutral-500">
+          {fmt(qtyCogs)} {ingredient.unit}
+        </span>
+      </div>
     );
   }
 
-  const tracking = cogsToTracking(qtyCogs, tiers);
+  /* Backward-compat fallback: legacy data dengan unitTracking saja
+   * (sebelum konvensi 2-unit). Drop ke tracking display kalau set. */
+  const trackingLabel = ingredient.unitTracking?.trim();
+  const hasTrackingTier =
+    Boolean(trackingLabel) &&
+    Boolean(ingredient.unitTrackingPerCogs) &&
+    Number(ingredient.unitTrackingPerCogs) > 0;
+  if (hasTrackingTier) {
+    const tiers: IngredientUnitTiers = {
+      cogsUnit: ingredient.unit,
+      trackingUnit: ingredient.unitTracking,
+      trackingPerCogs: ingredient.unitTrackingPerCogs,
+    };
+    const tracking = cogsToTracking(qtyCogs, tiers);
+    return (
+      <div className="flex flex-col items-end leading-tight">
+        <span>{fmt(tracking)}</span>
+        <span className="text-[10px] text-neutral-500">
+          {fmt(qtyCogs)} {ingredient.unit}
+        </span>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col items-end leading-tight">
-      <span>{fmt(tracking)}</span>
-      <span className="text-[10px] text-neutral-500">
-        {fmt(qtyCogs)} {ingredient.unit}
-      </span>
-    </div>
+    <>
+      {formatStockQty(
+        ingredient.currentStock,
+        ingredient.currentStockDecimal ?? null,
+      )}
+    </>
   );
 }
 
