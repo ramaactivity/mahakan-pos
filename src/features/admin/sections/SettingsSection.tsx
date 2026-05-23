@@ -7,6 +7,7 @@ import {
   Bluetooth,
   Building2,
   Clock,
+  Download,
   Pencil,
   ScrollText,
 } from "lucide-react";
@@ -32,6 +33,7 @@ import { BankAccountsCard } from "./settings/BankAccountsCard";
 import { ResetMockupDataCard } from "./settings/ResetMockupDataCard";
 import { PushNotificationToggle } from "@/features/push-notifications/PushNotificationToggle";
 import { NotificationPreferencesPanel } from "@/features/push-notifications/NotificationPreferencesPanel";
+import { InstallAppButton } from "@/features/pwa/InstallAppButton";
 
 type OperationalHours = NonNullable<Outlet["operationalHours"]>;
 
@@ -207,6 +209,47 @@ export function SettingsSection() {
         </CardHeader>
         <CardContent>
           <PrinterControls />
+        </CardContent>
+      </Card>
+
+      {/* Sesi AE-125 — PWA install card. Bantu owner+staff install
+       * Mahakan POS jadi aplikasi (home screen icon, fullscreen). */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Download className="size-5" aria-hidden /> Install Aplikasi (PWA)
+          </CardTitle>
+          <CardDescription>
+            Install Mahakan POS ke home screen HP / desktop. Buka cepat
+            tanpa browser, fullscreen, hemat data, dan push notif kerja
+            lebih reliable. Gratis, tidak pakai App Store / Play Store.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <InstallAppButton />
+          <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
+            <p className="font-semibold text-neutral-800">
+              Tombol install tidak muncul? Coba manual:
+            </p>
+            <ul className="mt-1.5 ml-4 list-disc space-y-0.5">
+              <li>
+                <strong>Chrome / Edge Android</strong>: menu (⋮) → &ldquo;Install
+                app&rdquo;
+              </li>
+              <li>
+                <strong>Safari iOS</strong>: tombol Share → &ldquo;Tambahkan ke
+                Layar Utama&rdquo;
+              </li>
+              <li>
+                <strong>Chrome / Edge desktop</strong>: icon install di address
+                bar (kanan)
+              </li>
+              <li>
+                <strong>Firefox</strong>: tidak support install desktop, tetap
+                bisa buka via browser
+              </li>
+            </ul>
+          </div>
         </CardContent>
       </Card>
 
