@@ -204,9 +204,15 @@ export function parseIngredientsCsv(text: string): ParseResult {
     return { rows: [], errorCount: 0, headers: [] };
   }
 
+  /* Sesi AE-142 — auto-detect delimiter. Excel locale id-ID default
+   * "Save As CSV" pakai semicolon (`;`), bukan comma. Owner/staff sering
+   * tidak sadar — file ke-upload tapi parser fail. Pilih delimiter dengan
+   * count tertinggi di header line; tie → comma (default). */
+  const delimiter = detectDelimiter(dataLines[0].line);
+
   /* Sesi AE-136 — case-insensitive header normalization karena owner
    * suka edit di Excel/Sheets yang capitalize column names. */
-  const headers = parseCsvLine(dataLines[0].line).map((h) =>
+  const headers = parseCsvLine(dataLines[0].line, delimiter).map((h) =>
     h.trim().toLowerCase().replace(/\s+/g, "_"),
   );
 
@@ -253,7 +259,7 @@ export function parseIngredientsCsv(text: string): ParseResult {
   let errorCount = 0;
 
   for (let i = 1; i < dataLines.length; i++) {
-    const cells = parseCsvLine(dataLines[i].line);
+    const cells = parseCsvLine(dataLines[i].line, delimiter);
     const raw: Record<string, string> = {};
     for (let h = 0; h < headers.length; h++) {
       raw[headers[h]] = (cells[h] ?? "").trim();
@@ -429,10 +435,35 @@ export function parseIngredientsCsv(text: string): ParseResult {
 }
 
 /**
- * Minimal CSV line parser — handles quote-escaping.
- * Per RFC 4180.
+ * Sesi AE-142 — detect CSV delimiter dari header line.
+ * Hitung occurrence `;` vs `,` di luar quoted regions; pilih yang lebih
+ * banyak. Tie atau zero → comma (RFC 4180 default).
+ *
+ * Why: Excel locale id-ID (juga German, Spanish) default Save As CSV pakai
+ * semicolon karena koma dipakai sebagai decimal separator regional.
  */
-function parseCsvLine(line: string): string[] {
+function detectDelimiter(headerLine: string): "," | ";" {
+  let commaCount = 0;
+  let semicolonCount = 0;
+  let inQuote = false;
+  for (let i = 0; i < headerLine.length; i++) {
+    const ch = headerLine[i];
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (inQuote) continue;
+    if (ch === ",") commaCount++;
+    else if (ch === ";") semicolonCount++;
+  }
+  return semicolonCount > commaCount ? ";" : ",";
+}
+
+/**
+ * Minimal CSV line parser — handles quote-escaping.
+ * Per RFC 4180. Delimiter configurable untuk Excel locale support.
+ */
+function parseCsvLine(line: string, delimiter: "," | ";" = ","): string[] {
   const result: string[] = [];
   let current = "";
   let inQuote = false;
@@ -451,7 +482,7 @@ function parseCsvLine(line: string): string[] {
         current += ch;
       }
     } else {
-      if (ch === ",") {
+      if (ch === delimiter) {
         result.push(current);
         current = "";
       } else if (ch === '"' && current === "") {

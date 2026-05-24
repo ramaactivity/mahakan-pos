@@ -74,6 +74,27 @@ describe("serializeIngredientsCsv", () => {
 });
 
 describe("parseIngredientsCsv", () => {
+  /* Sesi AE-142 — Excel locale id-ID save-as CSV pakai semicolon
+   * delimiter. Owner sering edit di Excel → re-upload format jadi
+   * semicolon. Parser harus auto-detect supaya tidak fail. */
+  it("auto-detects semicolon delimiter (Excel id-ID export)", () => {
+    const csv =
+      "id;name;section;Purchase Unit;Recipe Unit;cost_per_unit;current_stock;threshold;notes\n" +
+      ";Susu Test;bar;L;ml;4500;0;5000;Tes brand\n";
+    const result = parseIngredientsCsv(csv);
+    expect(result.errorCount).toBe(0);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].parsed).toMatchObject({
+      name: "Susu Test",
+      section: "bar",
+      recipeUnit: "ml",
+      purchaseUnit: "L",
+      costPerUnit: 4500,
+      threshold: 5000,
+      notes: "Tes brand",
+    });
+  });
+
   it("parses valid CSV correctly (legacy 'unit' column)", () => {
     const csv =
       "id,name,section,unit,cost_per_unit,current_stock,threshold,notes\n" +
