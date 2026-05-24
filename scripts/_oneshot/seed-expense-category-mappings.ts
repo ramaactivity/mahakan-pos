@@ -46,7 +46,10 @@ const TARGET_CATEGORIES: CategoryConfig[] = [
   { name: "Gas (LPG)", glAccountCode: "6205", isSystem: false, displayOrder: 12 },
   { name: "Pemeliharaan & Perbaikan", glAccountCode: "6302", isSystem: false, displayOrder: 13 },
   { name: "Transportasi", glAccountCode: "6303", isSystem: false, displayOrder: 14 },
-  { name: "ATK & Cetak", glAccountCode: "6305", isSystem: false, displayOrder: 15 },
+  /* Sesi AE-145 — split ATK & Cetak jadi 3 kategori terpisah. */
+  { name: "ATK", glAccountCode: "6305", isSystem: false, displayOrder: 15 },
+  { name: "Biaya Cetak", glAccountCode: "6306", isSystem: false, displayOrder: 17 },
+  { name: "Fotocopy Berkas", glAccountCode: "6307", isSystem: false, displayOrder: 18 },
   { name: "Bahan Pendukung", glAccountCode: "6301", isSystem: false, displayOrder: 16 },
   { name: "Sumbangan Sosial", glAccountCode: "6601", isSystem: false, displayOrder: 20 },
   { name: "Biaya Bank", glAccountCode: "6403", isSystem: false, displayOrder: 21 },

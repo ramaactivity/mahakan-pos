@@ -122,7 +122,10 @@ const DEFAULTS: DefaultAccount[] = [
   { code: "6302", name: "Pemeliharaan & Perbaikan", type: "expense", normalBalance: "debit", parentCode: "6300", isSystem: false, displayOrder: 21, notes: "Manual" },
   { code: "6303", name: "Transportasi & Pengiriman", type: "expense", normalBalance: "debit", parentCode: "6300", isSystem: false, displayOrder: 22, notes: "Manual" },
   { code: "6304", name: "Marketing & Iklan", type: "expense", normalBalance: "debit", parentCode: "6300", isSystem: true, displayOrder: 23, notes: "Default destination compliment + manual marketing spend" },
-  { code: "6305", name: "ATK & Cetak", type: "expense", normalBalance: "debit", parentCode: "6300", isSystem: false, displayOrder: 24, notes: "Manual" },
+  /* Sesi AE-145 — Inab finance: split "ATK & Cetak" jadi 3 akun terpisah. */
+  { code: "6305", name: "ATK", type: "expense", normalBalance: "debit", parentCode: "6300", isSystem: false, displayOrder: 24, notes: "Manual — alat tulis kantor (kertas HVS, pena, map, stapler, dll)" },
+  { code: "6306", name: "Biaya Cetak", type: "expense", normalBalance: "debit", parentCode: "6300", isSystem: false, displayOrder: 25, notes: "Manual — biaya cetak nota/banner/materi promosi (sesi AE-145 split dari 6305)" },
+  { code: "6307", name: "Fotocopy Berkas", type: "expense", normalBalance: "debit", parentCode: "6300", isSystem: false, displayOrder: 26, notes: "Manual — fotocopy dokumen/berkas (perizinan, kontrak, dll). Sesi AE-145." },
 
   // ============ 64xx Channel & Payment ============
   { code: "6401", name: "Biaya Aggregator", type: "expense", normalBalance: "debit", parentCode: "6400", isSystem: true, displayOrder: 30, notes: "Auto-debit saat aggregator settlement masuk (fee component)" },
