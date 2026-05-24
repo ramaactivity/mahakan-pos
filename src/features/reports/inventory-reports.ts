@@ -1,11 +1,7 @@
 import "server-only";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import {
-  ingredients,
-  stockOpnameLines,
-  stockOpnameSessions,
-} from "@/db/schema";
+import { ingredients } from "@/db/schema";
 import {
   fetchPurchaseRollup,
   fetchPurchasesByIngredient,
@@ -38,30 +34,69 @@ export interface OpnameSnapshot {
   costByIngredient: Map<string, number>;
 }
 
+/* Sesi AE-131 perf — combine session lookup + load lines into ONE query
+ * via CTE (saves 1 RTT). Caller pass WHERE predicate untuk session
+ * selection; CTE picks the latest, LEFT JOIN lines, single round-trip.
+ *
+ * Returns empty maps kalau no session matches (callers expect null —
+ * handled di wrapper functions below). */
+async function fetchOpnameSnapshotByPredicate(
+  sessionPredicate: ReturnType<typeof sql>,
+): Promise<OpnameSnapshot | null> {
+  type Row = {
+    session_id: string;
+    finalized_at: Date | null;
+    ingredient_id: string | null;
+    actual_qty: number | null;
+    unit_cost_at_snapshot: number | null;
+  };
+  const result = await db.execute(sql`
+    WITH latest_session AS (
+      SELECT id, finalized_at
+      FROM stock_opname_sessions
+      WHERE ${sessionPredicate}
+      ORDER BY finalized_at DESC
+      LIMIT 1
+    )
+    SELECT
+      ls.id AS session_id,
+      ls.finalized_at,
+      l.ingredient_id,
+      l.actual_qty,
+      l.unit_cost_at_snapshot
+    FROM latest_session ls
+    LEFT JOIN stock_opname_lines l ON l.session_id = ls.id
+  `);
+  const rows = (result as unknown as { rows: Row[] }).rows
+    ?? (result as unknown as Row[]);
+  if (rows.length === 0 || !rows[0]?.session_id || !rows[0]?.finalized_at) {
+    return null;
+  }
+  const sessionId = rows[0].session_id;
+  const finalizedAt = new Date(rows[0].finalized_at);
+  const qtyByIngredient = new Map<string, number>();
+  const costByIngredient = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.ingredient_id) continue; // LEFT JOIN with no lines
+    if (r.actual_qty !== null) {
+      qtyByIngredient.set(r.ingredient_id, Number(r.actual_qty));
+    }
+    if (r.unit_cost_at_snapshot !== null) {
+      costByIngredient.set(r.ingredient_id, Number(r.unit_cost_at_snapshot));
+    }
+  }
+  return { sessionId, finalizedAt, qtyByIngredient, costByIngredient };
+}
+
 export async function fetchLatestOpnameBefore(
   outletId: string,
   beforeDate: string,
 ): Promise<OpnameSnapshot | null> {
-  // Latest completed opname session that finalizedAt < `beforeDate` (start of day Asia/Jakarta).
-  // Treat dates as Asia/Jakarta calendar boundaries — UTC+7 fixed offset.
-  const [sess] = await db
-    .select({
-      id: stockOpnameSessions.id,
-      finalizedAt: stockOpnameSessions.finalizedAt,
-    })
-    .from(stockOpnameSessions)
-    .where(
-      and(
-        eq(stockOpnameSessions.outletId, outletId),
-        eq(stockOpnameSessions.status, "completed"),
-        sql`${stockOpnameSessions.finalizedAt} < (${beforeDate}::date AT TIME ZONE 'Asia/Jakarta')`,
-      ),
-    )
-    .orderBy(desc(stockOpnameSessions.finalizedAt))
-    .limit(1);
-  if (!sess || !sess.finalizedAt) return null;
-
-  return loadOpnameSnapshot(sess.id, sess.finalizedAt);
+  return fetchOpnameSnapshotByPredicate(sql`
+    outlet_id = ${outletId}::uuid
+    AND status = 'completed'
+    AND finalized_at < (${beforeDate}::date AT TIME ZONE 'Asia/Jakarta')
+  `);
 }
 
 async function fetchLatestOpnameWithin(
@@ -69,49 +104,12 @@ async function fetchLatestOpnameWithin(
   fromDate: string,
   toDate: string,
 ): Promise<OpnameSnapshot | null> {
-  const [sess] = await db
-    .select({
-      id: stockOpnameSessions.id,
-      finalizedAt: stockOpnameSessions.finalizedAt,
-    })
-    .from(stockOpnameSessions)
-    .where(
-      and(
-        eq(stockOpnameSessions.outletId, outletId),
-        eq(stockOpnameSessions.status, "completed"),
-        sql`${stockOpnameSessions.finalizedAt} >= (${fromDate}::date AT TIME ZONE 'Asia/Jakarta')`,
-        sql`${stockOpnameSessions.finalizedAt} < ((${toDate}::date + interval '1 day') AT TIME ZONE 'Asia/Jakarta')`,
-      ),
-    )
-    .orderBy(desc(stockOpnameSessions.finalizedAt))
-    .limit(1);
-  if (!sess || !sess.finalizedAt) return null;
-  return loadOpnameSnapshot(sess.id, sess.finalizedAt);
-}
-
-async function loadOpnameSnapshot(
-  sessionId: string,
-  finalizedAt: Date,
-): Promise<OpnameSnapshot> {
-  const lines = await db
-    .select({
-      ingredientId: stockOpnameLines.ingredientId,
-      actualQty: stockOpnameLines.actualQty,
-      unitCostAtSnapshot: stockOpnameLines.unitCostAtSnapshot,
-    })
-    .from(stockOpnameLines)
-    .where(eq(stockOpnameLines.sessionId, sessionId));
-
-  const qtyByIngredient = new Map<string, number>();
-  const costByIngredient = new Map<string, number>();
-  for (const l of lines) {
-    if (l.actualQty !== null) {
-      qtyByIngredient.set(l.ingredientId, l.actualQty);
-    }
-    costByIngredient.set(l.ingredientId, l.unitCostAtSnapshot);
-  }
-
-  return { sessionId, finalizedAt, qtyByIngredient, costByIngredient };
+  return fetchOpnameSnapshotByPredicate(sql`
+    outlet_id = ${outletId}::uuid
+    AND status = 'completed'
+    AND finalized_at >= (${fromDate}::date AT TIME ZONE 'Asia/Jakarta')
+    AND finalized_at < ((${toDate}::date + interval '1 day') AT TIME ZONE 'Asia/Jakarta')
+  `);
 }
 
 /**

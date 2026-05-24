@@ -244,6 +244,47 @@ async function requireSession() {
 }
 
 /**
+ * Sesi AE-131 perf — Batch decrement promo.current_uses untuk N usages.
+ *
+ * Sebelumnya: for (const u of promoUsageRows) await tx.update(promos)...
+ * = N round-trips × ~30-100ms Neon RTT = significant pada void/refund
+ * dengan banyak promo. Sekarang: ONE single UPDATE dengan CASE expression
+ * supaya semua decrement happen in 1 round-trip.
+ *
+ * Mendukung multiple usages dari promoId yang sama (count > 1 per id).
+ *
+ * No-op kalau usageRows empty.
+ */
+async function batchDecrementPromoUses(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  usageRows: ReadonlyArray<{ promoId: string }>,
+): Promise<void> {
+  if (usageRows.length === 0) return;
+  // Group by promoId untuk hitung total decrement per promo.
+  const decrementByPromoId = new Map<string, number>();
+  for (const u of usageRows) {
+    decrementByPromoId.set(
+      u.promoId,
+      (decrementByPromoId.get(u.promoId) ?? 0) + 1,
+    );
+  }
+  const promoIds = Array.from(decrementByPromoId.keys());
+  // Build CASE WHEN id = '...' THEN N expression untuk per-promo decrement.
+  const caseClauses = sql.join(
+    Array.from(decrementByPromoId.entries()).map(
+      ([id, count]) => sql`WHEN ${id} THEN ${count}`,
+    ),
+    sql.raw(" "),
+  );
+  await tx.execute(sql`
+    UPDATE promos
+    SET current_uses = GREATEST(0, current_uses - (CASE id ${caseClauses} ELSE 0 END)),
+        updated_at = NOW()
+    WHERE id IN (${sql.join(promoIds.map((id) => sql`${id}`), sql.raw(", "))})
+  `);
+}
+
+/**
  * Block mutations on a transaction whose shift is already closed. Sesi Z #5:
  * Owner reported staff could refund/void/edit transactions belonging to a
  * tutup-kasir'd shift, which silently broke shift reconciliation totals.
@@ -1008,15 +1049,8 @@ export async function voidTransaction(
       .select({ id: promoUsages.id, promoId: promoUsages.promoId })
       .from(promoUsages)
       .where(eq(promoUsages.transactionId, v.transactionId));
-    for (const u of promoUsageRows) {
-      await tx
-        .update(promos)
-        .set({
-          currentUses: sql`GREATEST(0, ${promos.currentUses} - 1)`,
-          updatedAt: new Date(),
-        })
-        .where(eq(promos.id, u.promoId));
-    }
+    /* Sesi AE-131 perf — batch decrement, was N round-trips per loop. */
+    await batchDecrementPromoUses(tx, promoUsageRows);
 
       return { updated: updatedRow, restoredIngredientIds: restored };
     });
@@ -1292,15 +1326,8 @@ export async function refundTransaction(
         .select({ id: promoUsages.id, promoId: promoUsages.promoId })
         .from(promoUsages)
         .where(eq(promoUsages.transactionId, v.transactionId));
-      for (const u of promoUsageRows) {
-        await tx
-          .update(promos)
-          .set({
-            currentUses: sql`GREATEST(0, ${promos.currentUses} - 1)`,
-            updatedAt: new Date(),
-          })
-          .where(eq(promos.id, u.promoId));
-      }
+      /* Sesi AE-131 perf — batch decrement. */
+      await batchDecrementPromoUses(tx, promoUsageRows);
 
       return { result: updated, restoredIngredientIds: restored };
     });
@@ -2563,6 +2590,16 @@ export async function closeOpenBill(
       ? input.cashReceived - remaining
       : null;
 
+  /* Sesi AE-131 perf — capture final state INSIDE tx supaya tidak perlu
+   * blocking refetch setelah commit (lihat akhir fn). Saves 3 RTT
+   * (≈300-500ms) per close action — customer-facing pain point. */
+  let finalPaymentMethod: TransactionWithItems["paymentMethod"] =
+    input.paymentMethod;
+  let finalCashReceived: number | null = null;
+  let finalCashChange: number | null = null;
+  let finalStockDeductedAt: Date | null = null;
+  const finalUpdatedAt = new Date();
+
   // Sesi AE-62j — wrap close in tx + SELECT FOR UPDATE pada transaction
   // row untuk prevent TOCTOU race condition. Sebelumnya: 2 kasir (double-tap
   // / network retry) bisa lulus status='open' check + close bill twice →
@@ -2677,6 +2714,13 @@ export async function closeOpenBill(
           ? input.cashReceived - freshRemaining
           : null;
 
+      /* Sesi AE-131 — derive final stockDeductedAt sekali, reuse di kedua
+       * branch + capture untuk return state (skip blocking refetch). */
+      const stockDeductedAtFinal =
+        locked.stockDeductedAt === null
+          ? finalUpdatedAt
+          : locked.stockDeductedAt;
+
       if (freshHasPriorSplits) {
         // Get shift for split row.
         const activeShift = await tx
@@ -2710,16 +2754,14 @@ export async function closeOpenBill(
             paymentMethod: "split",
             cashReceived: null,
             cashChange: null,
-            /* Sesi AE-62x — stamp deduct timestamp kalau baru deduct (defer
-             * mode). Kalau sudah set sebelumnya (legacy / direct sale),
-             * leave it (COALESCE-like semantic via conditional set). */
-            stockDeductedAt:
-              locked.stockDeductedAt === null
-                ? new Date()
-                : locked.stockDeductedAt,
-            updatedAt: new Date(),
+            stockDeductedAt: stockDeductedAtFinal,
+            updatedAt: finalUpdatedAt,
           })
           .where(eq(transactions.id, input.transactionId));
+        finalPaymentMethod = "split";
+        finalCashReceived = null;
+        finalCashChange = null;
+        finalStockDeductedAt = stockDeductedAtFinal;
       } else {
         await tx
           .update(transactions)
@@ -2730,13 +2772,16 @@ export async function closeOpenBill(
               input.paymentMethod === "cash" ? input.cashReceived : null,
             cashChange:
               input.paymentMethod === "cash" ? freshCashChange : null,
-            stockDeductedAt:
-              locked.stockDeductedAt === null
-                ? new Date()
-                : locked.stockDeductedAt,
-            updatedAt: new Date(),
+            stockDeductedAt: stockDeductedAtFinal,
+            updatedAt: finalUpdatedAt,
           })
           .where(eq(transactions.id, input.transactionId));
+        finalPaymentMethod = input.paymentMethod;
+        finalCashReceived =
+          input.paymentMethod === "cash" ? input.cashReceived : null;
+        finalCashChange =
+          input.paymentMethod === "cash" ? freshCashChange : null;
+        finalStockDeductedAt = stockDeductedAtFinal;
       }
     });
   } catch (e) {
@@ -2815,10 +2860,19 @@ export async function closeOpenBill(
     { label: "pos_sale", args: closePosSaleArgs },
   );
 
-  const refreshed = await fetchTransactionById(input.transactionId);
-  return refreshed
-    ? ok(refreshed)
-    : fail("DB_ERROR", "Gagal fetch transaksi setelah close");
+  /* Sesi AE-131 perf — skip fetchTransactionById (yang trigger 3 round-trips:
+   * trx + items + mods + customer). State sudah captured INSIDE tx, items +
+   * modifiers di `current` masih akurat (close hanya ubah header fields).
+   * Saves ~300-500ms per close, customer-facing pain point. */
+  return ok({
+    ...current,
+    status: "paid",
+    paymentMethod: finalPaymentMethod,
+    cashReceived: finalCashReceived,
+    cashChange: finalCashChange,
+    stockDeductedAt: finalStockDeductedAt,
+    updatedAt: finalUpdatedAt,
+  });
 }
 
 /**
@@ -2919,15 +2973,8 @@ export async function cancelOpenBill(
         .select({ id: promoUsages.id, promoId: promoUsages.promoId })
         .from(promoUsages)
         .where(eq(promoUsages.transactionId, v.transactionId));
-      for (const u of promoUsageRows) {
-        await tx
-          .update(promos)
-          .set({
-            currentUses: sql`GREATEST(0, ${promos.currentUses} - 1)`,
-            updatedAt: new Date(),
-          })
-          .where(eq(promos.id, u.promoId));
-      }
+      /* Sesi AE-131 perf — batch decrement. */
+      await batchDecrementPromoUses(tx, promoUsageRows);
 
       return { updated: updatedRow, restoredIds: restored };
     });
