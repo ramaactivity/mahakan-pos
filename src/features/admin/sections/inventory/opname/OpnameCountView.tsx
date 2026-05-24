@@ -22,6 +22,7 @@ import {
   CardHeader,
   Input,
   Modal,
+  Select,
   toast,
 } from "@/components/ui";
 import {
@@ -44,10 +45,10 @@ import { cn } from "@/lib/utils";
 import { EditUnitModal } from "./EditUnitModal";
 import { AddOpnameItemModal } from "./AddOpnameItemModal";
 import {
-  compatibleUnitsFor,
-  convertQtyWithIngredientPacks,
-  resolveUnit,
+  buildOpnameUnitContext,
+  computeOpnameQtyFromSplit,
   type IngredientPackConversion,
+  type OpnameUnitContext,
 } from "@/lib/unit-conversion";
 
 interface OpnameCountViewProps {
@@ -58,18 +59,23 @@ interface OpnameCountViewProps {
   onSubmittedForReview: () => void;
 }
 
+/**
+ * Sesi AE-147 — split input model. Staff input qty dalam 2 field:
+ *  - `primary` (string + unit) — qty "penuh" dalam unit yang dipilih
+ *    (default = Purchase Unit kalau ada, else Recipe Unit).
+ *  - `loose` (string, recipe unit only) — qty "sisa lepas" optional,
+ *    dipakai untuk discrete pack (mis. Yakult: 3 pack + 2 pcs lepas).
+ *
+ * Server selalu terima qty in recipe (master) unit. UI compute via
+ * `computeOpnameQtyFromSplit` sebelum saveOpnameCount.
+ */
 type LineState = {
-  /** Local input string (may be empty / partial). */
-  input: string;
-  /** Unit yang dipilih staff saat input (default = master unit).
-   *  Sesi AE-62af — supports ingredient pack alternatives (mis. "packs"
-   *  utk Lychee Kaleng yang master "pcs"). Server selalu terima qty
-   *  in master unit, jadi UI yang convert sebelum saveOpnameCount. */
-  inputUnit: string;
-  /** Last persisted value — null means uncounted, number means counted. */
+  primaryInput: string;
+  primaryUnit: string;
+  /** Optional second input dalam recipe unit. "" = tidak diisi. */
+  looseInput: string;
+  /** Last persisted value (in recipe unit) — null means uncounted. */
   saved: number | null;
-  /** "saving" while debounced action is in flight, "saved" after success,
-   * null when idle or hasn't been touched. */
   status: "idle" | "saving" | "saved" | "error";
   errorMsg?: string;
 };
@@ -116,8 +122,11 @@ export function OpnameCountView({
   const [addItemOpen, setAddItemOpen] = useState(false);
 
   // Map of ingredientId → state. Re-init when session id changes (rare).
+  // Sesi AE-147 — overlay localStorage draft di atas server initialState
+  // supaya in-flight typing yang belum tersave ke server tetap utuh saat
+  // user kembali ke halaman opname.
   const [stateMap, setStateMap] = useState<Map<string, LineState>>(() =>
-    initialState(detail),
+    mergeDraftIntoState(detail, readDraft(detail.id)),
   );
 
   // Optimistic unit overrides — populated when EditUnitModal saves so the
@@ -137,13 +146,31 @@ export function OpnameCountView({
   // If detail prop changes (e.g. parent refreshes after cancel), reseed.
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect */
-    setStateMap(initialState(detail));
+    setStateMap(mergeDraftIntoState(detail, readDraft(detail.id)));
     /* eslint-enable react-hooks/set-state-in-effect */
     // We intentionally re-init only when the session id changes — when the
     // parent refresh just bumps line counts but session is the same, we
     // don't want to overwrite the user's in-flight typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.id]);
+
+  /* Sesi AE-147 — Auto-save draft ke localStorage on every stateMap change,
+   * debounced 400ms. Key namespaced per sessionId. Restored on remount.
+   * Purged when session completes/cancels (handled via parent on transition). */
+  const draftSaveTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (draftSaveTimerRef.current) {
+      window.clearTimeout(draftSaveTimerRef.current);
+    }
+    draftSaveTimerRef.current = window.setTimeout(() => {
+      writeDraft(detail.id, stateMap);
+    }, 400);
+    return () => {
+      if (draftSaveTimerRef.current) {
+        window.clearTimeout(draftSaveTimerRef.current);
+      }
+    };
+  }, [detail.id, stateMap]);
 
   const [search, setSearch] = useState("");
   const [showOnlyUncounted, setShowOnlyUncounted] = useState(false);
@@ -162,6 +189,7 @@ export function OpnameCountView({
      * UI tidak briefly show stale prior-session data sebelum fetch baru
      * landing. Pre-fix: flow tetap di nilai lama → FlowMetric tampil number
      * misleading di transition antara sessions. */
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
     setFlow(null);
     void (async () => {
       const res = await getOpnameInventoryFlow(detail.id);
@@ -270,95 +298,138 @@ export function OpnameCountView({
     return computeHppPerSection(rows);
   }, [detail.lines, flow, stateMap]);
 
-  function scheduleSave(ingredientId: string, raw: string) {
+  /* Sesi AE-147 — Unit context dipre-compute per ingredient supaya
+   * scheduleSave dan persistLine bisa reuse tanpa rebuild tiap keystroke. */
+  const ctxMap = useMemo(() => {
+    const m = new Map<string, OpnameUnitContext>();
+    for (const line of detail.lines) {
+      const effectiveUnit = unitOverrides.get(line.ingredientId) ?? line.unitSnapshot;
+      m.set(
+        line.ingredientId,
+        buildOpnameUnitContext({
+          recipeUnit: effectiveUnit,
+          unitBelanja: line.ingredient.unitBelanja,
+          unitBelanjaPerCogs: line.ingredient.unitBelanjaPerCogs,
+          packConversions:
+            (line.ingredient.packConversions ??
+              null) as IngredientPackConversion[] | null,
+        }),
+      );
+    }
+    return m;
+  }, [detail.lines, unitOverrides]);
+
+  /** Schedule debounced save dari current state (split-aware). */
+  function scheduleSaveFromState(ingredientId: string) {
     setStateMap((prev) => {
       const next = new Map(prev);
-      const cur = next.get(ingredientId) ?? blankLineState();
-      next.set(ingredientId, { ...cur, input: raw, status: "saving" });
+      const cur = next.get(ingredientId);
+      if (!cur) return prev;
+      next.set(ingredientId, { ...cur, status: "saving" });
       return next;
     });
-
-    // Reset existing timer.
     const existing = timersRef.current.get(ingredientId);
     if (existing) window.clearTimeout(existing);
-
     const t = window.setTimeout(() => {
-      void persistLine(ingredientId, raw);
+      void persistLine(ingredientId);
     }, SAVE_DEBOUNCE_MS);
     timersRef.current.set(ingredientId, t);
   }
 
-  function setInputUnit(ingredientId: string, nextUnit: string) {
+  function setPrimaryInput(ingredientId: string, raw: string) {
     setStateMap((prev) => {
       const next = new Map(prev);
       const cur = next.get(ingredientId) ?? blankLineState();
-      next.set(ingredientId, { ...cur, inputUnit: nextUnit });
+      next.set(ingredientId, { ...cur, primaryInput: raw });
       return next;
     });
-    // Re-trigger save kalau sudah ada input value — qty interpretasi berubah.
+    scheduleSaveFromState(ingredientId);
+  }
+
+  function setLooseInput(ingredientId: string, raw: string) {
+    setStateMap((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(ingredientId) ?? blankLineState();
+      next.set(ingredientId, { ...cur, looseInput: raw });
+      return next;
+    });
+    scheduleSaveFromState(ingredientId);
+  }
+
+  function setPrimaryUnit(ingredientId: string, nextUnit: string) {
+    setStateMap((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(ingredientId) ?? blankLineState(nextUnit);
+      next.set(ingredientId, { ...cur, primaryUnit: nextUnit });
+      return next;
+    });
+    /* Re-trigger save kalau sudah ada qty input — interpretasi berubah. */
     const cur = stateMap.get(ingredientId);
-    if (cur && cur.input.trim().length > 0) {
-      scheduleSave(ingredientId, cur.input);
+    if (
+      cur &&
+      (cur.primaryInput.trim().length > 0 || cur.looseInput.trim().length > 0)
+    ) {
+      scheduleSaveFromState(ingredientId);
     }
   }
 
-  async function persistLine(ingredientId: string, raw: string) {
-    // Sesi AE-15 — accept decimal (mirror sesi AE-12 pattern dari purchases).
-    // Allow koma OR titik as decimal separator (staff Indo biasa pakai koma).
-    const trimmed = raw.trim().replace(",", ".");
-    let actualQty: number | null;
-    if (trimmed === "") {
-      actualQty = null;
-    } else {
-      const n = parseFloat(trimmed);
-      if (!Number.isFinite(n) || n < 0) {
-        setStateMap((prev) => {
-          const next = new Map(prev);
-          const cur = next.get(ingredientId) ?? blankLineState();
-          next.set(ingredientId, {
-            ...cur,
-            status: "error",
-            errorMsg: "Angka tidak valid",
-          });
-          return next;
-        });
-        return;
-      }
-      actualQty = n;
+  /** Parse Indonesian decimal — accept koma atau titik sebagai pemisah. */
+  function parseQtyInput(raw: string): number | null | "invalid" {
+    const t = raw.trim().replace(",", ".");
+    if (t === "") return null;
+    const n = parseFloat(t);
+    if (!Number.isFinite(n) || n < 0) return "invalid";
+    return n;
+  }
 
-      /* Sesi AE-62af — Convert qty kalau staff input pakai non-master unit
-       * (mis. "1 packs" → 20 pcs untuk Lychee Kaleng). Server selalu terima
-       * master unit. Helper handle same-dimension fallback (kg↔gr) +
-       * ingredient-scoped pack conversions. */
-      const cur = stateMap.get(ingredientId);
-      const inputUnit = cur?.inputUnit ?? "";
-      const line = detail.lines.find((l) => l.ingredientId === ingredientId);
-      const masterUnit = line?.unitSnapshot ?? line?.ingredient.unit ?? "";
-      const packs =
-        (line?.ingredient.packConversions ??
-          null) as IngredientPackConversion[] | null;
-      if (inputUnit && masterUnit && inputUnit !== masterUnit) {
-        const convertRes = convertQtyWithIngredientPacks(
-          actualQty,
-          inputUnit,
-          masterUnit,
-          packs,
-        );
-        if (!convertRes.ok || convertRes.qtyMaster === null) {
-          setStateMap((prev) => {
-            const next = new Map(prev);
-            const cs = next.get(ingredientId) ?? blankLineState();
-            next.set(ingredientId, {
-              ...cs,
-              status: "error",
-              errorMsg: `Gagal konversi ${inputUnit} → ${masterUnit}`,
-            });
-            return next;
-          });
-          return;
-        }
-        actualQty = convertRes.qtyMaster;
-      }
+  async function persistLine(ingredientId: string) {
+    const cur = stateMap.get(ingredientId);
+    if (!cur) return;
+    const ctx = ctxMap.get(ingredientId);
+    if (!ctx) return;
+
+    const primaryParsed = parseQtyInput(cur.primaryInput);
+    const looseParsed = parseQtyInput(cur.looseInput);
+
+    if (primaryParsed === "invalid" || looseParsed === "invalid") {
+      setStateMap((prev) => {
+        const next = new Map(prev);
+        const c = next.get(ingredientId);
+        if (!c) return prev;
+        next.set(ingredientId, {
+          ...c,
+          status: "error",
+          errorMsg: "Angka tidak valid",
+        });
+        return next;
+      });
+      return;
+    }
+
+    const actualQty = computeOpnameQtyFromSplit({
+      primaryQty: primaryParsed,
+      primaryUnit: cur.primaryUnit,
+      looseQtyRecipe: looseParsed,
+      context: ctx,
+    });
+
+    /* Validate: kalau ada input tapi convert fail → unit unknown. */
+    if (
+      actualQty === null &&
+      (primaryParsed !== null || looseParsed !== null)
+    ) {
+      setStateMap((prev) => {
+        const next = new Map(prev);
+        const c = next.get(ingredientId);
+        if (!c) return prev;
+        next.set(ingredientId, {
+          ...c,
+          status: "error",
+          errorMsg: `Gagal konversi ${cur.primaryUnit} → ${ctx.recipeUnit}`,
+        });
+        return next;
+      });
+      return;
     }
 
     const res = await saveOpnameCount({
@@ -370,40 +441,25 @@ export function OpnameCountView({
 
     setStateMap((prev) => {
       const next = new Map(prev);
-      const cur = next.get(ingredientId) ?? blankLineState();
+      const c = next.get(ingredientId) ?? blankLineState(cur.primaryUnit);
       if (!isOk(res)) {
         next.set(ingredientId, {
-          ...cur,
+          ...c,
           status: "error",
           errorMsg: res.error.message,
         });
         return next;
       }
-      /* Sesi AE-62af — preserve raw input + unit (mirror mobile pattern).
-       * Pre-fix: replace input dengan String(actualQty) yang sudah dikonversi
-       * ke master unit → bikin "1 packs" muncul jadi "20 packs" yang nonsense.
-       * Sekarang input = raw user value, saved = master qty (server source). */
-      next.set(ingredientId, {
-        input: raw.trim(),
-        inputUnit: cur.inputUnit,
-        saved: actualQty,
-        status: "saved",
-      });
+      next.set(ingredientId, { ...c, saved: actualQty, status: "saved" });
       return next;
     });
-    // Intentionally NOT calling onChanged() here. Parent has nothing to
-    // refresh — per-line counts only render inside this component, and a
-    // parent re-render would unmount us mid-typing and wipe other cells'
-    // in-flight (still-debouncing) input. Parent learns about line changes
-    // only at submit/finalize/cancel boundaries.
 
-    // Auto-clear "saved" state after a short moment.
     window.setTimeout(() => {
       setStateMap((prev) => {
         const next = new Map(prev);
-        const cur = next.get(ingredientId);
-        if (!cur || cur.status !== "saved") return prev;
-        next.set(ingredientId, { ...cur, status: "idle" });
+        const c = next.get(ingredientId);
+        if (!c || c.status !== "saved") return prev;
+        next.set(ingredientId, { ...c, status: "idle" });
         return next;
       });
     }, SAVED_TOAST_TTL_MS);
@@ -430,6 +486,9 @@ export function OpnameCountView({
     toast.success(
       "Opname disubmit untuk review. Tunggu manager untuk finalize.",
     );
+    /* Sesi AE-147 — draft sudah committed ke server, hapus dari localStorage
+     * supaya tidak rehydrate stale data kalau owner reopen session. */
+    clearDraft(detail.id);
     setSubmitOpen(false);
     onSubmittedForReview();
   }
@@ -695,17 +754,19 @@ export function OpnameCountView({
                 const f = flow?.perIngredient[line.ingredientId];
                 const effectiveUnit =
                   unitOverrides.get(line.ingredientId) ?? line.unitSnapshot;
+                const ctx =
+                  ctxMap.get(line.ingredientId) ??
+                  buildOpnameUnitContext({ recipeUnit: effectiveUnit });
                 return (
                   <CountRow
                     key={line.id}
                     ingredientId={line.ingredientId}
                     name={line.ingredientNameSnapshot}
-                    unit={effectiveUnit}
+                    ctx={ctx}
                     expectedQty={
-                      // Sesi AE-62e — prefer decimal (real value, mungkin
-                      // negative dari oversold). Bigint di-clamp 0 untuk
-                      // pass check constraint, jadi display dari bigint
-                      // misleading kalau real stok minus.
+                      /* Sesi AE-62e — prefer decimal (real value, mungkin
+                       * negative dari oversold). Bigint di-clamp 0 untuk
+                       * pass check constraint. */
                       line.expectedQtyDecimal !== null
                         ? parseFloat(line.expectedQtyDecimal)
                         : line.expectedQty
@@ -715,18 +776,19 @@ export function OpnameCountView({
                     unitCost={line.unitCostAtSnapshot}
                     flowLoaded={flow !== null}
                     hasPriorOpname={flow?.hasPriorOpname ?? false}
-                    packConversions={
-                      (line.ingredient.packConversions ??
-                        null) as IngredientPackConversion[] | null
-                    }
                     state={
                       stateMap.get(line.ingredientId) ??
-                      blankLineState(effectiveUnit)
+                      blankLineState(ctx.defaultUnit)
                     }
                     revealExpected={revealExpected}
-                    onChange={(raw) => scheduleSave(line.ingredientId, raw)}
+                    onPrimaryChange={(raw) =>
+                      setPrimaryInput(line.ingredientId, raw)
+                    }
+                    onLooseChange={(raw) =>
+                      setLooseInput(line.ingredientId, raw)
+                    }
                     onUnitChange={(next) =>
-                      setInputUnit(line.ingredientId, next)
+                      setPrimaryUnit(line.ingredientId, next)
                     }
                     onEditUnit={
                       canEditUnit
@@ -882,23 +944,19 @@ function Stat({ label, value }: { label: string; value: string }) {
 interface CountRowProps {
   ingredientId: string;
   name: string;
-  unit: string;
+  /** Sesi AE-147 — unit context (purchase/recipe/pack alts + conversion).
+   *  Recipe unit terbaca dari ctx.recipeUnit; tidak perlu prop terpisah. */
+  ctx: OpnameUnitContext;
   expectedQty: number;
-  /** Stok Awal — qty dari opname terakhir (atau 0 fallback). */
   openingQty: number;
-  /** Pembelian — sum purchase_items.qty di window opname. */
   purchasesQty: number;
-  /** Cost-per-unit untuk hitung Bahan Terpakai dalam rupiah. */
   unitCost: number;
-  /** True saat fetch flow data sudah balik. False = "memuat…" placeholder. */
   flowLoaded: boolean;
-  /** False = "Stok Awal" estimate karena belum ada opname sebelumnya. */
   hasPriorOpname: boolean;
-  /** Sesi AE-62af — ingredient pack conversions (mis. 1 packs = 20 pcs). */
-  packConversions: IngredientPackConversion[] | null;
   state: LineState;
   revealExpected: boolean;
-  onChange: (raw: string) => void;
+  onPrimaryChange: (raw: string) => void;
+  onLooseChange: (raw: string) => void;
   onUnitChange: (nextUnit: string) => void;
   onEditUnit?: () => void;
 }
@@ -906,55 +964,25 @@ interface CountRowProps {
 function CountRow({
   ingredientId,
   name,
-  unit,
+  ctx,
   expectedQty,
   openingQty,
   purchasesQty,
   unitCost,
   flowLoaded,
   hasPriorOpname,
-  packConversions,
   state,
   revealExpected,
-  onChange,
+  onPrimaryChange,
+  onLooseChange,
   onUnitChange,
   onEditUnit,
 }: CountRowProps) {
   const counted = state.saved !== null;
-  const diff =
-    state.saved !== null ? state.saved - expectedQty : null;
+  const diff = state.saved !== null ? state.saved - expectedQty : null;
   const closingQty = state.saved ?? null;
   const usedQty =
     closingQty === null ? null : openingQty + purchasesQty - closingQty;
-  /* Sesi AE-62af — unit picker: surface pack alternatives + same-dimension
-   * units (kg↔gr) supaya staff bisa input "1 packs" saat opname. */
-  const unitOptions = compatibleUnitsFor(unit, packConversions);
-  const masterMeta = resolveUnit(unit);
-  const hasPackAlternatives =
-    packConversions !== null && packConversions.length > 0;
-  const canPickUnit =
-    unitOptions.length > 1 &&
-    (hasPackAlternatives ||
-      (masterMeta !== null && masterMeta.dimension !== "discrete"));
-  const currentInputUnit = state.inputUnit || unit;
-  /* Preview: kalau staff input non-master + qty valid, tampilkan konversi
-   * ke master unit supaya jelas berapa pcs yang akan disimpan. */
-  const parsedInput = parseFloat(state.input.trim().replace(",", "."));
-  const showConvPreview =
-    canPickUnit &&
-    currentInputUnit !== unit &&
-    Number.isFinite(parsedInput) &&
-    parsedInput > 0;
-  let convPreview: number | null = null;
-  if (showConvPreview) {
-    const r = convertQtyWithIngredientPacks(
-      parsedInput,
-      currentInputUnit,
-      unit,
-      packConversions,
-    );
-    convPreview = r.qtyMaster;
-  }
   const usedCost = usedQty === null ? null : usedQty * unitCost;
   const usedTone =
     usedQty === null
@@ -965,8 +993,49 @@ function CountRow({
           ? "warning"
           : "ok";
 
+  const currentPrimaryUnit = state.primaryUnit || ctx.defaultUnit;
+  const canPickUnit = ctx.options.length > 1;
+  /* "Sisa lepas" hanya muncul kalau primary unit beda dari recipe AND
+   * conversion > 1. Continuous unit (kg → g) tetap support tapi staff
+   * jarang pakai (1,5 kg cukup); kita tetap allow untuk uniformity. */
+  const showLooseField =
+    ctx.supportsSplitInput && currentPrimaryUnit !== ctx.recipeUnit;
+
+  /* Live total preview pakai existing computeOpnameQtyFromSplit logic.
+   * Parse Indonesian (koma) jadi number; null kalau kosong. */
+  const primaryRaw = state.primaryInput.trim().replace(",", ".");
+  const looseRaw = state.looseInput.trim().replace(",", ".");
+  const primaryNum = primaryRaw === "" ? null : parseFloat(primaryRaw);
+  const looseNum = looseRaw === "" ? null : parseFloat(looseRaw);
+  const showTotalPreview =
+    (Number.isFinite(primaryNum) && (primaryNum as number) > 0) ||
+    (Number.isFinite(looseNum) && (looseNum as number) > 0);
+  let totalPreview: number | null = null;
+  if (showTotalPreview) {
+    totalPreview = computeOpnameQtyFromSplit({
+      primaryQty: Number.isFinite(primaryNum) ? (primaryNum as number) : null,
+      primaryUnit: currentPrimaryUnit,
+      looseQtyRecipe: Number.isFinite(looseNum) ? (looseNum as number) : null,
+      context: ctx,
+    });
+  }
+
+  /* Info chip: konversi purchase ↔ recipe + alt pack kalau ada. */
+  const purchaseChip =
+    ctx.purchaseUnit !== null
+      ? `Belanja: 1 ${ctx.purchaseUnit} = ${formatRatioForChip(
+          ctx.multipliers.get(ctx.purchaseUnit) ?? 1,
+        )} ${ctx.recipeUnit}`
+      : null;
+  const packAltChips = ctx.options
+    .filter((o) => o.source === "pack-alt")
+    .map(
+      (o) =>
+        `Pack: 1 ${o.value} = ${formatRatioForChip(o.multiplierToRecipe)} ${ctx.recipeUnit}`,
+    );
+
   return (
-    <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+    <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:gap-4">
       <div className="flex flex-1 items-start gap-2">
         <div
           className={cn(
@@ -981,50 +1050,60 @@ function CountRow({
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-medium text-neutral-900">{name}</p>
-          <p className="text-xs text-neutral-500">
-            Unit: {unit}
+          {/* Unit info chips — Purchase/Recipe + pack alternatives. */}
+          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-neutral-500">
+            <span>Resep: {ctx.recipeUnit}</span>
+            {purchaseChip ? (
+              <>
+                <span className="text-neutral-300">·</span>
+                <span className="font-medium text-neutral-700">
+                  {purchaseChip}
+                </span>
+              </>
+            ) : null}
+            {packAltChips.map((c) => (
+              <span key={c} className="rounded bg-neutral-100 px-1.5 py-0.5">
+                {c}
+              </span>
+            ))}
             {onEditUnit ? (
               <button
                 type="button"
                 onClick={onEditUnit}
                 className="ml-1 inline-flex items-center rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-mahakan-green-700"
                 aria-label={`Edit unit ${name}`}
-                title="Edit satuan bahan"
+                title="Edit satuan bahan + konversi"
               >
                 <Pencil className="size-3" />
               </button>
             ) : null}
             {revealExpected ? (
               <>
-                {" · "}
+                <span className="text-neutral-300">·</span>
                 <span className="font-mono text-neutral-700">
-                  Expected: {expectedQty.toLocaleString("id-ID")}
+                  Expected: {expectedQty.toLocaleString("id-ID")}{" "}
+                  {ctx.recipeUnit}
                 </span>
+                {diff !== null ? (
+                  <span
+                    className={cn(
+                      "font-mono",
+                      diff === 0
+                        ? "text-mahakan-green-900"
+                        : diff > 0
+                          ? "text-success-500"
+                          : "text-danger-500",
+                    )}
+                  >
+                    {diff === 0
+                      ? "sesuai"
+                      : `${diff > 0 ? "+" : ""}${diff.toLocaleString("id-ID")}`}
+                  </span>
+                ) : null}
               </>
             ) : null}
-            {diff !== null && revealExpected ? (
-              <>
-                {" · "}
-                <span
-                  className={cn(
-                    "font-mono",
-                    diff === 0
-                      ? "text-mahakan-green-900"
-                      : diff > 0
-                        ? "text-success-500"
-                        : "text-danger-500",
-                  )}
-                >
-                  {diff === 0
-                    ? "sesuai"
-                    : `${diff > 0 ? "+" : ""}${diff.toLocaleString("id-ID")}`}
-                </span>
-              </>
-            ) : null}
-          </p>
-          {/* Inventory flow formula line — Stok Awal + Pembelian − Opname
-              = Bahan Terpakai. Reads as math so Owner/staff cepet pahami
-              basis HPP. Sesi AA #1. */}
+          </div>
+          {/* Inventory flow (Stok Awal/Pembelian/Opname/Terpakai) — recipe unit. */}
           <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] tabular-nums text-neutral-600">
             {!flowLoaded ? (
               <span className="text-neutral-400">memuat data alur…</span>
@@ -1033,7 +1112,7 @@ function CountRow({
                 <FlowMetric
                   label="Stok Awal"
                   value={openingQty}
-                  unit={unit}
+                  unit={ctx.recipeUnit}
                   hint={
                     hasPriorOpname
                       ? "Dari opname sebelumnya"
@@ -1044,13 +1123,13 @@ function CountRow({
                 <FlowMetric
                   label="Pembelian"
                   value={purchasesQty}
-                  unit={unit}
+                  unit={ctx.recipeUnit}
                   hint="Total pembelian sejak opname terakhir"
                 />
                 <FlowMetric
                   label="Opname"
                   value={closingQty}
-                  unit={unit}
+                  unit={ctx.recipeUnit}
                   placeholder="—"
                   hint="Stok akhir hasil hitung kamu"
                 />
@@ -1075,7 +1154,7 @@ function CountRow({
                   Terpakai:{" "}
                   {usedQty === null
                     ? "—"
-                    : `${usedQty.toLocaleString("id-ID")} ${unit}`}
+                    : `${usedQty.toLocaleString("id-ID")} ${ctx.recipeUnit}`}
                   {usedCost !== null && unitCost > 0 ? (
                     <span className="ml-1 text-neutral-500">
                       ({formatRupiah(usedCost)})
@@ -1087,15 +1166,17 @@ function CountRow({
           </div>
         </div>
       </div>
-      <div className="flex flex-col gap-1 sm:w-[280px]">
+
+      {/* Input area: primary + unit Select + optional loose */}
+      <div className="flex flex-col gap-1.5 sm:w-[300px]">
         <div className="flex items-center gap-2">
           <input
             aria-label={`Qty aktual ${name}`}
             inputMode="decimal"
             autoComplete="off"
             placeholder="0"
-            value={state.input}
-            onChange={(e) => onChange(e.target.value)}
+            value={state.primaryInput}
+            onChange={(e) => onPrimaryChange(e.target.value)}
             className={cn(
               "h-11 w-full rounded-md border bg-white px-3 text-right font-mono text-base tabular-nums shadow-sm transition focus:outline-none focus:ring-2",
               state.status === "error"
@@ -1105,21 +1186,22 @@ function CountRow({
             data-testid={`count-input-${ingredientId}`}
           />
           {canPickUnit ? (
-            <select
-              aria-label={`Satuan ${name}`}
-              value={currentInputUnit}
-              onChange={(e) => onUnitChange(e.target.value)}
-              className="h-11 min-w-[78px] rounded-md border border-neutral-300 bg-white px-2 text-sm font-medium text-neutral-900 shadow-sm focus:border-mahakan-green-700 focus:outline-none focus:ring-2 focus:ring-mahakan-green-700/40"
-            >
-              {unitOptions.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            <div className="min-w-[88px]">
+              <Select
+                size="sm"
+                ariaLabel={`Satuan ${name}`}
+                options={ctx.options.map((o) => ({
+                  value: o.value,
+                  label: o.label,
+                  hint: o.hint ?? undefined,
+                }))}
+                value={currentPrimaryUnit}
+                onValueChange={onUnitChange}
+              />
+            </div>
           ) : (
-            <span className="text-xs font-medium text-neutral-600 sm:w-[60px]">
-              {unit}
+            <span className="min-w-[60px] text-sm font-medium text-neutral-600">
+              {ctx.recipeUnit}
             </span>
           )}
           <div className="w-5 flex-none text-center" aria-live="polite">
@@ -1141,9 +1223,43 @@ function CountRow({
             ) : null}
           </div>
         </div>
-        {showConvPreview && convPreview !== null ? (
+
+        {/* Loose input — only when primary unit != recipe AND ratio > 1.
+            Pakai untuk kasus pack tidak full (Yakult 3 pack + 2 pcs). */}
+        {showLooseField ? (
+          <div className="flex items-center gap-2">
+            <span className="flex-none text-xs text-neutral-500">+ sisa</span>
+            <input
+              aria-label={`Sisa lepas ${name}`}
+              inputMode="decimal"
+              autoComplete="off"
+              placeholder="0"
+              value={state.looseInput}
+              onChange={(e) => onLooseChange(e.target.value)}
+              className={cn(
+                "h-9 flex-1 rounded-md border bg-white px-3 text-right font-mono text-sm tabular-nums shadow-sm transition focus:outline-none focus:ring-2",
+                state.status === "error"
+                  ? "border-danger-500 focus:ring-danger-500"
+                  : "border-neutral-300 focus:border-mahakan-green-700 focus:ring-mahakan-green-700/40",
+              )}
+            />
+            <span className="min-w-[60px] text-xs font-medium text-neutral-600">
+              {ctx.recipeUnit}
+            </span>
+            <span className="w-5 flex-none" aria-hidden />
+          </div>
+        ) : null}
+
+        {/* Total preview — kalau split input atau unit beda dari recipe. */}
+        {totalPreview !== null && totalPreview > 0 && currentPrimaryUnit !== ctx.recipeUnit ? (
           <p className="text-right text-[11px] text-mahakan-green-700">
-            = {convPreview.toLocaleString("id-ID")} {unit}
+            Total ={" "}
+            <span className="font-mono font-semibold">
+              {totalPreview.toLocaleString("id-ID", {
+                maximumFractionDigits: 4,
+              })}{" "}
+              {ctx.recipeUnit}
+            </span>
           </p>
         ) : null}
       </div>
@@ -1154,6 +1270,12 @@ function CountRow({
       ) : null}
     </li>
   );
+}
+
+function formatRatioForChip(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "?";
+  if (Number.isInteger(n)) return n.toLocaleString("id-ID");
+  return new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(n);
 }
 
 interface FlowMetricProps {
@@ -1191,19 +1313,160 @@ function FlowMetric({
 }
 
 function blankLineState(unit = ""): LineState {
-  return { input: "", inputUnit: unit, saved: null, status: "idle" };
+  return {
+    primaryInput: "",
+    primaryUnit: unit,
+    looseInput: "",
+    saved: null,
+    status: "idle",
+  };
 }
 
+/** Sesi AE-147 — initialize state per line.
+ *  - Server saved actualQty selalu dalam recipe unit.
+ *  - Default primary unit = purchase unit kalau ada, else recipe.
+ *  - Default primary input = saved qty di-convert ke primary unit (kalau
+ *    primary != recipe). Tidak ada loose split saat load awal — staff
+ *    yang punya breakdown 3 pack + 2 pcs bisa ulang input manual saat
+ *    revise. (Trade-off: backend cuma simpan single decimal.)
+ */
 function initialState(detail: OpnameSessionDetail): Map<string, LineState> {
   const m = new Map<string, LineState>();
   for (const l of detail.lines) {
     const masterUnit = l.unitSnapshot ?? l.ingredient.unit ?? "";
+    const ctx = buildOpnameUnitContext({
+      recipeUnit: masterUnit,
+      unitBelanja: l.ingredient.unitBelanja,
+      unitBelanjaPerCogs: l.ingredient.unitBelanjaPerCogs,
+      packConversions:
+        (l.ingredient.packConversions ?? null) as IngredientPackConversion[] | null,
+    });
+    const savedQty =
+      l.actualQtyDecimal !== null
+        ? parseFloat(l.actualQtyDecimal)
+        : l.actualQty;
+    const primaryUnit = ctx.defaultUnit;
+    let primaryInput = "";
+    if (savedQty !== null) {
+      const mult = ctx.multipliers.get(primaryUnit) ?? 1;
+      const qtyInPrimary = savedQty / mult;
+      /* Format pakai locale id-ID (koma decimal) kalau perlu desimal. */
+      primaryInput = formatQtyForInput(qtyInPrimary);
+    }
     m.set(l.ingredientId, {
-      input: l.actualQty === null ? "" : String(l.actualQty),
-      inputUnit: masterUnit,
-      saved: l.actualQty,
+      primaryInput,
+      primaryUnit,
+      looseInput: "",
+      saved: savedQty,
       status: "idle",
     });
   }
   return m;
+}
+
+/** Format number to input string. Integer → no decimal. Float → koma 4 max. */
+function formatQtyForInput(n: number): string {
+  if (!Number.isFinite(n)) return "";
+  if (Number.isInteger(n)) return String(n);
+  /* Trim trailing zeros, pakai koma decimal id-ID. */
+  return new Intl.NumberFormat("id-ID", {
+    maximumFractionDigits: 4,
+    useGrouping: false,
+  }).format(n);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Sesi AE-147 — localStorage draft persistence.
+ *
+ * Key namespaced per sessionId: `mahakan.opname.draft.<sessionId>`.
+ * Stored shape: { ingredientId: { primaryInput, primaryUnit, looseInput } }.
+ *
+ * Server saved value is source of truth — draft hanya carry "typing
+ * position" untuk in-flight changes yang belum kesave / staff navigate
+ * away tanpa wait debounce. On mount: merge draft over initialState dengan
+ * preference: kalau draft punya entry untuk ingredientId AND draft entry
+ * non-empty, pakai draft input strings (server `saved` field tetap).
+ * ────────────────────────────────────────────────────────────────── */
+
+interface DraftLineEntry {
+  primaryInput: string;
+  primaryUnit: string;
+  looseInput: string;
+}
+
+type DraftPayload = Record<string, DraftLineEntry>;
+
+function draftKey(sessionId: string): string {
+  return `mahakan.opname.draft.${sessionId}`;
+}
+
+function readDraft(sessionId: string): DraftPayload | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(draftKey(sessionId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") return parsed as DraftPayload;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(sessionId: string, stateMap: Map<string, LineState>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const payload: DraftPayload = {};
+    for (const [id, s] of stateMap.entries()) {
+      /* Hanya simpan entry yang punya typing (skip empty supaya payload
+       * ringan + first load tidak overlay default empty state). */
+      if (
+        s.primaryInput.trim().length === 0 &&
+        s.looseInput.trim().length === 0
+      ) {
+        continue;
+      }
+      payload[id] = {
+        primaryInput: s.primaryInput,
+        primaryUnit: s.primaryUnit,
+        looseInput: s.looseInput,
+      };
+    }
+    if (Object.keys(payload).length === 0) {
+      window.localStorage.removeItem(draftKey(sessionId));
+      return;
+    }
+    window.localStorage.setItem(draftKey(sessionId), JSON.stringify(payload));
+  } catch {
+    /* Quota exceeded atau localStorage disabled — silent. */
+  }
+}
+
+function clearDraft(sessionId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(draftKey(sessionId));
+  } catch {
+    /* silent */
+  }
+}
+
+function mergeDraftIntoState(
+  detail: OpnameSessionDetail,
+  draft: DraftPayload | null,
+): Map<string, LineState> {
+  const base = initialState(detail);
+  if (!draft) return base;
+  for (const [id, entry] of Object.entries(draft)) {
+    const cur = base.get(id);
+    if (!cur) continue;
+    /* Overlay typing position — keep server-saved field. */
+    base.set(id, {
+      ...cur,
+      primaryInput: entry.primaryInput ?? cur.primaryInput,
+      primaryUnit: entry.primaryUnit ?? cur.primaryUnit,
+      looseInput: entry.looseInput ?? "",
+    });
+  }
+  return base;
 }

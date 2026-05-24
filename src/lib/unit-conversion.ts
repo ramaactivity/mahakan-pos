@@ -621,3 +621,186 @@ export function jakartaDateIso(d: Date): string {
     day: "2-digit",
   }).format(d);
 }
+
+/**
+ * Sesi AE-147 — Opname unit context.
+ *
+ * Bundle SEMUA unit options + conversion ratio yang relevan untuk satu
+ * ingredient di tampilan opname (Purchase Unit, Recipe Unit, pack
+ * alternatives, same-dimension legacy). Memberi 1 source of truth supaya
+ * UI tidak fragmented antara `compatibleUnitsFor` + `unitBelanja` +
+ * `packConversions`.
+ *
+ * Default unit: prefer `unitBelanja` (purchase) → fallback recipe.
+ * Hint per option: "1 X = N {recipe}" supaya staff paham conversion saat
+ * pilih unit.
+ *
+ * Returns map `multiplierTo` yang gampang dipakai applier: untuk convert
+ * qty input ke recipe (master) unit, multiply qty × multiplierTo[unit].
+ */
+export interface OpnameUnitOption {
+  /** Unit label (juga value untuk Select). */
+  value: string;
+  /** Display label sama dengan value, tapi bisa beda case nanti. */
+  label: string;
+  /** Berapa unit recipe per 1 unit ini. 1 untuk recipe unit itu sendiri. */
+  multiplierToRecipe: number;
+  /** Kategori: "purchase" (unitBelanja), "recipe" (master), "pack-alt"
+   *  (packConversions), "dimension" (same-dim via UNIT_TABLE).
+   *  Dipakai untuk grouping/styling di UI. */
+  source: "purchase" | "recipe" | "pack-alt" | "dimension";
+  /** Hint text untuk Select option, mis. "= 5 pcs". Null untuk recipe unit
+   *  itu sendiri (no conversion needed). */
+  hint: string | null;
+}
+
+export interface OpnameUnitContext {
+  /** Master/recipe unit (= ingredient.unit). Always present. */
+  recipeUnit: string;
+  /** Purchase unit kalau di-set (= ingredient.unitBelanja). Null = identity. */
+  purchaseUnit: string | null;
+  /** Sorted list untuk Select. Default unit = options[0]. */
+  options: OpnameUnitOption[];
+  /** Default unit yang dipilih di awal — purchase kalau ada, else recipe. */
+  defaultUnit: string;
+  /** Lookup multiplier: unit label → multiplier to recipe. Pakai untuk
+   *  convert qty input ke recipe unit (qty × multiplier = recipe qty). */
+  multipliers: Map<string, number>;
+  /** True kalau split input "penuh + sisa lepas" cocok dipakai
+   *  (multiplier purchase > 1 + recipe unit beda). */
+  supportsSplitInput: boolean;
+}
+
+export interface OpnameUnitContextInput {
+  recipeUnit: string;
+  unitBelanja?: string | null;
+  unitBelanjaPerCogs?: number | string | null;
+  packConversions?: IngredientPackConversion[] | null;
+}
+
+export function buildOpnameUnitContext(
+  input: OpnameUnitContextInput,
+): OpnameUnitContext {
+  const recipeUnit = input.recipeUnit;
+  const opts: OpnameUnitOption[] = [];
+  const multipliers = new Map<string, number>();
+  const seen = new Set<string>();
+
+  const norm = (s: string) => s.trim().toLowerCase();
+
+  /* 1. Purchase unit prepend kalau ada + per > 0 + beda dari recipe. */
+  const belanjaLabel = input.unitBelanja?.trim();
+  const belanjaPer = coercePerCogs(input.unitBelanjaPerCogs);
+  let purchaseUnit: string | null = null;
+  if (belanjaLabel && belanjaPer !== null && norm(belanjaLabel) !== norm(recipeUnit)) {
+    purchaseUnit = belanjaLabel;
+    opts.push({
+      value: belanjaLabel,
+      label: belanjaLabel,
+      multiplierToRecipe: belanjaPer,
+      source: "purchase",
+      hint: `= ${formatRatio(belanjaPer)} ${recipeUnit}`,
+    });
+    multipliers.set(belanjaLabel, belanjaPer);
+    seen.add(norm(belanjaLabel));
+  }
+
+  /* 2. Recipe unit (always). */
+  opts.push({
+    value: recipeUnit,
+    label: recipeUnit,
+    multiplierToRecipe: 1,
+    source: "recipe",
+    hint: null,
+  });
+  multipliers.set(recipeUnit, 1);
+  seen.add(norm(recipeUnit));
+
+  /* 3. Pack alternatives (ingredient-scoped, mis. "Packs" untuk Lychee). */
+  if (input.packConversions) {
+    for (const p of input.packConversions) {
+      const lc = norm(p.unitLabel);
+      if (lc.length === 0 || seen.has(lc)) continue;
+      if (!Number.isFinite(p.qtyPerBase) || p.qtyPerBase <= 0) continue;
+      opts.push({
+        value: p.unitLabel,
+        label: p.unitLabel,
+        multiplierToRecipe: p.qtyPerBase,
+        source: "pack-alt",
+        hint: `= ${formatRatio(p.qtyPerBase)} ${recipeUnit}`,
+      });
+      multipliers.set(p.unitLabel, p.qtyPerBase);
+      seen.add(lc);
+    }
+  }
+
+  /* 4. Same-dimension legacy units (kg↔gr, L↔ml) via UNIT_TABLE. Skip kalau
+   *    sudah ada purchase tier yang dominan supaya picker tidak ramai. */
+  if (!purchaseUnit) {
+    const dimComp = compatibleUnitsFor(recipeUnit, null);
+    for (const d of dimComp) {
+      const lc = norm(d.value);
+      if (seen.has(lc)) continue;
+      const conv = convertQty(1, d.value, recipeUnit);
+      if (conv === null || conv <= 0) continue;
+      opts.push({
+        value: d.value,
+        label: d.label,
+        multiplierToRecipe: conv,
+        source: "dimension",
+        hint: conv === 1 ? null : `= ${formatRatio(conv)} ${recipeUnit}`,
+      });
+      multipliers.set(d.value, conv);
+      seen.add(lc);
+    }
+  }
+
+  const defaultUnit = purchaseUnit ?? recipeUnit;
+  const supportsSplitInput =
+    purchaseUnit !== null && (belanjaPer ?? 0) > 1;
+
+  return {
+    recipeUnit,
+    purchaseUnit,
+    options: opts,
+    defaultUnit,
+    multipliers,
+    supportsSplitInput,
+  };
+}
+
+/** Format ratio tanpa trailing zeros: 1000 → "1000", 1.5 → "1,5",
+ *  0.25 → "0,25". Pakai locale id-ID. */
+function formatRatio(n: number): string {
+  return new Intl.NumberFormat("id-ID", {
+    maximumFractionDigits: 4,
+  }).format(n);
+}
+
+/**
+ * Sesi AE-147 — Compute final qty (in recipe unit) dari split input
+ * "penuh + sisa lepas". `primaryQty` di-`primaryUnit`, `loose` di recipe.
+ * Returns null kalau both invalid/empty.
+ */
+export function computeOpnameQtyFromSplit(args: {
+  primaryQty: number | null;
+  primaryUnit: string;
+  looseQtyRecipe: number | null;
+  context: OpnameUnitContext;
+}): number | null {
+  const { primaryQty, primaryUnit, looseQtyRecipe, context } = args;
+  let total = 0;
+  let hasValue = false;
+  if (primaryQty !== null && Number.isFinite(primaryQty) && primaryQty >= 0) {
+    const mult = context.multipliers.get(primaryUnit);
+    if (mult === undefined) return null;
+    total += primaryQty * mult;
+    hasValue = true;
+  }
+  if (looseQtyRecipe !== null && Number.isFinite(looseQtyRecipe) && looseQtyRecipe >= 0) {
+    total += looseQtyRecipe;
+    hasValue = true;
+  }
+  if (!hasValue) return null;
+  return total;
+}

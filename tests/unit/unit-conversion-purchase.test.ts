@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildOpnameUnitContext,
+  computeOpnameQtyFromSplit,
   convertPurchaseQty,
   scaleCostOnUnitChange,
 } from "@/lib/unit-conversion";
@@ -355,5 +357,133 @@ describe("scaleCostOnUnitChange", () => {
       oldCost: 333,
     });
     expect(r).toBeCloseTo(0.333, 5);
+  });
+});
+
+/* Sesi AE-147 — Opname unit context (purchase + recipe + pack alts). */
+describe("buildOpnameUnitContext", () => {
+  it("recipe-only fallback (no purchase tier, no pack alt)", () => {
+    const ctx = buildOpnameUnitContext({ recipeUnit: "g" });
+    expect(ctx.defaultUnit).toBe("g");
+    expect(ctx.purchaseUnit).toBeNull();
+    expect(ctx.supportsSplitInput).toBe(false);
+    /* Should include same-dimension legacy units (Kg). */
+    expect(ctx.options.some((o) => o.value === "Kg")).toBe(true);
+  });
+
+  it("includes purchase tier sebagai default", () => {
+    const ctx = buildOpnameUnitContext({
+      recipeUnit: "pcs",
+      unitBelanja: "pack",
+      unitBelanjaPerCogs: 5,
+    });
+    expect(ctx.defaultUnit).toBe("pack");
+    expect(ctx.purchaseUnit).toBe("pack");
+    expect(ctx.options[0].value).toBe("pack");
+    expect(ctx.options[0].hint).toContain("5 pcs");
+    expect(ctx.multipliers.get("pack")).toBe(5);
+    expect(ctx.multipliers.get("pcs")).toBe(1);
+    expect(ctx.supportsSplitInput).toBe(true);
+  });
+
+  it("identity purchase (kg+kg, per=1) → no separate option", () => {
+    const ctx = buildOpnameUnitContext({
+      recipeUnit: "kg",
+      unitBelanja: "kg",
+      unitBelanjaPerCogs: 1,
+    });
+    /* Purchase unit === recipe unit → tidak listed terpisah. */
+    expect(ctx.purchaseUnit).toBeNull();
+    expect(ctx.defaultUnit).toBe("kg");
+  });
+
+  it("pack alternatives merged + dedup", () => {
+    const ctx = buildOpnameUnitContext({
+      recipeUnit: "pcs",
+      unitBelanja: "pack",
+      unitBelanjaPerCogs: 5,
+      packConversions: [
+        { unitLabel: "Karton", qtyPerBase: 60 },
+        { unitLabel: "pack", qtyPerBase: 99 }, // dedup vs purchase
+      ],
+    });
+    const labels = ctx.options.map((o) => o.value);
+    expect(labels).toContain("Karton");
+    /* "pack" dedup'd — multiplier dari purchase (5) menang. */
+    expect(ctx.multipliers.get("pack")).toBe(5);
+    expect(ctx.multipliers.get("Karton")).toBe(60);
+  });
+});
+
+describe("computeOpnameQtyFromSplit", () => {
+  const ctxYakult = buildOpnameUnitContext({
+    recipeUnit: "pcs",
+    unitBelanja: "pack",
+    unitBelanjaPerCogs: 5,
+  });
+
+  it("3 pack + 2 pcs = 17 pcs", () => {
+    const r = computeOpnameQtyFromSplit({
+      primaryQty: 3,
+      primaryUnit: "pack",
+      looseQtyRecipe: 2,
+      context: ctxYakult,
+    });
+    expect(r).toBe(17);
+  });
+
+  it("primary only (3 pack) = 15 pcs", () => {
+    const r = computeOpnameQtyFromSplit({
+      primaryQty: 3,
+      primaryUnit: "pack",
+      looseQtyRecipe: null,
+      context: ctxYakult,
+    });
+    expect(r).toBe(15);
+  });
+
+  it("loose only (7 pcs) = 7 pcs", () => {
+    const r = computeOpnameQtyFromSplit({
+      primaryQty: null,
+      primaryUnit: "pack",
+      looseQtyRecipe: 7,
+      context: ctxYakult,
+    });
+    expect(r).toBe(7);
+  });
+
+  it("both null → null (uncounted)", () => {
+    const r = computeOpnameQtyFromSplit({
+      primaryQty: null,
+      primaryUnit: "pack",
+      looseQtyRecipe: null,
+      context: ctxYakult,
+    });
+    expect(r).toBeNull();
+  });
+
+  it("decimal kg input: 1.5 kg → 1500 g", () => {
+    const ctxBeans = buildOpnameUnitContext({
+      recipeUnit: "g",
+      unitBelanja: "kg",
+      unitBelanjaPerCogs: 1000,
+    });
+    const r = computeOpnameQtyFromSplit({
+      primaryQty: 1.5,
+      primaryUnit: "kg",
+      looseQtyRecipe: null,
+      context: ctxBeans,
+    });
+    expect(r).toBe(1500);
+  });
+
+  it("unknown unit → null", () => {
+    const r = computeOpnameQtyFromSplit({
+      primaryQty: 3,
+      primaryUnit: "wat",
+      looseQtyRecipe: null,
+      context: ctxYakult,
+    });
+    expect(r).toBeNull();
   });
 });
