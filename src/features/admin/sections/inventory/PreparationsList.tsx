@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Beaker, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  Beaker,
+  FileSpreadsheet,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import {
   Badge,
   Button,
@@ -23,6 +29,7 @@ import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
 import { PreparationFormModal } from "./PreparationFormModal";
+import { PrepExcelImportModal } from "./PrepExcelImportModal";
 
 type ActionTarget =
   | { kind: "edit"; preparation: Ingredient }
@@ -49,6 +56,7 @@ export function PreparationsList() {
   const [showInactive, setShowInactive] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
+  const [excelOpen, setExcelOpen] = useState(false);
   const [target, setTarget] = useState<ActionTarget>(null);
 
   useEffect(() => {
@@ -99,9 +107,18 @@ export function PreparationsList() {
           </p>
         </div>
         {canCreate ? (
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus className="size-4" aria-hidden /> Tambah Preparation
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setExcelOpen(true)}
+              title="Import / export Excel"
+            >
+              <FileSpreadsheet className="size-4" aria-hidden /> Excel
+            </Button>
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" aria-hidden /> Tambah Preparation
+            </Button>
+          </div>
         ) : null}
       </header>
 
@@ -268,6 +285,12 @@ export function PreparationsList() {
           setTarget(null);
           refresh();
         }}
+      />
+
+      <PrepExcelImportModal
+        open={excelOpen}
+        onClose={() => setExcelOpen(false)}
+        onApplied={() => refresh()}
       />
 
       <Modal

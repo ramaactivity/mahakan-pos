@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ChefHat, Coffee, AlertCircle } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChefHat,
+  Coffee,
+  FileSpreadsheet,
+} from "lucide-react";
 import {
   Badge,
   Button,
@@ -26,6 +32,7 @@ import {
   type Recipe,
 } from "@/features/inventory";
 import { RecipeEditorModal } from "./RecipeEditorModal";
+import { RecipeExcelImportModal } from "./RecipeExcelImportModal";
 
 interface RecipeStatus {
   hot?: { id: string; wasteFactorPct: number };
@@ -45,6 +52,7 @@ export function RecipesList() {
   );
   const [refreshKey, setRefreshKey] = useState(0);
   const [editTarget, setEditTarget] = useState<MenuItem | null>(null);
+  const [excelOpen, setExcelOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,6 +159,13 @@ export function RecipesList() {
             resep supaya COGS dan auto-deduct stok bisa jalan saat transaksi.
           </p>
         </div>
+        <Button
+          variant="outline"
+          onClick={() => setExcelOpen(true)}
+          title="Import / export Excel"
+        >
+          <FileSpreadsheet className="size-4" aria-hidden /> Excel
+        </Button>
       </header>
 
       <Card>
@@ -233,6 +248,12 @@ export function RecipesList() {
           setEditTarget(null);
           setRefreshKey((k) => k + 1);
         }}
+      />
+
+      <RecipeExcelImportModal
+        open={excelOpen}
+        onClose={() => setExcelOpen(false)}
+        onApplied={() => setRefreshKey((k) => k + 1)}
       />
     </div>
   );
