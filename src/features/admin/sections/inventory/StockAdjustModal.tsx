@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button, Input, Modal, Select, toast } from "@/components/ui";
 import { adjustStock, isOk, type Ingredient } from "@/features/inventory";
+import { parseIndonesianNumber } from "@/lib/format";
+import {
+  belanjaToCogs,
+  cogsToBelanja,
+  effectiveBelanjaUnit,
+  type IngredientUnitTiers,
+} from "@/lib/unit-conversion";
 
 interface StockAdjustModalProps {
   open: boolean;
@@ -17,6 +24,12 @@ const REASON_PRESETS = [
   "Bahan retur ke supplier",
   "Lainnya",
 ];
+
+function fmtIdn(n: number, maxDec = 4): string {
+  return new Intl.NumberFormat("id-ID", { maximumFractionDigits: maxDec }).format(
+    n,
+  );
+}
 
 export function StockAdjustModal({
   open,
@@ -41,20 +54,53 @@ export function StockAdjustModal({
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open]);
 
-  if (!ingredient) return null;
+  const tiers = useMemo<IngredientUnitTiers | null>(() => {
+    if (!ingredient) return null;
+    return {
+      cogsUnit: ingredient.unit,
+      belanjaUnit: ingredient.unitBelanja,
+      belanjaPerCogs: ingredient.unitBelanjaPerCogs,
+    };
+  }, [ingredient]);
 
-  function parseDelta(): number {
+  if (!ingredient || !tiers) return null;
+
+  const displayUnit = effectiveBelanjaUnit(tiers);
+  const usingBelanjaTier = displayUnit !== tiers.cogsUnit;
+  const currentStockCogs =
+    ingredient.currentStockDecimal !== null
+      ? parseFloat(ingredient.currentStockDecimal)
+      : ingredient.currentStock;
+  const currentStockDisplay = cogsToBelanja(currentStockCogs, tiers);
+
+  /* Sesi AE-141 — input dalam display unit (Purchase Unit, mis. kg) pakai
+   * koma desimal. Convert ke COGS unit (mis. g) sebelum simpan. */
+  function parseDeltaDisplay(): number {
     const trimmed = delta.trim();
     if (!trimmed) return 0;
-    const n = parseInt(trimmed, 10);
-    return Number.isFinite(n) ? n : NaN;
+    return parseIndonesianNumber(trimmed);
+  }
+
+  function deltaCogsFromDisplay(deltaDisplay: number): number {
+    if (!Number.isFinite(deltaDisplay)) return NaN;
+    const inCogs = belanjaToCogs(deltaDisplay, tiers!);
+    return Math.round(inCogs);
   }
 
   async function onSubmit() {
-    if (submitting || !ingredient) return;
-    const d = parseDelta();
-    if (!Number.isFinite(d) || d === 0) {
-      setError("Delta wajib diisi (boleh negatif, tapi tidak boleh 0)");
+    if (submitting || !ingredient || !tiers) return;
+    const dDisplay = parseDeltaDisplay();
+    if (!Number.isFinite(dDisplay) || dDisplay === 0) {
+      setError(
+        `Delta wajib diisi dalam ${displayUnit} (boleh negatif, pakai koma untuk desimal: 0,5)`,
+      );
+      return;
+    }
+    const dCogs = deltaCogsFromDisplay(dDisplay);
+    if (!Number.isFinite(dCogs) || dCogs === 0) {
+      setError(
+        `Delta terlalu kecil setelah konversi ke ${tiers.cogsUnit}. Naikkan jumlahnya.`,
+      );
       return;
     }
     const reason =
@@ -64,10 +110,11 @@ export function StockAdjustModal({
       return;
     }
 
-    const newStock = ingredient.currentStock + d;
-    if (newStock < 0) {
+    const newStockCogs = currentStockCogs + dCogs;
+    if (newStockCogs < 0) {
+      const newDisplay = cogsToBelanja(newStockCogs, tiers);
       setError(
-        `Adjust akan bikin stok negatif (${newStock}). Cek jumlah delta-nya.`,
+        `Adjust akan bikin stok negatif (${fmtIdn(newDisplay)} ${displayUnit}). Cek jumlah delta-nya.`,
       );
       return;
     }
@@ -77,7 +124,7 @@ export function StockAdjustModal({
 
     const res = await adjustStock({
       ingredientId: ingredient.id,
-      delta: d,
+      delta: dCogs,
       reason,
     });
 
@@ -87,21 +134,36 @@ export function StockAdjustModal({
       return;
     }
 
+    const newStockDisplayAfter = cogsToBelanja(
+      res.data.ingredient.currentStockDecimal !== null
+        ? parseFloat(res.data.ingredient.currentStockDecimal)
+        : res.data.ingredient.currentStock,
+      tiers,
+    );
     toast.success(
-      `Adjust ${d > 0 ? "+" : ""}${d} ${ingredient.unit} (stok jadi ${res.data.ingredient.currentStock})`,
+      `Adjust ${dDisplay > 0 ? "+" : ""}${fmtIdn(dDisplay)} ${displayUnit} (stok jadi ${fmtIdn(newStockDisplayAfter)} ${displayUnit})`,
     );
     onSaved();
   }
 
-  const d = parseDelta();
-  const previewStock = Number.isFinite(d) ? ingredient.currentStock + d : null;
+  const dDisplay = parseDeltaDisplay();
+  const previewStockDisplay = Number.isFinite(dDisplay)
+    ? currentStockDisplay + dDisplay
+    : null;
+  const dCogsPreview = Number.isFinite(dDisplay)
+    ? deltaCogsFromDisplay(dDisplay)
+    : NaN;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={`Adjust Stok — ${ingredient.name}`}
-      description={`Stok saat ini: ${ingredient.currentStock} ${ingredient.unit}`}
+      description={`Stok saat ini: ${fmtIdn(currentStockDisplay)} ${displayUnit}${
+        usingBelanjaTier
+          ? ` (= ${fmtIdn(currentStockCogs)} ${tiers.cogsUnit})`
+          : ""
+      }`}
       size="md"
       footer={
         <>
@@ -116,12 +178,12 @@ export function StockAdjustModal({
     >
       <div className="space-y-3">
         <Input
-          label={`Delta (${ingredient.unit}, boleh negatif)`}
-          placeholder="mis. -50 (kurang) atau +120 (tambah)"
+          label={`Delta (${displayUnit}, boleh negatif, pakai koma)`}
+          placeholder="mis. -0,5 (kurang) atau 1,5 (tambah)"
           value={delta}
           onChange={(e) => setDelta(e.target.value)}
           type="text"
-          inputMode="numeric"
+          inputMode="decimal"
           autoFocus
         />
 
@@ -142,18 +204,26 @@ export function StockAdjustModal({
           ) : null}
         </div>
 
-        {previewStock !== null && Number.isFinite(d) && d !== 0 ? (
+        {previewStockDisplay !== null &&
+        Number.isFinite(dDisplay) &&
+        dDisplay !== 0 ? (
           <div
             className={
-              previewStock < 0
+              previewStockDisplay < 0
                 ? "rounded-md bg-danger-100 p-2 text-xs text-danger-500"
                 : "rounded-md bg-mahakan-green-100/40 p-2 text-xs text-mahakan-green-900"
             }
           >
             Preview stok setelah adjust:{" "}
             <span className="font-mono font-bold">
-              {previewStock} {ingredient.unit}
+              {fmtIdn(previewStockDisplay)} {displayUnit}
             </span>
+            {usingBelanjaTier && Number.isFinite(dCogsPreview) ? (
+              <span className="ml-1 text-neutral-600">
+                (Δ {dCogsPreview > 0 ? "+" : ""}
+                {fmtIdn(dCogsPreview)} {tiers.cogsUnit})
+              </span>
+            ) : null}
           </div>
         ) : null}
 

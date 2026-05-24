@@ -1,15 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button, Input, Modal, toast } from "@/components/ui";
 import { isOk, receiveStock, type Ingredient } from "@/features/inventory";
-import { formatRupiah, parseRupiah } from "@/lib/format";
+import {
+  formatRupiah,
+  parseIndonesianNumber,
+  parseRupiah,
+} from "@/lib/format";
+import {
+  belanjaToCogs,
+  cogsToBelanja,
+  effectiveBelanjaUnit,
+  type IngredientUnitTiers,
+} from "@/lib/unit-conversion";
 
 interface StockReceiveModalProps {
   open: boolean;
   ingredient: Ingredient | null;
   onClose: () => void;
   onSaved: () => void;
+}
+
+function fmtIdn(n: number, maxDec = 4): string {
+  return new Intl.NumberFormat("id-ID", { maximumFractionDigits: maxDec }).format(
+    n,
+  );
 }
 
 export function StockReceiveModal({
@@ -25,26 +41,66 @@ export function StockReceiveModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const tiers = useMemo<IngredientUnitTiers | null>(() => {
+    if (!ingredient) return null;
+    return {
+      cogsUnit: ingredient.unit,
+      belanjaUnit: ingredient.unitBelanja,
+      belanjaPerCogs: ingredient.unitBelanjaPerCogs,
+    };
+  }, [ingredient]);
+
   useEffect(() => {
     if (!open) return;
     /* eslint-disable react-hooks/set-state-in-effect */
     setQty("");
-    setUnitCost(ingredient ? String(ingredient.costPerUnit) : "");
+    /* Seed harga per DISPLAY unit. cost master simpan per recipe unit;
+     * convert via × belanjaPerCogs (mis. 50/g × 1000 = 50.000/kg). */
+    if (ingredient && tiers) {
+      const costPerCogs = ingredient.costPerUnit;
+      const display = effectiveBelanjaUnit(tiers);
+      const usingBelanja = display !== tiers.cogsUnit;
+      if (usingBelanja) {
+        const per = Number(tiers.belanjaPerCogs) || 1;
+        setUnitCost(String(Math.round(costPerCogs * per)));
+      } else {
+        setUnitCost(String(costPerCogs));
+      }
+    } else {
+      setUnitCost("");
+    }
     setUpdateCost(true);
     setNote("");
     setError(null);
     setSubmitting(false);
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [open, ingredient]);
+  }, [open, ingredient, tiers]);
 
-  if (!ingredient) return null;
+  if (!ingredient || !tiers) return null;
 
-  function parseQty(): number {
-    const n = parseInt(qty, 10);
-    return Number.isFinite(n) ? n : 0;
+  const displayUnit = effectiveBelanjaUnit(tiers);
+  const usingBelanjaTier = displayUnit !== tiers.cogsUnit;
+  const belanjaPerCogs = usingBelanjaTier
+    ? Number(tiers.belanjaPerCogs) || 1
+    : 1;
+  const currentStockCogs =
+    ingredient.currentStockDecimal !== null
+      ? parseFloat(ingredient.currentStockDecimal)
+      : ingredient.currentStock;
+  const currentStockDisplay = cogsToBelanja(currentStockCogs, tiers);
+
+  function parseQtyDisplay(): number {
+    const trimmed = qty.trim();
+    if (!trimmed) return NaN;
+    return parseIndonesianNumber(trimmed);
   }
 
-  function parseUnit(): number {
+  function qtyCogsFromDisplay(qtyDisplay: number): number {
+    if (!Number.isFinite(qtyDisplay)) return NaN;
+    return Math.round(belanjaToCogs(qtyDisplay, tiers!));
+  }
+
+  function parseCostPerDisplay(): number {
     try {
       return parseRupiah(unitCost);
     } catch {
@@ -52,18 +108,31 @@ export function StockReceiveModal({
     }
   }
 
+  function costPerCogsFromDisplay(costPerDisplay: number): number {
+    if (!Number.isFinite(costPerDisplay) || costPerDisplay < 0) return 0;
+    return Math.round(costPerDisplay / belanjaPerCogs);
+  }
+
   async function onSubmit() {
-    if (submitting || !ingredient) return;
-    const q = parseQty();
-    const cost = parseUnit();
-    if (q <= 0) {
-      setError("Jumlah harus > 0");
+    if (submitting || !ingredient || !tiers) return;
+    const qDisplay = parseQtyDisplay();
+    if (!Number.isFinite(qDisplay) || qDisplay <= 0) {
+      setError(`Jumlah harus > 0 (dalam ${displayUnit}, pakai koma: 1,5)`);
       return;
     }
-    if (cost < 0) {
+    const qCogs = qtyCogsFromDisplay(qDisplay);
+    if (!Number.isFinite(qCogs) || qCogs <= 0) {
+      setError(
+        `Jumlah terlalu kecil setelah konversi ke ${tiers.cogsUnit}. Naikkan.`,
+      );
+      return;
+    }
+    const costDisplay = parseCostPerDisplay();
+    if (costDisplay < 0) {
       setError("Harga tidak boleh negatif");
       return;
     }
+    const costCogs = costPerCogsFromDisplay(costDisplay);
 
     setSubmitting(true);
     setError(null);
@@ -71,8 +140,8 @@ export function StockReceiveModal({
     const trimmed = note.trim();
     const res = await receiveStock({
       ingredientId: ingredient.id,
-      qty: q,
-      unitCost: cost,
+      qty: qCogs,
+      unitCost: costCogs,
       updateCost,
       note: trimmed.length > 0 ? trimmed : null,
     });
@@ -83,20 +152,39 @@ export function StockReceiveModal({
       return;
     }
 
+    const newStockDisplayAfter = cogsToBelanja(
+      res.data.ingredient.currentStockDecimal !== null
+        ? parseFloat(res.data.ingredient.currentStockDecimal)
+        : res.data.ingredient.currentStock,
+      tiers,
+    );
     toast.success(
-      `+${q} ${ingredient.unit} ${ingredient.name} masuk (stok jadi ${res.data.ingredient.currentStock})`,
+      `+${fmtIdn(qDisplay)} ${displayUnit} ${ingredient.name} masuk (stok jadi ${fmtIdn(newStockDisplayAfter)} ${displayUnit})`,
     );
     onSaved();
   }
 
-  const totalCost = parseQty() * parseUnit();
+  const qDisplay = parseQtyDisplay();
+  const costDisplay = parseCostPerDisplay();
+  const qCogsPreview = Number.isFinite(qDisplay)
+    ? qtyCogsFromDisplay(qDisplay)
+    : NaN;
+  const costCogsPreview = costPerCogsFromDisplay(costDisplay);
+  const totalCost =
+    Number.isFinite(qDisplay) && qDisplay > 0 && costDisplay > 0
+      ? Math.round(qDisplay * costDisplay)
+      : 0;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={`Terima Stok — ${ingredient.name}`}
-      description={`Stok saat ini: ${ingredient.currentStock} ${ingredient.unit}`}
+      description={`Stok saat ini: ${fmtIdn(currentStockDisplay)} ${displayUnit}${
+        usingBelanjaTier
+          ? ` (= ${fmtIdn(currentStockCogs)} ${tiers.cogsUnit})`
+          : ""
+      }`}
       size="md"
       footer={
         <>
@@ -112,23 +200,43 @@ export function StockReceiveModal({
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <Input
-            label={`Jumlah (${ingredient.unit})`}
-            placeholder="1000"
+            label={`Jumlah (${displayUnit}, pakai koma)`}
+            placeholder="mis. 1,5"
             value={qty}
             onChange={(e) => setQty(e.target.value)}
             type="text"
-            inputMode="numeric"
+            inputMode="decimal"
             autoFocus
           />
           <Input
-            label="Harga per Unit (Rp)"
-            placeholder="200"
+            label={`Harga per ${displayUnit} (Rp)`}
+            placeholder="50000"
             value={unitCost}
             onChange={(e) => setUnitCost(e.target.value)}
             type="text"
             inputMode="numeric"
           />
         </div>
+
+        {usingBelanjaTier &&
+        Number.isFinite(qCogsPreview) &&
+        qCogsPreview > 0 ? (
+          <div className="rounded-md bg-neutral-50 p-2 text-xs text-neutral-600">
+            Tersimpan sebagai:{" "}
+            <span className="font-mono">
+              {fmtIdn(qCogsPreview)} {tiers.cogsUnit}
+            </span>
+            {costCogsPreview > 0 ? (
+              <>
+                {" "}
+                @{" "}
+                <span className="font-mono">
+                  {formatRupiah(costCogsPreview)}/{tiers.cogsUnit}
+                </span>
+              </>
+            ) : null}
+          </div>
+        ) : null}
 
         <label className="flex items-start gap-2 rounded-md bg-neutral-100 p-2 text-sm text-neutral-700">
           <input
