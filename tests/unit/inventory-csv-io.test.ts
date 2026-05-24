@@ -102,7 +102,7 @@ describe("parseIngredientsCsv", () => {
     const result = parseIngredientsCsv(csv);
     expect(result.errorCount).toBe(0);
     expect(result.rows).toHaveLength(1);
-    expect(result.rows[0].parsed).toEqual({
+    expect(result.rows[0].parsed).toMatchObject({
       id: null,
       name: "Susu Test",
       section: "bar",
@@ -122,7 +122,7 @@ describe("parseIngredientsCsv", () => {
       ",Susu Test,bar,L,ml,1000,4500,0,5000,Tes brand\n";
     const result = parseIngredientsCsv(csv);
     expect(result.errorCount).toBe(0);
-    expect(result.rows[0].parsed).toEqual({
+    expect(result.rows[0].parsed).toMatchObject({
       id: null,
       name: "Susu Test",
       section: "bar",
@@ -282,6 +282,36 @@ describe("parseIngredientsCsv", () => {
     expect(result.errorCount).toBe(1);
     expect(result.rows[0].errors[0].field).toBe("header");
   });
+
+  /* Sesi AE-143 — Anisa upload CSV tanpa kolom purchase_per_recipe
+   * (export lama) → tidak boleh fail untuk pair yg butuh ratio
+   * (mis. pack/g). Parser skip error + set preservePurchasePerRecipe=true.
+   * Applier (lihat csv-actions) baca flag + pakai existing ratio. */
+  it("skips ratio error when purchase_per_recipe column missing (preserve mode)", () => {
+    const csv =
+      "id;name;section;purchase_unit;recipe_unit;cost_per_unit;current_stock;threshold;notes\n" +
+      "11111111-1111-1111-1111-111111111111;Beans Single Origin;bar;pack;g;625;7740000;200;\n";
+    const result = parseIngredientsCsv(csv);
+    expect(result.errorCount).toBe(0);
+    expect(result.rows[0].parsed?.preservePurchasePerRecipe).toBe(true);
+    expect(result.rows[0].parsed?.purchaseUnit).toBe("pack");
+    expect(result.rows[0].parsed?.purchasePerRecipe).toBeNull();
+  });
+
+  it("preserve flags reflect which columns are in CSV header", () => {
+    const csv =
+      "id;name;recipe_unit\n" +
+      "11111111-1111-1111-1111-111111111111;Test;g\n";
+    const result = parseIngredientsCsv(csv);
+    expect(result.errorCount).toBe(0);
+    const p = result.rows[0].parsed!;
+    expect(p.preserveSection).toBe(true);
+    expect(p.preservePurchaseUnit).toBe(true);
+    expect(p.preservePurchasePerRecipe).toBe(true);
+    expect(p.preserveCostPerUnit).toBe(true);
+    expect(p.preserveThreshold).toBe(true);
+    expect(p.preserveNotes).toBe(true);
+  });
 });
 
 describe("computeDiff", () => {
@@ -340,6 +370,35 @@ describe("computeDiff", () => {
     expect(diff.summary.error).toBe(1);
     expect(diff.rows[0].action).toBe("error");
     expect(diff.rows[0].errors[0].field).toBe("id");
+  });
+
+  /* Sesi AE-143 — CSV tanpa purchase_per_recipe + tanpa cost_per_unit
+   * column: existing values harus preserved → no spurious "update". */
+  it("UNCHANGED when only changed field is in missing column (preserve mode)", () => {
+    const existingWithBelanja: ExistingIngredientLite[] = [
+      {
+        id: "11111111-1111-1111-1111-111111111111",
+        name: "Beans",
+        section: "bar",
+        unit: "g",
+        unitBelanja: "pack",
+        unitBelanjaPerCogs: "200",
+        costPerUnit: 625,
+        reorderThreshold: 200,
+        notes: null,
+      },
+    ];
+    /* CSV punya purchase_unit "pack" tapi tanpa purchase_per_recipe column
+     * dan tanpa cost_per_unit column → preserve existing ratio + cost. */
+    const parsed = parseIngredientsCsv(
+      "id;name;section;purchase_unit;recipe_unit;threshold\n" +
+        "11111111-1111-1111-1111-111111111111;Beans;bar;pack;g;200\n",
+    );
+    expect(parsed.errorCount).toBe(0);
+    const diff = computeDiff(parsed, existingWithBelanja);
+    expect(diff.summary.unchanged).toBe(1);
+    expect(diff.summary.update).toBe(0);
+    expect(diff.rows[0].action).toBe("unchanged");
   });
 
   it("ignores current_stock field changes (read-only)", () => {

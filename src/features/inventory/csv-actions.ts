@@ -281,23 +281,43 @@ export async function applyIngredientsBulkUpdate(
         } else if (row.action === "update") {
           const existing = row.parsed.id ? byExistingId.get(row.parsed.id) : null;
           if (!existing) continue;
-          const costChanged =
-            existing.costPerUnit !== row.parsed.costPerUnit;
+          /* Sesi AE-143 — partial update. Untuk setiap field, kalau
+           * preserve flag set (kolom missing dari CSV header), pakai
+           * existing value alih-alih overwrite. costChanged hanya true
+           * kalau cost benar-benar berubah (bukan preserved). */
+          const effectiveSection = row.parsed.preserveSection
+            ? (existing.section as typeof row.parsed.section)
+            : row.parsed.section;
+          const effectivePurchaseUnit = row.parsed.preservePurchaseUnit
+            ? existing.unitBelanja
+            : row.parsed.purchaseUnit;
+          const effectivePurchasePerRecipe = row.parsed
+            .preservePurchasePerRecipe
+            ? existing.unitBelanjaPerCogs
+            : row.parsed.purchasePerRecipe !== null
+              ? String(row.parsed.purchasePerRecipe)
+              : null;
+          const effectiveCost = row.parsed.preserveCostPerUnit
+            ? existing.costPerUnit
+            : row.parsed.costPerUnit;
+          const effectiveThreshold = row.parsed.preserveThreshold
+            ? existing.reorderThreshold
+            : row.parsed.threshold;
+          const effectiveNotes = row.parsed.preserveNotes
+            ? existing.notes
+            : row.parsed.notes;
+          const costChanged = existing.costPerUnit !== effectiveCost;
           await tx
             .update(ingredients)
             .set({
               name: row.parsed.name,
-              section: row.parsed.section,
+              section: effectiveSection,
               unit: row.parsed.recipeUnit,
-              /* Sesi AE-136 — purchase unit + ratio. */
-              unitBelanja: row.parsed.purchaseUnit,
-              unitBelanjaPerCogs:
-                row.parsed.purchasePerRecipe !== null
-                  ? String(row.parsed.purchasePerRecipe)
-                  : null,
-              costPerUnit: row.parsed.costPerUnit,
-              reorderThreshold: row.parsed.threshold,
-              notes: row.parsed.notes,
+              unitBelanja: effectivePurchaseUnit,
+              unitBelanjaPerCogs: effectivePurchasePerRecipe,
+              costPerUnit: effectiveCost,
+              reorderThreshold: effectiveThreshold,
+              notes: effectiveNotes,
               updatedAt: new Date(),
               updatedBy: session.user.id,
               ...(costChanged

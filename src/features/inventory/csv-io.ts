@@ -41,6 +41,16 @@ export interface IngredientCsvRow {
   currentStock: number; // display only (read on export, ignored on import)
   threshold: number | null;
   notes: string | null;
+  /* Sesi AE-143 — partial update flags. Kalau kolom tidak ada di CSV
+   * header (vs ada tapi kosong), `preserve*` true → applier WAJIB pakai
+   * value existing waktu UPDATE alih-alih overwrite ke null/default.
+   * Untuk CREATE: ignore flag, gunakan parsed value apa adanya. */
+  preserveSection: boolean;
+  preservePurchaseUnit: boolean;
+  preservePurchasePerRecipe: boolean;
+  preserveCostPerUnit: boolean;
+  preserveThreshold: boolean;
+  preserveNotes: boolean;
 }
 
 export interface ValidationError {
@@ -234,6 +244,14 @@ export function parseIngredientsCsv(text: string): ParseResult {
    * Acceptable: name + (recipe_unit ATAU unit) minimum. */
   const hasRecipeUnit =
     headers.includes("recipe_unit") || headers.includes("unit");
+  const headerSet = new Set(headers);
+  /* Sesi AE-143 — partial update detection. */
+  const hasSectionCol = headerSet.has("section");
+  const hasPurchaseUnitCol = headerSet.has("purchase_unit");
+  const hasPurchasePerRecipeCol = headerSet.has("purchase_per_recipe");
+  const hasCostCol = headerSet.has("cost_per_unit");
+  const hasThresholdCol = headerSet.has("threshold");
+  const hasNotesCol = headerSet.has("notes");
   if (!headers.includes("name") || !hasRecipeUnit) {
     return {
       rows: [
@@ -304,7 +322,10 @@ export function parseIngredientsCsv(text: string): ParseResult {
         });
       } else {
         purchaseUnit = purchaseUnitRaw;
-        /* Resolve ratio: explicit > inferred > error */
+        /* Resolve ratio: explicit > inferred > error.
+         * Sesi AE-143: kalau kolom `purchase_per_recipe` TIDAK ada di
+         * header (vs ada tapi kosong) → skip error, biarkan applier
+         * preserve existing value via flag preservePurchasePerRecipe. */
         if (purchasePerRecipeRaw.length > 0) {
           /* User explicit set ratio — parse Indonesian (koma desimal). */
           const cleaned = purchasePerRecipeRaw
@@ -329,6 +350,12 @@ export function parseIngredientsCsv(text: string): ParseResult {
             purchaseUnit.toLowerCase() === recipeUnit.toLowerCase()
           ) {
             purchasePerRecipe = 1; // identity
+          } else if (!hasPurchasePerRecipeCol) {
+            /* Kolom ratio missing dari CSV → preserve existing via
+             * applier (ditandai flag di bawah). UNTUK CREATE row, applier
+             * fallback ke null → admin perlu re-upload dengan ratio
+             * setelah create. Untuk UPDATE row (mayoritas case), preserve
+             * existing memenuhi expectation user. */
           } else {
             errors.push({
               field: "purchase_per_recipe",
@@ -366,10 +393,11 @@ export function parseIngredientsCsv(text: string): ParseResult {
       });
     }
 
-    // cost_per_unit: integer >= 0
-    const costRaw = raw.cost_per_unit ?? raw["cost_per_unit"] ?? "0";
+    // cost_per_unit: integer >= 0. Sesi AE-143: kalau kolom missing,
+    // default 0 + preserve flag akan handle preservation di applier.
+    const costRaw = raw.cost_per_unit ?? "0";
     const cost = Number(costRaw);
-    if (!Number.isFinite(cost) || cost < 0 || !Number.isInteger(cost)) {
+    if (hasCostCol && (!Number.isFinite(cost) || cost < 0 || !Number.isInteger(cost))) {
       errors.push({
         field: "cost_per_unit",
         message: `cost_per_unit harus integer >= 0 (got '${costRaw}')`,
@@ -417,6 +445,15 @@ export function parseIngredientsCsv(text: string): ParseResult {
             currentStock: 0, // read-only — ignored on import
             threshold,
             notes,
+            /* Sesi AE-143 — preserve flags untuk partial update. True =
+             * kolom tidak ada di CSV header → applier pakai existing
+             * value (UPDATE) atau default (CREATE). */
+            preserveSection: !hasSectionCol,
+            preservePurchaseUnit: !hasPurchaseUnitCol,
+            preservePurchasePerRecipe: !hasPurchasePerRecipeCol,
+            preserveCostPerUnit: !hasCostCol,
+            preserveThreshold: !hasThresholdCol,
+            preserveNotes: !hasNotesCol,
           }
         : null;
 
@@ -600,24 +637,45 @@ export function computeDiff(
       continue;
     }
 
+    /* Sesi AE-143 — Hanya kolom yg present di CSV header yg dibandingkan.
+     * Kolom missing → applier akan preserve existing → tidak counted as
+     * "changed" supaya UNCHANGED rows bener-bener accurate. */
     const changed: string[] = [];
     if (ex.name !== r.parsed.name) changed.push("name");
-    if (ex.section !== r.parsed.section) changed.push("section");
+    if (!r.parsed.preserveSection && ex.section !== r.parsed.section) {
+      changed.push("section");
+    }
     if (ex.unit !== r.parsed.recipeUnit) changed.push("recipe_unit");
-    /* Sesi AE-136 — diff purchase unit + ratio. Empty string === null
-     * untuk konsistensi (kolom kosong di CSV = clear). */
-    const exPurchase = ex.unitBelanja?.trim() || null;
-    const newPurchase = r.parsed.purchaseUnit?.trim() || null;
-    if (exPurchase !== newPurchase) changed.push("purchase_unit");
-    const exRatio = ex.unitBelanjaPerCogs
-      ? parseFloat(ex.unitBelanjaPerCogs)
-      : null;
-    const newRatio = r.parsed.purchasePerRecipe ?? null;
-    if (exRatio !== newRatio) changed.push("purchase_per_recipe");
-    if (ex.costPerUnit !== r.parsed.costPerUnit) changed.push("cost_per_unit");
-    if ((ex.reorderThreshold ?? null) !== (r.parsed.threshold ?? null))
+    if (!r.parsed.preservePurchaseUnit) {
+      const exPurchase = ex.unitBelanja?.trim() || null;
+      const newPurchase = r.parsed.purchaseUnit?.trim() || null;
+      if (exPurchase !== newPurchase) changed.push("purchase_unit");
+    }
+    if (!r.parsed.preservePurchasePerRecipe) {
+      const exRatio = ex.unitBelanjaPerCogs
+        ? parseFloat(ex.unitBelanjaPerCogs)
+        : null;
+      const newRatio = r.parsed.purchasePerRecipe ?? null;
+      if (exRatio !== newRatio) changed.push("purchase_per_recipe");
+    }
+    if (
+      !r.parsed.preserveCostPerUnit &&
+      ex.costPerUnit !== r.parsed.costPerUnit
+    ) {
+      changed.push("cost_per_unit");
+    }
+    if (
+      !r.parsed.preserveThreshold &&
+      (ex.reorderThreshold ?? null) !== (r.parsed.threshold ?? null)
+    ) {
       changed.push("threshold");
-    if ((ex.notes ?? null) !== (r.parsed.notes ?? null)) changed.push("notes");
+    }
+    if (
+      !r.parsed.preserveNotes &&
+      (ex.notes ?? null) !== (r.parsed.notes ?? null)
+    ) {
+      changed.push("notes");
+    }
 
     if (changed.length === 0) {
       rows.push({
