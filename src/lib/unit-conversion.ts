@@ -686,7 +686,11 @@ export function buildOpnameUnitContext(
   const multipliers = new Map<string, number>();
   const seen = new Set<string>();
 
-  const norm = (s: string) => s.trim().toLowerCase();
+  /* Sesi AE-148 — Dedup-aware normalization. Owner feedback: jangan
+   * tampilkan "pack" + "Packs" + "Pack" sebagai 3 unit terpisah karena
+   * konseptual sama. Norm strip whitespace + lowercase + strip trailing
+   * "s" untuk plural variants. */
+  const norm = normalizeUnitLabel;
 
   /* 1. Purchase unit prepend kalau ada + per > 0 + beda dari recipe. */
   const belanjaLabel = input.unitBelanja?.trim();
@@ -716,12 +720,20 @@ export function buildOpnameUnitContext(
   multipliers.set(recipeUnit, 1);
   seen.add(norm(recipeUnit));
 
-  /* 3. Pack alternatives (ingredient-scoped, mis. "Packs" untuk Lychee). */
+  /* 3. Pack alternatives (ingredient-scoped, mis. "Packs" untuk Lychee).
+   * Sesi AE-148 — DUAL DEDUP: label-based (case+plural) + multiplier-based.
+   * Drop pack-alt yang punya multiplier sama dengan purchase unit (mis.
+   * unitBelanja "kg" 1000 + pack-alt "Packs" 1000 → keep purchase, drop). */
+  const seenMultipliers = new Set<number>();
+  for (const opt of opts) {
+    seenMultipliers.add(opt.multiplierToRecipe);
+  }
   if (input.packConversions) {
     for (const p of input.packConversions) {
       const lc = norm(p.unitLabel);
       if (lc.length === 0 || seen.has(lc)) continue;
       if (!Number.isFinite(p.qtyPerBase) || p.qtyPerBase <= 0) continue;
+      if (seenMultipliers.has(p.qtyPerBase)) continue;
       opts.push({
         value: p.unitLabel,
         label: p.unitLabel,
@@ -731,6 +743,7 @@ export function buildOpnameUnitContext(
       });
       multipliers.set(p.unitLabel, p.qtyPerBase);
       seen.add(lc);
+      seenMultipliers.add(p.qtyPerBase);
     }
   }
 
@@ -775,6 +788,51 @@ function formatRatio(n: number): string {
   return new Intl.NumberFormat("id-ID", {
     maximumFractionDigits: 4,
   }).format(n);
+}
+
+/**
+ * Sesi AE-148 — Normalize unit label ke canonical form untuk dedup.
+ *
+ * Aturan:
+ *  1. Trim whitespace
+ *  2. Lookup canonical case di CANONICAL_UNIT_LABELS (mis. "l"/"liter" → "L",
+ *     untuk preserve SI uppercase). Kalau ada match, return canonical.
+ *  3. Else lowercase + strip trailing "s" untuk plural variant
+ *     (pack/packs/Packs → pack).
+ *
+ * Reasoning: owner feedback "selaraskan pack dan packs jangan ada dua unit
+ * yang sebenarnya sama". Tanpa norm, opname picker tampak duplikat.
+ * Tetap preserve "L" uppercase karena standard SI.
+ */
+const CANONICAL_UNIT_LABELS: Record<string, string> = {
+  l: "L",
+  liter: "L",
+  litre: "L",
+  ml: "ml",
+  kg: "kg",
+  g: "g",
+  gr: "g",
+  gram: "g",
+  pcs: "pcs",
+  pc: "pcs",
+};
+
+export function normalizeUnitLabel(label: string): string {
+  if (!label) return "";
+  const trimmed = label.trim();
+  if (trimmed.length === 0) return "";
+  const lc = trimmed.toLowerCase();
+  /* Cek canonical SI / common units dulu (preserve uppercase mis. L). */
+  if (CANONICAL_UNIT_LABELS[lc]) return CANONICAL_UNIT_LABELS[lc];
+  /* Strip trailing "s" untuk plural — hanya kalau hasilnya > 3 char,
+   * supaya "ml", "gr", "gas", "set" tetap intact. */
+  let s = lc;
+  if (s.length > 3 && s.endsWith("s")) {
+    s = s.slice(0, -1);
+    /* Re-cek canonical setelah strip (mis. "liters" → "liter" → "L"). */
+    if (CANONICAL_UNIT_LABELS[s]) return CANONICAL_UNIT_LABELS[s];
+  }
+  return s;
 }
 
 /**

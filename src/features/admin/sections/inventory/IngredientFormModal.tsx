@@ -22,45 +22,90 @@ interface IngredientFormModalProps {
   onSaved: () => void;
 }
 
-/* Sesi AE-137 — Expand preset purchase units supaya owner minim
- * pilih "...lainnya". Daftar lengkap pattern umum Mahakan: liquid (L,
- * btl, galon, kaleng), powder/biji (kg, pack, dus, sachet, renceng),
- * counted (pcs, lusin, ikat, kotak, bks), bulk (karton, bal, pail,
- * tabung, set, roll, pax). */
-const COMMON_RECIPE_UNITS = ["g", "ml", "pcs"];
-const COMMON_PURCHASE_UNITS = [
-  "kg",
-  "L",
-  "btl",
-  "galon",
-  "kaleng",
-  "pack",
-  "karton",
-  "dus",
-  "sachet",
-  "renceng",
-  "pcs",
-  "lusin",
-  "ikat",
-  "kotak",
-  "bks",
-  "bal",
-  "pail",
-  "tabung",
-  "set",
-  "roll",
-  "pax",
-];
-/* Recipe unit picker masih perlu kg/L/pack untuk bahan-bahan yang
- * tidak di-breakdown lebih kecil (mis. Hand Gloves recipe = pack). */
-const COMMON_UNITS = [
-  ...COMMON_RECIPE_UNITS,
-  "kg",
-  "L",
-  "pack",
-  "btl",
-  "set",
-];
+/* Sesi AE-148 — Categorized unit groups (owner feedback: lebih rapih,
+ * tidak terbang ke "...lainnya"). Picker pakai Radix Select groups. */
+const RECIPE_UNIT_GROUPS = [
+  {
+    label: "Berat & Volume",
+    options: [
+      { value: "g", label: "g", hint: "gram" },
+      { value: "ml", label: "ml", hint: "mililiter" },
+    ],
+  },
+  {
+    label: "Hitungan",
+    options: [{ value: "pcs", label: "pcs", hint: "pieces" }],
+  },
+  {
+    label: "Per Wadah / Kemasan",
+    options: [
+      { value: "kg", label: "kg", hint: "kilogram (jarang untuk recipe)" },
+      { value: "L", label: "L", hint: "liter (jarang untuk recipe)" },
+      { value: "pack", label: "pack" },
+      { value: "btl", label: "btl", hint: "botol" },
+      { value: "set", label: "set" },
+    ],
+  },
+] as const;
+
+const PURCHASE_UNIT_GROUPS = [
+  {
+    label: "Berat",
+    options: [
+      { value: "kg", label: "kg", hint: "kilogram" },
+      { value: "g", label: "g", hint: "gram" },
+    ],
+  },
+  {
+    label: "Volume",
+    options: [
+      { value: "L", label: "L", hint: "liter" },
+      { value: "ml", label: "ml", hint: "mililiter" },
+      { value: "galon", label: "galon", hint: "19 L galon air" },
+    ],
+  },
+  {
+    label: "Wadah / Kemasan",
+    options: [
+      { value: "btl", label: "btl", hint: "botol" },
+      { value: "kaleng", label: "kaleng" },
+      { value: "pack", label: "pack" },
+      { value: "dus", label: "dus" },
+      { value: "karton", label: "karton" },
+      { value: "kotak", label: "kotak" },
+      { value: "sachet", label: "sachet" },
+      { value: "renceng", label: "renceng" },
+      { value: "bks", label: "bks", hint: "bungkus" },
+      { value: "bal", label: "bal" },
+      { value: "pail", label: "pail" },
+      { value: "ikat", label: "ikat" },
+    ],
+  },
+  {
+    label: "Hitungan",
+    options: [
+      { value: "pcs", label: "pcs", hint: "pieces" },
+      { value: "lusin", label: "lusin" },
+      { value: "set", label: "set" },
+      { value: "pax", label: "pax" },
+    ],
+  },
+  {
+    label: "Khusus",
+    options: [
+      { value: "tabung", label: "tabung", hint: "gas LPG" },
+      { value: "roll", label: "roll", hint: "sealer / plastik roll" },
+    ],
+  },
+] as const;
+
+/* Flat lookup (as string[]) untuk "is this a preset?" check. */
+const COMMON_RECIPE_UNITS: string[] = RECIPE_UNIT_GROUPS.flatMap((g) =>
+  g.options.map((o) => o.value),
+);
+const COMMON_PURCHASE_UNITS: string[] = PURCHASE_UNIT_GROUPS.flatMap((g) =>
+  g.options.map((o) => o.value),
+);
 
 const SECTION_OPTIONS: Array<{
   value: IngredientSection | "__none";
@@ -304,17 +349,29 @@ export function IngredientFormModal({
             Recipe Unit <span className="text-danger-500">*</span>
           </label>
           <div className="flex gap-1">
-            <div className="w-28">
+            <div className="w-32">
               <Select
                 ariaLabel="Recipe unit preset"
-                options={[
-                  ...COMMON_UNITS.map((u) => ({ value: u, label: u })),
-                  { value: "__custom", label: "…lainnya" },
+                groups={[
+                  ...RECIPE_UNIT_GROUPS.map((g) => ({
+                    label: g.label,
+                    options: g.options.map((o) => ({
+                      value: o.value,
+                      label: o.label,
+                      hint: "hint" in o ? o.hint : undefined,
+                    })),
+                  })),
+                  {
+                    label: "Lainnya",
+                    options: [
+                      { value: "__custom", label: "Custom…" },
+                    ],
+                  },
                 ]}
-                value={COMMON_UNITS.includes(unit) ? unit : "__custom"}
+                value={COMMON_RECIPE_UNITS.includes(unit) ? unit : "__custom"}
                 onValueChange={(v) => {
                   if (v === "__custom") {
-                    if (COMMON_UNITS.includes(unit)) setUnit("");
+                    if (COMMON_RECIPE_UNITS.includes(unit)) setUnit("");
                   } else {
                     setUnit(v);
                   }
@@ -322,7 +379,7 @@ export function IngredientFormModal({
                 size="sm"
               />
             </div>
-            {!COMMON_UNITS.includes(unit) ? (
+            {!COMMON_RECIPE_UNITS.includes(unit) ? (
               <input
                 type="text"
                 placeholder="custom"
@@ -346,18 +403,28 @@ export function IngredientFormModal({
             Purchase Unit
           </label>
           <div className="flex items-center gap-2">
-            <div className="w-28">
+            <div className="w-32">
               <Select
                 ariaLabel="Purchase unit preset"
                 /* Sesi AE-136 HOTFIX — Radix Select.Item tolak value="".
                  * Pakai sentinel "__none" + map ke string kosong di state. */
-                options={[
-                  { value: "__none", label: "—" },
-                  ...COMMON_PURCHASE_UNITS.map((u) => ({
-                    value: u,
-                    label: u,
+                groups={[
+                  {
+                    label: "—",
+                    options: [{ value: "__none", label: "Tidak ada" }],
+                  },
+                  ...PURCHASE_UNIT_GROUPS.map((g) => ({
+                    label: g.label,
+                    options: g.options.map((o) => ({
+                      value: o.value,
+                      label: o.label,
+                      hint: "hint" in o ? o.hint : undefined,
+                    })),
                   })),
-                  { value: "__custom", label: "…lainnya" },
+                  {
+                    label: "Lainnya",
+                    options: [{ value: "__custom", label: "Custom…" }],
+                  },
                 ]}
                 value={
                   unitBelanja === ""

@@ -12,7 +12,7 @@ import {
   Save,
   Search,
 } from "lucide-react";
-import { Input, Spinner, toast } from "@/components/ui";
+import { Input, Select, Spinner, toast } from "@/components/ui";
 import { useSession } from "@/features/auth/SessionProvider";
 import {
   getActiveOpname,
@@ -26,10 +26,9 @@ import type {
 } from "@/features/stock-opname/types";
 import { AddOpnameItemModal } from "@/features/admin/sections/inventory/opname/AddOpnameItemModal";
 import {
+  buildOpnameUnitContext,
   cogsToTracking,
-  compatibleUnitsFor,
   convertQtyWithIngredientPacks,
-  resolveUnit,
   type IngredientPackConversion,
   type IngredientUnitTiers,
 } from "@/lib/unit-conversion";
@@ -634,18 +633,20 @@ function LineRow({
       ? cogsToTracking(convertedToMaster, tiers)
       : null;
 
-  // Sesi AE-62y — unit options include ingredient pack alternatives.
-  // Untuk ingredient yang punya pack mapping (mis. "packs" 20 pcs untuk
-  // Lychee Kaleng), picker exposed walaupun master discrete. Tanpa pack
-  // alternatives + master discrete → picker disabled (fallback ke master only).
-  const unitOptions = compatibleUnitsFor(masterUnit, ingredientPacks);
-  const masterMeta = resolveUnit(masterUnit);
-  const hasPackAlternatives =
-    ingredientPacks !== null && ingredientPacks.length > 0;
-  const canPickUnit =
-    unitOptions.length > 1 &&
-    (hasPackAlternatives ||
-      (masterMeta !== null && masterMeta.dimension !== "discrete"));
+  /* Sesi AE-148 — Pakai buildOpnameUnitContext (sama dengan desktop)
+   * supaya dedup + ordering konsisten. Context bundle purchase + recipe
+   * + pack alternatives dengan dedup case+plural+multiplier. */
+  const opnameCtx = buildOpnameUnitContext({
+    recipeUnit: masterUnit,
+    unitBelanja: line.ingredient.unitBelanja,
+    unitBelanjaPerCogs: line.ingredient.unitBelanjaPerCogs,
+    packConversions: ingredientPacks,
+  });
+  const canPickUnit = opnameCtx.options.length > 1;
+  const purchaseMultiplier =
+    opnameCtx.purchaseUnit !== null
+      ? (opnameCtx.multipliers.get(opnameCtx.purchaseUnit) ?? 1)
+      : null;
 
   return (
     <li
@@ -658,10 +659,39 @@ function LineRow({
       )}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 space-y-1">
           <p className="text-sm font-semibold text-neutral-900">
             {line.ingredient.name}
           </p>
+          {/* Sesi AE-148 — Unit info chips: Resep + Belanja + Pack alts. */}
+          <div className="flex flex-wrap items-center gap-1 text-[10px]">
+            <span className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600">
+              Resep:&nbsp;<span className="font-semibold">{masterUnit}</span>
+            </span>
+            {opnameCtx.purchaseUnit && purchaseMultiplier !== null ? (
+              <span className="inline-flex items-center rounded bg-mahakan-green-100/70 px-1.5 py-0.5 font-medium text-mahakan-green-900">
+                1 {opnameCtx.purchaseUnit} ={" "}
+                {new Intl.NumberFormat("id-ID", {
+                  maximumFractionDigits: 4,
+                }).format(purchaseMultiplier)}{" "}
+                {masterUnit}
+              </span>
+            ) : null}
+            {opnameCtx.options
+              .filter((o) => o.source === "pack-alt")
+              .map((alt) => (
+                <span
+                  key={alt.value}
+                  className="inline-flex items-center rounded bg-blue-50 px-1.5 py-0.5 font-medium text-blue-900"
+                >
+                  1 {alt.value} ={" "}
+                  {new Intl.NumberFormat("id-ID", {
+                    maximumFractionDigits: 4,
+                  }).format(alt.multiplierToRecipe)}{" "}
+                  {masterUnit}
+                </span>
+              ))}
+          </div>
           <p className="text-[11px] text-neutral-600">
             Expected:{" "}
             <span className="font-mono">{fmt(expectedQtyValue)}</span>{" "}
@@ -685,21 +715,25 @@ function LineRow({
           className="flex-1 rounded-md border border-neutral-300 bg-white px-3 py-2 text-base font-mono tabular-nums text-neutral-900 placeholder:text-neutral-400 focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
         />
         {canPickUnit ? (
-          <select
-            value={inputUnit}
-            onChange={(e) => onUnitChange(e.target.value)}
-            onBlur={() => onBlur(inputValue)}
-            className="shrink-0 rounded-md border border-neutral-300 bg-white px-2 py-2 text-sm font-medium text-neutral-900 focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
-            aria-label={`Satuan ${line.ingredient.name}`}
-          >
-            {unitOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <div className="w-[88px] flex-none">
+            <Select
+              size="md"
+              ariaLabel={`Satuan ${line.ingredient.name}`}
+              options={opnameCtx.options.map((o) => ({
+                value: o.value,
+                label: o.label,
+                hint: o.hint ?? undefined,
+              }))}
+              value={inputUnit}
+              onValueChange={(v) => {
+                onUnitChange(v);
+                /* Save dengan unit baru — match prev onBlur behavior. */
+                onBlur(inputValue);
+              }}
+            />
+          </div>
         ) : (
-          <span className="flex shrink-0 items-center px-2 text-sm font-medium text-neutral-700">
+          <span className="flex shrink-0 items-center rounded-md border border-neutral-200 bg-neutral-50 px-3 text-sm font-medium text-neutral-700">
             {masterUnit}
           </span>
         )}

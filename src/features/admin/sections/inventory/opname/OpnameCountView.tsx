@@ -1020,79 +1020,90 @@ function CountRow({
     });
   }
 
-  /* Info chip: konversi purchase ↔ recipe + alt pack kalau ada. */
-  const purchaseChip =
+  /* Sesi AE-148 — Polish: info chips dengan warna + icon untuk hierarchy
+   * visual yang lebih jelas. Resep = neutral, Belanja = green pill, Pack
+   * alt = blue pill. */
+  const purchaseMultiplier =
     ctx.purchaseUnit !== null
-      ? `Belanja: 1 ${ctx.purchaseUnit} = ${formatRatioForChip(
-          ctx.multipliers.get(ctx.purchaseUnit) ?? 1,
-        )} ${ctx.recipeUnit}`
+      ? (ctx.multipliers.get(ctx.purchaseUnit) ?? 1)
       : null;
-  const packAltChips = ctx.options
-    .filter((o) => o.source === "pack-alt")
-    .map(
-      (o) =>
-        `Pack: 1 ${o.value} = ${formatRatioForChip(o.multiplierToRecipe)} ${ctx.recipeUnit}`,
-    );
+  const packAlts = ctx.options.filter((o) => o.source === "pack-alt");
 
   return (
-    <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:gap-4">
-      <div className="flex flex-1 items-start gap-2">
+    <li className="flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-neutral-50/40 sm:flex-row sm:items-start sm:gap-5">
+      {/* LEFT: status + name + chips + flow */}
+      <div className="flex flex-1 items-start gap-3 min-w-0">
         <div
           className={cn(
-            "mt-0.5 flex size-6 flex-none items-center justify-center rounded-full text-[11px] font-bold",
+            "mt-1 flex size-7 flex-none items-center justify-center rounded-full text-xs font-bold",
             counted
               ? "bg-mahakan-green-700 text-white"
               : "bg-neutral-200 text-neutral-500",
           )}
           aria-hidden
         >
-          {counted ? <Check className="size-3.5" /> : "—"}
+          {counted ? <Check className="size-4" /> : "—"}
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="font-medium text-neutral-900">{name}</p>
-          {/* Unit info chips — Purchase/Recipe + pack alternatives. */}
-          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-neutral-500">
-            <span>Resep: {ctx.recipeUnit}</span>
-            {purchaseChip ? (
-              <>
-                <span className="text-neutral-300">·</span>
-                <span className="font-medium text-neutral-700">
-                  {purchaseChip}
-                </span>
-              </>
-            ) : null}
-            {packAltChips.map((c) => (
-              <span key={c} className="rounded bg-neutral-100 px-1.5 py-0.5">
-                {c}
-              </span>
-            ))}
+        <div className="flex-1 min-w-0 space-y-2">
+          {/* Row 1: name + edit button */}
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold text-neutral-900 truncate">
+              {name}
+            </p>
             {onEditUnit ? (
               <button
                 type="button"
                 onClick={onEditUnit}
-                className="ml-1 inline-flex items-center rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-mahakan-green-700"
+                className="flex-none inline-flex items-center rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-mahakan-green-700"
                 aria-label={`Edit unit ${name}`}
                 title="Edit satuan bahan + konversi"
               >
-                <Pencil className="size-3" />
+                <Pencil className="size-3.5" />
               </button>
             ) : null}
+          </div>
+
+          {/* Row 2: unit info chips */}
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+            <span className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600">
+              Resep:&nbsp;<span className="font-semibold">{ctx.recipeUnit}</span>
+            </span>
+            {ctx.purchaseUnit && purchaseMultiplier !== null ? (
+              <span className="inline-flex items-center rounded bg-mahakan-green-100/70 px-1.5 py-0.5 font-medium text-mahakan-green-900">
+                Belanja:&nbsp;
+                <span className="font-semibold">
+                  1 {ctx.purchaseUnit} = {formatRatioForChip(purchaseMultiplier)}{" "}
+                  {ctx.recipeUnit}
+                </span>
+              </span>
+            ) : null}
+            {packAlts.map((alt) => (
+              <span
+                key={alt.value}
+                className="inline-flex items-center rounded bg-blue-50 px-1.5 py-0.5 font-medium text-blue-900"
+              >
+                Pack:&nbsp;
+                <span className="font-semibold">
+                  1 {alt.value} = {formatRatioForChip(alt.multiplierToRecipe)}{" "}
+                  {ctx.recipeUnit}
+                </span>
+              </span>
+            ))}
             {revealExpected ? (
               <>
-                <span className="text-neutral-300">·</span>
-                <span className="font-mono text-neutral-700">
+                <span className="inline-flex items-center rounded bg-amber-50 px-1.5 py-0.5 font-mono font-medium text-amber-900">
                   Expected: {expectedQty.toLocaleString("id-ID")}{" "}
                   {ctx.recipeUnit}
                 </span>
                 {diff !== null ? (
                   <span
                     className={cn(
-                      "font-mono",
+                      "inline-flex items-center rounded px-1.5 py-0.5 font-mono font-medium",
                       diff === 0
-                        ? "text-mahakan-green-900"
+                        ? "bg-mahakan-green-100 text-mahakan-green-900"
                         : diff > 0
-                          ? "text-success-500"
-                          : "text-danger-500",
+                          ? "bg-success-100 text-success-500"
+                          : "bg-danger-100 text-danger-500",
                     )}
                   >
                     {diff === 0
@@ -1103,8 +1114,9 @@ function CountRow({
               </>
             ) : null}
           </div>
-          {/* Inventory flow (Stok Awal/Pembelian/Opname/Terpakai) — recipe unit. */}
-          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] tabular-nums text-neutral-600">
+
+          {/* Row 3: inventory flow (Stok Awal → Opname → Terpakai) */}
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] tabular-nums">
             {!flowLoaded ? (
               <span className="text-neutral-400">memuat data alur…</span>
             ) : (
@@ -1132,6 +1144,7 @@ function CountRow({
                   unit={ctx.recipeUnit}
                   placeholder="—"
                   hint="Stok akhir hasil hitung kamu"
+                  emphasized
                 />
                 <span
                   className={cn(
@@ -1151,7 +1164,7 @@ function CountRow({
                           : "Pemakaian periode ini"
                   }
                 >
-                  Terpakai:{" "}
+                  <span className="text-neutral-500">Terpakai:</span>{" "}
                   {usedQty === null
                     ? "—"
                     : `${usedQty.toLocaleString("id-ID")} ${ctx.recipeUnit}`}
@@ -1167,9 +1180,12 @@ function CountRow({
         </div>
       </div>
 
-      {/* Input area: primary + unit Select + optional loose */}
-      <div className="flex flex-col gap-1.5 sm:w-[300px]">
-        <div className="flex items-center gap-2">
+      {/* RIGHT: input zone */}
+      <div className="flex flex-col gap-1.5 sm:w-[320px] sm:flex-none">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
+          Hitung stok aktual
+        </p>
+        <div className="flex items-stretch gap-2">
           <input
             aria-label={`Qty aktual ${name}`}
             inputMode="decimal"
@@ -1178,7 +1194,7 @@ function CountRow({
             value={state.primaryInput}
             onChange={(e) => onPrimaryChange(e.target.value)}
             className={cn(
-              "h-11 w-full rounded-md border bg-white px-3 text-right font-mono text-base tabular-nums shadow-sm transition focus:outline-none focus:ring-2",
+              "h-12 flex-1 rounded-md border bg-white px-3 text-right font-mono text-lg tabular-nums shadow-sm transition focus:outline-none focus:ring-2",
               state.status === "error"
                 ? "border-danger-500 focus:ring-danger-500"
                 : "border-neutral-300 focus:border-mahakan-green-700 focus:ring-mahakan-green-700/40",
@@ -1186,9 +1202,9 @@ function CountRow({
             data-testid={`count-input-${ingredientId}`}
           />
           {canPickUnit ? (
-            <div className="min-w-[88px]">
+            <div className="w-[96px] flex-none">
               <Select
-                size="sm"
+                size="md"
                 ariaLabel={`Satuan ${name}`}
                 options={ctx.options.map((o) => ({
                   value: o.value,
@@ -1197,27 +1213,31 @@ function CountRow({
                 }))}
                 value={currentPrimaryUnit}
                 onValueChange={onUnitChange}
+                className="h-12"
               />
             </div>
           ) : (
-            <span className="min-w-[60px] text-sm font-medium text-neutral-600">
+            <span className="flex h-12 w-[60px] flex-none items-center justify-center rounded-md border border-neutral-200 bg-neutral-50 text-sm font-medium text-neutral-700">
               {ctx.recipeUnit}
             </span>
           )}
-          <div className="w-5 flex-none text-center" aria-live="polite">
+          <div
+            className="flex w-5 flex-none items-center justify-center"
+            aria-live="polite"
+          >
             {state.status === "saving" ? (
               <Loader2
-                className="mx-auto size-4 animate-spin text-neutral-400"
+                className="size-4 animate-spin text-neutral-400"
                 aria-label="Menyimpan"
               />
             ) : state.status === "saved" ? (
               <Check
-                className="mx-auto size-4 text-mahakan-green-700"
+                className="size-5 text-mahakan-green-700"
                 aria-label="Tersimpan"
               />
             ) : state.status === "error" ? (
               <AlertCircle
-                className="mx-auto size-4 text-danger-500"
+                className="size-5 text-danger-500"
                 aria-label="Gagal"
               />
             ) : null}
@@ -1225,10 +1245,12 @@ function CountRow({
         </div>
 
         {/* Loose input — only when primary unit != recipe AND ratio > 1.
-            Pakai untuk kasus pack tidak full (Yakult 3 pack + 2 pcs). */}
+            Pakai untuk kasus pack tidak full (Yakult 3 pack + 2 pcs lepas). */}
         {showLooseField ? (
-          <div className="flex items-center gap-2">
-            <span className="flex-none text-xs text-neutral-500">+ sisa</span>
+          <div className="flex items-stretch gap-2">
+            <span className="flex h-9 flex-none items-center px-1 text-[11px] font-medium text-neutral-500">
+              + sisa lepas
+            </span>
             <input
               aria-label={`Sisa lepas ${name}`}
               inputMode="decimal"
@@ -1243,7 +1265,7 @@ function CountRow({
                   : "border-neutral-300 focus:border-mahakan-green-700 focus:ring-mahakan-green-700/40",
               )}
             />
-            <span className="min-w-[60px] text-xs font-medium text-neutral-600">
+            <span className="flex h-9 w-[60px] flex-none items-center justify-center rounded-md border border-neutral-200 bg-neutral-50 text-xs font-medium text-neutral-700">
               {ctx.recipeUnit}
             </span>
             <span className="w-5 flex-none" aria-hidden />
@@ -1252,19 +1274,19 @@ function CountRow({
 
         {/* Total preview — kalau split input atau unit beda dari recipe. */}
         {totalPreview !== null && totalPreview > 0 && currentPrimaryUnit !== ctx.recipeUnit ? (
-          <p className="text-right text-[11px] text-mahakan-green-700">
-            Total ={" "}
-            <span className="font-mono font-semibold">
+          <div className="flex items-center justify-end gap-1 rounded bg-mahakan-green-100/40 px-2 py-1 text-[11px] text-mahakan-green-900">
+            <span className="text-mahakan-green-700">Total tersimpan:</span>
+            <span className="font-mono font-semibold tabular-nums">
               {totalPreview.toLocaleString("id-ID", {
                 maximumFractionDigits: 4,
               })}{" "}
               {ctx.recipeUnit}
             </span>
-          </p>
+          </div>
         ) : null}
       </div>
       {state.status === "error" ? (
-        <p className="text-xs text-danger-500 sm:basis-full sm:pl-8">
+        <p className="text-xs text-danger-500 sm:basis-full sm:pl-10">
           {state.errorMsg}
         </p>
       ) : null}
@@ -1285,6 +1307,7 @@ interface FlowMetricProps {
   hint: string;
   placeholder?: string;
   warn?: boolean;
+  emphasized?: boolean;
 }
 
 function FlowMetric({
@@ -1294,6 +1317,7 @@ function FlowMetric({
   hint,
   placeholder = "0",
   warn,
+  emphasized,
 }: FlowMetricProps) {
   return (
     <span title={hint} className="inline-flex items-baseline gap-1">
@@ -1301,7 +1325,11 @@ function FlowMetric({
       <span
         className={cn(
           "font-medium",
-          warn ? "text-warning-500" : "text-neutral-900",
+          warn
+            ? "text-warning-500"
+            : emphasized
+              ? "font-semibold text-mahakan-green-900"
+              : "text-neutral-900",
         )}
       >
         {value === null

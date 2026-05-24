@@ -3,6 +3,7 @@ import {
   buildOpnameUnitContext,
   computeOpnameQtyFromSplit,
   convertPurchaseQty,
+  normalizeUnitLabel,
   scaleCostOnUnitChange,
 } from "@/lib/unit-conversion";
 
@@ -404,7 +405,7 @@ describe("buildOpnameUnitContext", () => {
       unitBelanjaPerCogs: 5,
       packConversions: [
         { unitLabel: "Karton", qtyPerBase: 60 },
-        { unitLabel: "pack", qtyPerBase: 99 }, // dedup vs purchase
+        { unitLabel: "pack", qtyPerBase: 99 }, // dedup vs purchase (by label)
       ],
     });
     const labels = ctx.options.map((o) => o.value);
@@ -412,6 +413,74 @@ describe("buildOpnameUnitContext", () => {
     /* "pack" dedup'd — multiplier dari purchase (5) menang. */
     expect(ctx.multipliers.get("pack")).toBe(5);
     expect(ctx.multipliers.get("Karton")).toBe(60);
+  });
+
+  /* Sesi AE-148 — multiplier-based dedup. Owner case: Beans Houseblend
+   * unitBelanja="kg" multiplier 1000 + packConversions=[Packs/1000]. Same
+   * multiplier → drop pack-alt supaya picker tidak duplikat. */
+  it("dedup pack-alt by same multiplier as purchase", () => {
+    const ctx = buildOpnameUnitContext({
+      recipeUnit: "g",
+      unitBelanja: "kg",
+      unitBelanjaPerCogs: 1000,
+      packConversions: [
+        { unitLabel: "Packs", qtyPerBase: 1000 }, // dedup by multiplier
+        { unitLabel: "Karton", qtyPerBase: 5000 }, // beda multiplier, kept
+      ],
+    });
+    const packAltOptions = ctx.options.filter((o) => o.source === "pack-alt");
+    expect(packAltOptions).toHaveLength(1);
+    expect(packAltOptions[0].value).toBe("Karton");
+  });
+
+  /* Sesi AE-148 — dedup case-insensitive + plural variant. */
+  it("dedup pack vs Packs vs PACK (case + plural)", () => {
+    const ctx = buildOpnameUnitContext({
+      recipeUnit: "g",
+      unitBelanja: "kg",
+      unitBelanjaPerCogs: 1000,
+      packConversions: [
+        { unitLabel: "Packs", qtyPerBase: 1000 }, // plural+case variant of pack
+        { unitLabel: "PACK", qtyPerBase: 1000 }, // case variant
+        { unitLabel: "pack", qtyPerBase: 500 },
+      ],
+    });
+    /* Hanya 1 entry "pack/Pack/Packs/PACK" should survive — first wins. */
+    const packVariants = ctx.options.filter((o) =>
+      ["pack", "packs", "Pack", "PACK", "Packs"].includes(o.value),
+    );
+    expect(packVariants.length).toBe(1);
+  });
+
+  it("normalizeUnitLabel kasus umum + canonical SI", () => {
+    /* Plural + case: pack family. */
+    expect(normalizeUnitLabel("pack")).toBe("pack");
+    expect(normalizeUnitLabel("Pack")).toBe("pack");
+    expect(normalizeUnitLabel("PACKS")).toBe("pack");
+    expect(normalizeUnitLabel(" Packs ")).toBe("pack");
+    /* Canonical SI volume — preserve uppercase L. */
+    expect(normalizeUnitLabel("L")).toBe("L");
+    expect(normalizeUnitLabel("l")).toBe("L");
+    expect(normalizeUnitLabel("Liter")).toBe("L");
+    expect(normalizeUnitLabel("liter")).toBe("L");
+    /* Canonical mass + count. */
+    expect(normalizeUnitLabel("ml")).toBe("ml");
+    expect(normalizeUnitLabel("ML")).toBe("ml");
+    expect(normalizeUnitLabel("kg")).toBe("kg");
+    expect(normalizeUnitLabel("Kg")).toBe("kg");
+    /* "gr"/"gram" alias → canonical "g". */
+    expect(normalizeUnitLabel("gr")).toBe("g");
+    expect(normalizeUnitLabel("gram")).toBe("g");
+    expect(normalizeUnitLabel("g")).toBe("g");
+    /* "Pcs"/"pc" → canonical "pcs". */
+    expect(normalizeUnitLabel("Pcs")).toBe("pcs");
+    expect(normalizeUnitLabel("pc")).toBe("pcs");
+    /* 3-char non-canonical preserved. */
+    expect(normalizeUnitLabel("gas")).toBe("gas");
+    expect(normalizeUnitLabel("set")).toBe("set");
+    /* 4+ char custom: lowercase + strip s. */
+    expect(normalizeUnitLabel("kalengs")).toBe("kaleng");
+    expect(normalizeUnitLabel("Kaleng")).toBe("kaleng");
   });
 });
 
