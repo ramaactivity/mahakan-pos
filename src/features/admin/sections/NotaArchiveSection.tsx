@@ -12,6 +12,7 @@ import {
   Filter,
   FlagTriangleRight,
   Loader2,
+  Plus,
   RefreshCcw,
   Search,
   X,
@@ -23,6 +24,7 @@ import {
   CardContent,
   Input,
   Modal,
+  Select,
   Skeleton,
   toast,
 } from "@/components/ui";
@@ -42,7 +44,9 @@ import {
   type PublicNotaArchiveWithFiles,
 } from "@/features/nota-archives";
 import type { Role } from "@/lib/auth";
+import { hasPermission } from "@/lib/auth/rbac";
 import { cn } from "@/lib/utils";
+import { UploadNotaModal } from "./nota/UploadNotaModal";
 
 interface NotaArchiveSectionProps {
   viewerRole: Role;
@@ -118,6 +122,9 @@ export function NotaArchiveSection({ viewerRole }: NotaArchiveSectionProps) {
   }
 
   const [detailId, setDetailId] = useState<string | null>(null);
+  /* Sesi AE-149 — Upload nota dari back office (mirror staff /m/nota). */
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const canUpload = hasPermission(viewerRole, "nota_archive.create");
 
   return (
     <div className="space-y-4 p-6">
@@ -131,28 +138,41 @@ export function NotaArchiveSection({ viewerRole }: NotaArchiveSectionProps) {
             download di sini, file fisik tersimpan rapi di Google Drive.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void refetch()}>
-          <RefreshCcw className="size-4" aria-hidden /> Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>
+            <RefreshCcw className="size-4" aria-hidden /> Refresh
+          </Button>
+          {canUpload ? (
+            <Button size="sm" onClick={() => setUploadOpen(true)}>
+              <Plus className="size-4" aria-hidden /> Upload Nota
+            </Button>
+          ) : null}
+        </div>
       </header>
 
-      {/* Stats */}
+      {/* Stats — wider cards dengan icon + helper text. */}
       {stats ? (
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-3">
           <StatCard
             label="Menunggu Review"
             value={stats.pendingReview}
             tone="warning"
+            icon={<AlertCircle className="size-5" aria-hidden />}
+            helper="Belum diverifikasi oleh manager"
           />
           <StatCard
             label="Sudah Dicek (bulan ini)"
             value={stats.reviewedThisMonth}
             tone="success"
+            icon={<CheckCircle2 className="size-5" aria-hidden />}
+            helper="Reviewed & marked clean"
           />
           <StatCard
-            label="Total Bulan Ini"
+            label="Total Nota Bulan Ini"
             value={stats.totalThisMonth}
             tone="neutral"
+            icon={<FileText className="size-5" aria-hidden />}
+            helper="Termasuk semua status"
           />
         </div>
       ) : null}
@@ -202,48 +222,51 @@ export function NotaArchiveSection({ viewerRole }: NotaArchiveSectionProps) {
       </div>
 
       {showFilters ? (
-        <div className="grid gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3 sm:grid-cols-3">
-          <div>
-            <label className="block text-xs font-medium text-neutral-700">
-              Kategori
-            </label>
-            <select
-              value={categoryFilter}
-              onChange={(e) =>
-                setCategoryFilter(
-                  e.target.value as NotaArchiveCategory | "all",
-                )
-              }
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-mahakan-green-700 focus:outline-none"
+        <div className="grid gap-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4 sm:grid-cols-3">
+          <Select
+            label="Kategori"
+            ariaLabel="Filter kategori"
+            options={[
+              { value: "all", label: "Semua kategori" },
+              ...notaArchiveCategoryValues.map((c) => ({
+                value: c,
+                label: `${CATEGORY_EMOJI[c]}  ${CATEGORY_LABELS[c]}`,
+              })),
+            ]}
+            value={categoryFilter}
+            onValueChange={(v) =>
+              setCategoryFilter(v as NotaArchiveCategory | "all")
+            }
+            size="sm"
+          />
+          <div className="space-y-1.5">
+            <label
+              htmlFor="nota-date-from"
+              className="block text-sm font-medium text-neutral-900"
             >
-              <option value="all">Semua kategori</option>
-              {notaArchiveCategoryValues.map((c) => (
-                <option key={c} value={c}>
-                  {CATEGORY_LABELS[c]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-neutral-700">
               Tanggal dari
             </label>
             <input
+              id="nota-date-from"
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-mahakan-green-700 focus:outline-none"
+              className="h-9 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
             />
           </div>
-          <div>
-            <label className="block text-xs font-medium text-neutral-700">
+          <div className="space-y-1.5">
+            <label
+              htmlFor="nota-date-to"
+              className="block text-sm font-medium text-neutral-900"
+            >
               Tanggal sampai
             </label>
             <input
+              id="nota-date-to"
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-mahakan-green-700 focus:outline-none"
+              className="h-9 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
             />
           </div>
         </div>
@@ -366,6 +389,15 @@ export function NotaArchiveSection({ viewerRole }: NotaArchiveSectionProps) {
           }}
         />
       ) : null}
+
+      <UploadNotaModal
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        onUploaded={() => {
+          setUploadOpen(false);
+          refresh();
+        }}
+      />
     </div>
   );
 }
@@ -374,21 +406,34 @@ function StatCard({
   label,
   value,
   tone,
+  icon,
+  helper,
 }: {
   label: string;
   value: number;
   tone: "warning" | "success" | "neutral";
+  icon?: React.ReactNode;
+  helper?: string;
 }) {
   return (
-    <Card>
-      <CardContent className="flex items-center justify-between p-4">
-        <div>
-          <p className="text-xs uppercase tracking-wider text-neutral-500">
+    <Card
+      className={cn(
+        "border-l-4 transition-shadow hover:shadow-md",
+        tone === "warning"
+          ? "border-l-warning-500"
+          : tone === "success"
+            ? "border-l-mahakan-green-700"
+            : "border-l-neutral-300",
+      )}
+    >
+      <CardContent className="flex items-start justify-between gap-3 p-5">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
             {label}
           </p>
           <p
             className={cn(
-              "mt-0.5 text-2xl font-bold",
+              "mt-1.5 text-3xl font-bold tabular-nums",
               tone === "warning"
                 ? "text-warning-500"
                 : tone === "success"
@@ -398,14 +443,22 @@ function StatCard({
           >
             {value}
           </p>
+          {helper ? (
+            <p className="mt-1 text-[11px] text-neutral-500">{helper}</p>
+          ) : null}
         </div>
-        {tone === "warning" ? (
-          <AlertCircle className="size-6 text-warning-500" aria-hidden />
-        ) : tone === "success" ? (
-          <CheckCircle2 className="size-6 text-mahakan-green-700" aria-hidden />
-        ) : (
-          <FileText className="size-6 text-neutral-400" aria-hidden />
-        )}
+        <div
+          className={cn(
+            "flex size-10 flex-none items-center justify-center rounded-full",
+            tone === "warning"
+              ? "bg-warning-100/60 text-warning-500"
+              : tone === "success"
+                ? "bg-mahakan-green-100/60 text-mahakan-green-900"
+                : "bg-neutral-100 text-neutral-500",
+          )}
+        >
+          {icon ?? <FileText className="size-5" aria-hidden />}
+        </div>
       </CardContent>
     </Card>
   );
