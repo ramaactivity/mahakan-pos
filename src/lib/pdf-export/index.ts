@@ -4,7 +4,9 @@ import jsPDF from "jspdf";
 import { formatRupiah } from "@/lib/format";
 import type {
   DailySalesReport,
+  HppReport,
   PnlReport,
+  PurchaseRollupReport,
   SalesRangeReport,
 } from "@/features/reports";
 import type { Outlet } from "@/features/outlets";
@@ -758,5 +760,160 @@ export function exportCashFlowStatementPdf(
   save(
     doc,
     `mahakan-arus-kas-${report.periodLabel.replace(/\s/g, "-")}.pdf`,
+  );
+}
+
+/* ============================================================
+ * Sesi AE-140 — HPP (COGS Periodik) PDF export.
+ *
+ * Inab Finance feedback: report selain Harian/Mingguan/PnL belum punya
+ * Export PDF. Tambah HPP + Purchase Rollup karena paling sering dipakai
+ * Finance untuk close-month.
+ * ============================================================ */
+
+export function exportHppPdf(report: HppReport, outlet: Outlet): void {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  let y = brandedHeader(
+    doc,
+    outlet,
+    `Laporan HPP (COGS) — ${report.period.from} s/d ${report.period.to}`,
+  );
+
+  if (report.hasPartialRows) {
+    doc.setFontSize(8);
+    doc.setTextColor("#B45309");
+    doc.text(
+      "⚠ Ada bahan dengan stok awal/akhir derived dari current stock (bukan opname snapshot) — angka partial.",
+      MARGIN,
+      y,
+    );
+    y += 5;
+  }
+
+  /* Ringkasan totals. */
+  y = sectionTitle(doc, "Ringkasan Totals", y);
+  y = row(doc, "Stok Awal (Cost)", formatRupiah(report.totals.stockAwalCost), y);
+  y = row(
+    doc,
+    "Pembelian Periode (Cost)",
+    formatRupiah(report.totals.pembelianCost),
+    y,
+  );
+  y = row(
+    doc,
+    "Stok Akhir (Cost)",
+    formatRupiah(report.totals.stockAkhirCost),
+    y,
+  );
+  y = row(doc, "HPP / COGS Periode", formatRupiah(report.totals.hppCost), y, true);
+  y = divider(doc, y);
+
+  /* Per section breakdown. */
+  if (report.bySection.length > 0) {
+    y = ensurePage(doc, y, 50);
+    y = sectionTitle(doc, "Per Section", y);
+    for (const s of report.bySection) {
+      y = ensurePage(doc, y);
+      y = row(
+        doc,
+        `${s.sectionLabel}: HPP`,
+        formatRupiah(s.hppCost),
+        y,
+      );
+    }
+    y = divider(doc, y);
+  }
+
+  /* Per ingredient table (cap to 100 rows untuk PDF readability). */
+  if (report.rows.length > 0) {
+    y = ensurePage(doc, y, 50);
+    y = sectionTitle(doc, `Per Bahan (${report.rows.length} bahan)`, y);
+    const top = report.rows
+      .filter((r) => r.hppCost > 0)
+      .sort((a, b) => b.hppCost - a.hppCost)
+      .slice(0, 100);
+    for (const r of top) {
+      y = ensurePage(doc, y);
+      const flag = r.partial ? " (P)" : "";
+      y = row(
+        doc,
+        `${r.name}${flag} (${r.hppQty} ${r.unit})`,
+        formatRupiah(r.hppCost),
+        y,
+      );
+    }
+    if (report.rows.length > 100) {
+      y = ensurePage(doc, y);
+      doc.setFontSize(8);
+      doc.setTextColor(BRAND.muted);
+      doc.text(
+        `... ${report.rows.length - 100} bahan lain (HPP < ${formatRupiah(top[top.length - 1]?.hppCost ?? 0)}) tidak ditampilkan`,
+        MARGIN,
+        y,
+      );
+    }
+  }
+
+  footer(doc);
+  save(doc, `mahakan-hpp-${report.period.from}-to-${report.period.to}.pdf`);
+}
+
+/* Purchase Rollup PDF — pivot view per date × section/payment method. */
+export function exportPurchaseRollupPdf(
+  report: PurchaseRollupReport,
+  outlet: Outlet,
+): void {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  let y = brandedHeader(
+    doc,
+    outlet,
+    `Rekap Pembelian — ${report.period.from} s/d ${report.period.to}`,
+  );
+
+  y = sectionTitle(doc, "Grand Total", y);
+  y = row(doc, "Total Pembelian Periode", formatRupiah(report.grandTotal), y, true);
+  y = divider(doc, y);
+
+  /* By date. */
+  if (report.byDate.length > 0) {
+    y = ensurePage(doc, y, 40);
+    y = sectionTitle(doc, "Per Tanggal", y);
+    for (const d of report.byDate) {
+      y = ensurePage(doc, y);
+      y = row(doc, d.date, formatRupiah(d.total), y);
+    }
+    y = divider(doc, y);
+  }
+
+  /* By column (section × payment). */
+  const PAYMENT_LABEL_PURCHASE: Record<string, string> = {
+    cash: "Cash",
+    transfer: "Transfer",
+    qris: "QRIS",
+    edc: "EDC",
+    top: "TOP / Hutang",
+    other: "Lainnya",
+  };
+  if (report.byColumn.length > 0) {
+    y = ensurePage(doc, y, 50);
+    y = sectionTitle(doc, "Per Section × Pembayaran", y);
+    for (const c of report.byColumn) {
+      y = ensurePage(doc, y);
+      const sectionLabel = c.section ?? "Tanpa Section";
+      const payLabel =
+        PAYMENT_LABEL_PURCHASE[c.paymentMethod] ?? c.paymentMethod;
+      y = row(
+        doc,
+        `${sectionLabel} — ${payLabel}`,
+        formatRupiah(c.total),
+        y,
+      );
+    }
+  }
+
+  footer(doc);
+  save(
+    doc,
+    `mahakan-purchase-rollup-${report.period.from}-to-${report.period.to}.pdf`,
   );
 }

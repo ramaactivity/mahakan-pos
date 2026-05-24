@@ -20,6 +20,8 @@ import {
   type HppReport,
   type HppReportRow,
 } from "@/features/reports";
+import { getOwnOutlet, type Outlet } from "@/features/outlets";
+import { exportHppPdf } from "@/lib/pdf-export";
 import { formatRupiah } from "@/lib/format";
 import { downloadCsv } from "./menu-engineering-csv";
 import { cn } from "@/lib/utils";
@@ -46,8 +48,18 @@ function monthStartIso(): string {
 
 export function HppView() {
   const [report, setReport] = useState<HppReport | null>(null);
+  const [outlet, setOutlet] = useState<Outlet | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    void (async () => {
+      const res = await getOwnOutlet();
+      if (res.success) setOutlet(res.data);
+    })();
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
   const [range, setRange] = useState<DateRangeValue>({
     from: monthStartIso(),
     to: todayJakartaIso(),
@@ -110,6 +122,11 @@ export function HppView() {
     return result;
   }, [report]);
 
+  function onExportPdf() {
+    if (!report || !outlet) return;
+    exportHppPdf(report, outlet);
+  }
+
   function onExportCsv() {
     if (!report) return;
     const data = report.rows.map((r) => ({
@@ -148,6 +165,15 @@ export function HppView() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onExportPdf}
+            disabled={!report || !outlet || report.rows.length === 0}
+            aria-label="Export PDF"
+          >
+            <Download className="size-4" aria-hidden /> PDF
+          </Button>
           <Button
             variant="outline"
             size="sm"

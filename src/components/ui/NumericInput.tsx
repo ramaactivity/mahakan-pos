@@ -104,11 +104,21 @@ export const NumericInput = forwardRef<HTMLDivElement, NumericInputProps>(
         if (!allowDecimal) return;
         if (value.includes(".")) return;
         d = ".";
-        if (value === "") {
+        if (value === "" || value === "0") {
           onChange("0.");
           haptic();
           return;
         }
+      }
+      /* Sesi AE-140 — treat leading "0" sebagai placeholder. Default
+       * value "Rp0" sebelumnya bikin user input "1" → "01" → display
+       * "Rp01" atau worse "Rp0.100.000" untuk multi-digit input.
+       * Fix: replace "0" dengan digit pertama (kecuali user input "0"
+       * lagi yang berarti memang mau "0", atau decimal handled di atas). */
+      if (value === "0" && d !== "0") {
+        onChange(d);
+        haptic();
+        return;
       }
       onChange(value + d);
       haptic();

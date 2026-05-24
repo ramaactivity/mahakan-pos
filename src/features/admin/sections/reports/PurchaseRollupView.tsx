@@ -19,6 +19,8 @@ import {
   isOk,
   type PurchaseRollupReport,
 } from "@/features/reports";
+import { getOwnOutlet, type Outlet } from "@/features/outlets";
+import { exportPurchaseRollupPdf } from "@/lib/pdf-export";
 import { formatRupiah } from "@/lib/format";
 import { downloadCsv } from "./menu-engineering-csv";
 
@@ -62,8 +64,18 @@ function cellKey(c: { section: string | null; paymentMethod: string }) {
 
 export function PurchaseRollupView() {
   const [report, setReport] = useState<PurchaseRollupReport | null>(null);
+  const [outlet, setOutlet] = useState<Outlet | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    void (async () => {
+      const res = await getOwnOutlet();
+      if (res.success) setOutlet(res.data);
+    })();
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
   const [range, setRange] = useState<DateRangeValue>({
     from: monthStartIso(),
     to: todayJakartaIso(),
@@ -162,6 +174,11 @@ export function PurchaseRollupView() {
       };
     }, [report]);
 
+  function onExportPdf() {
+    if (!report || !outlet) return;
+    exportPurchaseRollupPdf(report, outlet);
+  }
+
   function onExportCsv() {
     if (!report) return;
     const dates = Array.from(byDate.keys()).sort();
@@ -203,6 +220,15 @@ export function PurchaseRollupView() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onExportPdf}
+            disabled={!report || !outlet || report.cells.length === 0}
+            aria-label="Export PDF"
+          >
+            <Download className="size-4" aria-hidden /> PDF
+          </Button>
           <Button
             variant="outline"
             size="sm"

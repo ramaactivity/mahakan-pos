@@ -310,8 +310,24 @@ export function JournalEntryModal({
     },
   ];
   function applyTemplate(t: Template) {
-    const findId = (code: string) => accounts.find((a) => a.code === code)?.id ?? null;
-    setDescription(t.description);
+    const findId = (code: string) =>
+      accounts.find((a) => a.code === code)?.id ?? null;
+
+    /* Sesi AE-140 — guard description overwrite. Inab Finance lapor:
+     * "user udah ngetik description sendiri lalu pilih template, input
+     * mereka bisa hilang tanpa sadar". Solution: kalau description
+     * sudah terisi (non-empty trimmed), konfirmasi dulu sebelum
+     * overwrite. Kalau kosong, langsung fill. */
+    const currentDesc = description.trim();
+    let shouldOverwrite = true;
+    if (currentDesc.length > 0 && currentDesc !== t.description.trim()) {
+      shouldOverwrite = window.confirm(
+        `Description "${currentDesc}" akan ditimpa jadi "${t.description.trim()}". Lanjut?`,
+      );
+    }
+    if (shouldOverwrite) {
+      setDescription(t.description);
+    }
     setLines([
       {
         id: crypto.randomUUID(),
