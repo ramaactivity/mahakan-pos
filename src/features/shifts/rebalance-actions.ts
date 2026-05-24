@@ -429,7 +429,7 @@ export async function approveShiftRebalance(input: {
   if (!hasPermission(session.user.role, "shift.rebalance.approve")) {
     return fail(
       "FORBIDDEN",
-      "Hanya Owner yang bisa approve rebalancing. Kasir/Manager harus minta owner masukin kode.",
+      "Tidak punya akses apply kode approval. Hubungi Owner.",
     );
   }
   const parsed = approveSchema.safeParse(input);
@@ -649,6 +649,18 @@ export async function rejectShiftRebalance(input: {
     return fail(
       "INVALID_STATE",
       `Rebalance sudah ${rebalance.status} — tidak bisa reject lagi.`,
+    );
+  }
+  /* Sesi AE-150 — Guard: submitter tidak boleh reject pengajuannya
+   * sendiri (semantic-nya cancel, bukan reject). Exception: owner
+   * tetap bisa reject milik sendiri (edge case, but owner is god). */
+  if (
+    rebalance.requestedBy === session.user.id &&
+    session.user.role !== "owner"
+  ) {
+    return fail(
+      "FORBIDDEN_SELF_REJECT",
+      "Tidak bisa reject pengajuan sendiri — pakai Cancel untuk membatalkan.",
     );
   }
   const now = new Date();

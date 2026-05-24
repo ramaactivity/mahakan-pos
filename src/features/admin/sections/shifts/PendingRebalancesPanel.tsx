@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import {
   AlertTriangle,
+  Ban,
   CheckCircle2,
   Clock,
+  KeyRound,
   Mail,
   XCircle,
 } from "lucide-react";
@@ -21,6 +23,7 @@ import {
 } from "@/components/ui";
 import {
   approveShiftRebalance,
+  cancelShiftRebalance,
   listShiftRebalances,
   rejectShiftRebalance,
   type ShiftRebalance,
@@ -58,8 +61,10 @@ const SOURCE_LABEL: Record<string, string> = {
 export function PendingRebalancesPanel() {
   const { session } = useSession();
   const role = session?.user.role ?? "staff";
+  const userId = session?.user.id ?? "";
   const canApprove = hasPermission(role, "shift.rebalance.approve");
   const canReject = hasPermission(role, "shift.rebalance.reject");
+  const canCancel = hasPermission(role, "shift.rebalance.cancel");
   const canView = hasPermission(role, "shift.rebalance.view");
 
   const [filter, setFilter] = useState<
@@ -69,9 +74,9 @@ export function PendingRebalancesPanel() {
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [actionTarget, setActionTarget] = useState<RebalanceRow | null>(null);
-  const [actionMode, setActionMode] = useState<"approve" | "reject" | null>(
-    null,
-  );
+  const [actionMode, setActionMode] = useState<
+    "approve" | "reject" | "cancel" | null
+  >(null);
 
   /* Sesi AE-62ag — ticking clock untuk live-age. Update tiap 60s supaya
    * badge "stale" (>1h) muncul tanpa user reload. Date.now() di render
@@ -171,29 +176,48 @@ export function PendingRebalancesPanel() {
           />
         ) : (
           <div className="space-y-2">
-            {rows.map((r) => (
-              <RebalanceCard
-                key={r.id}
-                row={r}
-                nowMs={nowMs}
-                onApprove={
-                  canApprove && r.status === "pending_approval"
-                    ? () => {
-                        setActionTarget(r);
-                        setActionMode("approve");
-                      }
-                    : undefined
-                }
-                onReject={
-                  canReject && r.status === "pending_approval"
-                    ? () => {
-                        setActionTarget(r);
-                        setActionMode("reject");
-                      }
-                    : undefined
-                }
-              />
-            ))}
+            {rows.map((r) => {
+              /* Sesi AE-150 — Entity-level role distinction.
+               * - Submitter (yang ngajukan): boleh Input Kode + Cancel sendiri.
+               *   Tidak boleh reject (semantic = cancel).
+               * - Approver non-submitter (owner / other manager): boleh Reject.
+               *   "Input Kode" tidak ditampilkan supaya tidak misleading —
+               *   owner approve via email channel (out-of-band), bukan login. */
+              const isSubmitter = r.requestedBy === userId;
+              const isPending = r.status === "pending_approval";
+              return (
+                <RebalanceCard
+                  key={r.id}
+                  row={r}
+                  nowMs={nowMs}
+                  isSubmitter={isSubmitter}
+                  onApprove={
+                    isSubmitter && canApprove && isPending
+                      ? () => {
+                          setActionTarget(r);
+                          setActionMode("approve");
+                        }
+                      : undefined
+                  }
+                  onCancel={
+                    isSubmitter && canCancel && isPending
+                      ? () => {
+                          setActionTarget(r);
+                          setActionMode("cancel");
+                        }
+                      : undefined
+                  }
+                  onReject={
+                    !isSubmitter && canReject && isPending
+                      ? () => {
+                          setActionTarget(r);
+                          setActionMode("reject");
+                        }
+                      : undefined
+                  }
+                />
+              );
+            })}
           </div>
         )}
       </div>
@@ -219,11 +243,17 @@ function RebalanceCard({
   row,
   onApprove,
   onReject,
+  onCancel,
+  isSubmitter,
   nowMs,
 }: {
   row: RebalanceRow;
   onApprove?: () => void;
   onReject?: () => void;
+  onCancel?: () => void;
+  /** True kalau viewer.userId === row.requestedBy. Dipakai untuk badge
+   *  "Pengajuan Anda" + swap reject → cancel button. */
+  isSubmitter: boolean;
   /** Sesi AE-62ag — passed dari parent (ticking state) supaya age update
    * setiap menit tanpa langgar React purity rule (Date.now() di render). */
   nowMs: number;
@@ -283,6 +313,9 @@ function RebalanceCard({
                 {row.cashierName ?? "Kasir"}
               </p>
               <StatusBadge status={row.status} />
+              {isSubmitter && row.status === "pending_approval" ? (
+                <Badge variant="info">Pengajuan Anda</Badge>
+              ) : null}
               <span className="text-xs text-neutral-500">
                 {SOURCE_LABEL[row.source] ?? row.source}
               </span>
@@ -300,11 +333,27 @@ function RebalanceCard({
               · diajukan {formatIndonesianDateTime(row.requestedAt)} oleh{" "}
               {row.requesterName ?? "—"}
             </p>
+            {isSubmitter && row.status === "pending_approval" ? (
+              <p className="mt-1 inline-flex items-center gap-1.5 rounded-md bg-info-100/60 px-2 py-1 text-[11px] text-info-700">
+                <Mail className="size-3" /> Kode 6-digit sudah dikirim ke Owner.
+                Minta kode ke Owner via WA, lalu klik <strong>Input Kode</strong>.
+              </p>
+            ) : null}
           </div>
-          <div className="flex shrink-0 gap-1.5">
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
             {onApprove ? (
               <Button size="sm" onClick={onApprove}>
-                <Mail className="size-4" /> Input Kode
+                <KeyRound className="size-4" /> Input Kode
+              </Button>
+            ) : null}
+            {onCancel ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onCancel}
+                className="text-warning-700 hover:bg-warning-100"
+              >
+                <Ban className="size-4" /> Cancel
               </Button>
             ) : null}
             {onReject ? (
@@ -314,7 +363,7 @@ function RebalanceCard({
                 onClick={onReject}
                 className="text-danger-500 hover:bg-danger-100"
               >
-                Reject
+                <XCircle className="size-4" /> Reject
               </Button>
             ) : null}
           </div>
@@ -400,7 +449,7 @@ function ActionModal({
   onChanged,
 }: {
   target: RebalanceRow | null;
-  mode: "approve" | "reject" | null;
+  mode: "approve" | "reject" | "cancel" | null;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -440,9 +489,9 @@ function ActionModal({
         setError(res.error.message);
         return;
       }
-      toast.success("Rebalancing approved + journal updated");
+      toast.success("Rebalancing applied + journal updated");
       onChanged();
-    } else {
+    } else if (mode === "reject") {
       if (reason.trim().length < 3) {
         setError("Alasan minimal 3 karakter");
         return;
@@ -459,14 +508,32 @@ function ActionModal({
       }
       toast.info("Rebalancing rejected");
       onChanged();
+    } else if (mode === "cancel") {
+      setSubmitting(true);
+      const res = await cancelShiftRebalance({
+        rebalanceId: target.id,
+      });
+      setSubmitting(false);
+      if (!isOk(res)) {
+        setError(res.error.message);
+        return;
+      }
+      toast.info("Pengajuan dibatalkan");
+      onChanged();
     }
   }
+
+  const titleMap = {
+    approve: "Input Kode Approval",
+    reject: "Reject Rebalancing",
+    cancel: "Cancel Pengajuan Anda",
+  } as const;
 
   return (
     <Modal
       open
       onClose={submitting ? () => undefined : onClose}
-      title={mode === "approve" ? "Approve Rebalancing" : "Reject Rebalancing"}
+      title={titleMap[mode]}
       description={`Shift ${target.cashierName ?? "kasir"} · alasan: ${target.reason}`}
       size="md"
       footer={
@@ -478,15 +545,25 @@ function ActionModal({
             onClick={onSubmit}
             loading={submitting}
             disabled={submitting}
-            variant={mode === "approve" ? "primary" : "destructive"}
+            variant={
+              mode === "approve"
+                ? "primary"
+                : mode === "reject"
+                  ? "destructive"
+                  : "outline"
+            }
           >
             {mode === "approve" ? (
               <>
-                <CheckCircle2 className="size-4" /> Approve
+                <KeyRound className="size-4" /> Apply
+              </>
+            ) : mode === "reject" ? (
+              <>
+                <XCircle className="size-4" /> Reject
               </>
             ) : (
               <>
-                <XCircle className="size-4" /> Reject
+                <Ban className="size-4" /> Cancel
               </>
             )}
           </Button>
@@ -497,7 +574,8 @@ function ActionModal({
         {mode === "approve" ? (
           <>
             <p className="text-xs text-neutral-700">
-              Masukkan kode 6-digit yang dikirim ke email Owner.
+              Owner kirim kode 6-digit via WA / SMS setelah review email.
+              Masukkan kode di sini untuk apply koreksi.
             </p>
             <Input
               autoFocus
@@ -515,14 +593,14 @@ function ActionModal({
               <p className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                 <span>
-                  <strong>Approve = irreversible.</strong> Shift fields akan
+                  <strong>Apply = irreversible.</strong> Shift fields akan
                   ter-update + journal lama di-reverse + journal baru di-post.
-                  Pastikan correction nya benar.
+                  Pastikan correction-nya benar.
                 </span>
               </p>
             </div>
           </>
-        ) : (
+        ) : mode === "reject" ? (
           <>
             <Input
               autoFocus
@@ -532,6 +610,21 @@ function ActionModal({
               onChange={(e) => setReason(e.target.value)}
               required
             />
+            <p className="rounded-md bg-danger-50 px-2 py-1.5 text-[11px] text-danger-700">
+              Reject ini akan revoke kode 6-digit + notify submitter. Submitter
+              perlu submit ulang kalau koreksi tetap dibutuhkan.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-neutral-700">
+              Yakin batalkan pengajuan ini? Kode 6-digit yang sudah dikirim ke
+              Owner akan di-revoke supaya tidak bisa di-apply lagi.
+            </p>
+            <p className="rounded-md bg-warning-50 px-2 py-1.5 text-[11px] text-warning-700">
+              Aman dipakai kalau Anda sadar pengajuan salah sebelum Owner
+              ngasih kode. Kalau perlu, submit ulang dengan nilai benar.
+            </p>
           </>
         )}
         {error ? (

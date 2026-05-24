@@ -373,7 +373,10 @@ export async function approveEntryChange(input: {
 }): Promise<ApiResult<{ changeId: string; appliedAt: Date }>> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "entry_change.approve")) {
-    return fail("FORBIDDEN", "Hanya Owner yang bisa approve koreksi entry");
+    return fail(
+      "FORBIDDEN",
+      "Tidak punya akses apply kode approval. Hubungi Owner.",
+    );
   }
   const parsed = approveSchema.safeParse(input);
   if (!parsed.success) {
@@ -546,7 +549,7 @@ export async function rejectEntryChange(input: {
 }): Promise<ApiResult<{ changeId: string }>> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "entry_change.approve")) {
-    return fail("FORBIDDEN", "Hanya Owner yang bisa reject koreksi entry");
+    return fail("FORBIDDEN", "Tidak punya hak reject koreksi entry");
   }
   const parsed = rejectSchema.safeParse(input);
   if (!parsed.success) {
@@ -563,6 +566,17 @@ export async function rejectEntryChange(input: {
   if (pec.outletId !== session.user.outletId) return fail("FORBIDDEN", "Outlet lain");
   if (pec.status !== "pending_approval") {
     return fail("INVALID_STATE", `Sudah ${pec.status}.`);
+  }
+  /* Sesi AE-150 — Submitter tidak boleh reject pengajuannya sendiri
+   * (semantic-nya cancel). Owner exception. */
+  if (
+    pec.requestedBy === session.user.id &&
+    session.user.role !== "owner"
+  ) {
+    return fail(
+      "FORBIDDEN_SELF_REJECT",
+      "Tidak bisa reject pengajuan sendiri — pakai Cancel.",
+    );
   }
 
   const now = new Date();

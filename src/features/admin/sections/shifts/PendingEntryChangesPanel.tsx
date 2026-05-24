@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Ban,
   CheckCircle2,
   Clock,
+  KeyRound,
   Mail,
   Pencil,
   Trash2,
@@ -23,6 +25,7 @@ import {
 } from "@/components/ui";
 import {
   approveEntryChange,
+  cancelEntryChange,
   isOk,
   listPendingEntryChanges,
   rejectEntryChange,
@@ -47,6 +50,7 @@ import { cn } from "@/lib/utils";
 export function PendingEntryChangesPanel() {
   const { session } = useSession();
   const role = session?.user.role ?? "staff";
+  const userId = session?.user.id ?? "";
   const canApprove = hasPermission(role, "entry_change.approve");
 
   const [filter, setFilter] = useState<
@@ -56,7 +60,9 @@ export function PendingEntryChangesPanel() {
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [actionTarget, setActionTarget] = useState<PendingEntryChangeWithMeta | null>(null);
-  const [actionMode, setActionMode] = useState<"approve" | "reject" | null>(null);
+  const [actionMode, setActionMode] = useState<
+    "approve" | "reject" | "cancel" | null
+  >(null);
 
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   useEffect(() => {
@@ -255,29 +261,57 @@ export function PendingEntryChangesPanel() {
                     </p>
                   ) : null}
 
-                  {r.status === "pending_approval" && canApprove ? (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setActionTarget(r);
-                          setActionMode("approve");
-                        }}
-                      >
-                        <CheckCircle2 className="size-4" /> Approve dengan Kode
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setActionTarget(r);
-                          setActionMode("reject");
-                        }}
-                      >
-                        <XCircle className="size-4" /> Reject
-                      </Button>
-                    </div>
-                  ) : null}
+                  {(() => {
+                    if (r.status !== "pending_approval") return null;
+                    /* Sesi AE-150 — entity-level role distinction.
+                     * Submitter (yang propose koreksi) → "Input Kode" + Cancel.
+                     * Non-submitter approver → "Reject" saja.
+                     * Owner approve via email channel (out-of-band). */
+                    const isSubmitter = r.requestedBy === userId;
+                    return (
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {isSubmitter && canApprove ? (
+                          <>
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                setActionTarget(r);
+                                setActionMode("approve");
+                              }}
+                            >
+                              <KeyRound className="size-4" /> Input Kode
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setActionTarget(r);
+                                setActionMode("cancel");
+                              }}
+                              className="text-warning-700 hover:bg-warning-100"
+                            >
+                              <Ban className="size-4" /> Cancel
+                            </Button>
+                            <span className="ml-1 inline-flex items-center gap-1.5 text-[11px] text-info-700">
+                              <Mail className="size-3" /> Pengajuan Anda
+                            </span>
+                          </>
+                        ) : !isSubmitter && canApprove ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setActionTarget(r);
+                              setActionMode("reject");
+                            }}
+                            className="text-danger-500 hover:bg-danger-100"
+                          >
+                            <XCircle className="size-4" /> Reject
+                          </Button>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
                 </li>
               );
             })}
@@ -310,7 +344,7 @@ function ActionModal({
   onSubmitted,
 }: {
   target: PendingEntryChangeWithMeta | null;
-  mode: "approve" | "reject" | null;
+  mode: "approve" | "reject" | "cancel" | null;
   onClose: () => void;
   onSubmitted: () => void;
 }) {
@@ -352,7 +386,7 @@ function ActionModal({
       }
       toast.success("Koreksi disetujui — entry sudah ter-update");
       onSubmitted();
-    } else {
+    } else if (mode === "reject") {
       if (rejectReason.trim().length < 3) {
         setError("Alasan reject minimal 3 karakter");
         setSubmitting(false);
@@ -369,14 +403,29 @@ function ActionModal({
       }
       toast.success("Koreksi ditolak");
       onSubmitted();
+    } else if (mode === "cancel") {
+      const res = await cancelEntryChange({ changeId: target.id });
+      setSubmitting(false);
+      if (!isOk(res)) {
+        setError(res.error.message);
+        return;
+      }
+      toast.info("Pengajuan dibatalkan");
+      onSubmitted();
     }
   }
+
+  const titleMap = {
+    approve: "Input Kode Approval",
+    reject: "Reject Koreksi Entry",
+    cancel: "Cancel Pengajuan Anda",
+  } as const;
 
   return (
     <Modal
       open={!!target && !!mode}
       onClose={submitting ? () => undefined : onClose}
-      title={mode === "approve" ? "Approve Koreksi Entry" : "Reject Koreksi Entry"}
+      title={titleMap[mode]}
       size="md"
       footer={
         <>
@@ -388,9 +437,27 @@ function ActionModal({
             loading={submitting}
             disabled={submitting}
             size="lg"
-            variant={mode === "reject" ? "destructive" : "primary"}
+            variant={
+              mode === "approve"
+                ? "primary"
+                : mode === "reject"
+                  ? "destructive"
+                  : "outline"
+            }
           >
-            {mode === "approve" ? "Approve" : "Reject"}
+            {mode === "approve" ? (
+              <>
+                <KeyRound className="size-4" /> Apply
+              </>
+            ) : mode === "reject" ? (
+              <>
+                <XCircle className="size-4" /> Reject
+              </>
+            ) : (
+              <>
+                <Ban className="size-4" /> Cancel
+              </>
+            )}
           </Button>
         </>
       }
@@ -415,16 +482,25 @@ function ActionModal({
         </div>
 
         {mode === "approve" ? (
-          <Input
-            label="Kode 6-digit dari email"
-            placeholder="000000"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            inputMode="numeric"
-            maxLength={6}
-            required
-          />
-        ) : (
+          <>
+            <p className="text-xs text-neutral-700">
+              Owner kirim kode 6-digit via WA / SMS setelah review email.
+              Masukkan kode untuk apply koreksi ini.
+            </p>
+            <Input
+              label="Kode 6-digit"
+              placeholder="000000"
+              value={code}
+              onChange={(e) =>
+                setCode(e.target.value.replace(/[^\d]/g, "").slice(0, 6))
+              }
+              inputMode="numeric"
+              maxLength={6}
+              required
+              autoFocus
+            />
+          </>
+        ) : mode === "reject" ? (
           <div className="space-y-1.5">
             <label
               htmlFor="reject-reason"
@@ -445,6 +521,16 @@ function ActionModal({
               required
             />
           </div>
+        ) : (
+          <>
+            <p className="text-sm text-neutral-700">
+              Yakin batalkan pengajuan ini? Kode 6-digit yang sudah dikirim ke
+              Owner akan di-revoke.
+            </p>
+            <p className="rounded-md bg-warning-50 px-2 py-1.5 text-[11px] text-warning-700">
+              Submit ulang dengan nilai benar kalau perlu.
+            </p>
+          </>
         )}
 
         {error ? (

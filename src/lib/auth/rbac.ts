@@ -54,8 +54,18 @@ export const permissions = {
    * .reject: owner/manager reject pending
    * .cancel: requester withdraw before approve
    * .view: list pending + history */
+  /* Sesi AE-150 — Owner clarification on approval flow:
+   * Code 6-digit emailed ke owner (out-of-band approval channel). Owner
+   * baca email, decide, lalu share code ke MANAGER via WA/SMS. Manager
+   * (or whoever ada di kedai dengan akses sistem) input code di system
+   * untuk APPLY rebalancing. Owner tidak perlu login → "Input Kode"
+   * tidak ditampilkan di owner page.
+   *
+   * Permission `approve` = "punya hak apply code yang dishare owner".
+   * Manager + supervisor punya hak ini. Code = bearer token; security
+   * via email channel + 6-digit hash + 5-attempt lockout. */
   "shift.rebalance.request": ["owner", "manager", "supervisor", "staff"],
-  "shift.rebalance.approve": ["owner"],
+  "shift.rebalance.approve": ["owner", "manager", "supervisor"],
   "shift.rebalance.reject": ["owner", "manager"],
   "shift.rebalance.cancel": ["owner", "manager", "supervisor", "staff"],
   "shift.rebalance.view": ["owner", "manager", "supervisor"],
@@ -107,10 +117,11 @@ export const permissions = {
   "income.delete": ["owner"],
   "cash.daily_summary.view": ["owner", "manager", "supervisor", "staff"],
   /* Sesi AE-67 — Entry change suggest workflow. Semua role bisa propose
-   * (staff yang sadar duluan kalau salah input), hanya owner yang bisa
-   * approve via 6-digit code (mirror shift.rebalance). */
+   * (staff yang sadar duluan kalau salah input), code 6-digit emailed
+   * ke owner. Manager/supervisor input code di system untuk apply
+   * (mirror shift.rebalance pattern sesi AE-150). */
   "entry_change.propose": ["owner", "manager", "supervisor", "staff"],
-  "entry_change.approve": ["owner"],
+  "entry_change.approve": ["owner", "manager", "supervisor"],
 
   // Reports — supervisor lihat operational, NOT P&L / cost / financial export.
   "report.sales.view": ["owner", "manager", "supervisor"],
