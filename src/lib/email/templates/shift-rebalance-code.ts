@@ -82,7 +82,7 @@ export function buildShiftRebalanceCodeEmail(
     "",
     `KODE: ${input.code}`,
     "",
-    `Berlaku sampai ${fmtTime(input.expiresAt)} WIB (10 menit). Single-use.`,
+    `Berlaku sampai ${fmtTime(input.expiresAt)} WIB (1 jam). Single-use.`,
     "",
     `Setelah Anda approve, sistem akan:`,
     `  - Update shift fields ke nilai corrected`,
@@ -148,7 +148,7 @@ export function buildShiftRebalanceCodeEmail(
       ${input.code}
     </div>
     <div style="font-size: 12px; color: #777; margin-top: 12px;">
-      Berlaku sampai ${fmtTime(input.expiresAt)} WIB (10 menit). Single-use.
+      Berlaku sampai ${fmtTime(input.expiresAt)} WIB (1 jam). Single-use.
     </div>
   </div>
   <div style="background: #ecfdf5; padding: 12px; border-radius: 8px; font-size: 12px; color: #065f46; margin-bottom: 16px;">

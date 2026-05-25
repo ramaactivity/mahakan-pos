@@ -153,7 +153,7 @@ export function ApprovalCodeModal({
             </p>
             <p className="mt-1 text-xs text-neutral-700">
               Owner forward kode ke kamu via WhatsApp untuk approve. Kode
-              berlaku 10 menit, single-use, dan terikat ke transaksi ini.
+              berlaku 1 jam, single-use, dan terikat ke transaksi ini.
             </p>
           </div>
           <dl className="space-y-1 text-xs">

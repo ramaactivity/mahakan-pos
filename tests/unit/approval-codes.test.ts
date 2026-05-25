@@ -66,8 +66,8 @@ describe("maskEmail", () => {
 });
 
 describe("constants", () => {
-  it("TTL is 10 minutes", () => {
-    expect(DEFAULT_CODE_TTL_MS).toBe(10 * 60 * 1000);
+  it("TTL is 1 hour (sesi AE-150 — extended dari 10 menit)", () => {
+    expect(DEFAULT_CODE_TTL_MS).toBe(60 * 60 * 1000);
   });
 
   it("lockout threshold is 5 failures", () => {

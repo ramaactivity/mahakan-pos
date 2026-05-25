@@ -74,8 +74,11 @@ export function isOk<T>(
  */
 export const FAILED_ATTEMPTS_LOCKOUT_THRESHOLD = 5;
 
-/** Default code TTL — 10 minutes. */
-export const DEFAULT_CODE_TTL_MS = 10 * 60 * 1000;
+/** Default code TTL — 1 jam (sesi AE-150 owner feedback: 10 menit terlalu
+ *  sebentar untuk owner yang lagi WA dengan customer/meeting). 1 jam masih
+ *  cukup ketat untuk security (bukan code yang menggantung berhari-hari)
+ *  + bracket lockout 5 attempt + revoke saat reject/cancel masih jaga. */
+export const DEFAULT_CODE_TTL_MS = 60 * 60 * 1000;
 
 /**
  * Generate a 6-digit numeric code with crypto-quality randomness.

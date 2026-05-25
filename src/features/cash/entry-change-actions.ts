@@ -40,7 +40,7 @@ import { resolveOwnerEmailRecipients } from "@/features/approval-codes/recipient
 import { fail, ok, type ApiResult } from "./types";
 
 const BCRYPT_COST = 10;
-const PEC_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 jam (lebih lama dari code 10 menit supaya UI tidak misleading)
+const PEC_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 jam (lebih lama dari code 1 jam supaya UI tidak misleading)
 
 async function requireSession() {
   const session = await auth();
