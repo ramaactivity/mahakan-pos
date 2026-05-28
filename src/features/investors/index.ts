@@ -23,3 +23,9 @@ export {
   listInvestors,
   updateInvestor,
 } from "./actions";
+
+export {
+  getInvestorModuleSnapshot,
+  wipeInvestorModuleData,
+  type InvestorModuleSnapshot,
+} from "./wipe-actions";

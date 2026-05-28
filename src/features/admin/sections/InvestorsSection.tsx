@@ -56,6 +56,7 @@ import {
   type ProfitDistribution,
 } from "@/features/profit-distributions";
 import { CapitalChangesReportView } from "./investors/CapitalChangesReportView";
+import { WipeModuleButton } from "./investors/WipeModuleButton";
 import { InvestorFormModal } from "./investors/InvestorFormModal";
 import { CreditorImportWizard } from "./investors/CreditorImportWizard";
 import { InvestorImportWizard } from "./investors/InvestorImportWizard";
@@ -116,16 +117,21 @@ export function InvestorsSection({ viewerRole }: InvestorsSectionProps) {
   );
   const canCompute = hasPermission(viewerRole, "distribution.compute");
 
+  const isOwner = viewerRole === "owner";
+
   return (
     <div className="p-6 space-y-4">
-      <header>
-        <h1 className="text-2xl font-bold text-mahakan-green-900">
-          Modal & Dividen
-        </h1>
-        <p className="text-sm text-neutral-700">
-          Investor + Pengelola Mahakan Coffee. Profit-share bulanan dari Net
-          Profit ledger.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-mahakan-green-900">
+            Modal & Dividen
+          </h1>
+          <p className="text-sm text-neutral-700">
+            Investor + Pengelola Mahakan Coffee. Profit-share bulanan dari Net
+            Profit ledger.
+          </p>
+        </div>
+        <WipeModuleButton isOwner={isOwner} />
       </header>
 
       <div className="flex gap-1 border-b border-neutral-200">

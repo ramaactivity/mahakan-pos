@@ -168,6 +168,8 @@ export const AUDIT_EVENT_TYPES = [
   "investor.update",
   "investor.delete",
   "investor.import",
+  /* Sesi AE-160f — wipe seluruh modul investor/pengelola/kreditur (owner-only). */
+  "investor_module.wipe",
   "pengelola.create",
   "pengelola.update",
   "pengelola.delete",
