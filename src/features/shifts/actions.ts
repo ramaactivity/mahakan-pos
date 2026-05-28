@@ -1,9 +1,9 @@
 "use server";
 
-import { and, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { expenses, incomes, shifts, transactions } from "@/db/schema";
+import { expenses, incomes, shifts, splitPayments, transactions } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAndSanitize } from "@/lib/server-error";
@@ -308,8 +308,12 @@ export async function closeShift(
   // Aggregate transactions in this shift via pure helper (sesi AE-44).
   // refundedAmount column wajib di-select supaya partial refund bisa
   // di-deduct presisi (bukan over-deduct pakai total).
-  const txns = await db
+  // Sesi AE-155 — fetch trx + splits sekaligus supaya pure helper bisa
+  // allocate per-method untuk paymentMethod="split". Tanpa join splits,
+  // expectedCash hitung 0 dari split trx (variance alarm palsu).
+  const txnRows = await db
     .select({
+      id: transactions.id,
       status: transactions.status,
       paymentMethod: transactions.paymentMethod,
       total: transactions.total,
@@ -317,6 +321,36 @@ export async function closeShift(
     })
     .from(transactions)
     .where(eq(transactions.shiftId, current.id));
+
+  const splitTrxIds = txnRows
+    .filter((t) => t.paymentMethod === "split")
+    .map((t) => t.id);
+  const splitsByTrxId = new Map<
+    string,
+    Array<{ paymentMethod: string; amount: number }>
+  >();
+  if (splitTrxIds.length > 0) {
+    const splitRows = await db
+      .select({
+        transactionId: splitPayments.transactionId,
+        paymentMethod: splitPayments.paymentMethod,
+        amount: splitPayments.amount,
+      })
+      .from(splitPayments)
+      .where(inArray(splitPayments.transactionId, splitTrxIds));
+    for (const s of splitRows) {
+      const list = splitsByTrxId.get(s.transactionId) ?? [];
+      list.push({ paymentMethod: s.paymentMethod, amount: s.amount });
+      splitsByTrxId.set(s.transactionId, list);
+    }
+  }
+  const txns = txnRows.map((t) => ({
+    status: t.status,
+    paymentMethod: t.paymentMethod,
+    total: t.total,
+    refundedAmount: t.refundedAmount,
+    splits: splitsByTrxId.get(t.id),
+  }));
 
   /* Sesi AE-49 — fetch petty cash expense + income yang affect kas drawer
    * fisik. Filter:

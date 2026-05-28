@@ -15,11 +15,22 @@ export type ShiftTxnStatus =
   | "partially_refunded"
   | "open";
 
+export interface ShiftTxnSplitRow {
+  paymentMethod: string;
+  amount: number;
+}
+
 export interface ShiftTxnRow {
   status: ShiftTxnStatus;
   paymentMethod: string;
   total: number;
   refundedAmount: number;
+  /** Sesi AE-155 — splits untuk transaksi dengan paymentMethod="split".
+   *  Required saat paymentMethod="split"; null/empty untuk single-method
+   *  trx. Helper akan iterate splits dan aggregate per-method ke
+   *  paidCash/paidQris/paidCard. Tanpa field ini, split trx ke-skip di
+   *  expected cash calculation → variance alarm palsu. */
+  splits?: ShiftTxnSplitRow[];
 }
 
 export interface PettyCashSummary {
@@ -94,12 +105,29 @@ export function computeShiftCashSummary(
   let refundedAmount = 0;
   let refundedCash = 0;
 
+  /* Sesi AE-155 — helper allocate split amount ke bucket cash/qris/card. */
+  function bucketize(method: string, amount: number) {
+    if (method === "cash") paidCash += amount;
+    else if (method === "qris") paidQris += amount;
+    else paidCard += amount;
+  }
+
   for (const t of txns) {
     if (t.status === "paid") {
       paidCount += 1;
-      if (t.paymentMethod === "cash") paidCash += t.total;
-      else if (t.paymentMethod === "qris") paidQris += t.total;
-      else paidCard += t.total;
+      if (t.paymentMethod === "split") {
+        /* Iterate per-method splits supaya expectedCash + QRIS settlement
+         * + Card settlement akurat. Defensive: kalau splits kosong (data
+         * lama / migration anomaly), fallback ke single bucket "other" via
+         * paidCard supaya total tetap match. */
+        if (t.splits && t.splits.length > 0) {
+          for (const s of t.splits) bucketize(s.paymentMethod, s.amount);
+        } else {
+          paidCard += t.total;
+        }
+      } else {
+        bucketize(t.paymentMethod, t.total);
+      }
     } else if (t.status === "voided") {
       voidedCount += 1;
       voidedAmount += t.total;

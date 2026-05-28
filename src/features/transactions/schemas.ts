@@ -59,6 +59,9 @@ export const createTransactionSchema = z.object({
     "card_mandiri",
     "card_bri",
     "card_other",
+    /* Sesi AE-155 — accept "split" di direct sale. Server validate splits
+     * payload non-empty + sum=total + cashReceived=cashChange=null. */
+    "split",
   ]),
   cashReceived: moneySchema.nullable(),
   cashChange: moneySchema.nullable(),
@@ -72,6 +75,27 @@ export const createTransactionSchema = z.object({
     .transform((n) => (typeof n === "number" && n > 0 ? n : null)),
   /** Sesi K — FK to promos.id when discount sourced from a master promo. */
   promoId: z.uuid().nullish(),
+  /** Sesi AE-155 — split metode payment di direct sale. Empty/undef = single
+   *  method. Server validate sum=total + paymentMethod="split". */
+  splits: z
+    .array(
+      z.object({
+        paymentMethod: z.enum([
+          "cash",
+          "qris",
+          "card_bca",
+          "card_bni",
+          "card_mandiri",
+          "card_bri",
+          "card_other",
+        ]),
+        amount: moneySchema,
+        cashReceived: moneySchema.nullable(),
+        cashChange: moneySchema.nullable(),
+      }),
+    )
+    .max(8, "Maksimal 8 split per transaksi")
+    .optional(),
 });
 
 export const voidTransactionSchema = z.object({

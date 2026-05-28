@@ -81,6 +81,12 @@ const PaymentModal = lazy(() =>
     default: m.PaymentModal,
   })),
 );
+/* Sesi AE-155 — Split metode payment builder untuk direct sale. */
+const SplitMethodBuilderModal = lazy(() =>
+  import("@/features/pos/components/SplitMethodBuilderModal").then((m) => ({
+    default: m.SplitMethodBuilderModal,
+  })),
+);
 const PromoPickerModal = lazy(() =>
   import("@/features/pos/components/PromoPickerModal").then((m) => ({
     default: m.PromoPickerModal,
@@ -404,6 +410,9 @@ export function PosShell() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [cashInput, setCashInput] = useState("");
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+  /* Sesi AE-155 — Split metode builder open + caching split rows untuk pass
+   * ke createTransaction. */
+  const [splitBuilderOpen, setSplitBuilderOpen] = useState(false);
   // Synchronous double-tap guard. React state updates are async, so two taps
   // within one commit window both observe paymentSubmitting=false and fire
   // duplicate transactions. Ref updates synchronously and gates re-entry.
@@ -996,6 +1005,76 @@ export function PosShell() {
     }
   }
 
+  /**
+   * Sesi AE-155 — Process direct sale dengan split metode payment.
+   * Dipanggil dari SplitMethodBuilderModal onConfirm. Sama dengan
+   * handleProcessPayment tapi pakai paymentMethod="split" + splits payload.
+   * Server validate sum=total. Kalau sukses: success state same as cash.
+   */
+  async function handleProcessSplitPayment(
+    splits: import("@/features/transactions").CreateTransactionSplitInput[],
+  ) {
+    if (paymentInFlightRef.current) return;
+    if (!activeDraft || !shift) return;
+    paymentInFlightRef.current = true;
+    setPaymentSubmitting(true);
+    setPaymentError(null);
+
+    try {
+      const payload = {
+        clientRefId: crypto.randomUUID(),
+        shiftId: shift.id,
+        cashierId: session!.user.id,
+        pagerNumber: activeDraft.pagerNumber,
+        orderType: activeDraft.orderType,
+        customerName: activeDraft.customerName,
+        customerPhone: activeDraft.customerPhone,
+        note: activeDraft.billNote,
+        items: activeDraft.items.map((item) => ({
+          menuItemId: item.menuItemId,
+          variant: item.variant,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          modifiersPriceDelta: item.modifiersPriceDelta,
+          subtotal: item.subtotal,
+          note: item.note,
+          openPriceNote: item.openPriceNote,
+          modifiers: item.modifiers.map((m) => ({
+            modifierSlug: m.modifierSlug,
+            selectedValue: m.selectedValue,
+            priceDelta: m.priceDelta,
+          })),
+        })),
+        subtotal,
+        discountType: activeDraft.discount?.type ?? null,
+        discountValue: activeDraft.discount?.value ?? null,
+        discountAmount,
+        discountReason: activeDraft.discountReason,
+        total,
+        paymentMethod: "split" as PaymentMethod,
+        cashReceived: null,
+        cashChange: null,
+        discountApproverToken: activeDraft.discountApproverToken ?? undefined,
+        loyaltyPointsRedeemed: activeDraft.loyaltyPointsRedeemed,
+        promoId: activeDraft.promoId,
+        splits,
+      };
+
+      const res = await createTransaction(payload);
+      if (!isOk(res)) {
+        setPaymentError(res.error.message);
+        return;
+      }
+      removeDraft(activeDraft.id);
+      setHistoryRefreshKey((k) => k + 1);
+      setSplitBuilderOpen(false);
+      setRightPanel({ kind: "paid", trx: res.data });
+    } finally {
+      paymentInFlightRef.current = false;
+      setPaymentSubmitting(false);
+    }
+  }
+
   async function handleProcessPayment() {
     if (paymentInFlightRef.current) return;
     if (!activeDraft || !shift) return;
@@ -1345,7 +1424,24 @@ export function PosShell() {
             setRightPanel({ kind: "cart", draftId: activeDraft.id })
           }
           onSubmit={handleProcessPayment}
+          /* Sesi AE-155 — open split builder modal (separate dari main flow). */
+          onUseSplit={() => setSplitBuilderOpen(true)}
         />
+      ) : null}
+
+      {/* Sesi AE-155 — Split metode payment builder. */}
+      {activeDraft ? (
+        <Suspense fallback={null}>
+          <SplitMethodBuilderModal
+            open={splitBuilderOpen}
+            total={total}
+            submitting={paymentSubmitting}
+            onCancel={() => setSplitBuilderOpen(false)}
+            onConfirm={(splits) => {
+              void handleProcessSplitPayment(splits);
+            }}
+          />
+        </Suspense>
       ) : null}
 
       {/* Sesi AE-151 — close-bill modal triggered after Update + Bayar.

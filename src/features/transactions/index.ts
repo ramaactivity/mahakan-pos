@@ -6,6 +6,7 @@ export type {
   CreateTransactionInput,
   CreateTransactionItemInput,
   CreateTransactionItemModifierInput,
+  CreateTransactionSplitInput,
   DiscountType,
   EditOpenBillInput,
   OrderType,

@@ -483,6 +483,71 @@ export async function createTransaction(
     return fail(validation.code, validation.message);
   }
 
+  /* Sesi AE-155 — Split metode payment validation untuk direct sale.
+   * Saat splits non-empty: paymentMethod harus "split", cashReceived +
+   * cashChange harus null, sum splits.amount harus = recomputedTotal. */
+  const splits = v.splits ?? [];
+  if (splits.length > 0) {
+    if (v.paymentMethod !== "split") {
+      return fail(
+        "SPLIT_METHOD_MISMATCH",
+        "paymentMethod harus 'split' kalau pakai splits array",
+      );
+    }
+    if (v.cashReceived !== null || v.cashChange !== null) {
+      return fail(
+        "SPLIT_CASH_FIELDS_INVALID",
+        "cashReceived + cashChange harus null untuk split (lihat constraint check_split_amount). Per-split punya cashReceived sendiri.",
+      );
+    }
+    if (splits.length < 2) {
+      return fail(
+        "SPLIT_TOO_FEW",
+        "Split butuh minimal 2 metode. Kalau cuma 1 metode pakai paymentMethod biasa.",
+      );
+    }
+    const sumSplits = splits.reduce((acc, s) => acc + s.amount, 0);
+    if (sumSplits !== validation.recomputedTotal) {
+      return fail(
+        "SPLIT_AMOUNT_MISMATCH",
+        `Total split (Rp ${sumSplits.toLocaleString("id-ID")}) tidak sama dengan total bill (Rp ${validation.recomputedTotal.toLocaleString("id-ID")})`,
+      );
+    }
+    /* Per-split cash field check: cash split punya cashReceived non-null,
+     * non-cash split harus null. */
+    for (const s of splits) {
+      if (s.paymentMethod === "cash") {
+        if (s.cashReceived === null || s.cashReceived < s.amount) {
+          return fail(
+            "SPLIT_CASH_INSUFFICIENT",
+            `Split cash Rp ${s.amount.toLocaleString("id-ID")}: uang diterima kurang`,
+          );
+        }
+        if (s.cashChange === null || s.cashChange !== s.cashReceived - s.amount) {
+          return fail(
+            "SPLIT_CASH_CHANGE_MISMATCH",
+            "Split cash: cashChange harus = cashReceived - amount",
+          );
+        }
+      } else {
+        if (s.cashReceived !== null || s.cashChange !== null) {
+          return fail(
+            "SPLIT_NONCASH_CASH_FIELDS",
+            "Split non-cash: cashReceived + cashChange harus null",
+          );
+        }
+      }
+    }
+  } else {
+    /* Tidak ada splits → paymentMethod tidak boleh "split". */
+    if (v.paymentMethod === "split") {
+      return fail(
+        "SPLIT_REQUIRED",
+        "paymentMethod='split' butuh splits array minimal 2 entry",
+      );
+    }
+  }
+
   // Resolve customer result from parallel batch
   let customerId: string | null = null;
   let customerNameSnapshot = v.customerName ?? null;
@@ -600,7 +665,11 @@ export async function createTransaction(
           discountReason: v.discountReason,
           total: validation.recomputedTotal,
           paymentMethod: v.paymentMethod,
-          cashReceived: v.paymentMethod === "cash" ? v.cashReceived : null,
+          /* Sesi AE-155 — split method: per-split cash di split_payments
+           * table. Trx-level cashReceived + cashChange null per
+           * ck_transactions_cash_split_consistency constraint. */
+          cashReceived:
+            v.paymentMethod === "cash" ? v.cashReceived : null,
           cashChange: v.paymentMethod === "cash" ? v.cashChange : null,
           status: "paid",
           discountApprover: discountApproverId,
@@ -773,6 +842,29 @@ export async function createTransaction(
             .values(modRows)
             .returning()
         : [];
+
+      /* Sesi AE-155 — Insert split_payments rows untuk direct-sale split.
+       * Existing addSplitPayment action dipakai open-bill flow (add-then-
+       * close). Untuk direct sale: trx ter-create paid + splits sekaligus
+       * dalam 1 tx. splitKind selalu "nominal" (per_menu tidak make sense
+       * untuk direct sale single customer). Constraint trx.paymentMethod
+       * = "split" + cashReceived + cashChange null sudah enforced di
+       * pre-validation. */
+      if (splits.length > 0) {
+        await tx.insert(splitPayments).values(
+          splits.map((s) => ({
+            transactionId: insertedTrx.id,
+            outletId: session.user.outletId,
+            shiftId: v.shiftId,
+            cashierId: session.user.id,
+            amount: s.amount,
+            paymentMethod: s.paymentMethod,
+            cashReceived: s.paymentMethod === "cash" ? s.cashReceived : null,
+            cashChange: s.paymentMethod === "cash" ? s.cashChange : null,
+            splitKind: "nominal" as const,
+          })),
+        );
+      }
 
       return {
         trx: { ...insertedTrx, cogs: hasAnyCogs ? flow.totalCogs : null },
@@ -2174,6 +2266,20 @@ export async function editOpenBill(
           .delete(transactionItems)
           .where(eq(transactionItems.transactionId, v.transactionId));
       }
+
+      /* Sesi AE-155 — invalidate prior split_payments saat items berubah.
+       * Skenario: customer bayar Rp 50.000 cash (open bill total Rp 100.000),
+       * lalu staff tambah item baru → total naik jadi Rp 150.000. Sisa
+       * pembayaran harus dihitung ulang dari 0, bukan dari prior split,
+       * supaya kasir clear-slate dan tidak salah hitung.
+       *
+       * Strategy: hard delete prior split rows. Aman karena bill status
+       * masih "open" (uncommitted ke buku besar). Audit trail edit di-track
+       * via existing edit audit log. Untuk paid bill (split sudah final),
+       * editOpenBill block via TRX_NOT_OPEN guard di atas. */
+      await tx
+        .delete(splitPayments)
+        .where(eq(splitPayments.transactionId, v.transactionId));
 
       // Step 3: insert new items.
       const itemsInserted = await tx

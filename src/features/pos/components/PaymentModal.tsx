@@ -7,6 +7,7 @@ import {
   CreditCard,
   Loader2,
   QrCode,
+  Split,
   Wallet,
 } from "lucide-react";
 import { Badge, Button, Modal } from "@/components/ui";
@@ -33,6 +34,11 @@ interface PaymentModalProps {
   error: string | null;
   onCancel: () => void;
   onSubmit: () => void;
+  /** Sesi AE-155 — open SplitMethodBuilderModal untuk split metode payment
+   *  (1 orang bayar 1 bill pakai cash + QRIS, dst). Owner pakai untuk
+   *  customer yang mau bagi metode. Beda dengan SplitPaymentModal (per_menu
+   *  / per orang) yang dipakai dari Bill Aktif tab. */
+  onUseSplit?: () => void;
 }
 
 /**
@@ -69,6 +75,7 @@ export function PaymentModal({
   error,
   onCancel,
   onSubmit,
+  onUseSplit,
 }: PaymentModalProps) {
   const isCash = paymentMethod === "cash";
   const cardLabel = methodLabel(paymentMethod);
@@ -275,6 +282,18 @@ export function PaymentModal({
                 Icon={Wallet}
               />
             </div>
+            {/* Sesi AE-155 — Split metode payment (cash + QRIS, dst). */}
+            {onUseSplit ? (
+              <button
+                type="button"
+                onClick={onUseSplit}
+                disabled={submitting}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-mahakan-green-700/40 bg-mahakan-green-50/40 px-3 py-2 text-sm font-medium text-mahakan-green-900 transition-colors hover:bg-mahakan-green-100/60 disabled:opacity-50"
+              >
+                <Split className="size-4" aria-hidden />
+                Pakai Split Metode (cash + QRIS, dst)
+              </button>
+            ) : null}
           </section>
 
           {isCash ? (

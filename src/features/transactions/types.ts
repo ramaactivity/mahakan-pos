@@ -194,6 +194,32 @@ export interface CreateTransactionInput {
    * promo's UUID. Server validates eligibility, inserts promo_usages row,
    * and increments promos.currentUses (all in same DB tx). */
   promoId?: string | null;
+  /** Sesi AE-155 — Split metode payment di direct sale (POS).
+   *  Saat di-set + non-empty: paymentMethod harus "split", cashReceived +
+   *  cashChange harus null (per check constraint), dan SUM(splits.amount)
+   *  harus exactly = total. Server insert split_payments rows + journal
+   *  pakai postJournalForPosSale yang sudah split-aware.
+   *
+   *  Beda dengan addSplitPayment (open-bill flow): di sini transaksi langsung
+   *  paid + split rows ter-create dalam 1 server action atomic. Cocok untuk
+   *  kasir yang langsung tahu mau split saat checkout (tidak via save-bill
+   *  dulu).
+   *
+   *  Empty array atau undefined = single-method payment (existing behavior). */
+  splits?: CreateTransactionSplitInput[];
+}
+
+/** Sesi AE-155 — Per-split entry untuk direct-sale split payment. */
+export interface CreateTransactionSplitInput {
+  /** Method untuk split ini. Tidak boleh "split" (rekursi). */
+  paymentMethod: Exclude<PaymentMethod, "split">;
+  /** Rupiah amount untuk split ini. Sum semua splits harus = transaction.total. */
+  amount: number;
+  /** Cash received (only kalau paymentMethod="cash" + split terakhir
+   *  yang mungkin punya change). Else null. */
+  cashReceived: number | null;
+  /** Change (cashReceived - amount). Hanya kalau cash. Else null. */
+  cashChange: number | null;
 }
 
 export interface VoidTransactionInput {

@@ -9,6 +9,7 @@ import {
   outlets,
   shifts,
   shiftRebalances,
+  splitPayments,
   users,
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
@@ -104,7 +105,7 @@ async function computeRebalancedVariance(
   shift: Shift,
   correctedActualCash: number,
 ): Promise<{ expectedCash: number; correctedVariance: number }> {
-  const txns = await db
+  const txnRows = await db
     .select({
       id: transactions.id,
       status: transactions.status,
@@ -114,6 +115,39 @@ async function computeRebalancedVariance(
     })
     .from(transactions)
     .where(eq(transactions.shiftId, shift.id));
+
+  /* Sesi AE-155 — fetch splits untuk trx split, sama pattern dengan
+   * closeShift action. computeShiftCashSummary butuh per-method allocation
+   * untuk variance accurate. */
+  const splitTrxIds = txnRows
+    .filter((t) => t.paymentMethod === "split")
+    .map((t) => t.id);
+  const splitsByTrxId = new Map<
+    string,
+    Array<{ paymentMethod: string; amount: number }>
+  >();
+  if (splitTrxIds.length > 0) {
+    const splitRows = await db
+      .select({
+        transactionId: splitPayments.transactionId,
+        paymentMethod: splitPayments.paymentMethod,
+        amount: splitPayments.amount,
+      })
+      .from(splitPayments)
+      .where(inArray(splitPayments.transactionId, splitTrxIds));
+    for (const s of splitRows) {
+      const list = splitsByTrxId.get(s.transactionId) ?? [];
+      list.push({ paymentMethod: s.paymentMethod, amount: s.amount });
+      splitsByTrxId.set(s.transactionId, list);
+    }
+  }
+  const txns = txnRows.map((t) => ({
+    status: t.status,
+    paymentMethod: t.paymentMethod,
+    total: t.total,
+    refundedAmount: t.refundedAmount,
+    splits: splitsByTrxId.get(t.id),
+  }));
 
   // Petty cash range from shift open date → close (or today kalau belum close).
   const shiftStartDate = toJakartaDateOnly(shift.openedAt);

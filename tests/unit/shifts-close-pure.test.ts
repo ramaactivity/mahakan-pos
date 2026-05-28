@@ -267,3 +267,95 @@ describe("computeExpectedCash (sesi AE-49)", () => {
     expect(computeExpectedCash(20_000, s)).toBe(-20_000);
   });
 });
+
+/* Sesi AE-155 — Split metode payment aggregation. */
+describe("computeShiftCashSummary — split payment method", () => {
+  const splitTxn = (
+    total: number,
+    splits: Array<{ paymentMethod: string; amount: number }>,
+  ): ShiftTxnRow => ({
+    status: "paid",
+    paymentMethod: "split",
+    total,
+    refundedAmount: 0,
+    splits,
+  });
+
+  it("split cash + QRIS allocates per-method bukan ke total bucket", () => {
+    const s = computeShiftCashSummary([
+      splitTxn(135_000, [
+        { paymentMethod: "cash", amount: 100_000 },
+        { paymentMethod: "qris", amount: 35_000 },
+      ]),
+    ]);
+    expect(s.paidCount).toBe(1);
+    expect(s.paidCash).toBe(100_000);
+    expect(s.paidQris).toBe(35_000);
+    expect(s.paidCard).toBe(0);
+  });
+
+  it("split cash + EDC card allocates per-method", () => {
+    const s = computeShiftCashSummary([
+      splitTxn(200_000, [
+        { paymentMethod: "cash", amount: 50_000 },
+        { paymentMethod: "card_bca", amount: 150_000 },
+      ]),
+    ]);
+    expect(s.paidCash).toBe(50_000);
+    expect(s.paidQris).toBe(0);
+    expect(s.paidCard).toBe(150_000);
+  });
+
+  it("3-way split (cash + QRIS + EDC) sum exact = total", () => {
+    const s = computeShiftCashSummary([
+      splitTxn(300_000, [
+        { paymentMethod: "cash", amount: 100_000 },
+        { paymentMethod: "qris", amount: 100_000 },
+        { paymentMethod: "card_bri", amount: 100_000 },
+      ]),
+    ]);
+    expect(s.paidCash + s.paidQris + s.paidCard).toBe(300_000);
+  });
+
+  it("mix split + non-split trx accurate aggregation", () => {
+    const s = computeShiftCashSummary([
+      txn("paid", "cash", 50_000),
+      splitTxn(135_000, [
+        { paymentMethod: "cash", amount: 100_000 },
+        { paymentMethod: "qris", amount: 35_000 },
+      ]),
+      txn("paid", "qris", 60_000),
+    ]);
+    expect(s.paidCount).toBe(3);
+    expect(s.paidCash).toBe(50_000 + 100_000);
+    expect(s.paidQris).toBe(35_000 + 60_000);
+  });
+
+  it("expectedCash includes split cash allocation", () => {
+    /* Bill split: cash 100k + QRIS 35k. Drawer harusnya naik 100k. */
+    const s = computeShiftCashSummary([
+      splitTxn(135_000, [
+        { paymentMethod: "cash", amount: 100_000 },
+        { paymentMethod: "qris", amount: 35_000 },
+      ]),
+    ]);
+    /* Opening 200k + paidCash 100k - refunds 0 - petty 0 = 300k */
+    expect(computeExpectedCash(200_000, s)).toBe(300_000);
+  });
+
+  it("defensive fallback: split trx tanpa splits array → paidCard (avoid lose total)", () => {
+    /* Data lama atau anomaly: paymentMethod=split tapi splits undefined.
+     * Pure helper fallback ke paidCard supaya total tetap tracked. */
+    const s = computeShiftCashSummary([
+      {
+        status: "paid",
+        paymentMethod: "split",
+        total: 100_000,
+        refundedAmount: 0,
+      },
+    ]);
+    expect(s.paidCash).toBe(0);
+    expect(s.paidQris).toBe(0);
+    expect(s.paidCard).toBe(100_000);
+  });
+});
