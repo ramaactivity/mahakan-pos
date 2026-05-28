@@ -110,6 +110,10 @@ export const voidTransactionSchema = z.object({
     .trim()
     .regex(/^\d{6}$/)
     .optional(),
+  /** Direct-approve mode (Pusat Persetujuan): owner-only path, skip
+   * code/PIN entirely. Caller HARUS owner role; auth helper enforce.
+   * Active codes untuk trx ini di-revoke (audit trail jelas). */
+  directOwnerApprove: z.boolean().optional(),
 });
 
 /** Sesi AE-62k — cancel open bill (customer batal, no-show, dst).
@@ -129,6 +133,9 @@ export const refundTransactionSchema = z.object({
     .trim()
     .regex(/^\d{6}$/)
     .optional(),
+  /** Direct-approve mode (Pusat Persetujuan, owner-only). Lihat note di
+   * voidTransactionSchema. */
+  directOwnerApprove: z.boolean().optional(),
 });
 
 export const refundTransactionPartialSchema = z.object({

@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { DashboardHome } from "@/features/admin/sections/DashboardHome";
 import { useSession } from "@/features/auth/SessionProvider";
 import { useCashDepositDashboard } from "@/features/finance/useCashDepositDashboard";
+import { useApprovalsSummary } from "@/features/approvals/useApprovalsSummary";
 import { hasPermission } from "@/lib/auth/rbac";
 
 /* Helper: convert named export ke lazy-loaded default. Tiap section di-named
@@ -21,6 +22,11 @@ import { hasPermission } from "@/lib/auth/rbac";
 const AuditLogSection = lazy(() =>
   import("@/features/admin/sections/AuditLogSection").then((m) => ({
     default: m.AuditLogSection,
+  })),
+);
+const ApprovalsSection = lazy(() =>
+  import("@/features/admin/sections/ApprovalsSection").then((m) => ({
+    default: m.ApprovalsSection,
   })),
 );
 const JournalRetryQueueSection = lazy(() =>
@@ -148,6 +154,7 @@ const NotaArchiveSection = lazy(() =>
  * validation (filter invalid hash dari URL). */
 const VALID_SECTIONS: ReadonlySet<AdminSection> = new Set([
   "dashboard",
+  "approvals",
   "menu",
   "inventory",
   "suppliers",
@@ -256,11 +263,21 @@ export function AdminShell() {
     ? hasPermission(session.user.role, "cash_deposit.verify")
     : false;
   const depositDashboardQuery = useCashDepositDashboard();
-  const depositBadges = canVerifyDeposits
-    ? {
-        setoran_tunai: depositDashboardQuery.data?.pendingCount ?? 0,
-      }
-    : undefined;
+  /* Sesi AE-160 — Pusat Persetujuan: badge total pending across 5 flows.
+   * Hanya fetch kalau user punya akses queue (approval_code.view). */
+  const canViewApprovals = session
+    ? hasPermission(session.user.role, "approval_code.view")
+    : false;
+  const approvalsSummary = useApprovalsSummary(canViewApprovals);
+  const sidebarBadges: Partial<Record<AdminSection, number>> = {};
+  if (canVerifyDeposits) {
+    sidebarBadges.setoran_tunai = depositDashboardQuery.data?.pendingCount ?? 0;
+  }
+  if (canViewApprovals) {
+    sidebarBadges.approvals = approvalsSummary.data?.total ?? 0;
+  }
+  const depositBadges =
+    Object.keys(sidebarBadges).length > 0 ? sidebarBadges : undefined;
 
   if (!session) return null;
 
@@ -329,7 +346,9 @@ export function AdminShell() {
           <DashboardHome user={session.user} onNavigate={setSection} />
         ) : (
           <Suspense fallback={<SectionFallback />}>
-            {section === "menu" ? (
+            {section === "approvals" ? (
+              <ApprovalsSection />
+            ) : section === "menu" ? (
               <MenuSection />
             ) : section === "cogs_variance" ? (
               <CogsVarianceSection />

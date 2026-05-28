@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CODE_TTL_MS,
   FAILED_ATTEMPTS_LOCKOUT_THRESHOLD,
+  computeApprovalCodeExpiry,
   generateNumericCode6,
   maskEmail,
 } from "@/features/approval-codes/types";
@@ -66,11 +67,67 @@ describe("maskEmail", () => {
 });
 
 describe("constants", () => {
-  it("TTL is 1 hour (sesi AE-150 — extended dari 10 menit)", () => {
+  it("floor TTL is 1 hour (minimum guarantee untuk request menjelang tengah malam)", () => {
     expect(DEFAULT_CODE_TTL_MS).toBe(60 * 60 * 1000);
   });
 
   it("lockout threshold is 5 failures", () => {
     expect(FAILED_ATTEMPTS_LOCKOUT_THRESHOLD).toBe(5);
+  });
+});
+
+describe("computeApprovalCodeExpiry", () => {
+  // Helper: 23:59:59.999 WIB di hari yang sama (UTC = 16:59:59.999 hari sama).
+  function endOfDayWibUtc(jakartaYmd: string): Date {
+    return new Date(`${jakartaYmd}T23:59:59.999+07:00`);
+  }
+
+  it("request siang hari → expires end-of-day WIB hari itu (10+ jam window)", () => {
+    // 2026-05-28 14:00 WIB = 2026-05-28 07:00 UTC
+    const now = new Date("2026-05-28T07:00:00.000Z");
+    const exp = computeApprovalCodeExpiry(now);
+    expect(exp.toISOString()).toBe(endOfDayWibUtc("2026-05-28").toISOString());
+  });
+
+  it("request pagi → expires end-of-day WIB hari itu", () => {
+    // 2026-05-28 08:00 WIB = 2026-05-28 01:00 UTC
+    const now = new Date("2026-05-28T01:00:00.000Z");
+    const exp = computeApprovalCodeExpiry(now);
+    expect(exp.toISOString()).toBe(endOfDayWibUtc("2026-05-28").toISOString());
+  });
+
+  it("request menjelang tengah malam → fallback ke 1 jam floor (lebih panjang dari end-of-day)", () => {
+    // 2026-05-28 23:30 WIB = 2026-05-28 16:30 UTC
+    // End of day = 16:59:59.999 UTC (29 menit lagi). Floor = +1 jam = 17:30 UTC.
+    // Floor menang.
+    const now = new Date("2026-05-28T16:30:00.000Z");
+    const exp = computeApprovalCodeExpiry(now);
+    const floor = new Date(now.getTime() + DEFAULT_CODE_TTL_MS);
+    expect(exp.toISOString()).toBe(floor.toISOString());
+  });
+
+  it("request tepat di batas (23:00 WIB) → end-of-day masih menang (1 jam sisa = sama)", () => {
+    // 2026-05-28 23:00 WIB = 2026-05-28 16:00 UTC
+    // End of day = 16:59:59.999 UTC. Floor = 17:00 UTC.
+    // Floor menang (lebih besar).
+    const now = new Date("2026-05-28T16:00:00.000Z");
+    const exp = computeApprovalCodeExpiry(now);
+    const floor = new Date(now.getTime() + DEFAULT_CODE_TTL_MS);
+    expect(exp.toISOString()).toBe(floor.toISOString());
+  });
+
+  it("request 22:00 WIB → end-of-day menang (sisa ~2 jam)", () => {
+    // 2026-05-28 22:00 WIB = 2026-05-28 15:00 UTC
+    // End of day = 16:59:59.999 UTC. Floor = 16:00 UTC.
+    // End of day menang.
+    const now = new Date("2026-05-28T15:00:00.000Z");
+    const exp = computeApprovalCodeExpiry(now);
+    expect(exp.toISOString()).toBe(endOfDayWibUtc("2026-05-28").toISOString());
+  });
+
+  it("default arg = new Date()", () => {
+    // Smoke test — function callable tanpa argumen.
+    const exp = computeApprovalCodeExpiry();
+    expect(exp.getTime()).toBeGreaterThan(Date.now());
   });
 });

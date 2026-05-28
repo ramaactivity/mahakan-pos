@@ -8,6 +8,7 @@ export type {
 export {
   DEFAULT_CODE_TTL_MS,
   FAILED_ATTEMPTS_LOCKOUT_THRESHOLD,
+  computeApprovalCodeExpiry,
   generateNumericCode6,
   isOk,
   maskEmail,

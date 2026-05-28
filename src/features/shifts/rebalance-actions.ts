@@ -19,7 +19,7 @@ import { logAndSanitize } from "@/lib/server-error";
 import { sendEmail } from "@/lib/email/send";
 import { buildShiftRebalanceCodeEmail } from "@/lib/email/templates/shift-rebalance-code";
 import {
-  DEFAULT_CODE_TTL_MS,
+  computeApprovalCodeExpiry,
   FAILED_ATTEMPTS_LOCKOUT_THRESHOLD,
   generateNumericCode6,
   maskEmail,
@@ -293,7 +293,7 @@ export async function requestShiftRebalance(input: {
   const codeHash = await bcrypt.hash(code, BCRYPT_COST);
   const codeFirstTwo = code.slice(0, 2);
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + DEFAULT_CODE_TTL_MS);
+  const expiresAt = computeApprovalCodeExpiry(now);
 
   let rebalanceId: string;
   try {
@@ -643,6 +643,151 @@ export async function approveShiftRebalance(input: {
         originalVariance: rebalance.originalVariance,
         correctedVariance,
         codeFirstTwo: active.codeFirstTwo,
+      },
+    },
+    metadata: { outletId: shift.outletId, actorRole: session.user.role },
+  });
+
+  return ok({ rebalanceId: v.rebalanceId, appliedAt: now });
+}
+
+/**
+ * Direct-approve (owner-only path tanpa kode).
+ *
+ * Dipakai dari Pusat Persetujuan ketika owner sudah login di backoffice
+ * dan ingin meng-approve tanpa generate→kirim kode WA bolak-balik.
+ * Owner role wajib (bukan permission `shift.rebalance.approve` yang juga
+ * dikasih ke manager) — direct approve harus ekstra-strict.
+ *
+ * Side effects identik dengan [[approveShiftRebalance]] kecuali active
+ * code di-revoke (bukan consume) supaya audit trail jelas: ini bukan
+ * konsumsi kode normal.
+ */
+export async function approveShiftRebalanceDirect(input: {
+  rebalanceId: string;
+}): Promise<ApiResult<{ rebalanceId: string; appliedAt: Date }>> {
+  const session = await requireSession();
+  if (session.user.role !== "owner") {
+    return fail(
+      "FORBIDDEN",
+      "Direct approve hanya untuk Owner. Manager pakai jalur kode.",
+    );
+  }
+  const v = { rebalanceId: input.rebalanceId };
+
+  const [rebalance] = await db
+    .select()
+    .from(shiftRebalances)
+    .where(eq(shiftRebalances.id, v.rebalanceId))
+    .limit(1);
+  if (!rebalance) return fail("NOT_FOUND", "Rebalance tidak ditemukan");
+  if (rebalance.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Rebalance dari outlet lain");
+  }
+  if (rebalance.status !== "pending_approval") {
+    return fail(
+      "INVALID_STATE",
+      `Rebalance sudah ${rebalance.status} — tidak bisa approve lagi.`,
+    );
+  }
+
+  const [shift] = await db
+    .select()
+    .from(shifts)
+    .where(eq(shifts.id, rebalance.shiftId))
+    .limit(1);
+  if (!shift) return fail("NOT_FOUND", "Shift tidak ditemukan");
+
+  const { correctedVariance } = await computeRebalancedVariance(
+    shift,
+    rebalance.correctedActualCash,
+  );
+
+  const now = new Date();
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(shifts)
+        .set({
+          actualCash: rebalance.correctedActualCash,
+          variance: correctedVariance,
+          qrisSettlement:
+            rebalance.correctedQrisSettlement ?? shift.qrisSettlement,
+          edcSettlement:
+            rebalance.correctedEdcSettlement ?? shift.edcSettlement,
+          updatedAt: now,
+        })
+        .where(eq(shifts.id, shift.id));
+
+      // Revoke any active code (owner approved directly, code obsolete).
+      await tx
+        .update(approvalCodes)
+        .set({ revokedAt: now, revokedByUserId: session.user.id })
+        .where(
+          and(
+            eq(approvalCodes.targetShiftRebalanceId, v.rebalanceId),
+            isNull(approvalCodes.consumedAt),
+            isNull(approvalCodes.revokedAt),
+          ),
+        );
+
+      await tx
+        .update(shiftRebalances)
+        .set({
+          status: "approved",
+          approvedBy: session.user.id,
+          approvedAt: now,
+          correctedVariance,
+          updatedAt: now,
+        })
+        .where(eq(shiftRebalances.id, v.rebalanceId));
+    });
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(
+        e,
+        "shift-rebalance.approve.direct",
+        "Operasi database gagal",
+      ),
+    );
+  }
+
+  const closedDate = shift.closedAt
+    ? new Date(shift.closedAt).toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
+  const shiftLabelForJournal = `Shift ${shift.id.slice(0, 8)} ${closedDate}`;
+  fireJournalHook(
+    async () => {
+      await postJournalForShiftRebalance({
+        outletId: shift.outletId,
+        shiftId: shift.id,
+        shiftRebalanceId: v.rebalanceId,
+        shiftLabel: shiftLabelForJournal,
+        originalVariance: rebalance.originalVariance,
+        correctedVariance,
+        reason: rebalance.reason,
+        entryDate: closedDate,
+        actorId: session.user.id,
+      });
+    },
+    "shift_variance_rebalance",
+  );
+
+  await logAudit({
+    eventType: "shift.rebalance.approve",
+    userId: session.user.id,
+    entityType: "shift_rebalance",
+    entityId: v.rebalanceId,
+    payload: {
+      summary: `Approve rebalancing shift ${shift.id.slice(0, 8)} (direct owner) — variance ${rebalance.originalVariance} → ${correctedVariance}`,
+      context: {
+        shiftId: shift.id,
+        originalCash: rebalance.originalActualCash,
+        correctedCash: rebalance.correctedActualCash,
+        originalVariance: rebalance.originalVariance,
+        correctedVariance,
+        directOwnerApprove: true,
       },
     },
     metadata: { outletId: shift.outletId, actorRole: session.user.role },

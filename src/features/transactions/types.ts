@@ -232,6 +232,9 @@ export interface VoidTransactionInput {
   approverToken?: string;
   /** New "code" mode (B-2) — 6-digit Owner-issued approval code. */
   approvalCode?: string;
+  /** Direct-approve mode (Pusat Persetujuan, owner-only). Bypass code/PIN,
+   * server revoke active codes inline. */
+  directOwnerApprove?: boolean;
 }
 
 export interface RefundTransactionInput {
@@ -239,6 +242,8 @@ export interface RefundTransactionInput {
   reason: string;
   approverToken?: string;
   approvalCode?: string;
+  /** Direct-approve mode (Pusat Persetujuan, owner-only). */
+  directOwnerApprove?: boolean;
 }
 
 /** Per-item line for a partial refund request. */

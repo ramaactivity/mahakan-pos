@@ -3,6 +3,7 @@
 import { and, eq, getTableColumns, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  approvalCodes,
   categories,
   expenseCategories,
   expenses,
@@ -107,14 +108,42 @@ type VoidRefundAuth =
       mode: "pin";
       approverToken: string;
     }
+  | {
+      ok: true;
+      mode: "direct_owner";
+      ownerId: string;
+    }
   | { ok: false; code: string; message: string };
 
 async function prepareVoidRefundAuth(
   outletId: string,
   actionType: "pos.transaction.void" | "pos.transaction.refund",
-  v: { approverToken?: string; approvalCode?: string },
+  v: {
+    approverToken?: string;
+    approvalCode?: string;
+    directOwnerApprove?: boolean;
+  },
+  callerSession: { userId: string; role: string },
 ): Promise<VoidRefundAuth> {
   const kind = actionType === "pos.transaction.void" ? "void" : "refund";
+
+  // Direct-owner override (Pusat Persetujuan path) — takes precedence supaya
+  // owner tidak terblok meski outlet settings.voidMode = "pin" (PIN-only).
+  if (v.directOwnerApprove === true) {
+    if (callerSession.role !== "owner") {
+      return {
+        ok: false,
+        code: "FORBIDDEN_DIRECT_APPROVE",
+        message: "Direct approve hanya untuk Owner — kasir/manager pakai jalur kode/PIN.",
+      };
+    }
+    return {
+      ok: true,
+      mode: "direct_owner",
+      ownerId: callerSession.userId,
+    };
+  }
+
   const mode = await resolveApprovalMode(outletId, kind);
   if (mode === "code") {
     if (!v.approvalCode) {
@@ -164,6 +193,26 @@ async function consumeVoidRefundCredential(
     if (!isApprovalOk(res)) {
       throw new Error(`APPROVAL_CODE_FAILED:${res.error.code}:${res.error.message}`);
     }
+    return prepared.ownerId;
+  }
+  if (prepared.mode === "direct_owner") {
+    // Revoke any active codes untuk trx ini + actionType — owner sudah
+    // approve langsung di Pusat Persetujuan, kode lama jadi obsolete.
+    // Inside tx supaya rollback safe kalau void/refund mutation gagal.
+    await tx
+      .update(approvalCodes)
+      .set({
+        revokedAt: new Date(),
+        revokedByUserId: prepared.ownerId,
+      })
+      .where(
+        and(
+          eq(approvalCodes.targetTransactionId, transactionId),
+          eq(approvalCodes.actionType, actionType),
+          isNull(approvalCodes.consumedAt),
+          isNull(approvalCodes.revokedAt),
+        ),
+      );
     return prepared.ownerId;
   }
   // PIN mode — consume token inside this tx supaya atomic dengan source action.
@@ -1070,6 +1119,7 @@ export async function voidTransaction(
     session.user.outletId,
     "pos.transaction.void",
     v,
+    { userId: session.user.id, role: session.user.role },
   );
   if (!prepared.ok) {
     return fail(prepared.code, prepared.message);
@@ -1259,6 +1309,7 @@ export async function refundTransaction(
     session.user.outletId,
     "pos.transaction.refund",
     v,
+    { userId: session.user.id, role: session.user.role },
   );
   if (!prepared.ok) {
     return fail(prepared.code, prepared.message);
@@ -1580,6 +1631,7 @@ export async function refundTransactionPartial(
     session.user.outletId,
     "pos.transaction.refund",
     v,
+    { userId: session.user.id, role: session.user.role },
   );
   if (!prepared.ok) {
     return fail(prepared.code, prepared.message);

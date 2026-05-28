@@ -74,11 +74,31 @@ export function isOk<T>(
  */
 export const FAILED_ATTEMPTS_LOCKOUT_THRESHOLD = 5;
 
-/** Default code TTL — 1 jam (sesi AE-150 owner feedback: 10 menit terlalu
- *  sebentar untuk owner yang lagi WA dengan customer/meeting). 1 jam masih
- *  cukup ketat untuk security (bukan code yang menggantung berhari-hari)
- *  + bracket lockout 5 attempt + revoke saat reject/cancel masih jaga. */
+/** Floor TTL — minimum 1 jam supaya request menjelang tengah malam tetap
+ *  punya window cukup. Lihat [[computeApprovalCodeExpiry]] untuk policy
+ *  lengkap (extend sampai end-of-day WIB). */
 export const DEFAULT_CODE_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Owner sering baru online di malam hari (sesi AE-? — staff feedback:
+ * kode 1 jam expired sebelum owner sempat baca email). Policy:
+ *   expiresAt = max(now + 1 jam floor, 23:59:59.999 WIB hari yang sama)
+ *
+ * - Request jam 14:00 WIB → expires 23:59 WIB hari itu (~10 jam window).
+ * - Request jam 23:30 WIB → expires 00:30 WIB hari berikut (1 jam floor).
+ *
+ * Floor 1 jam tetap dipertahankan supaya staff tidak terpaksa re-request
+ * dalam waktu sangat singkat kalau owner kebetulan online tepat lewat jam
+ * 24. Lockout 5 attempt + revoke on reject/cancel masih jaga abuse.
+ */
+export function computeApprovalCodeExpiry(now: Date = new Date()): Date {
+  const floor = new Date(now.getTime() + DEFAULT_CODE_TTL_MS);
+  // End of day WIB = 23:59:59.999 pada calendar date "now" di WIB (UTC+7).
+  const wibShifted = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  const ymd = wibShifted.toISOString().slice(0, 10);
+  const endOfDayWib = new Date(`${ymd}T23:59:59.999+07:00`);
+  return endOfDayWib.getTime() > floor.getTime() ? endOfDayWib : floor;
+}
 
 /**
  * Generate a 6-digit numeric code with crypto-quality randomness.

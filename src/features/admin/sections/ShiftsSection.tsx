@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Eye, Pencil, Receipt } from "lucide-react";
+import { AlertTriangle, ArrowRight, Eye, Receipt, ShieldCheck } from "lucide-react";
 import {
   Badge,
   Button,
@@ -13,8 +13,7 @@ import {
   Skeleton,
 } from "@/components/ui";
 import { ShiftDetailModal } from "./shifts/ShiftDetailModal";
-import { PendingRebalancesPanel } from "./shifts/PendingRebalancesPanel";
-import { PendingEntryChangesPanel } from "./shifts/PendingEntryChangesPanel";
+import { useApprovalsSummary } from "@/features/approvals/useApprovalsSummary";
 import { isOk, listShifts, type Shift } from "@/features/shifts";
 import { getOwnOutlet } from "@/features/outlets";
 import { listUsers, type PublicUser } from "@/features/users";
@@ -27,9 +26,12 @@ import { cn } from "@/lib/utils";
 const DEFAULT_VARIANCE_THRESHOLD = 10_000;
 
 export function ShiftsSection() {
-  const [tab, setTab] = useState<"history" | "rebalance">("history");
   const [varianceFilter, setVarianceFilter] = useState<"all" | "flag">("all");
   const [openShift, setOpenShift] = useState<Shift | null>(null);
+  /* Sesi AE-160 — Rebalancing & Entry Changes queue dipindah ke Pusat
+   * Persetujuan (#approvals). Halaman Shifts kembali fokus ke history. */
+  const approvalsSummary = useApprovalsSummary(true);
+  const rebalancePending = approvalsSummary.data?.byKind.rebalance ?? 0;
 
   // Sesi AE-14 — TanStack Query, parallel + cached.
   const shiftsQuery = useQuery({
@@ -104,70 +106,67 @@ export function ShiftsSection() {
           </p>
         </div>
         <div className="flex gap-2">
-          {tab === "history" ? (
-            <>
-              <Button
-                size="sm"
-                variant={varianceFilter === "all" ? "primary" : "outline"}
-                onClick={() => setVarianceFilter("all")}
-              >
-                Semua ({shifts.length})
-              </Button>
-              <Button
-                size="sm"
-                variant={varianceFilter === "flag" ? "primary" : "outline"}
-                onClick={() => setVarianceFilter("flag")}
-              >
-                <AlertTriangle className="size-4" aria-hidden /> Flagged (
-                {flaggedCount})
-              </Button>
-            </>
-          ) : null}
+          <Button
+            size="sm"
+            variant={varianceFilter === "all" ? "primary" : "outline"}
+            onClick={() => setVarianceFilter("all")}
+          >
+            Semua ({shifts.length})
+          </Button>
+          <Button
+            size="sm"
+            variant={varianceFilter === "flag" ? "primary" : "outline"}
+            onClick={() => setVarianceFilter("flag")}
+          >
+            <AlertTriangle className="size-4" aria-hidden /> Flagged (
+            {flaggedCount})
+          </Button>
         </div>
       </header>
 
-      {/* Sesi AE-62o — tab navigation: History | Rebalancing queue */}
-      <div className="flex gap-1 border-b border-neutral-200">
-        <button
-          type="button"
-          onClick={() => setTab("history")}
-          className={cn(
-            "relative px-4 py-2 text-sm font-medium transition-colors",
-            tab === "history"
-              ? "text-mahakan-green-900"
-              : "text-neutral-600 hover:text-neutral-900",
-          )}
-        >
-          Riwayat Shift
-          {tab === "history" ? (
-            <span className="absolute inset-x-0 -bottom-px h-0.5 bg-mahakan-green-700" />
-          ) : null}
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("rebalance")}
-          className={cn(
-            "relative inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors",
-            tab === "rebalance"
-              ? "text-mahakan-green-900"
-              : "text-neutral-600 hover:text-neutral-900",
-          )}
-        >
-          <Pencil className="size-4" aria-hidden /> Rebalancing
-          {tab === "rebalance" ? (
-            <span className="absolute inset-x-0 -bottom-px h-0.5 bg-mahakan-green-700" />
-          ) : null}
-        </button>
-      </div>
-
-      {tab === "rebalance" ? (
-        <div className="space-y-4">
-          <PendingRebalancesPanel />
-          <PendingEntryChangesPanel />
+      {/* Sesi AE-160 — Rebalancing queue dipindah ke Pusat Persetujuan. */}
+      <button
+        type="button"
+        onClick={() => {
+          if (typeof window !== "undefined") {
+            window.location.hash = "#approvals";
+          }
+        }}
+        className={cn(
+          "flex w-full items-center justify-between gap-3 rounded-lg border bg-white px-4 py-3 text-left transition-colors hover:bg-neutral-50",
+          rebalancePending > 0
+            ? "border-warning-300 bg-warning-50/40"
+            : "border-neutral-200",
+        )}
+      >
+        <div className="flex items-center gap-3">
+          <div
+            className={cn(
+              "flex size-9 items-center justify-center rounded-full",
+              rebalancePending > 0
+                ? "bg-warning-100 text-warning-700"
+                : "bg-mahakan-green-100 text-mahakan-green-700",
+            )}
+          >
+            <ShieldCheck className="size-5" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-neutral-900">
+              Rebalancing & Approval pindah ke{" "}
+              <span className="text-mahakan-green-800">Pusat Persetujuan</span>
+            </p>
+            <p className="text-xs text-neutral-600">
+              Semua queue void / refund / koreksi / rebalance / edit catatan
+              terpusat di sana.
+              {rebalancePending > 0
+                ? ` ${rebalancePending} rebalance menunggu approval.`
+                : ""}
+            </p>
+          </div>
         </div>
-      ) : null}
+        <ArrowRight className="size-5 text-neutral-400" />
+      </button>
 
-      {tab === "history" ? (
       <Card>
         <CardHeader />
         <CardContent className="px-0">
@@ -309,7 +308,6 @@ export function ShiftsSection() {
           )}
         </CardContent>
       </Card>
-      ) : null}
 
       <ShiftDetailModal
         shift={openShift}

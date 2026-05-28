@@ -19,6 +19,7 @@ import {
   LogOut,
   Package,
   ScrollText,
+  ShieldCheck,
   Settings,
   Sparkles,
   Truck,
@@ -35,6 +36,7 @@ import type { Role } from "@/lib/auth";
 
 export type AdminSection =
   | "dashboard"
+  | "approvals"
   | "menu"
   | "cogs_variance"
   | "inventory"
@@ -97,6 +99,10 @@ const NAV_GROUPS: NavGroup[] = [
     heading: "Operasi",
     items: [
       { key: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
+      /* Sesi AE-160 — Pusat Persetujuan: void/refund/correction/rebalance/
+       * entry-change pending+history dalam satu queue + dual-mode approve
+       * (kode atau direct owner). Badge angka pending total. */
+      { key: "approvals", label: "Persetujuan", Icon: ShieldCheck },
       { key: "shifts", label: "Shifts", Icon: Receipt },
     ],
   },

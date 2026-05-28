@@ -31,7 +31,7 @@ import { logAndSanitize } from "@/lib/server-error";
 import { sendEmail } from "@/lib/email/send";
 import { buildEntryChangeCodeEmail } from "@/lib/email/templates/entry-change-code";
 import {
-  DEFAULT_CODE_TTL_MS,
+  computeApprovalCodeExpiry,
   FAILED_ATTEMPTS_LOCKOUT_THRESHOLD,
   generateNumericCode6,
   maskEmail,
@@ -40,7 +40,11 @@ import { resolveOwnerEmailRecipients } from "@/features/approval-codes/recipient
 import { fail, ok, type ApiResult } from "./types";
 
 const BCRYPT_COST = 10;
-const PEC_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 jam (lebih lama dari code 1 jam supaya UI tidak misleading)
+// PEC wrapper TTL — kasih buffer 24 jam supaya PEC row tidak expire sebelum
+// codenya (code paling lama valid sampai 23:59 WIB hari yang sama, jadi 24 jam
+// dari sekarang pasti lebih panjang). Mencegah UI "kode masih hidup tapi PEC
+// sudah expired".
+const PEC_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 async function requireSession() {
   const session = await auth();
@@ -244,7 +248,7 @@ export async function proposeEntryChange(input: ProposeEntryChangeInput): Promis
   const codeHash = await bcrypt.hash(code, BCRYPT_COST);
   const codeFirstTwo = code.slice(0, 2);
   const now = new Date();
-  const codeExpiresAt = new Date(now.getTime() + DEFAULT_CODE_TTL_MS);
+  const codeExpiresAt = computeApprovalCodeExpiry(now);
   const pecExpiresAt = new Date(now.getTime() + PEC_EXPIRY_MS);
 
   let changeId: string;
@@ -532,6 +536,176 @@ export async function approveEntryChange(input: {
       before: pec.originalData as Record<string, unknown>,
       after: pec.operation === "delete" ? null : (pec.proposedData as Record<string, unknown> | null),
       context: { operation: pec.operation, entityType: pec.entityType, entityId: pec.entityId },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  return ok({ changeId: pec.id, appliedAt: now });
+}
+
+/**
+ * Direct-approve oleh owner langsung dari Pusat Persetujuan — tanpa kode.
+ * Identik dengan [[approveEntryChange]] kecuali skip code verify dan revoke
+ * active code (bukan consume). Owner-only.
+ */
+export async function approveEntryChangeDirect(input: {
+  changeId: string;
+}): Promise<ApiResult<{ changeId: string; appliedAt: Date }>> {
+  const session = await requireSession();
+  if (session.user.role !== "owner") {
+    return fail(
+      "FORBIDDEN",
+      "Direct approve hanya untuk Owner. Manager pakai jalur kode.",
+    );
+  }
+
+  const [pec] = await db
+    .select()
+    .from(pendingEntryChanges)
+    .where(eq(pendingEntryChanges.id, input.changeId))
+    .limit(1);
+  if (!pec) return fail("NOT_FOUND", "Koreksi entry tidak ditemukan");
+  if (pec.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Koreksi dari outlet lain");
+  }
+  if (pec.status !== "pending_approval") {
+    return fail(
+      "INVALID_STATE",
+      `Koreksi sudah ${pec.status} — tidak bisa approve lagi.`,
+    );
+  }
+  if (pec.expiresAt < new Date()) {
+    await db
+      .update(pendingEntryChanges)
+      .set({ status: "expired", updatedAt: new Date() })
+      .where(eq(pendingEntryChanges.id, pec.id));
+    return fail(
+      "EXPIRED",
+      "Koreksi sudah kadaluarsa. Minta requester ajukan ulang.",
+    );
+  }
+
+  const now = new Date();
+  try {
+    await db.transaction(async (tx) => {
+      if (pec.operation === "delete") {
+        if (pec.entityType === "expense") {
+          await tx
+            .update(expenses)
+            .set({
+              deletedAt: now,
+              deletedBy: session.user.id,
+              updatedAt: now,
+              updatedBy: session.user.id,
+            })
+            .where(eq(expenses.id, pec.entityId));
+        } else {
+          await tx
+            .update(incomes)
+            .set({
+              deletedAt: now,
+              deletedBy: session.user.id,
+              updatedAt: now,
+              updatedBy: session.user.id,
+            })
+            .where(eq(incomes.id, pec.entityId));
+        }
+      } else {
+        const proposed = (pec.proposedData ?? {}) as Record<string, unknown>;
+        if (pec.entityType === "expense") {
+          const updates: Partial<typeof expenses.$inferInsert> = {
+            updatedAt: now,
+            updatedBy: session.user.id,
+          };
+          if (typeof proposed.expenseDate === "string")
+            updates.expenseDate = proposed.expenseDate;
+          if (typeof proposed.categoryId === "string")
+            updates.categoryId = proposed.categoryId;
+          if (typeof proposed.description === "string")
+            updates.description = proposed.description;
+          if (typeof proposed.amount === "number")
+            updates.amount = proposed.amount;
+          if (typeof proposed.paymentMethod === "string") {
+            updates.paymentMethod = proposed.paymentMethod as
+              | "cash"
+              | "transfer"
+              | "other";
+          }
+          await tx
+            .update(expenses)
+            .set(updates)
+            .where(eq(expenses.id, pec.entityId));
+        } else {
+          const updates: Partial<typeof incomes.$inferInsert> = {
+            updatedAt: now,
+            updatedBy: session.user.id,
+          };
+          if (typeof proposed.incomeDate === "string")
+            updates.incomeDate = proposed.incomeDate;
+          if (typeof proposed.description === "string")
+            updates.description = proposed.description;
+          if (typeof proposed.amount === "number")
+            updates.amount = proposed.amount;
+          if (typeof proposed.paymentMethod === "string") {
+            updates.paymentMethod = proposed.paymentMethod as
+              | "cash"
+              | "transfer"
+              | "other";
+          }
+          await tx
+            .update(incomes)
+            .set(updates)
+            .where(eq(incomes.id, pec.entityId));
+        }
+      }
+
+      await tx
+        .update(pendingEntryChanges)
+        .set({
+          status: "approved",
+          approvedBy: session.user.id,
+          approvedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(pendingEntryChanges.id, pec.id));
+
+      // Revoke any active code (owner direct, code bypass).
+      await tx
+        .update(approvalCodes)
+        .set({ revokedAt: now, revokedByUserId: session.user.id })
+        .where(
+          and(
+            eq(approvalCodes.targetEntryChangeId, pec.id),
+            isNull(approvalCodes.consumedAt),
+            isNull(approvalCodes.revokedAt),
+          ),
+        );
+    });
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "entry-change.approve.direct", "Operasi database gagal"),
+    );
+  }
+
+  await logAudit({
+    eventType: "entry_change.approve",
+    userId: session.user.id,
+    entityType: "pending_entry_change",
+    entityId: pec.id,
+    payload: {
+      summary: `Approve ${pec.operation} ${pec.entityType} (direct owner) — ${pec.reason}`,
+      before: pec.originalData as Record<string, unknown>,
+      after:
+        pec.operation === "delete"
+          ? null
+          : (pec.proposedData as Record<string, unknown> | null),
+      context: {
+        operation: pec.operation,
+        entityType: pec.entityType,
+        entityId: pec.entityId,
+        directOwnerApprove: true,
+      },
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
   });

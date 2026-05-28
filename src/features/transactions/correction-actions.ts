@@ -21,7 +21,7 @@ import { logAndSanitize } from "@/lib/server-error";
 import { sendEmail } from "@/lib/email/send";
 import { buildTransactionCorrectionCodeEmail } from "@/lib/email/templates/transaction-correction-code";
 import {
-  DEFAULT_CODE_TTL_MS,
+  computeApprovalCodeExpiry,
   FAILED_ATTEMPTS_LOCKOUT_THRESHOLD,
   generateNumericCode6,
   maskEmail,
@@ -404,7 +404,7 @@ export async function requestTransactionCorrection(input: {
   const codeHash = await bcrypt.hash(code, BCRYPT_COST);
   const codeFirstTwo = code.slice(0, 2);
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + DEFAULT_CODE_TTL_MS);
+  const expiresAt = computeApprovalCodeExpiry(now);
 
   let correctionId: string;
   try {
@@ -1007,6 +1007,348 @@ export async function approveTransactionCorrection(input: {
   );
 
   return ok({ correctionId: v.correctionId, appliedAt: now });
+}
+
+/**
+ * Direct-approve oleh owner langsung dari Pusat Persetujuan — tanpa kode.
+ *
+ * Side-effect identik dengan [[approveTransactionCorrection]] kecuali:
+ *   - tidak ada code verify / consume
+ *   - active code untuk koreksi ini di-revoke (audit trail: "owner direct,
+ *     code bypass")
+ *   - audit log menandai `directOwnerApprove: true`
+ *
+ * Sengaja owner-only (lebih strict dari permission `*.correction.approve`
+ * yang juga punya manager) karena bypass kode = bypass dual-control.
+ */
+export async function approveTransactionCorrectionDirect(input: {
+  correctionId: string;
+}): Promise<ApiResult<{ correctionId: string; appliedAt: Date }>> {
+  const session = await requireSession();
+  if (session.user.role !== "owner") {
+    return fail(
+      "FORBIDDEN",
+      "Direct approve hanya untuk Owner. Manager pakai jalur kode.",
+    );
+  }
+
+  const [correction] = await db
+    .select()
+    .from(transactionCorrections)
+    .where(eq(transactionCorrections.id, input.correctionId))
+    .limit(1);
+  if (!correction) return fail("NOT_FOUND", "Koreksi tidak ditemukan");
+  if (correction.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Koreksi dari outlet lain");
+  }
+  if (correction.status !== "pending_approval") {
+    return fail(
+      "INVALID_STATE",
+      `Koreksi sudah ${correction.status} — tidak bisa approve lagi.`,
+    );
+  }
+
+  const now = new Date();
+  let trxNumber = "";
+  let trxCashierId = "";
+  let trxEntryDate = jakartaDateOf(new Date());
+  try {
+    await db.transaction(async (tx) => {
+      const [lockedRow] = await tx
+        .select({
+          id: transactions.id,
+          status: transactions.status,
+          paymentMethod: transactions.paymentMethod,
+          total: transactions.total,
+          subtotal: transactions.subtotal,
+          discountAmount: transactions.discountAmount,
+          refundedAmount: transactions.refundedAmount,
+          customerId: transactions.customerId,
+          loyaltyPointsEarned: transactions.loyaltyPointsEarned,
+          loyaltyPointsRedeemed: transactions.loyaltyPointsRedeemed,
+          cashierId: transactions.cashierId,
+          transactionNumber: transactions.transactionNumber,
+          createdAt: transactions.createdAt,
+        })
+        .from(transactions)
+        .where(eq(transactions.id, correction.transactionId))
+        .for("update")
+        .limit(1);
+      if (!lockedRow) throw new Error("TRX_NOT_FOUND_AT_LOCK");
+      if (lockedRow.status !== "paid") {
+        throw new Error("TRX_STATUS_CHANGED_NOT_PAID");
+      }
+      if (lockedRow.refundedAmount > 0) {
+        throw new Error("TRX_HAS_REFUND_AT_APPROVE");
+      }
+      trxNumber = lockedRow.transactionNumber;
+      trxCashierId = lockedRow.cashierId;
+      trxEntryDate = jakartaDateOf(new Date(lockedRow.createdAt));
+
+      const [shiftRow] = await tx
+        .select()
+        .from(shifts)
+        .where(eq(shifts.id, correction.shiftIdAtRequest))
+        .limit(1);
+      if (!shiftRow) throw new Error("SHIFT_NOT_FOUND_AT_APPROVE");
+      const reCheck = getCorrectableTransactionWindow({
+        trx: {
+          shiftId: correction.shiftIdAtRequest,
+          outletId: correction.outletId,
+        },
+        shift: {
+          id: shiftRow.id,
+          status: shiftRow.status,
+          closedAt: shiftRow.closedAt,
+          outletId: shiftRow.outletId,
+        },
+        now,
+      });
+      if (!reCheck.eligible) throw new Error("WINDOW_EXPIRED_AT_APPROVE");
+
+      const correctedPaymentMethod = correction.correctedPaymentMethod;
+      const correctedTotal = correction.correctedTotal;
+      const correctedDiscountAmount = correction.correctedDiscountAmount;
+      const trxUpdate: Record<string, unknown> = {
+        paymentMethod: correctedPaymentMethod,
+        total: correctedTotal,
+        discountAmount: correctedDiscountAmount,
+        updatedAt: now,
+      };
+      if (correctedPaymentMethod === "cash") {
+        trxUpdate.cashReceived = correctedTotal;
+        trxUpdate.cashChange = 0;
+      } else {
+        trxUpdate.cashReceived = null;
+        trxUpdate.cashChange = null;
+      }
+      if (correctedDiscountAmount > 0) {
+        trxUpdate.discountReason = `Koreksi (direct owner): ${correction.reason}`;
+      } else {
+        trxUpdate.discountReason = null;
+      }
+      await tx
+        .update(transactions)
+        .set(trxUpdate)
+        .where(eq(transactions.id, correction.transactionId));
+
+      const hadOriginalSplits =
+        correction.originalSplitBreakdown !== null &&
+        Array.isArray(correction.originalSplitBreakdown) &&
+        (correction.originalSplitBreakdown as unknown[]).length > 0;
+      const willBeSplit =
+        correctedPaymentMethod === "split" &&
+        Array.isArray(correction.correctedSplitBreakdown) &&
+        (correction.correctedSplitBreakdown as unknown[]).length > 0;
+      if (hadOriginalSplits || willBeSplit) {
+        await tx
+          .delete(splitPayments)
+          .where(eq(splitPayments.transactionId, correction.transactionId));
+      }
+      if (willBeSplit) {
+        const rows =
+          correction.correctedSplitBreakdown as SplitBreakdownRow[] | null;
+        if (rows && rows.length > 0) {
+          await tx.insert(splitPayments).values(
+            rows.map((r) => ({
+              transactionId: correction.transactionId,
+              outletId: correction.outletId,
+              shiftId: correction.shiftIdAtRequest,
+              cashierId: trxCashierId,
+              amount: r.amount,
+              paymentMethod: r.paymentMethod,
+              cashReceived:
+                r.paymentMethod === "cash"
+                  ? (r.cashReceived ?? r.amount)
+                  : null,
+              cashChange:
+                r.paymentMethod === "cash" ? (r.cashChange ?? 0) : null,
+              splitKind: "nominal" as const,
+            })),
+          );
+        }
+      }
+
+      if (lockedRow.customerId) {
+        const oldEarn = lockedRow.loyaltyPointsEarned ?? 0;
+        const newEarn = computePointsEarned(correctedTotal);
+        const delta = newEarn - oldEarn;
+        const spentDelta = correctedTotal - lockedRow.total;
+        if (delta !== 0) {
+          await tx
+            .update(customers)
+            .set({
+              totalPoints: sql`${customers.totalPoints} + ${delta}`,
+              totalSpent: sql`${customers.totalSpent} + ${spentDelta}`,
+              updatedAt: now,
+              updatedBy: session.user.id,
+            })
+            .where(eq(customers.id, lockedRow.customerId));
+          await tx
+            .update(transactions)
+            .set({ loyaltyPointsEarned: newEarn, updatedAt: now })
+            .where(eq(transactions.id, correction.transactionId));
+        } else if (spentDelta !== 0) {
+          await tx
+            .update(customers)
+            .set({
+              totalSpent: sql`${customers.totalSpent} + ${spentDelta}`,
+              updatedAt: now,
+              updatedBy: session.user.id,
+            })
+            .where(eq(customers.id, lockedRow.customerId));
+        }
+      }
+
+      // Revoke any active code (direct approve, code obsolete).
+      await tx
+        .update(approvalCodes)
+        .set({ revokedAt: now, revokedByUserId: session.user.id })
+        .where(
+          and(
+            eq(approvalCodes.targetTransactionCorrectionId, input.correctionId),
+            isNull(approvalCodes.consumedAt),
+            isNull(approvalCodes.revokedAt),
+          ),
+        );
+
+      await tx
+        .update(transactionCorrections)
+        .set({
+          status: "approved",
+          approvedBy: session.user.id,
+          approvedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(transactionCorrections.id, input.correctionId));
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === "TRX_STATUS_CHANGED_NOT_PAID") {
+      return fail(
+        "TRX_NOT_PAID",
+        "Status transaksi sudah berubah (mungkin di-void/refund). Koreksi dibatalkan.",
+      );
+    }
+    if (msg === "TRX_HAS_REFUND_AT_APPROVE") {
+      return fail(
+        "TRX_HAS_REFUND",
+        "Transaksi sudah ada refund. Koreksi dibatalkan.",
+      );
+    }
+    if (msg === "WINDOW_EXPIRED_AT_APPROVE") {
+      return fail(
+        "WINDOW_EXPIRED",
+        "Shift transaksi sudah ditutup >24 jam sejak request. Pakai shift-level rebalance.",
+      );
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(
+        e,
+        "transaction-correction.approve.direct",
+        "Operasi database gagal",
+      ),
+    );
+  }
+
+  await logAudit({
+    eventType: "transaction.correction.approve",
+    userId: session.user.id,
+    entityType: "transaction_correction",
+    entityId: input.correctionId,
+    payload: {
+      summary: `Approve koreksi TRX ${trxNumber} (direct owner): ${correction.originalPaymentMethod}→${correction.correctedPaymentMethod}, ${correction.originalTotal}→${correction.correctedTotal}`,
+      context: {
+        transactionId: correction.transactionId,
+        transactionNumber: trxNumber,
+        originalPaymentMethod: correction.originalPaymentMethod,
+        correctedPaymentMethod: correction.correctedPaymentMethod,
+        originalTotal: correction.originalTotal,
+        correctedTotal: correction.correctedTotal,
+        directOwnerApprove: true,
+      },
+    },
+    metadata: { outletId: correction.outletId, actorRole: session.user.role },
+  });
+
+  fireJournalHook(
+    async () => {
+      await postJournalForTransactionCorrection({
+        outletId: correction.outletId,
+        transactionId: correction.transactionId,
+        transactionNumber: trxNumber,
+        correctionId: input.correctionId,
+        original: {
+          paymentMethod: correction.originalPaymentMethod as
+            | "cash"
+            | "qris"
+            | "card_bca"
+            | "card_bni"
+            | "card_mandiri"
+            | "card_bri"
+            | "card_other"
+            | "split",
+          total: correction.originalTotal,
+          subtotal: correction.originalSubtotal,
+          discountAmount: correction.originalDiscountAmount,
+          splits:
+            (correction.originalSplitBreakdown as
+              | Array<{
+                  paymentMethod:
+                    | "cash"
+                    | "qris"
+                    | "card_bca"
+                    | "card_bni"
+                    | "card_mandiri"
+                    | "card_bri"
+                    | "card_other";
+                  amount: number;
+                }>
+              | null) ?? null,
+        },
+        corrected: {
+          paymentMethod: correction.correctedPaymentMethod as
+            | "cash"
+            | "qris"
+            | "card_bca"
+            | "card_bni"
+            | "card_mandiri"
+            | "card_bri"
+            | "card_other"
+            | "split",
+          total: correction.correctedTotal,
+          subtotal: correction.originalSubtotal,
+          discountAmount: correction.correctedDiscountAmount,
+          splits:
+            (correction.correctedSplitBreakdown as
+              | Array<{
+                  paymentMethod:
+                    | "cash"
+                    | "qris"
+                    | "card_bca"
+                    | "card_bni"
+                    | "card_mandiri"
+                    | "card_bri"
+                    | "card_other";
+                  amount: number;
+                }>
+              | null) ?? null,
+        },
+        reason: correction.reason,
+        entryDate: trxEntryDate,
+        actorId: session.user.id,
+      });
+    },
+    "pos_sale_correction",
+    {
+      sourceId: input.correctionId,
+      outletId: correction.outletId,
+      actorId: session.user.id,
+    },
+  );
+
+  return ok({ correctionId: input.correctionId, appliedAt: now });
 }
 
 // ============================================================

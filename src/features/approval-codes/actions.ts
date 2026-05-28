@@ -17,7 +17,7 @@ import {
   type ApprovalCode,
   type RequestApprovalCodeInput,
   type RequestApprovalCodeResult,
-  DEFAULT_CODE_TTL_MS,
+  computeApprovalCodeExpiry,
   FAILED_ATTEMPTS_LOCKOUT_THRESHOLD,
   generateNumericCode6,
   maskEmail,
@@ -182,7 +182,7 @@ export async function requestApprovalCode(
   const codeHash = await bcrypt.hash(code, BCRYPT_COST);
   const codeFirstTwo = code.slice(0, 2);
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + DEFAULT_CODE_TTL_MS);
+  const expiresAt = computeApprovalCodeExpiry(now);
 
   const [inserted] = await db
     .insert(approvalCodes)

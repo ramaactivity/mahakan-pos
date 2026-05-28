@@ -64,7 +64,7 @@ export function buildApprovalCodeEmail(
     "",
     `KODE: ${input.code}`,
     "",
-    `Berlaku sampai ${fmtTime(input.expiresAt)} WIB (1 jam). Single-use.`,
+    `Berlaku sampai ${fmtTime(input.expiresAt)} WIB. Single-use.`,
     "",
     `Forward kode ini ke ${input.requestedByName} via WhatsApp untuk approve.`,
     "",
@@ -94,7 +94,7 @@ export function buildApprovalCodeEmail(
       ${input.code}
     </div>
     <div style="font-size: 12px; color: #777; margin-top: 12px;">
-      Berlaku sampai ${fmtTime(input.expiresAt)} WIB (1 jam). Single-use.
+      Berlaku sampai ${fmtTime(input.expiresAt)} WIB. Single-use.
     </div>
   </div>
   <p style="font-size: 13px; color: #555;">
