@@ -341,20 +341,13 @@ export async function restoreStockForTransaction(
         ? "Auto-restore refund incl. waste buffer"
         : "Auto-restore for open bill edit incl. waste buffer";
 
-  const affected: string[] = [];
+  /* Sesi AE-154 perf — sebelumnya N round-trip update + N round-trip
+   * insert (~5 sec untuk 50 bahan). Sekarang Promise.all updates + single
+   * bulk insert movements, mirror pattern applyStockDeductions. */
+  const now = new Date();
+  const movementRows: Array<typeof inventoryMovements.$inferInsert> = [];
   for (const [ingredientId, { totalQty, unitCost }] of restoreByIngredient) {
-    await tx
-      .update(ingredients)
-      .set({
-        currentStock: sql`${ingredients.currentStock} + ${totalQty}`,
-        // Sesi AE-12 — keep decimal in sync.
-        currentStockDecimal: sql`COALESCE(${ingredients.currentStockDecimal}, ${ingredients.currentStock}::numeric) + ${totalQty}`,
-        updatedAt: new Date(),
-        updatedBy: userId,
-      })
-      .where(eq(ingredients.id, ingredientId));
-
-    await tx.insert(inventoryMovements).values({
+    movementRows.push({
       outletId,
       ingredientId,
       kind,
@@ -366,11 +359,30 @@ export async function restoreStockForTransaction(
       reason,
       createdBy: userId,
     });
-
-    affected.push(ingredientId);
   }
 
-  return Array.from(new Set(affected));
+  const updates = Array.from(restoreByIngredient.entries()).map(
+    ([ingredientId, { totalQty }]) =>
+      tx
+        .update(ingredients)
+        .set({
+          currentStock: sql`${ingredients.currentStock} + ${totalQty}`,
+          /* Sesi AE-12 — keep decimal in sync. */
+          currentStockDecimal: sql`COALESCE(${ingredients.currentStockDecimal}, ${ingredients.currentStock}::numeric) + ${totalQty}`,
+          updatedAt: now,
+          updatedBy: userId,
+        })
+        .where(eq(ingredients.id, ingredientId)),
+  );
+
+  if (updates.length > 0) {
+    await Promise.all(updates);
+  }
+  if (movementRows.length > 0) {
+    await tx.insert(inventoryMovements).values(movementRows);
+  }
+
+  return Array.from(restoreByIngredient.keys());
 }
 
 /**

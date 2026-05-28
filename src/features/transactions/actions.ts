@@ -2245,20 +2245,17 @@ export async function editOpenBill(
         .select({ id: promoUsages.id, promoId: promoUsages.promoId })
         .from(promoUsages)
         .where(eq(promoUsages.transactionId, v.transactionId));
-      // Decrement currentUses on any previously-recorded promos for this trx.
-      for (const u of existingUsages) {
-        await tx
-          .update(promos)
-          .set({
-            currentUses: sql`GREATEST(0, ${promos.currentUses} - 1)`,
-            updatedAt: new Date(),
-          })
-          .where(eq(promos.id, u.promoId));
-      }
+      /* Sesi AE-154 perf — pakai batch helper (sama yg dipakai void +
+       * refund). Sebelumnya for-loop sequential = N round-trip (~50ms each).
+       * Batch CASE statement = 1 RTT. Plus delete promo_usages parallel
+       * dengan batch decrement. */
       if (existingUsages.length > 0) {
-        await tx
-          .delete(promoUsages)
-          .where(eq(promoUsages.transactionId, v.transactionId));
+        await Promise.all([
+          batchDecrementPromoUses(tx, existingUsages),
+          tx
+            .delete(promoUsages)
+            .where(eq(promoUsages.transactionId, v.transactionId)),
+        ]);
       }
       // Record the new usage if applicable.
       if (v.promoId && validation.recomputedDiscountAmount > 0) {

@@ -4,6 +4,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Banknote,
+  ChevronDown,
   FileText,
   Gift,
   Loader2,
@@ -1964,24 +1965,33 @@ function CartPanelImpl({
           </div>
         </div>
 
-        {/* Aksi lainnya — collapsed by default untuk hemat space */}
+        {/* Aksi lainnya — collapsed by default untuk hemat space.
+            Sesi AE-154 — polish: dropdown arrow lebih clean dari label
+            "Buka"/"Tutup" yg crammed. Active dot lebih besar (2px). */}
         <button
           type="button"
           onClick={() => setMoreOpen((v) => !v)}
-          className="flex w-full items-center justify-between rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:border-neutral-300"
+          className="flex w-full items-center justify-between rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-700 transition-colors hover:border-neutral-300 hover:bg-neutral-50"
         >
-          <span className="flex items-center gap-1.5">
-            <MoreHorizontal className="size-4" aria-hidden />
-            Aksi Lain
+          <span className="flex items-center gap-2">
+            <MoreHorizontal className="size-4 text-neutral-500" aria-hidden />
+            <span>Aksi Lain</span>
             {(draft.billNote ||
               draft.discount ||
               (draft.loyaltyPointsRedeemed ?? 0) > 0) ? (
-              <span className="ml-1 size-1.5 rounded-full bg-mahakan-green-700" />
+              <span
+                className="size-2 rounded-full bg-mahakan-green-700"
+                title="Ada catatan / diskon / poin aktif"
+              />
             ) : null}
           </span>
-          <span className="text-neutral-400">
-            {moreOpen ? "Tutup" : "Buka"}
-          </span>
+          <ChevronDown
+            className={cn(
+              "size-4 text-neutral-400 transition-transform",
+              moreOpen && "rotate-180",
+            )}
+            aria-hidden
+          />
         </button>
         {moreOpen ? (
           <div className="space-y-2 rounded-md border border-neutral-200 bg-white p-2">
@@ -2066,35 +2076,36 @@ function CartPanelImpl({
         ) : null}
 
         {/* Primary action — always visible, big touch target.
-            Sesi AE-151 — Staff feedback: dalam mode edit bill, sering customer
-            langsung mau bayar. Split jadi 2 button: Update saja (outline)
-            + Update & Bayar (primary). Saat NEW bill (no editingBillId),
-            tetap satu tombol "Bayar". */}
+            Sesi AE-154 — Staff feedback (post AE-151): "Update & Bayar Rp"
+            overflow di tablet kasir. Refactor:
+            - Primary "Bayar Sekarang" full-width prominent
+            - "Update Bill saja" sebagai secondary action di bawah dengan
+              variant ghost, lebih kecil. Stack vertical biar nggak crammed.
+            - Total Rupiah TIDAK di tombol — sudah ada di "TOTAL" row di
+              atas; redundant + bikin layout berat. */}
         {draft.editingBillId ? (
-          <div className="flex gap-2">
-            <Button
-              size="lg"
-              variant="outline"
-              onClick={onSaveAsOpenBill}
-              loading={saveBillSubmitting}
-              disabled={draft.items.length === 0 || saveBillSubmitting}
-              className="flex-1"
-            >
-              <FileText className="size-4" aria-hidden />
-              {saveBillSubmitting ? "Menyimpan…" : "Update Bill"}
-            </Button>
+          <div className="space-y-1.5">
             <Button
               size="lg"
               onClick={onUpdateBillAndPay}
               loading={saveBillSubmitting}
               disabled={draft.items.length === 0 || saveBillSubmitting}
-              className="flex-[1.4]"
+              fullWidth
             >
               <Banknote className="size-4" aria-hidden />
-              Update & Bayar
-              <span className="ml-auto font-mono text-xs opacity-80">
-                {formatRupiah(total)}
-              </span>
+              {saveBillSubmitting ? "Memproses…" : "Bayar Sekarang"}
+            </Button>
+            <Button
+              size="md"
+              variant="ghost"
+              onClick={onSaveAsOpenBill}
+              loading={saveBillSubmitting}
+              disabled={draft.items.length === 0 || saveBillSubmitting}
+              fullWidth
+              className="text-xs text-neutral-600"
+            >
+              <FileText className="size-3.5" aria-hidden />
+              {saveBillSubmitting ? "Menyimpan…" : "Update Bill saja (bayar nanti)"}
             </Button>
           </div>
         ) : (
