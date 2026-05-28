@@ -660,6 +660,9 @@ export async function resetPin(
    * Management → masih gagal login Absensi (PIN beda). Pakai bcrypt sama
    * dengan attendance flow (bcryptjs hash 10 rounds). */
   let syncedToAttendance = false;
+  /* True kalau user role bisa absensi tapi belum ter-link → owner perlu
+   * link via tab Karyawan. Warning dilampirkan ke response payload. */
+  let needsEmployeeLink = false;
   try {
     const bcrypt = (await import("bcryptjs")).default;
     const attendanceHash = await bcrypt.hash(parsed.data.newPin, 10);
@@ -678,10 +681,24 @@ export async function resetPin(
       )
       .returning({ id: employees.id });
     syncedToAttendance = linkedEmployees.length > 0;
+    /* Non-owner roles biasanya juga karyawan absensi. Kalau tidak ada link,
+     * flag untuk owner. Owner sendiri biasanya tidak absensi → skip flag. */
+    if (
+      !syncedToAttendance &&
+      target.role !== "owner"
+    ) {
+      needsEmployeeLink = true;
+    }
   } catch (e) {
     /* Don't fail the user PIN reset if attendance sync fails. Log it; owner
      * masih bisa manually reset attendance PIN di Karyawan tab kalau perlu. */
     console.error("[user.reset_pin attendance sync failed]", e);
+  }
+
+  if (needsEmployeeLink) {
+    console.warn(
+      `[user.reset_pin] User ${target.name} (${target.role}) tidak ter-link ke employee — PIN Absensi tidak ter-sync. Link via tab Karyawan dulu kalau perlu.`,
+    );
   }
 
   await logAudit({
@@ -691,7 +708,7 @@ export async function resetPin(
     entityId: row.id,
     payload: {
       summary: `Reset PIN ${target.role} ${target.name}${syncedToAttendance ? " (+sync Absensi)" : ""}`,
-      context: { syncedToAttendance },
+      context: { syncedToAttendance, needsEmployeeLink },
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
   });
