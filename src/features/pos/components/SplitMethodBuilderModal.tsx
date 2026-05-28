@@ -327,39 +327,41 @@ export function SplitMethodBuilderModal({
         </>
       }
     >
-      <div className="grid items-start gap-4 landscape:md:grid-cols-[1fr_1fr] landscape:md:gap-5">
-        {/* LEFT — summary + rows (scroll independent dari numpad). */}
-        <div className="space-y-3">
-          {/* Summary band — sticky di atas modal scroll supaya kasir selalu
-              lihat Sisa walau scroll ke row bawah. Sesi AE-156. */}
-          <div className="sticky top-0 z-10 -mx-1 grid grid-cols-3 gap-2 bg-white px-1 pb-1 pt-0.5">
-            <SummaryTile
-              label="Bill"
-              value={formatRupiah(total)}
-              tone="neutral"
-            />
-            <SummaryTile
-              label="Di-split"
-              value={formatRupiah(sumSplits)}
-              tone={sumSplits === total ? "success" : "neutral"}
-            />
-            <SummaryTile
-              label={remaining > 0 ? "Sisa" : remaining < 0 ? "Lebih" : "Pas"}
-              value={
-                remaining === 0
-                  ? formatRupiah(0)
-                  : formatRupiah(Math.abs(remaining))
-              }
-              tone={
-                remaining === 0
-                  ? "success"
-                  : remaining > 0
-                    ? "warning"
-                    : "danger"
-              }
-            />
-          </div>
+      {/* Sticky summary bar — sesi AE-156c: single horizontal bar, edge-to-
+          edge dengan negative margin cancel modal padding. Solid bg + border-
+          bottom + shadow supaya tidak ada konten "bocor" lewat gap saat scroll. */}
+      <div className="sticky top-0 z-30 -mx-6 -mt-4 mb-4 border-b border-neutral-200 bg-white/95 px-6 py-2.5 shadow-sm backdrop-blur-sm">
+        <div className="flex items-center justify-between gap-3">
+          <SummaryStat label="Bill" value={total} tone="neutral" />
+          <span className="text-neutral-200" aria-hidden>
+            │
+          </span>
+          <SummaryStat
+            label="Sudah"
+            value={sumSplits}
+            tone={sumSplits === total ? "success" : "neutral"}
+          />
+          <span className="text-neutral-200" aria-hidden>
+            │
+          </span>
+          <SummaryStat
+            label={remaining > 0 ? "Sisa" : remaining < 0 ? "Lebih" : "Pas"}
+            value={Math.abs(remaining)}
+            tone={
+              remaining === 0
+                ? "success"
+                : remaining > 0
+                  ? "warning"
+                  : "danger"
+            }
+            highlighted
+          />
+        </div>
+      </div>
 
+      <div className="grid items-start gap-4 landscape:md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] landscape:md:gap-5">
+        {/* LEFT — rows + add button (scroll independent dari numpad). */}
+        <div className="space-y-3">
           {/* Rows */}
           <div className="space-y-2">
             {rows.map((r, idx) => (
@@ -413,8 +415,9 @@ export function SplitMethodBuilderModal({
 
         {/* RIGHT — focused field display + numpad. Sticky di landscape:md+
             (tablet+ desktop) supaya tetap visible saat user scroll LEFT
-            untuk lihat row #2/#3 di bawah. Sesi AE-156 fix. */}
-        <div className="space-y-3 landscape:md:sticky landscape:md:top-0 landscape:md:self-start">
+            untuk lihat row #2/#3 di bawah. top-14 (56px) untuk leave room
+            ke summary band sticky di atasnya. Sesi AE-156c. */}
+        <div className="space-y-3 landscape:md:sticky landscape:md:top-14 landscape:md:self-start">
           {/* Focused field display */}
           <div className="space-y-2">
             <div className="flex items-baseline justify-between">
@@ -546,39 +549,43 @@ export function SplitMethodBuilderModal({
   );
 }
 
-function SummaryTile({
+function SummaryStat({
   label,
   value,
   tone,
+  highlighted,
 }: {
   label: string;
-  value: string;
+  value: number;
   tone: "neutral" | "success" | "warning" | "danger";
+  highlighted?: boolean;
 }) {
   return (
     <div
       className={cn(
-        "rounded-lg border px-3 py-2",
-        tone === "success" && "border-mahakan-green-300 bg-mahakan-green-50",
-        tone === "warning" && "border-warning-300 bg-warning-50",
-        tone === "danger" && "border-danger-300 bg-danger-50",
-        tone === "neutral" && "border-neutral-200 bg-neutral-50",
+        "flex flex-1 items-baseline gap-2",
+        highlighted &&
+          "rounded-md px-2.5 py-1 ring-1",
+        highlighted && tone === "success" && "bg-mahakan-green-50 ring-mahakan-green-300",
+        highlighted && tone === "warning" && "bg-warning-50 ring-warning-300",
+        highlighted && tone === "danger" && "bg-danger-50 ring-danger-300",
+        highlighted && tone === "neutral" && "bg-neutral-50 ring-neutral-200",
       )}
     >
-      <p className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
         {label}
-      </p>
-      <p
+      </span>
+      <span
         className={cn(
-          "mt-0.5 font-mono text-sm font-bold tabular-nums sm:text-base",
+          "font-mono text-base font-bold tabular-nums",
           tone === "success" && "text-mahakan-green-900",
           tone === "warning" && "text-warning-700",
           tone === "danger" && "text-danger-700",
           tone === "neutral" && "text-neutral-900",
         )}
       >
-        {value}
-      </p>
+        {formatRupiah(value)}
+      </span>
     </div>
   );
 }
