@@ -9,6 +9,7 @@ import {
   Modal,
   toast,
 } from "@/components/ui";
+import { formatRupiah } from "@/lib/format";
 import {
   isOk,
   listInvestors,
@@ -74,6 +75,17 @@ export function ShareTransferModal({
   const toCurrent = toInvestor ? Number(toInvestor.sharePct) : 0;
   const fromAfter = fromCurrent - delta;
   const toAfter = toCurrent + delta;
+
+  /* Sesi AE-160d — Estimasi nilai nominal saham (untuk display saja, tidak
+   * mempengaruhi mutasi). Pakai total modal pool aktif sebagai basis
+   * valuasi. P2P transfer tidak mengubah modalDisetor — itu historical
+   * setoran. Tapi "nilai 1% saham" ≈ totalPool / 100 untuk konteks ekuivalen. */
+  const totalModalPool = useMemo(
+    () => investors.reduce((s, i) => s + Number(i.modalDisetor ?? 0), 0),
+    [investors],
+  );
+  const valuePerPct = totalModalPool / 100;
+  const deltaValue = delta * valuePerPct;
 
   const validation = useMemo(() => {
     if (!fromId) return { ok: false, message: "Pilih investor sumber" };
@@ -162,7 +174,7 @@ export function ShareTransferModal({
                       options: investors.map((i) => ({
                         value: i.id,
                         label: i.fullName,
-                        hint: `${Number(i.sharePct).toFixed(4)}%`,
+                        hint: `${Number(i.sharePct).toFixed(4)}% · ${formatRupiah(Number(i.modalDisetor ?? 0))}`,
                       })),
                     },
                   ]}
@@ -170,9 +182,22 @@ export function ShareTransferModal({
                   onChange={setFromId}
                 />
                 {fromInvestor ? (
-                  <p className="mt-1 text-[11px] text-neutral-600">
-                    Share saat ini: {fromCurrent.toFixed(4)}%
-                  </p>
+                  <div className="mt-1 space-y-0.5 text-[11px] text-neutral-600">
+                    <p>
+                      Share saat ini:{" "}
+                      <strong>{fromCurrent.toFixed(4)}%</strong>
+                      {totalModalPool > 0 ? (
+                        <span className="text-neutral-500">
+                          {" "}
+                          ≈ {formatRupiah(fromCurrent * valuePerPct)}
+                        </span>
+                      ) : null}
+                    </p>
+                    <p className="text-neutral-500">
+                      Modal disetor historis:{" "}
+                      {formatRupiah(Number(fromInvestor.modalDisetor ?? 0))}
+                    </p>
+                  </div>
                 ) : null}
               </div>
               <div>
@@ -191,7 +216,7 @@ export function ShareTransferModal({
                         .map((i) => ({
                           value: i.id,
                           label: i.fullName,
-                          hint: `${Number(i.sharePct).toFixed(4)}%`,
+                          hint: `${Number(i.sharePct).toFixed(4)}% · ${formatRupiah(Number(i.modalDisetor ?? 0))}`,
                         })),
                     },
                   ]}
@@ -199,46 +224,89 @@ export function ShareTransferModal({
                   onChange={setToId}
                 />
                 {toInvestor ? (
-                  <p className="mt-1 text-[11px] text-neutral-600">
-                    Share saat ini: {toCurrent.toFixed(4)}%
-                  </p>
+                  <div className="mt-1 space-y-0.5 text-[11px] text-neutral-600">
+                    <p>
+                      Share saat ini:{" "}
+                      <strong>{toCurrent.toFixed(4)}%</strong>
+                      {totalModalPool > 0 ? (
+                        <span className="text-neutral-500">
+                          {" "}
+                          ≈ {formatRupiah(toCurrent * valuePerPct)}
+                        </span>
+                      ) : null}
+                    </p>
+                    <p className="text-neutral-500">
+                      Modal disetor historis:{" "}
+                      {formatRupiah(Number(toInvestor.modalDisetor ?? 0))}
+                    </p>
+                  </div>
                 ) : null}
               </div>
             </div>
 
-            <Input
-              label="Delta Share % (yang dipindah)"
-              type="number"
-              value={sharePctDelta}
-              onChange={(e) => setSharePctDelta(e.target.value)}
-              placeholder="5"
-              step={0.0001}
-              min={0}
-              max={100}
-            />
+            <div>
+              <Input
+                label="Delta Share % (yang dipindah)"
+                type="number"
+                value={sharePctDelta}
+                onChange={(e) => setSharePctDelta(e.target.value)}
+                placeholder="5"
+                step={0.0001}
+                min={0}
+                max={100}
+              />
+              {delta > 0 && totalModalPool > 0 ? (
+                <p className="mt-1 text-[11px] text-neutral-600">
+                  Estimasi nilai nominal: <strong>{formatRupiah(deltaValue)}</strong>{" "}
+                  <span className="text-neutral-500">
+                    (basis: total modal pool {formatRupiah(totalModalPool)})
+                  </span>
+                </p>
+              ) : null}
+            </div>
 
             {validation.ok && delta > 0 ? (
               <div className="rounded-md border border-mahakan-green-200 bg-mahakan-green-50/40 p-3 text-xs">
                 <p className="mb-2 font-semibold text-mahakan-green-900">
                   Preview After Transfer:
                 </p>
-                <div className="space-y-1">
-                  <div className="flex justify-between">
-                    <span>{fromInvestor?.fullName}</span>
-                    <span className="font-mono">
+                <div className="space-y-1.5">
+                  <div className="flex justify-between gap-3">
+                    <span className="min-w-0 truncate">
+                      {fromInvestor?.fullName}
+                    </span>
+                    <span className="text-right font-mono">
                       {fromCurrent.toFixed(4)}% →{" "}
                       <strong className="text-danger-600">
                         {fromAfter.toFixed(4)}%
                       </strong>
+                      {totalModalPool > 0 ? (
+                        <span className="block text-[10px] font-normal text-neutral-500">
+                          {formatRupiah(fromCurrent * valuePerPct)} →{" "}
+                          <strong className="text-danger-600">
+                            {formatRupiah(fromAfter * valuePerPct)}
+                          </strong>
+                        </span>
+                      ) : null}
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>{toInvestor?.fullName}</span>
-                    <span className="font-mono">
+                  <div className="flex justify-between gap-3">
+                    <span className="min-w-0 truncate">
+                      {toInvestor?.fullName}
+                    </span>
+                    <span className="text-right font-mono">
                       {toCurrent.toFixed(4)}% →{" "}
                       <strong className="text-success-600">
                         {toAfter.toFixed(4)}%
                       </strong>
+                      {totalModalPool > 0 ? (
+                        <span className="block text-[10px] font-normal text-neutral-500">
+                          {formatRupiah(toCurrent * valuePerPct)} →{" "}
+                          <strong className="text-success-600">
+                            {formatRupiah(toAfter * valuePerPct)}
+                          </strong>
+                        </span>
+                      ) : null}
                     </span>
                   </div>
                 </div>

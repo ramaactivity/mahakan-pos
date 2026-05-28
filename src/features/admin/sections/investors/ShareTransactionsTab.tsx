@@ -258,9 +258,18 @@ export function ShareTransactionsTab({ canManage }: ShareTransactionsTabProps) {
       <Card>
         <CardContent className="p-0">
           <div className="border-b border-neutral-200 px-4 py-3">
-            <h3 className="text-sm font-semibold text-neutral-900">
-              Riwayat Mutasi Saham
-            </h3>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-sm font-semibold text-neutral-900">
+                Riwayat Mutasi Saham
+              </h3>
+              {canManage ? (
+                <p className="text-[11px] text-neutral-500">
+                  <strong>Tidak bisa dihapus</strong> demi audit trail. Salah
+                  input? Klik <strong>Reverse</strong> untuk balikkan share
+                  ke posisi semula.
+                </p>
+              ) : null}
+            </div>
           </div>
           {txQuery.isLoading ? (
             <div className="space-y-1 p-4">
@@ -322,14 +331,19 @@ export function ShareTransactionsTab({ canManage }: ShareTransactionsTabProps) {
                           {t.status === "posted" ? (
                             <Button
                               size="sm"
-                              variant="ghost"
+                              variant="outline"
                               onClick={() => setReverseTarget(t)}
                               className="text-danger-600 hover:bg-danger-50"
-                              title="Reverse"
+                              title="Balikkan share ke posisi semula"
                             >
                               <RotateCcw className="size-3" />
+                              Reverse
                             </Button>
-                          ) : null}
+                          ) : (
+                            <span className="text-[11px] text-neutral-400">
+                              Sudah di-reverse
+                            </span>
+                          )}
                         </td>
                       ) : null}
                     </tr>
