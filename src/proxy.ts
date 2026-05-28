@@ -8,6 +8,17 @@ import { auth } from "@/lib/auth";
 const PUBLIC_PATHS = ["/", "/login", "/pin", "/showcase", "/absenkaryawan", "/m"];
 const ADMIN_PATHS = ["/dashboard"];
 
+/* Sesi AE-153 — Staff feedback: saat unauth user buka /pos di laptop/tablet/HP,
+ * default redirect harus ke PIN login (kasir flow), bukan email/password
+ * (yang dipakai owner/manager Back Office). Mirror RequireAuth client-side
+ * routing. POS + mobile karyawan butuh PIN; Dashboard butuh email/pwd. */
+function resolveLoginPathForTarget(pathname: string): "/login" | "/pin" {
+  if (pathname === "/pos" || pathname.startsWith("/pos/")) return "/pin";
+  /* /m paths are public; tapi defensive in case ada protected child paths. */
+  if (pathname === "/m" || pathname.startsWith("/m/")) return "/pin";
+  return "/login";
+}
+
 function matches(pathname: string, prefixes: string[]): boolean {
   return prefixes.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
@@ -83,7 +94,10 @@ export default auth((req) => {
 
   // ---------- Protected paths ----------
   if (!isAuthed) {
-    const loginUrl = new URL("/login", nextUrl);
+    /* Sesi AE-153 — route-aware login redirect. /pos → /pin (PIN-only for
+     * kasir/manager pinch); /dashboard → /login (email+password Back Office). */
+    const loginPath = resolveLoginPathForTarget(pathname);
+    const loginUrl = new URL(loginPath, nextUrl);
     if (isExpired) {
       loginUrl.searchParams.set("expired", "1");
     } else {

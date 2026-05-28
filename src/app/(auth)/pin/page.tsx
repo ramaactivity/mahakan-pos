@@ -334,6 +334,23 @@ function PinLoginInner() {
                 }}
               />
             )}
+            {/* Sesi AE-153 — escape hatch ke email login untuk owner/manager
+                yang mau langsung ke Back Office tanpa via PIN. Preserve
+                callback URL. */}
+            <p className="mt-4 text-center text-xs text-neutral-500">
+              Owner / Manager? Login Back Office pakai{" "}
+              <a
+                href={`/login${
+                  callbackUrl
+                    ? `?callbackUrl=${encodeURIComponent(callbackUrl)}`
+                    : ""
+                }`}
+                className="font-medium text-mahakan-green-700 hover:underline"
+              >
+                email + password
+              </a>
+              .
+            </p>
           </CardContent>
         </>
       )}

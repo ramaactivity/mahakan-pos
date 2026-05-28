@@ -136,6 +136,23 @@ function LoginContent() {
             {submitting ? "Memproses…" : "Masuk"}
           </Button>
         </form>
+        {/* Sesi AE-153 — link bantu staff/kasir yang nyasar ke email login.
+            Default cari ke /pin. Preserve callbackUrl/next supaya tetap balik
+            ke destination yg sama setelah PIN sukses. */}
+        <p className="mt-4 text-center text-xs text-neutral-500">
+          Kasir / staff? Pakai{" "}
+          <a
+            href={`/pin${
+              safeNext
+                ? `?callbackUrl=${encodeURIComponent(safeNext)}`
+                : ""
+            }`}
+            className="font-medium text-mahakan-green-700 hover:underline"
+          >
+            Login PIN
+          </a>{" "}
+          di sini.
+        </p>
       </CardContent>
     </Card>
   );
