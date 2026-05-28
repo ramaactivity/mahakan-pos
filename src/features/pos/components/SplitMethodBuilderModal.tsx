@@ -327,11 +327,12 @@ export function SplitMethodBuilderModal({
         </>
       }
     >
-      <div className="grid gap-4 landscape:md:grid-cols-[1fr_1fr] landscape:md:gap-5">
-        {/* LEFT — summary + rows */}
+      <div className="grid items-start gap-4 landscape:md:grid-cols-[1fr_1fr] landscape:md:gap-5">
+        {/* LEFT — summary + rows (scroll independent dari numpad). */}
         <div className="space-y-3">
-          {/* Summary band */}
-          <div className="grid grid-cols-3 gap-2">
+          {/* Summary band — sticky di atas modal scroll supaya kasir selalu
+              lihat Sisa walau scroll ke row bawah. Sesi AE-156. */}
+          <div className="sticky top-0 z-10 -mx-1 grid grid-cols-3 gap-2 bg-white px-1 pb-1 pt-0.5">
             <SummaryTile
               label="Bill"
               value={formatRupiah(total)}
@@ -410,8 +411,10 @@ export function SplitMethodBuilderModal({
           ) : null}
         </div>
 
-        {/* RIGHT — focused field display + numpad */}
-        <div className="space-y-3">
+        {/* RIGHT — focused field display + numpad. Sticky di landscape:md+
+            (tablet+ desktop) supaya tetap visible saat user scroll LEFT
+            untuk lihat row #2/#3 di bawah. Sesi AE-156 fix. */}
+        <div className="space-y-3 landscape:md:sticky landscape:md:top-0 landscape:md:self-start">
           {/* Focused field display */}
           <div className="space-y-2">
             <div className="flex items-baseline justify-between">
