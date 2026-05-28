@@ -47,7 +47,9 @@ export function paymentMethodReceiptLabel(m: PaymentMethod): string {
     case "card_other":
       return "KARTU LAINNYA";
     case "split":
-      return "SPLIT (multi-payer)";
+      /* Sesi AE-156d — owner clarification: "split" = split metode payment
+       * (1 orang pakai beberapa metode), bukan multi-payer. Label updated. */
+      return "SPLIT METODE";
   }
 }
 

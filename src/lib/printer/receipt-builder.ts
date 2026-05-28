@@ -83,6 +83,22 @@ export interface ReceiptData {
     | "split";
   cashReceived: number | null;
   cashChange: number | null;
+  /** Sesi AE-156d — when paymentMethod="split", per-method breakdown
+   *  rendered di "BAYAR" section supaya customer + audit liat persis
+   *  alokasi cash/QRIS/EDC. Empty/undefined kalau bukan split. */
+  splits?: Array<{
+    paymentMethod:
+      | "cash"
+      | "qris"
+      | "card_bca"
+      | "card_bni"
+      | "card_mandiri"
+      | "card_bri"
+      | "card_other";
+    amount: number;
+    cashReceived: number | null;
+    cashChange: number | null;
+  }>;
   status: "paid" | "voided" | "refunded" | "open" | "partially_refunded";
   footerText: string | null;
   /** Optional 1-3 lines printed above the outlet name (promo banners). */
@@ -227,6 +243,8 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
   parts.push(bold(false));
 
   // Payment — bold so labels stand out at a glance, uppercase for visual weight.
+  // Sesi AE-156d — split paymentMethod render per-method breakdown supaya
+  // customer + audit lihat alokasi (cash 100k / QRIS 35k, dst).
   parts.push(divider("-", COLS));
   parts.push(bold(true));
   if (d.paymentMethod === "cash") {
@@ -236,6 +254,33 @@ export function buildReceipt(d: ReceiptData): Uint8Array {
     parts.push(
       dualLine("KEMBALI", formatRupiah(d.cashChange ?? 0), COLS),
     );
+  } else if (d.paymentMethod === "split" && d.splits && d.splits.length > 0) {
+    parts.push(text("BAYAR (SPLIT METODE):\n"));
+    let totalCashChange = 0;
+    for (const s of d.splits) {
+      parts.push(
+        dualLine(
+          `  ${paymentMethodReceiptLabel(s.paymentMethod)}`,
+          formatRupiah(s.amount),
+          COLS,
+        ),
+      );
+      if (s.paymentMethod === "cash" && s.cashReceived !== null) {
+        parts.push(
+          dualLine(
+            `    diterima`,
+            formatRupiah(s.cashReceived),
+            COLS,
+          ),
+        );
+        if (s.cashChange && s.cashChange > 0) {
+          totalCashChange += s.cashChange;
+        }
+      }
+    }
+    if (totalCashChange > 0) {
+      parts.push(dualLine("KEMBALI", formatRupiah(totalCashChange), COLS));
+    }
   } else {
     parts.push(text(`BAYAR : ${paymentMethodReceiptLabel(d.paymentMethod)}\n`));
   }

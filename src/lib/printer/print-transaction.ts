@@ -96,6 +96,25 @@ function buildCustomerBytes(
     paymentMethod: trx.paymentMethod,
     cashReceived: trx.cashReceived,
     cashChange: trx.cashChange,
+    /* Sesi AE-156d — Pass splits ke receipt builder supaya breakdown
+     * render kalau paymentMethod="split". TransactionWithItems include
+     * splits dari fetchTransactionById. */
+    splits:
+      trx.paymentMethod === "split" && trx.splits
+        ? trx.splits.map((s) => ({
+            paymentMethod: s.paymentMethod as
+              | "cash"
+              | "qris"
+              | "card_bca"
+              | "card_bni"
+              | "card_mandiri"
+              | "card_bri"
+              | "card_other",
+            amount: s.amount,
+            cashReceived: s.cashReceived,
+            cashChange: s.cashChange,
+          }))
+        : undefined,
     status: trx.status,
     footerText: config.footerText ?? null,
     headerLines: config.headerLines,

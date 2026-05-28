@@ -98,6 +98,9 @@ export interface TransactionMemberInfo {
 export interface TransactionWithItems extends Transaction {
   items: Array<TransactionItem & { modifiers: TransactionItemModifier[] }>;
   member?: TransactionMemberInfo | null;
+  /** Sesi AE-156d — split payments breakdown (cuma populated kalau
+   *  paymentMethod="split"). Empty array kalau bukan split. */
+  splits?: SplitPaymentWithItems[];
 }
 
 export type ApiResult<T> =
