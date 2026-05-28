@@ -56,6 +56,7 @@ import {
   type ProfitDistribution,
 } from "@/features/profit-distributions";
 import { CapitalChangesReportView } from "./investors/CapitalChangesReportView";
+import { MasterImportButton } from "./investors/MasterImportButton";
 import { WipeModuleButton } from "./investors/WipeModuleButton";
 import { InvestorFormModal } from "./investors/InvestorFormModal";
 import { CreditorImportWizard } from "./investors/CreditorImportWizard";
@@ -131,7 +132,10 @@ export function InvestorsSection({ viewerRole }: InvestorsSectionProps) {
             Profit ledger.
           </p>
         </div>
-        <WipeModuleButton isOwner={isOwner} />
+        <div className="flex flex-wrap items-center gap-2">
+          {canManage ? <MasterImportButton /> : null}
+          <WipeModuleButton isOwner={isOwner} />
+        </div>
       </header>
 
       <div className="flex gap-1 border-b border-neutral-200">
