@@ -264,9 +264,10 @@ export function AdminShell() {
     : false;
   const depositDashboardQuery = useCashDepositDashboard();
   /* Sesi AE-160 — Pusat Persetujuan: badge total pending across 5 flows.
-   * Hanya fetch kalau user punya akses queue (approval_code.view). */
+   * Owner + Manager + Supervisor bisa view (approval_queue.view); direct
+   * approve owner-only (di-enforce server-side per-action). */
   const canViewApprovals = session
-    ? hasPermission(session.user.role, "approval_code.view")
+    ? hasPermission(session.user.role, "approval_queue.view")
     : false;
   const approvalsSummary = useApprovalsSummary(canViewApprovals);
   const sidebarBadges: Partial<Record<AdminSection, number>> = {};

@@ -55,7 +55,7 @@ async function listPendingVoidRefundFromCodes(): Promise<
   ApiResult<VoidRefundPendingRow[]>
 > {
   const session = await requireSession();
-  if (!hasPermission(session.user.role, "approval_code.view")) {
+  if (!hasPermission(session.user.role, "approval_queue.view")) {
     return fail("FORBIDDEN", "Tidak punya hak lihat queue approval");
   }
   const now = new Date();
@@ -132,7 +132,7 @@ export async function listUnifiedApprovals(opts: {
   limit?: number;
 } = {}): Promise<ApiResult<UnifiedApprovalItem[]>> {
   const session = await requireSession();
-  if (!hasPermission(session.user.role, "approval_code.view")) {
+  if (!hasPermission(session.user.role, "approval_queue.view")) {
     return fail("FORBIDDEN", "Tidak punya hak lihat queue approval");
   }
   const status = opts.status ?? "pending";
@@ -334,7 +334,7 @@ export async function getApprovalQueueSummary(): Promise<
   }>
 > {
   const session = await requireSession();
-  if (!hasPermission(session.user.role, "approval_code.view")) {
+  if (!hasPermission(session.user.role, "approval_queue.view")) {
     return fail("FORBIDDEN", "Tidak punya hak lihat queue approval");
   }
   const outletId = session.user.outletId;

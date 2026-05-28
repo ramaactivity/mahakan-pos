@@ -353,6 +353,11 @@ export const permissions = {
   /** View + revoke active approval codes (admin panel). */
   "approval_code.view": ["owner"],
   "approval_code.revoke": ["owner"],
+  /** Sesi AE-160 — view Pusat Persetujuan (unified queue 5 flow approval).
+   * Manager + supervisor butuh ini supaya bisa tracking progress + lihat
+   * history; mereka tidak bisa direct-approve (owner-only) tapi bisa input
+   * kode 6-digit untuk approve sesuai flow per-kind. */
+  "approval_queue.view": ["owner", "manager", "supervisor"],
 
   // Finance / Keuangan (Sesi Q). Verify is owner-only by design.
   // Supervisor view + create deposit/aggregator (operational data entry),

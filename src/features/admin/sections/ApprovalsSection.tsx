@@ -85,7 +85,7 @@ export function ApprovalsSection() {
   const role = session?.user.role ?? "staff";
   const userId = session?.user.id ?? "";
   const isOwner = role === "owner";
-  const canView = hasPermission(role, "approval_code.view");
+  const canView = hasPermission(role, "approval_queue.view");
   const queryClient = useQueryClient();
 
   const [statusFilter, setStatusFilter] = useState<StatusFilterKey>("pending");
