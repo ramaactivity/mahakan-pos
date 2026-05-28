@@ -3,6 +3,13 @@ export {
   postWithdrawal,
   reverseWithdrawal,
 } from "./actions";
+
+export {
+  bulkImportHistoricalWithdrawals,
+  type BulkImportWithdrawalsInput,
+  type BulkImportWithdrawalsResult,
+  type HistoricalWithdrawalRow,
+} from "./bulk-import";
 export {
   isOk,
   type ApiResult,

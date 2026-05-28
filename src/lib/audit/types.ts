@@ -187,6 +187,9 @@ export const AUDIT_EVENT_TYPES = [
   "distribution.reverse",
   "withdrawal.post",
   "withdrawal.reverse",
+  /* Sesi AE-160h — bulk import pencairan historis (no journal, no balance
+   * decrement). Owner-only flow setelah wipe + master re-import. */
+  "withdrawal.bulk_import_historical",
   "creditor.create",
   "creditor.update",
   "creditor.delete",

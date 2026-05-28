@@ -20,6 +20,7 @@ import * as XLSX from "xlsx";
 import type { BulkImportInvestorRow } from "@/features/investors";
 import type { BulkImportPengelolaRow } from "@/features/pengelola";
 import type { BulkImportCreditorRow } from "@/features/creditors";
+import type { HistoricalWithdrawalRow } from "@/features/withdrawals";
 import {
   parseDateCell,
   parseDecimalCell,
@@ -62,6 +63,16 @@ export const PENGELOLA_HEADERS = [
   "Status",
 ] as const;
 
+export const PENCAIRAN_HEADERS = [
+  "Tanggal",
+  "Nama Investor",
+  "NIK",
+  "Nominal",
+  "Bank Sumber",
+  "No Rekening Sumber",
+  "Catatan",
+] as const;
+
 export const KREDITUR_HEADERS = [
   "Nama",
   "Nickname",
@@ -93,6 +104,12 @@ const PETUNJUK_ROWS = [
   ["3. Header (baris ke-1) JANGAN diubah, urutan kolom JANGAN diganti."],
   ["4. Save file (.xlsx), upload via tombol 'Import Excel' di header."],
   ["5. Preview akan tampil dulu sebelum data masuk DB. Cek baik-baik."],
+  [""],
+  ["Sheet PENCAIRAN (riwayat pencairan dividen — historical only):"],
+  ["• Sheet ini OPSIONAL. Cuma untuk audit trail riwayat pencairan dari periode lama."],
+  ["• PENCAIRAN tidak post jurnal akuntansi (jurnal sudah ada dari periode lama)."],
+  ["• PENCAIRAN tidak mengurangi saldo dividen (saldo di sheet INVESTOR diasumsikan saldo CURRENT)."],
+  ["• Bank Sumber harus sudah ada di Saldo Akun (Settings → Bank). Lookup by nama bank + 4 digit tail rekening."],
   [""],
   ["Format kolom (semua sheet):"],
   ["• Tanggal — pakai YYYY-MM-DD atau DD/MM/YYYY (mis. 1990-05-17 atau 17/5/1990)."],
@@ -223,6 +240,23 @@ export function generateMasterTemplate(): Blob {
   wsKreditur["!cols"] = KREDITUR_HEADERS.map(() => ({ wch: 18 }));
   XLSX.utils.book_append_sheet(wb, wsKreditur, "KREDITUR");
 
+  // Sheet PENCAIRAN — header + 1 contoh.
+  const pencairanSample = [
+    [...PENCAIRAN_HEADERS],
+    [
+      "2025-08-15",
+      "Siti Salsabila",
+      "",
+      "500000",
+      "BCA",
+      "1234567890",
+      "Pencairan dividen Agustus 2025",
+    ],
+  ];
+  const wsPencairan = XLSX.utils.aoa_to_sheet(pencairanSample);
+  wsPencairan["!cols"] = PENCAIRAN_HEADERS.map(() => ({ wch: 22 }));
+  XLSX.utils.book_append_sheet(wb, wsPencairan, "PENCAIRAN");
+
   const arrayBuffer = XLSX.write(wb, {
     type: "array",
     bookType: "xlsx",
@@ -238,6 +272,7 @@ export interface ParseMasterResult {
   investors: BulkImportInvestorRow[];
   pengelola: BulkImportPengelolaRow[];
   creditors: BulkImportCreditorRow[];
+  withdrawals: HistoricalWithdrawalRow[];
   warnings: string[];
 }
 
@@ -431,7 +466,43 @@ export function parseMasterTemplate(buffer: ArrayBuffer): ParseMasterResult {
     })
     .filter((r): r is BulkImportCreditorRow => r !== null);
 
-  return { investors, pengelola: pengelolaRows, creditors, warnings };
+  /* PENCAIRAN (opsional sheet). Skip kalau tidak ada atau row 0. */
+  const pencairanParse = sheetToRows(wb, "PENCAIRAN", PENCAIRAN_HEADERS);
+  // PENCAIRAN sheet opsional — kalau header missing dan sheet tidak ada,
+  // jangan warn. Tapi kalau ada sheet tapi header beda, baru warn.
+  if (wb.Sheets["PENCAIRAN"]) {
+    warnings.push(...pencairanParse.warnings);
+  }
+  const withdrawals: HistoricalWithdrawalRow[] = pencairanParse.rows
+    .map((r) => {
+      const investorName = r["Nama Investor"]?.trim() ?? "";
+      if (investorName.length < 2) return null;
+      const amount = parseRupiahCell(r["Nominal"] ?? "");
+      if (amount <= 0) return null;
+      const occurredAt =
+        parseDateCell(r["Tanggal"] ?? "") ??
+        new Date().toISOString().slice(0, 10);
+      const bankName = r["Bank Sumber"]?.trim() ?? "";
+      if (bankName.length === 0) return null;
+      return {
+        occurredAt,
+        investorName,
+        investorNik: r["NIK"]?.trim() || null,
+        amount,
+        bankName,
+        bankAccountNumber: r["No Rekening Sumber"]?.trim() || null,
+        description: r["Catatan"]?.trim() || null,
+      } as HistoricalWithdrawalRow;
+    })
+    .filter((r): r is HistoricalWithdrawalRow => r !== null);
+
+  return {
+    investors,
+    pengelola: pengelolaRows,
+    creditors,
+    withdrawals,
+    warnings,
+  };
 }
 
 /** Trigger browser download (.xlsx file). */

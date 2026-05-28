@@ -18,6 +18,10 @@ import { bulkImportInvestors, isOk as investorsIsOk } from "@/features/investors
 import { bulkImportPengelola, isOk as pengelolaIsOk } from "@/features/pengelola";
 import { bulkImportCreditors, isOk as creditorsIsOk } from "@/features/creditors";
 import {
+  bulkImportHistoricalWithdrawals,
+  isOk as withdrawalsIsOk,
+} from "@/features/withdrawals";
+import {
   downloadMasterTemplate,
   parseMasterTemplate,
   type ParseMasterResult,
@@ -162,6 +166,40 @@ export function MasterImportButton() {
       }
     }
 
+    /* PENCAIRAN — selalu di-import paling akhir, setelah investor ada di DB.
+     * Historical-only (tidak post jurnal, tidak ubah saldo). */
+    if (parseResult.withdrawals.length > 0) {
+      const r = await bulkImportHistoricalWithdrawals({
+        rows: parseResult.withdrawals,
+      });
+      if (withdrawalsIsOk(r)) {
+        out.push({
+          kind: "Pencairan",
+          inserted: r.data.inserted,
+          updated: 0,
+          skipped: r.data.skippedDuplicate,
+          errors: r.data.errors.length,
+        });
+        if (r.data.errors.length > 0) {
+          /* Show first 3 errors agar owner tau row mana yang gagal. */
+          const sample = r.data.errors
+            .slice(0, 3)
+            .map((e) => `Baris ${e.rowIndex}: ${e.reason}`)
+            .join("\n");
+          toast.info(`Pencairan ada error:\n${sample}`);
+        }
+      } else {
+        out.push({
+          kind: "Pencairan",
+          inserted: 0,
+          updated: 0,
+          skipped: 0,
+          errors: parseResult.withdrawals.length,
+        });
+        toast.error(`Pencairan: ${r.error.message}`);
+      }
+    }
+
     setResults(out);
     setImporting(false);
 
@@ -169,6 +207,7 @@ export function MasterImportButton() {
     queryClient.invalidateQueries({ queryKey: ["admin", "investors"] });
     queryClient.invalidateQueries({ queryKey: ["admin", "pengelola"] });
     queryClient.invalidateQueries({ queryKey: ["admin", "creditors"] });
+    queryClient.invalidateQueries({ queryKey: ["admin", "withdrawals"] });
 
     const totalInserted = out.reduce((a, b) => a + b.inserted, 0);
     const totalUpdated = out.reduce((a, b) => a + b.updated, 0);
@@ -180,7 +219,8 @@ export function MasterImportButton() {
   const totalRows =
     (parseResult?.investors.length ?? 0) +
     (parseResult?.pengelola.length ?? 0) +
-    (parseResult?.creditors.length ?? 0);
+    (parseResult?.creditors.length ?? 0) +
+    (parseResult?.withdrawals.length ?? 0);
 
   return (
     <div className="flex gap-2">
@@ -277,6 +317,17 @@ export function MasterImportButton() {
                     <span>Kreditur</span>
                     <span className="font-mono font-semibold">
                       {parseResult.creditors.length}
+                    </span>
+                  </li>
+                  <li className="flex justify-between">
+                    <span>
+                      Pencairan{" "}
+                      <span className="text-[10px] text-neutral-500">
+                        (historis, info-only)
+                      </span>
+                    </span>
+                    <span className="font-mono font-semibold">
+                      {parseResult.withdrawals.length}
                     </span>
                   </li>
                 </ul>
