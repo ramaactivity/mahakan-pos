@@ -161,42 +161,54 @@ export async function requestApprovalCode(
     );
   }
 
-  // Revoke any prior unused, unrevoked, unexpired codes for this trx+action
-  // so Owner only has one active code per request line. Defense-in-depth:
-  // staff can request again if Owner's first email got lost without polluting
-  // the active-code list.
-  await db
-    .update(approvalCodes)
-    .set({ revokedAt: new Date(), revokedByUserId: session.user.id })
-    .where(
-      and(
-        eq(approvalCodes.targetTransactionId, transactionId),
-        eq(approvalCodes.actionType, input.actionType),
-        isNull(approvalCodes.consumedAt),
-        isNull(approvalCodes.revokedAt),
-        gt(approvalCodes.expiresAt, new Date()),
-      ),
-    );
-
+  /* Sesi AE-160c — Atomic revoke + insert dalam 1 tx supaya tidak ada
+   * window di mana 2 request paralel jadi 2 kode aktif untuk trx yang sama.
+   * Sebelumnya revoke + insert dilakukan terpisah → race condition. */
   const code = generateNumericCode6();
   const codeHash = await bcrypt.hash(code, BCRYPT_COST);
   const codeFirstTwo = code.slice(0, 2);
   const now = new Date();
   const expiresAt = computeApprovalCodeExpiry(now);
 
-  const [inserted] = await db
-    .insert(approvalCodes)
-    .values({
-      codeHash,
-      codeFirstTwo,
-      actionType: input.actionType,
-      targetTransactionId: transactionId,
-      outletId: session.user.outletId,
-      requestedByUserId: session.user.id,
-      reason,
-      expiresAt,
-    })
-    .returning();
+  let inserted;
+  try {
+    inserted = await db.transaction(async (tx) => {
+      // Revoke any prior unused, unrevoked, unexpired codes (atomic dengan
+      // insert supaya race "2 active code untuk 1 trx" tidak mungkin).
+      await tx
+        .update(approvalCodes)
+        .set({ revokedAt: now, revokedByUserId: session.user.id })
+        .where(
+          and(
+            eq(approvalCodes.targetTransactionId, transactionId),
+            eq(approvalCodes.actionType, input.actionType),
+            isNull(approvalCodes.consumedAt),
+            isNull(approvalCodes.revokedAt),
+            gt(approvalCodes.expiresAt, now),
+          ),
+        );
+
+      const [row] = await tx
+        .insert(approvalCodes)
+        .values({
+          codeHash,
+          codeFirstTwo,
+          actionType: input.actionType,
+          targetTransactionId: transactionId,
+          outletId: session.user.outletId,
+          requestedByUserId: session.user.id,
+          reason,
+          expiresAt,
+        })
+        .returning();
+      return row;
+    });
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      e instanceof Error ? e.message : "Generate kode gagal",
+    );
+  }
 
   // Multi-recipient fan-out: send the same email to every recipient in
   // parallel. Result is "sent" if ANY succeeded, "failed" if ALL failed,
@@ -476,11 +488,28 @@ export async function consumeApprovalCode(
     return fail("WRONG_CODE", "Kode salah. Cek lagi atau minta kode baru.");
   }
 
-  const [consumed] = await db
+  /* Sesi AE-160c — Atomic single-use enforcement via conditional UPDATE.
+   * Tambah guard `consumedAt IS NULL AND revokedAt IS NULL` di WHERE supaya
+   * 2 request paralel yang sama-sama match bcrypt tidak bisa double-consume.
+   * Returns 0 rows kalau race → detect dengan ALREADY_CONSUMED. */
+  const consumedRows = await db
     .update(approvalCodes)
     .set({ consumedAt: new Date(), consumedByUserId: session.user.id })
-    .where(eq(approvalCodes.id, active.id))
+    .where(
+      and(
+        eq(approvalCodes.id, active.id),
+        isNull(approvalCodes.consumedAt),
+        isNull(approvalCodes.revokedAt),
+      ),
+    )
     .returning();
+  if (consumedRows.length === 0) {
+    return fail(
+      "ALREADY_CONSUMED",
+      "Kode sudah dipakai (kemungkinan double-tap). Minta kode baru ke Owner.",
+    );
+  }
+  const consumed = consumedRows[0];
 
   await logAudit({
     eventType: "approval_code.consume",

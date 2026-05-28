@@ -3062,6 +3062,7 @@ export async function cancelOpenBill(
 
   let updated: Transaction;
   let restoredIngredientIds: string[] = [];
+  let stockWasDeducted = false;
   try {
     const result = await db.transaction(async (tx) => {
       const [locked] = await tx
@@ -3086,6 +3087,7 @@ export async function cancelOpenBill(
       if (locked.status !== "open") {
         throw new Error(`BAD_STATE:${locked.status}`);
       }
+      stockWasDeducted = locked.stockDeductedAt !== null;
 
       const [updatedRow] = await tx
         .update(transactions)
@@ -3179,6 +3181,48 @@ export async function cancelOpenBill(
       actorRole: session.user.role,
     },
   });
+
+  /* Sesi AE-160c — Fire reverse journal hook kalau stock pernah ter-deducted
+   * (legacy pre-AE-62x open bill). Tanpa ini, COGS yang sudah ter-post di
+   * sale-time journal tidak ter-reverse → GL drift permanent.
+   *
+   * Defer-mode bill (stockDeductedAt NULL, pattern post-AE-62x) tidak fire
+   * journal hook karena memang belum pernah post pos_sale → tidak ada yang
+   * perlu di-reverse. */
+  if (stockWasDeducted) {
+    const { postJournalForPosVoid } = await import(
+      "@/features/accounting/hooks"
+    );
+    const itemRows = await db
+      .select({
+        itemCategoryName: transactionItemsSchema.itemCategoryName,
+        subtotal: transactionItemsSchema.subtotal,
+        cogs: transactionItemsSchema.cogs,
+      })
+      .from(transactionItemsSchema)
+      .where(eq(transactionItemsSchema.transactionId, v.transactionId));
+    const aggItems = itemRows.map((it) => ({
+      itemCategoryName: it.itemCategoryName,
+      amount: Number(it.subtotal),
+      cogs: Number(it.cogs ?? 0),
+    }));
+    const posVoidArgs = {
+      outletId: session.user.outletId,
+      transactionId: v.transactionId,
+      items: aggItems,
+      actorId: session.user.id,
+    };
+    fireJournalHook(
+      () => postJournalForPosVoid(posVoidArgs),
+      "pos_void",
+      {
+        sourceId: v.transactionId,
+        outletId: session.user.outletId,
+        actorId: session.user.id,
+      },
+      { label: "pos_void_cancel_open_bill", args: posVoidArgs },
+    );
+  }
 
   return ok(updated);
 }

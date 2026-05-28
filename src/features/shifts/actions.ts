@@ -1,9 +1,19 @@
 "use server";
 
-import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, isNull, lte } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { expenses, incomes, shifts, splitPayments, transactions } from "@/db/schema";
+import {
+  approvalCodes,
+  expenses,
+  incomes,
+  shiftRebalances,
+  shifts,
+  splitPayments,
+  transactionCorrections,
+  transactions,
+} from "@/db/schema";
+import { pendingEntryChanges } from "@/db/schema/pending_entry_changes";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAndSanitize } from "@/lib/server-error";
@@ -302,6 +312,127 @@ export async function closeShift(
     return fail(
       "OPEN_BILLS_EXIST",
       `Ada ${openBillRows.length} bill belum dibayar di shift ini: ${list}. Selesaikan atau batalkan dulu sebelum tutup shift.`,
+    );
+  }
+
+  /* Sesi AE-160c — BLOCK close kalau ada pending approval.
+   *
+   * Reason: sebelumnya shift bisa ditutup walaupun ada void/refund/koreksi/
+   * rebalance/edit-catatan pending. Akibatnya:
+   *   - expected_cash dihitung dengan status trx "paid" (void belum apply)
+   *   - kode masih bisa di-consume setelah shift tutup (tidak ada cek)
+   *   - status berubah `voided` setelah close → drift expected vs aktual
+   *   - audit trail kacau (shift closed dengan transaksi status berubah)
+   *
+   * Fix: kasir/manager wajib resolve dulu di Pusat Persetujuan sebelum
+   * close. Owner bisa Approve langsung. Atau Tolak/Batalkan dulu. */
+  const trxInShiftRows = await db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(eq(transactions.shiftId, current.id));
+  const trxIdsInShift = trxInShiftRows.map((r) => r.id);
+
+  const now = new Date();
+  const [
+    pendingVoidRefundCodes,
+    pendingRebalances,
+    pendingCorrections,
+    pendingEntryChangesInShift,
+  ] = await Promise.all([
+    trxIdsInShift.length > 0
+      ? db
+          .select({
+            id: approvalCodes.id,
+            actionType: approvalCodes.actionType,
+            trxId: approvalCodes.targetTransactionId,
+          })
+          .from(approvalCodes)
+          .where(
+            and(
+              eq(approvalCodes.outletId, current.outletId),
+              inArray(approvalCodes.targetTransactionId, trxIdsInShift),
+              inArray(approvalCodes.actionType, [
+                "pos.transaction.void",
+                "pos.transaction.refund",
+              ]),
+              isNull(approvalCodes.consumedAt),
+              isNull(approvalCodes.revokedAt),
+              gt(approvalCodes.expiresAt, now),
+            ),
+          )
+      : Promise.resolve(
+          [] as Array<{
+            id: string;
+            actionType: string;
+            trxId: string | null;
+          }>,
+        ),
+    db
+      .select({ id: shiftRebalances.id })
+      .from(shiftRebalances)
+      .where(
+        and(
+          eq(shiftRebalances.shiftId, current.id),
+          eq(shiftRebalances.status, "pending_approval"),
+        ),
+      ),
+    trxIdsInShift.length > 0
+      ? db
+          .select({
+            id: transactionCorrections.id,
+            transactionId: transactionCorrections.transactionId,
+          })
+          .from(transactionCorrections)
+          .where(
+            and(
+              inArray(transactionCorrections.transactionId, trxIdsInShift),
+              eq(transactionCorrections.status, "pending_approval"),
+            ),
+          )
+      : Promise.resolve(
+          [] as Array<{ id: string; transactionId: string }>,
+        ),
+    db
+      .select({ id: pendingEntryChanges.id })
+      .from(pendingEntryChanges)
+      .where(
+        and(
+          eq(pendingEntryChanges.shiftId, current.id),
+          eq(pendingEntryChanges.status, "pending_approval"),
+          gt(pendingEntryChanges.expiresAt, now),
+        ),
+      ),
+  ]);
+
+  const voidCount = pendingVoidRefundCodes.filter(
+    (r) => r.actionType === "pos.transaction.void",
+  ).length;
+  const refundCount = pendingVoidRefundCodes.filter(
+    (r) => r.actionType === "pos.transaction.refund",
+  ).length;
+  const totalPending =
+    voidCount +
+    refundCount +
+    pendingRebalances.length +
+    pendingCorrections.length +
+    pendingEntryChangesInShift.length;
+
+  if (totalPending > 0) {
+    const parts: string[] = [];
+    if (voidCount > 0) parts.push(`${voidCount} void`);
+    if (refundCount > 0) parts.push(`${refundCount} refund`);
+    if (pendingCorrections.length > 0)
+      parts.push(`${pendingCorrections.length} koreksi`);
+    if (pendingRebalances.length > 0)
+      parts.push(`${pendingRebalances.length} rebalance`);
+    if (pendingEntryChangesInShift.length > 0)
+      parts.push(`${pendingEntryChangesInShift.length} edit catatan`);
+    return fail(
+      "PENDING_APPROVALS_EXIST",
+      `Ada pending approval (${parts.join(" + ")}) di shift ini. ` +
+        `Selesaikan dulu di Pusat Persetujuan (Owner approve langsung, ` +
+        `atau Manager input kode, atau Tolak/Batalkan) sebelum tutup shift. ` +
+        `Kalau dipaksakan, hitungan kas bisa drift.`,
     );
   }
 
