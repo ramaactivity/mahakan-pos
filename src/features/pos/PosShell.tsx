@@ -2191,17 +2191,19 @@ function CartPanelImpl({
               <Banknote className="size-4" aria-hidden />
               {saveBillSubmitting ? "Memproses…" : "Bayar Sekarang"}
             </Button>
+            {/* Sesi AE-157 — staff feedback: tombol harus visible (border +
+                bg), bukan ghost yang terlihat hanya text. Pakai outline
+                variant. Label simplified per staff request. */}
             <Button
               size="md"
-              variant="ghost"
+              variant="outline"
               onClick={onSaveAsOpenBill}
               loading={saveBillSubmitting}
               disabled={draft.items.length === 0 || saveBillSubmitting}
               fullWidth
-              className="text-xs text-neutral-600"
             >
               <FileText className="size-3.5" aria-hidden />
-              {saveBillSubmitting ? "Menyimpan…" : "Update Bill saja (bayar nanti)"}
+              {saveBillSubmitting ? "Menyimpan…" : "Update Bill (bayar nanti)"}
             </Button>
           </div>
         ) : (
