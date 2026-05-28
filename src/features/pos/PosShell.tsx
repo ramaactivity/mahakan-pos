@@ -3,6 +3,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  Banknote,
   FileText,
   Gift,
   Loader2,
@@ -60,6 +61,13 @@ const ApproverOverrideModal = lazy(() =>
 const CloseShiftModal = lazy(() =>
   import("@/features/pos/components/CloseShiftModal").then((m) => ({
     default: m.CloseShiftModal,
+  })),
+);
+/* Sesi AE-151 — reuse modal sama yang dipakai OpenBillPanel "Bayar Sekarang",
+ * dipasang di shell supaya bisa di-trigger setelah Update Bill + Bayar. */
+const CloseOpenBillModal = lazy(() =>
+  import("@/features/pos/components/CloseOpenBillModal").then((m) => ({
+    default: m.CloseOpenBillModal,
   })),
 );
 const ComplimentModal = lazy(() =>
@@ -279,6 +287,11 @@ export function PosShell() {
   const [metadataModal, setMetadataModal] = useState<
     "pay" | "save_bill" | null
   >(null);
+  /* Sesi AE-151 — Bill to pay setelah "Update & Bayar" sukses. State
+   * triggers CloseOpenBillModal mount. Setelah modal closed (sukses /
+   * batal), reset ke null. Pattern mirror printConfirm. */
+  const [billToCloseAfterUpdate, setBillToCloseAfterUpdate] =
+    useState<TransactionWithItems | null>(null);
 
   // Cart store
   const draftsRecord = useCartStore((s) => s.drafts);
@@ -862,7 +875,24 @@ export function PosShell() {
     await commitSaveAsOpenBill();
   }
 
-  async function commitSaveAsOpenBill() {
+  /**
+   * Sesi AE-151 — Staff feedback: setelah Update Bill (edit open bill),
+   * customer kadang langsung mau bayar. Tombol Update + Bayar bikin
+   * flow 1-tap: editOpenBill + open CloseOpenBillModal. Tanpa fitur ini
+   * staff harus klik Update Bill → tutup cart → tab Bill Aktif → cari
+   * bill → klik Bayar Sekarang (~5 detik vs 1 detik).
+   *
+   * Hanya tersedia untuk EDIT path (editingBillId set). CREATE path
+   * sudah punya "Bayar" langsung di kasir (tanpa save open bill dulu).
+   */
+  async function handleUpdateBillAndPay() {
+    if (!activeDraft || !shift || !session) return;
+    if (activeDraft.items.length === 0) return;
+    if (!activeDraft.editingBillId) return;
+    await commitSaveAsOpenBill({ proceedToPay: true });
+  }
+
+  async function commitSaveAsOpenBill(opts?: { proceedToPay?: boolean }) {
     if (paymentInFlightRef.current) return;
     if (!activeDraft || !shift || !session) return;
     if (activeDraft.items.length === 0) return;
@@ -914,7 +944,15 @@ export function PosShell() {
         removeDraft(activeDraft.id);
         setRightPanel({ kind: "idle" });
         setHistoryRefreshKey((k) => k + 1);
-        setPrintConfirm({ trx: res.data, title: "Bill di-update" });
+        /* Sesi AE-151 — proceedToPay path: skip printConfirm + langsung
+         * trigger CloseOpenBillModal (yang sudah handle print + cleanup
+         * sendiri setelah payment sukses). printConfirm di-skip biar
+         * staff tidak ada modal nge-popup berlapis. */
+        if (opts?.proceedToPay) {
+          setBillToCloseAfterUpdate(res.data);
+        } else {
+          setPrintConfirm({ trx: res.data, title: "Bill di-update" });
+        }
         return;
       }
 
@@ -1234,6 +1272,7 @@ export function PosShell() {
               onOpenRedeem={handleOpenRedeem}
               redeemLoading={redeemLoading}
               onSaveAsOpenBill={handleSaveAsOpenBill}
+              onUpdateBillAndPay={handleUpdateBillAndPay}
               saveBillSubmitting={paymentSubmitting}
               onProceedToPayment={handleProceedToPayment}
               onCancel={handleCancelOrder}
@@ -1307,6 +1346,30 @@ export function PosShell() {
           onSubmit={handleProcessPayment}
         />
       ) : null}
+
+      {/* Sesi AE-151 — close-bill modal triggered after Update + Bayar.
+       * Sama modal yang dipakai OpenBillPanel "Bayar Sekarang" — di-lift
+       * ke shell supaya bisa di-trigger dari cart flow tanpa user pindah
+       * tab. onClosed → success modal print + refresh history; onClose →
+       * batal payment, bill tetap sudah ter-update sebagai open. */}
+      <Suspense fallback={null}>
+        <CloseOpenBillModal
+          open={billToCloseAfterUpdate !== null}
+          bill={billToCloseAfterUpdate}
+          cashierName={session?.user.name ?? "Kasir"}
+          receiptConfig={receiptConfig}
+          onClose={() => setBillToCloseAfterUpdate(null)}
+          onClosed={(closedTrx) => {
+            setBillToCloseAfterUpdate(null);
+            setHistoryRefreshKey((k) => k + 1);
+            setPrintConfirm({
+              trx: closedTrx,
+              title: "Pembayaran sukses",
+            });
+          }}
+          onOpenSettings={() => setTab("settings")}
+        />
+      </Suspense>
 
       {/* sesi AD-7 — screen-blocking overlay during Save Bill / Update Bill
        * submission. Prevents kasir double-tapping the button while server
@@ -1732,6 +1795,9 @@ function IdlePanel({
 interface CartPanelPropsExtra {
   onOpenCompliment: () => void;
   onSaveAsOpenBill: () => void;
+  /** Sesi AE-151 — chain editOpenBill + immediately open CloseOpenBillModal.
+   *  Hanya valid kalau editingBillId set (cek di caller). */
+  onUpdateBillAndPay: () => void;
   onOpenRedeem: () => void;
   redeemLoading: boolean;
   /** sesi AD-7: drives loading state on Save Bill / Update Bill buttons,
@@ -1774,6 +1840,7 @@ function CartPanelImpl({
   onOpenRedeem,
   redeemLoading,
   onSaveAsOpenBill,
+  onUpdateBillAndPay,
   saveBillSubmitting,
   onProceedToPayment,
   onCancel,
@@ -1998,18 +2065,38 @@ function CartPanelImpl({
           </div>
         ) : null}
 
-        {/* Primary action — always visible, big touch target */}
+        {/* Primary action — always visible, big touch target.
+            Sesi AE-151 — Staff feedback: dalam mode edit bill, sering customer
+            langsung mau bayar. Split jadi 2 button: Update saja (outline)
+            + Update & Bayar (primary). Saat NEW bill (no editingBillId),
+            tetap satu tombol "Bayar". */}
         {draft.editingBillId ? (
-          <Button
-            size="lg"
-            onClick={onSaveAsOpenBill}
-            loading={saveBillSubmitting}
-            disabled={draft.items.length === 0 || saveBillSubmitting}
-            fullWidth
-          >
-            <FileText className="size-4" aria-hidden />
-            {saveBillSubmitting ? "Menyimpan bill…" : "Update Bill"}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={onSaveAsOpenBill}
+              loading={saveBillSubmitting}
+              disabled={draft.items.length === 0 || saveBillSubmitting}
+              className="flex-1"
+            >
+              <FileText className="size-4" aria-hidden />
+              {saveBillSubmitting ? "Menyimpan…" : "Update Bill"}
+            </Button>
+            <Button
+              size="lg"
+              onClick={onUpdateBillAndPay}
+              loading={saveBillSubmitting}
+              disabled={draft.items.length === 0 || saveBillSubmitting}
+              className="flex-[1.4]"
+            >
+              <Banknote className="size-4" aria-hidden />
+              Update & Bayar
+              <span className="ml-auto font-mono text-xs opacity-80">
+                {formatRupiah(total)}
+              </span>
+            </Button>
+          </div>
         ) : (
           <Button
             size="lg"
