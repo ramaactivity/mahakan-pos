@@ -59,7 +59,7 @@ export function ResetPinModal({
       open={open}
       onClose={onClose}
       title={`Reset PIN — ${userName}`}
-      description="PIN baru menggantikan PIN lama. User harus pakai PIN baru di POS."
+      description="PIN baru otomatis dipakai untuk login POS + Absensi Karyawan (kalau user juga karyawan)."
       size="sm"
       footer={
         <>
@@ -104,6 +104,16 @@ export function ResetPinModal({
           }
           required
         />
+        {/* Sesi AE-152 — clarify dual-scope: PIN ini dipakai 2 entry point. */}
+        <div className="rounded-md bg-info-100/60 px-3 py-2 text-xs text-info-700">
+          <p className="font-semibold">PIN ini dipakai untuk:</p>
+          <ul className="mt-0.5 ml-4 list-disc space-y-0.5">
+            <li>Login POS (tablet kasir)</li>
+            <li>
+              Absensi Karyawan (kalau user ter-link ke record karyawan) — auto-sync
+            </li>
+          </ul>
+        </div>
         {error ? (
           <p role="alert" className="text-sm font-medium text-danger-500">
             {error}

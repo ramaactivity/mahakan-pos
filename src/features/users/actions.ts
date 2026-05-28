@@ -1,9 +1,9 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { users } from "@/db/schema";
+import { employees, users } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission, type Permission, type Role } from "@/lib/auth";
 import { canActOnRole } from "@/lib/auth/rbac";
@@ -523,6 +523,29 @@ export async function updateUser(
     .where(eq(users.id, v.id))
     .returning();
 
+  /* Sesi AE-152 — sync PIN ke linked employee.attendancePinHash. Sama
+   * dengan resetPin path. Hanya kalau pin di-set (non-null). Clear PIN
+   * (pin=null) tidak clear attendance — owner harus explicit reset di
+   * Karyawan tab supaya tidak nuke attendance accidentally. */
+  if (v.pin && v.pin.length > 0) {
+    try {
+      const bcrypt = (await import("bcryptjs")).default;
+      const attendanceHash = await bcrypt.hash(v.pin, 10);
+      await db
+        .update(employees)
+        .set({
+          attendancePinHash: attendanceHash,
+          updatedAt: new Date(),
+          updatedBy: session.user.id,
+        })
+        .where(
+          and(eq(employees.userId, v.id), isNull(employees.deletedAt)),
+        );
+    } catch (e) {
+      console.error("[user.update attendance sync failed]", e);
+    }
+  }
+
   const isDeactivation = v.status === "inactive" && target.status !== "inactive";
   const isReactivation = v.status === "active" && target.status !== "active";
 
@@ -631,13 +654,44 @@ export async function resetPin(
     .where(eq(users.id, parsed.data.userId))
     .returning();
 
+  /* Sesi AE-152 — sync ke employees.attendancePinHash kalau user ada
+   * linked employee record. Owner expectation: 1 PIN, works everywhere
+   * (POS login + Absensi Karyawan). Tanpa sync, owner reset PIN di Staff
+   * Management → masih gagal login Absensi (PIN beda). Pakai bcrypt sama
+   * dengan attendance flow (bcryptjs hash 10 rounds). */
+  let syncedToAttendance = false;
+  try {
+    const bcrypt = (await import("bcryptjs")).default;
+    const attendanceHash = await bcrypt.hash(parsed.data.newPin, 10);
+    const linkedEmployees = await db
+      .update(employees)
+      .set({
+        attendancePinHash: attendanceHash,
+        updatedAt: new Date(),
+        updatedBy: session.user.id,
+      })
+      .where(
+        and(
+          eq(employees.userId, parsed.data.userId),
+          isNull(employees.deletedAt),
+        ),
+      )
+      .returning({ id: employees.id });
+    syncedToAttendance = linkedEmployees.length > 0;
+  } catch (e) {
+    /* Don't fail the user PIN reset if attendance sync fails. Log it; owner
+     * masih bisa manually reset attendance PIN di Karyawan tab kalau perlu. */
+    console.error("[user.reset_pin attendance sync failed]", e);
+  }
+
   await logAudit({
     eventType: "user.reset_pin",
     userId: session.user.id,
     entityType: "user",
     entityId: row.id,
     payload: {
-      summary: `Reset PIN ${target.role} ${target.name}`,
+      summary: `Reset PIN ${target.role} ${target.name}${syncedToAttendance ? " (+sync Absensi)" : ""}`,
+      context: { syncedToAttendance },
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
   });
