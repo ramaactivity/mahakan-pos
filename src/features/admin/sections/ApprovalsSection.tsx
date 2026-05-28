@@ -326,15 +326,17 @@ export function ApprovalsSection() {
           {items.map((item) => {
             const isSubmitter = item.requesterId === userId;
             const isPending = item.status === "pending";
-            const canCodeApprove =
-              item.kind === "rebalance" ||
-              item.kind === "correction" ||
-              item.kind === "entry_change";
 
             // Action availability:
-            // - Owner: direct + (kode kalau berlaku) + reject (non-submitter) + cancel (any pending)
-            // - Manager/Supervisor: kode (kalau bukan submitter) + reject (non-submitter)
-            // - Submitter: cancel + kode (kalau ada — submitter dapat kode dari owner via WA)
+            // - Owner: direct + kode (semua kind) + reject (non-submitter) + cancel
+            // - Manager/Supervisor: kode (semua kind, termasuk void/refund) +
+            //   reject (non-submitter)
+            // - Submitter: cancel + kode (submitter dapat kode dari owner via WA)
+            //
+            // Sesi AE-160b — Manager/supervisor sekarang bisa input kode untuk
+            // void/refund di back office juga (sebelumnya cuma di POS), supaya
+            // alur "owner kirim kode lama, staff sudah balik ke meja" tidak
+            // stuck. Server enforce role + outlet di approveVoidRefundWithCode.
             const onDirectApprove =
               isOwner && isPending && item.canDirectApprove
                 ? () => {
@@ -342,13 +344,12 @@ export function ApprovalsSection() {
                     setActionMode("direct");
                   }
                 : undefined;
-            const onApproveWithCode =
-              isPending && canCodeApprove
-                ? () => {
-                    setActionTarget(item);
-                    setActionMode("code");
-                  }
-                : undefined;
+            const onApproveWithCode = isPending
+              ? () => {
+                  setActionTarget(item);
+                  setActionMode("code");
+                }
+              : undefined;
             const onReject =
               isPending && !isSubmitter && (isOwner || role === "manager")
                 ? () => {

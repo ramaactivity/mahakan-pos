@@ -17,7 +17,12 @@ import {
 import { approveShiftRebalance } from "@/features/shifts/rebalance-actions";
 import { approveTransactionCorrection } from "@/features/transactions/correction-actions";
 import { approveEntryChange } from "@/features/cash/entry-change-actions";
-import { cancelApproval, directApprove, rejectApproval } from "@/features/approvals";
+import {
+  approveVoidRefundWithCode,
+  cancelApproval,
+  directApprove,
+  rejectApproval,
+} from "@/features/approvals";
 import type { UnifiedApprovalItem } from "@/features/approvals";
 
 export type ApprovalActionMode =
@@ -130,13 +135,18 @@ export function ApprovalActionModal({
           return;
         }
       } else {
-        // void/refund: code-input dari back office tidak supported — kode
-        // diketik di POS, owner langsung approve dari sini.
+        // void/refund: kode-input dari back office. sourceId = approvalCodes.id.
+        // Server resolve trx + reason, call voidTransaction/refundTransaction
+        // dengan code (existing code-mode path).
+        const res = await approveVoidRefundWithCode({
+          approvalCodeId: target.sourceId,
+          code: code.trim(),
+        });
         setSubmitting(false);
-        setError(
-          "Void/Refund di-approve via direct approve owner atau dari POS.",
-        );
-        return;
+        if (!res.success) {
+          setError(res.error.message);
+          return;
+        }
       }
       toast.success(`${KIND_LABEL[target.kind]} berhasil di-approve`);
       onChanged();

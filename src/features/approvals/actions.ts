@@ -4,6 +4,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { approvalCodes } from "@/db/schema";
 import { auth } from "@/lib/auth";
+import { hasPermission } from "@/lib/auth";
 import {
   refundTransaction,
   voidTransaction,
@@ -140,6 +141,82 @@ export async function directApprove(input: {
   }
 
   return fail("UNKNOWN_KIND", `Kind tidak dikenal: ${input.kind}`);
+}
+
+/**
+ * Input kode 6-digit untuk void/refund di Pusat Persetujuan (manager/supervisor
+ * path). Use case: staff request void/refund dari POS → owner kirim kode via
+ * WA → manager input kode di back office (kalau staff tidak balik ke POS atau
+ * kalau manager yang menyetujui ulang dari sini).
+ *
+ * sourceId = approvalCodes.id. Resolve target trx + reason → call
+ * voidTransaction/refundTransaction dengan `approvalCode` (existing code-mode
+ * path; consume code terjadi inline di tx).
+ */
+export async function approveVoidRefundWithCode(input: {
+  approvalCodeId: string;
+  code: string;
+}): Promise<
+  ApiResult<{
+    kind: "void" | "refund";
+    sourceId: string;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "approval_queue.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak proses approval queue");
+  }
+  const codeTrim = input.code.trim();
+  if (!/^\d{6}$/.test(codeTrim)) {
+    return fail("INVALID_FORMAT", "Kode harus 6 digit angka");
+  }
+
+  const [codeRow] = await db
+    .select({
+      id: approvalCodes.id,
+      actionType: approvalCodes.actionType,
+      targetTransactionId: approvalCodes.targetTransactionId,
+      reason: approvalCodes.reason,
+      consumedAt: approvalCodes.consumedAt,
+      revokedAt: approvalCodes.revokedAt,
+      outletId: approvalCodes.outletId,
+    })
+    .from(approvalCodes)
+    .where(eq(approvalCodes.id, input.approvalCodeId))
+    .limit(1);
+  if (!codeRow) return fail("NOT_FOUND", "Approval tidak ditemukan");
+  if (codeRow.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Outlet lain");
+  }
+  if (codeRow.consumedAt || codeRow.revokedAt) {
+    return fail("INVALID_STATE", "Approval sudah di-process");
+  }
+  if (!codeRow.targetTransactionId) {
+    return fail("INVALID_STATE", "Approval tidak terhubung ke transaksi");
+  }
+
+  if (codeRow.actionType === "pos.transaction.void") {
+    const res = await voidTransaction({
+      transactionId: codeRow.targetTransactionId,
+      reason: codeRow.reason,
+      approvalCode: codeTrim,
+    });
+    if (!isOk(res)) return fail(res.error.code, res.error.message);
+    return ok({ kind: "void", sourceId: input.approvalCodeId });
+  }
+  if (codeRow.actionType === "pos.transaction.refund") {
+    const res = await refundTransaction({
+      transactionId: codeRow.targetTransactionId,
+      reason: codeRow.reason,
+      approvalCode: codeTrim,
+    });
+    if (!isOk(res)) return fail(res.error.code, res.error.message);
+    return ok({ kind: "refund", sourceId: input.approvalCodeId });
+  }
+  return fail(
+    "MISMATCH",
+    "Approval ini bukan void/refund — pakai flow yang sesuai",
+  );
 }
 
 /**

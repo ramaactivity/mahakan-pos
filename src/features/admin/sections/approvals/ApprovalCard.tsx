@@ -13,6 +13,7 @@ import {
 import { Badge, Button, Card, CardContent } from "@/components/ui";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
+import { formatTimeAgoFriendly } from "@/lib/duration";
 import { cn } from "@/lib/utils";
 import type { ApprovalKind, UnifiedApprovalItem } from "@/features/approvals";
 
@@ -59,10 +60,9 @@ export function ApprovalCard({
   onCancel,
 }: ApprovalCardProps) {
   const meta = KIND_META[item.kind];
-  const ageMin = Math.floor(
-    (nowMs - item.requestedAt.getTime()) / 60_000,
-  );
+  const ageMin = Math.floor((nowMs - item.requestedAt.getTime()) / 60_000);
   const isStale = item.status === "pending" && ageMin > STALE_THRESHOLD_MIN;
+  const ageFriendly = formatTimeAgoFriendly(item.requestedAt, nowMs);
 
   return (
     <Card
@@ -86,8 +86,18 @@ export function ApprovalCard({
                 <Badge variant="info">Pengajuan Anda</Badge>
               ) : null}
               {isStale ? (
-                <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-warning-700">
-                  <Clock className="size-3" /> {ageMin}m
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-warning-700"
+                  title={`Diajukan ${formatIndonesianDateTime(item.requestedAt)}`}
+                >
+                  <Clock className="size-3" /> {ageFriendly}
+                </span>
+              ) : item.status === "pending" ? (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] text-neutral-500"
+                  title={`Diajukan ${formatIndonesianDateTime(item.requestedAt)}`}
+                >
+                  <Clock className="size-3" /> {ageFriendly}
                 </span>
               ) : null}
             </div>

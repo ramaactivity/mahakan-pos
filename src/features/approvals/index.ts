@@ -6,6 +6,7 @@ export type {
 } from "./types";
 
 export {
+  approveVoidRefundWithCode,
   cancelApproval,
   directApprove,
   rejectApproval,
