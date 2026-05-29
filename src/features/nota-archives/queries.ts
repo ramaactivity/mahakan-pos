@@ -4,7 +4,6 @@ import { db } from "@/db";
 import {
   notaArchiveFiles,
   notaArchives,
-  users,
 } from "@/db/schema";
 import {
   toPublicArchive,
@@ -41,28 +40,26 @@ export async function listArchives(
   const limit = Math.min(opts.limit ?? 50, 200);
   const offset = opts.offset ?? 0;
 
-  const uploader = sql.raw('"uploader"'); // alias for joined users (createdBy)
-  const reviewer = sql.raw('"reviewer"');
-
-  /* Drizzle alias pattern via subquery alias not straightforward; do two
-   * lookups via aliasedTable instead. Simpler: select base + N+1 free,
-   * since we have small dataset (max 200 rows per page). Resolve names
-   * in single grouped query: */
+  /* Correlated subqueries untuk nama uploader/reviewer + jumlah file.
+   *
+   * PENTING: outer-column harus di-qualify literal `nota_archives.*`.
+   * Kalau pakai interpolasi Drizzle `${notaArchives.id}` / `${notaArchives.createdBy}`,
+   * Drizzle me-render kolom POLOS tanpa prefix tabel (`"id"`, `"created_by"`)
+   * di posisi SELECT-field. Akibatnya di dalam subquery nama itu ke-tangkap
+   * oleh kolom inner yang namanya sama (nota_archive_files.id, users.created_by)
+   * → count selalu 0, nama selalu null. Lihat sesi AE-161. */
   const rows = await db
     .select({
       archive: notaArchives,
-      createdByName: sql<string>`(SELECT name FROM ${users} WHERE id = ${notaArchives.createdBy})`,
-      reviewedByName: sql<string | null>`(SELECT name FROM ${users} WHERE id = ${notaArchives.reviewedBy})`,
-      fileCount: sql<number>`(SELECT count(*)::int FROM ${notaArchiveFiles} WHERE nota_archive_id = ${notaArchives.id})`,
+      createdByName: sql<string>`(SELECT u.name FROM users u WHERE u.id = nota_archives.created_by)`,
+      reviewedByName: sql<string | null>`(SELECT u.name FROM users u WHERE u.id = nota_archives.reviewed_by)`,
+      fileCount: sql<number>`(SELECT count(*)::int FROM nota_archive_files f WHERE f.nota_archive_id = nota_archives.id)`,
     })
     .from(notaArchives)
     .where(and(...conds))
     .orderBy(desc(notaArchives.notaDate), desc(notaArchives.createdAt))
     .limit(limit)
     .offset(offset);
-
-  void uploader;
-  void reviewer;
 
   return {
     items: rows.map((r) =>
@@ -83,8 +80,8 @@ export async function getArchiveById(
   const [row] = await db
     .select({
       archive: notaArchives,
-      createdByName: sql<string>`(SELECT name FROM ${users} WHERE id = ${notaArchives.createdBy})`,
-      reviewedByName: sql<string | null>`(SELECT name FROM ${users} WHERE id = ${notaArchives.reviewedBy})`,
+      createdByName: sql<string>`(SELECT u.name FROM users u WHERE u.id = nota_archives.created_by)`,
+      reviewedByName: sql<string | null>`(SELECT u.name FROM users u WHERE u.id = nota_archives.reviewed_by)`,
     })
     .from(notaArchives)
     .where(and(eq(notaArchives.id, id), isNull(notaArchives.deletedAt)))

@@ -11,7 +11,9 @@ import {
   FileText,
   Filter,
   FlagTriangleRight,
+  FolderOpen,
   Loader2,
+  Pencil,
   Plus,
   RefreshCcw,
   Search,
@@ -39,6 +41,7 @@ import {
   listNotaArchives,
   notaArchiveCategoryValues,
   reviewNotaArchive,
+  updateNotaArchive,
   type NotaArchiveCategory,
   type NotaArchiveStatus,
   type PublicNotaArchiveWithFiles,
@@ -502,6 +505,66 @@ function NotaDetailModal({
 
   const canReview = viewerRole === "owner" || viewerRole === "manager";
   const canDelete = canReview;
+  const canEdit = canReview;
+
+  /* Edit mode (sesi AE-161) — owner sering ngeh tanggal/nominal/keterangan
+   * salah pas udah submit (tulisan nota kadang siwer). */
+  const [editing, setEditing] = useState(false);
+  const [editDate, setEditDate] = useState("");
+  const [editCategory, setEditCategory] =
+    useState<NotaArchiveCategory>("pembelian_cash");
+  const [editDesc, setEditDesc] = useState("");
+  const [editAmount, setEditAmount] = useState("");
+
+  /* Semua file 1 nota berada di folder Drive yang sama (per kategori/bulan),
+   * jadi ambil driveFolderId pertama yang ada. */
+  const driveFolderId =
+    archive?.files.find((f) => f.driveFolderId)?.driveFolderId ?? null;
+  const driveFolderUrl = driveFolderId
+    ? `https://drive.google.com/drive/folders/${driveFolderId}`
+    : null;
+
+  function openEdit() {
+    if (!archive) return;
+    setEditDate(archive.notaDate);
+    setEditCategory(archive.category);
+    setEditDesc(archive.description);
+    setEditAmount(
+      archive.amount ? String(Math.round(Number(archive.amount))) : "",
+    );
+    setEditing(true);
+  }
+
+  async function handleSaveEdit() {
+    if (!archive || submitting) return;
+    if (editDesc.trim().length === 0) {
+      toast.error("Keterangan wajib diisi");
+      return;
+    }
+    const digits = editAmount.replace(/[^\d]/g, "");
+    const amountNum = digits === "" ? null : Number(digits);
+    if (amountNum !== null && !Number.isFinite(amountNum)) {
+      toast.error("Nominal tidak valid");
+      return;
+    }
+    setSubmitting(true);
+    const res = await updateNotaArchive({
+      id: archive.id,
+      notaDate: editDate,
+      category: editCategory,
+      description: editDesc.trim(),
+      amount: amountNum,
+    });
+    setSubmitting(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    setArchive(res.data);
+    setEditing(false);
+    toast.success("Nota diperbarui");
+    onChanged();
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -572,29 +635,53 @@ function NotaDetailModal({
       title="Detail Nota"
       size="xl"
       footer={
-        <>
-          {canDelete && archive ? (
+        editing ? (
+          <>
             <Button
               variant="ghost"
-              onClick={() => setPendingAction("delete")}
+              onClick={() => setEditing(false)}
               disabled={submitting}
-              className="text-danger-500 hover:bg-danger-100/50"
             >
-              Hapus
+              Batal
             </Button>
-          ) : null}
-          <Button variant="ghost" onClick={onClose} disabled={submitting}>
-            Tutup
-          </Button>
-          {canReview && archive && archive.status !== "reviewed" ? (
-            <Button
-              onClick={() => handleStatusChange("reviewed")}
-              loading={submitting && pendingAction !== "delete"}
-            >
-              <CheckCircle2 className="size-4" aria-hidden /> Mark Sudah Dicek
+            <Button onClick={handleSaveEdit} loading={submitting}>
+              <CheckCircle2 className="size-4" aria-hidden /> Simpan Perubahan
             </Button>
-          ) : null}
-        </>
+          </>
+        ) : (
+          <>
+            {canDelete && archive ? (
+              <Button
+                variant="ghost"
+                onClick={() => setPendingAction("delete")}
+                disabled={submitting}
+                className="text-danger-500 hover:bg-danger-100/50"
+              >
+                Hapus
+              </Button>
+            ) : null}
+            <Button variant="ghost" onClick={onClose} disabled={submitting}>
+              Tutup
+            </Button>
+            {canEdit && archive ? (
+              <Button
+                variant="outline"
+                onClick={openEdit}
+                disabled={submitting}
+              >
+                <Pencil className="size-4" aria-hidden /> Edit
+              </Button>
+            ) : null}
+            {canReview && archive && archive.status !== "reviewed" ? (
+              <Button
+                onClick={() => handleStatusChange("reviewed")}
+                loading={submitting && pendingAction !== "delete"}
+              >
+                <CheckCircle2 className="size-4" aria-hidden /> Mark Sudah Dicek
+              </Button>
+            ) : null}
+          </>
+        )
       }
     >
       {loading ? (
@@ -605,54 +692,148 @@ function NotaDetailModal({
         <p className="text-sm text-neutral-700">Data tidak tersedia.</p>
       ) : (
         <div className="space-y-5">
-          {/* Header info */}
-          <div className="flex items-start gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-            <div
-              className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-white text-xl ring-1 ring-inset ring-neutral-200"
-              aria-hidden
-            >
-              {CATEGORY_EMOJI[archive.category]}
-            </div>
-            <div className="min-w-0 flex-1">
+          {/* Header info — atau form edit saat mode edit. */}
+          {editing ? (
+            <div className="space-y-3 rounded-lg border border-mahakan-green-200 bg-mahakan-green-50/40 p-4">
               <p className="text-xs font-bold uppercase tracking-wide text-mahakan-green-900">
-                {CATEGORY_LABELS[archive.category]}
+                Edit Nota
               </p>
-              <p className="text-base font-bold text-neutral-900">
-                {archive.description}
-              </p>
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-600">
-                <span>{formatDateID(archive.notaDate)}</span>
-                {archive.amount ? (
-                  <span className="font-mono text-neutral-900">
-                    {formatRupiah(Number(archive.amount))}
-                  </span>
-                ) : null}
-                <span>Upload: {archive.createdByName}</span>
-                <span>
-                  {archive.createdAt.toLocaleString("id-ID", {
-                    day: "numeric",
-                    month: "short",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </span>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="edit-nota-date"
+                    className="block text-xs font-medium text-neutral-900"
+                  >
+                    Tanggal nota
+                  </label>
+                  <input
+                    id="edit-nota-date"
+                    type="date"
+                    value={editDate}
+                    onChange={(e) => setEditDate(e.target.value)}
+                    className="h-9 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+                  />
+                </div>
+                <Select
+                  label="Kategori"
+                  ariaLabel="Edit kategori"
+                  options={notaArchiveCategoryValues.map((c) => ({
+                    value: c,
+                    label: `${CATEGORY_EMOJI[c]}  ${CATEGORY_LABELS[c]}`,
+                  }))}
+                  value={editCategory}
+                  onValueChange={(v) =>
+                    setEditCategory(v as NotaArchiveCategory)
+                  }
+                  size="sm"
+                />
               </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <StatusBadge status={archive.status} />
-                {archive.reviewedByName ? (
-                  <span className="text-[11px] text-neutral-500">
-                    oleh {archive.reviewedByName}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="edit-nota-desc"
+                  className="block text-xs font-medium text-neutral-900"
+                >
+                  Keterangan
+                </label>
+                <input
+                  id="edit-nota-desc"
+                  type="text"
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  maxLength={500}
+                  placeholder="Mis. Bahan baku, bayar listrik PLN…"
+                  className="h-9 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="edit-nota-amount"
+                  className="block text-xs font-medium text-neutral-900"
+                >
+                  Nominal (Rp) — boleh dikosongkan
+                </label>
+                <input
+                  id="edit-nota-amount"
+                  inputMode="numeric"
+                  value={
+                    editAmount === ""
+                      ? ""
+                      : Number(editAmount).toLocaleString("id-ID")
+                  }
+                  onChange={(e) =>
+                    setEditAmount(e.target.value.replace(/[^\d]/g, ""))
+                  }
+                  placeholder="0"
+                  className="h-9 w-full rounded-md border border-neutral-300 bg-white px-3 text-right font-mono text-sm focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+                />
+              </div>
+              <p className="text-[11px] text-neutral-500">
+                Foto nota tidak ikut berubah — cuma data tanggal, kategori,
+                keterangan, dan nominal.
+              </p>
+            </div>
+          ) : (
+            <div className="flex items-start gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+              <div
+                className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-white text-xl ring-1 ring-inset ring-neutral-200"
+                aria-hidden
+              >
+                {CATEGORY_EMOJI[archive.category]}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold uppercase tracking-wide text-mahakan-green-900">
+                  {CATEGORY_LABELS[archive.category]}
+                </p>
+                <p className="text-base font-bold text-neutral-900">
+                  {archive.description}
+                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-600">
+                  <span>{formatDateID(archive.notaDate)}</span>
+                  {archive.amount ? (
+                    <span className="font-mono text-neutral-900">
+                      {formatRupiah(Number(archive.amount))}
+                    </span>
+                  ) : null}
+                  <span>Upload: {archive.createdByName}</span>
+                  <span>
+                    {archive.createdAt.toLocaleString("id-ID", {
+                      day: "numeric",
+                      month: "short",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
                   </span>
-                ) : null}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <StatusBadge status={archive.status} />
+                  {archive.reviewedByName ? (
+                    <span className="text-[11px] text-neutral-500">
+                      oleh {archive.reviewedByName}
+                    </span>
+                  ) : null}
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Files grid */}
           <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
-              Foto Nota ({archive.files.length})
-            </h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                Foto Nota ({archive.files.length})
+              </h3>
+              {driveFolderUrl ? (
+                <a
+                  href={driveFolderUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-mahakan-green-700 bg-white px-3 py-1.5 text-xs font-semibold text-mahakan-green-900 hover:bg-mahakan-green-50"
+                >
+                  <FolderOpen className="size-3.5" aria-hidden /> Buka Folder di
+                  Drive
+                </a>
+              ) : null}
+            </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {archive.files.map((f) => (
                 <FileThumb key={f.id} file={f} />
@@ -661,7 +842,7 @@ function NotaDetailModal({
           </section>
 
           {/* Reviewer note */}
-          {canReview ? (
+          {editing ? null : canReview ? (
             <section className="space-y-2">
               <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-500">
                 Catatan Reviewer (opsional)
