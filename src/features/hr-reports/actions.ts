@@ -238,6 +238,7 @@ export async function getAttendanceCalendar(input: {
       gpsDistanceMeters: attendanceRecords.gpsDistanceMeters,
       manualEditAt: attendanceRecords.manualEditAt,
       manualEditReason: attendanceRecords.manualEditReason,
+      isManualEntry: attendanceRecords.isManualEntry,
     })
     .from(attendanceRecords)
     .where(
@@ -253,6 +254,8 @@ export async function getAttendanceCalendar(input: {
       employeeId: employeeSchedules.employeeId,
       scheduleDate: employeeSchedules.scheduleDate,
       dayOff: employeeSchedules.dayOff,
+      startTime: employeeSchedules.startTime,
+      endTime: employeeSchedules.endTime,
     })
     .from(employeeSchedules)
     .where(
@@ -307,6 +310,7 @@ export async function getAttendanceCalendar(input: {
           ? new Date(rec.manualEditAt).toISOString()
           : null;
         cell.manualEditReason = rec.manualEditReason;
+        cell.isManualEntry = rec.isManualEntry ?? false;
       } else if (sched && sched.dayOff) {
         status = "off";
       } else if (sched && !sched.dayOff) {
@@ -316,6 +320,12 @@ export async function getAttendanceCalendar(input: {
         status = date > todayWib ? "upcoming" : "alpa";
       } else {
         status = "kosong";
+      }
+      // Sesi AE-162 — propagate jam shift terjadwal untuk modal "Tandai
+      // Hadir" (preview jam yang bakal dicatat).
+      if (sched && !sched.dayOff) {
+        cell.scheduleStartTime = sched.startTime ?? null;
+        cell.scheduleEndTime = sched.endTime ?? null;
       }
       cell.status = status;
       days[date] = cell;

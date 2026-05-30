@@ -3,14 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  CalendarCheck,
   CalendarDays,
   CalendarRange,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock,
   Copy,
   Layers,
   Pencil,
+  Trash2,
 } from "lucide-react";
 import {
   Button,
@@ -32,7 +35,12 @@ import {
   upsertSchedule,
   type ScheduleWithEmployee,
 } from "@/features/schedules";
-import { editAttendanceManual } from "@/features/attendance/actions";
+import {
+  bulkBackfillAttendance,
+  createManualAttendance,
+  deleteManualAttendance,
+  editAttendanceManual,
+} from "@/features/attendance/actions";
 import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
 import {
@@ -165,11 +173,17 @@ export function SchedulesSection() {
   const [viewMode, setViewMode] = useState<ViewMode>("schedule");
   const [rangeMode, setRangeMode] = useState<RangeMode>("week");
   const [attendanceDetail, setAttendanceDetail] = useState<{
+    employeeId: string;
     employeeName: string;
     date: string;
     cell: AttendanceCalendarCell;
   } | null>(null);
+  /* Sesi AE-162 — modal backfill massal absen. */
+  const [bulkBackfillOpen, setBulkBackfillOpen] = useState(false);
   const queryClient = useQueryClient();
+  const { session } = useSession();
+  const canManualEdit =
+    !!session && hasPermission(session.user.role, "attendance.manual_edit");
 
   const [editing, setEditing] = useState<{
     employee: ActiveEmployee;
@@ -482,6 +496,15 @@ export function SchedulesSection() {
             <CalendarRange className="size-3" /> 5 Minggu
           </button>
         </div>
+        {viewMode === "attendance" && canManualEdit ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setBulkBackfillOpen(true)}
+          >
+            <CalendarCheck className="size-4" aria-hidden /> Backfill Hadir
+          </Button>
+        ) : null}
         {viewMode === "attendance" ? (
           <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
             {(
@@ -698,6 +721,7 @@ export function SchedulesSection() {
                                       )
                                         return;
                                       setAttendanceDetail({
+                                        employeeId: emp.id,
                                         employeeName: emp.fullName,
                                         date: dateIso,
                                         cell,
@@ -767,6 +791,19 @@ export function SchedulesSection() {
           });
         }}
       />
+
+      {bulkBackfillOpen ? (
+        <BulkBackfillModal
+          employees={employees}
+          defaultFrom={fromIso}
+          defaultTo={toIso}
+          onClose={() => setBulkBackfillOpen(false)}
+          onDone={() => {
+            setBulkBackfillOpen(false);
+            refresh();
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -828,6 +865,7 @@ function AttendanceDetailModal({
   onSaved,
 }: {
   detail: {
+    employeeId: string;
     employeeName: string;
     date: string;
     cell: AttendanceCalendarCell;
@@ -840,7 +878,9 @@ function AttendanceDetailModal({
   const { session } = useSession();
   const canEdit =
     !!session && hasPermission(session.user.role, "attendance.manual_edit");
-  const [editMode, setEditMode] = useState(false);
+  /* Sesi AE-162 — formMode: "edit" untuk record yang ada, "create" untuk
+   * input absen manual di hari Alpa (tanpa clock-in). */
+  const [formMode, setFormMode] = useState<null | "edit" | "create">(null);
   const [editIsLate, setEditIsLate] = useState<"yes" | "no" | "unknown">(
     "unknown",
   );
@@ -848,11 +888,15 @@ function AttendanceDetailModal({
   const [editOT, setEditOT] = useState("");
   const [editReason, setEditReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  /* Sesi AE-162 — konfirmasi hapus entri manual. */
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   /* Reset edit state when detail changes. */
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect */
-    setEditMode(false);
+    setFormMode(null);
+    setConfirmDelete(false);
     if (detail) {
       setEditIsLate(
         (detail.cell.isLate ?? "unknown") as "yes" | "no" | "unknown",
@@ -882,6 +926,17 @@ function AttendanceDetailModal({
   /* Sesi AE-63 phase8 — edit only available kalau ada attendance record
    * (status hadir/telat). Off/alpa/kosong tidak ada record untuk di-edit. */
   const hasRecord = !!detail.cell.recordId;
+  /* Sesi AE-162 — input manual untuk hari Alpa (terjadwal, lewat, tanpa
+   * clock-in). Hapus hanya untuk record yang dibuat manual oleh HR. */
+  const isManualEntry = !!detail.cell.isManualEntry;
+  const canCreate = canEdit && !hasRecord && detail.cell.status === "alpa";
+  const canDeleteManual = canEdit && hasRecord && isManualEntry;
+  const schedStart = detail.cell.scheduleStartTime
+    ? formatHm(detail.cell.scheduleStartTime)
+    : null;
+  const schedEnd = detail.cell.scheduleEndTime
+    ? formatHm(detail.cell.scheduleEndTime)
+    : null;
 
   async function onSubmitEdit() {
     if (!detail?.cell.recordId || submitting) return;
@@ -910,8 +965,56 @@ function AttendanceDetailModal({
     setSubmitting(false);
     if (res.success) {
       toast.success("Status absen ter-update");
-      setEditMode(false);
+      setFormMode(null);
       onSaved?.();
+    } else {
+      toast.error(res.error.message);
+    }
+  }
+
+  /* Sesi AE-162 — buat record absen manual (Tandai Hadir) untuk hari Alpa. */
+  async function onSubmitCreate() {
+    if (!detail || submitting) return;
+    const lateN = editIsLate === "yes" ? parseInt(editLate, 10) || 0 : 0;
+    const otN = parseInt(editOT, 10) || 0;
+    if (editReason.trim().length < 3) {
+      toast.error("Alasan minimal 3 karakter (mis. 'rekap absen manual Mei')");
+      return;
+    }
+    setSubmitting(true);
+    const res = await createManualAttendance({
+      employeeId: detail.employeeId,
+      shiftDate: detail.date,
+      isLate: editIsLate,
+      lateMinutes: lateN,
+      overtimeMinutes: otN,
+      reason: editReason.trim(),
+    });
+    setSubmitting(false);
+    if (res.success) {
+      toast.success("Absen ditandai Hadir (manual)");
+      setFormMode(null);
+      onSaved?.();
+      onClose();
+    } else {
+      toast.error(res.error.message);
+    }
+  }
+
+  /* Sesi AE-162 — hapus entri manual → kembali ke Alpa. */
+  async function onDelete() {
+    if (!detail?.cell.recordId || deleting) return;
+    setDeleting(true);
+    const res = await deleteManualAttendance({
+      recordId: detail.cell.recordId,
+      reason: editReason.trim() || null,
+    });
+    setDeleting(false);
+    if (res.success) {
+      toast.success("Entri manual dihapus — kembali ke Alpa");
+      setConfirmDelete(false);
+      onSaved?.();
+      onClose();
     } else {
       toast.error(res.error.message);
     }
@@ -923,13 +1026,13 @@ function AttendanceDetailModal({
       onClose={onClose}
       title={`Detail Absen — ${detail.employeeName}`}
       description={dateLabel}
-      size="md"
+      size="2xl"
       footer={
-        editMode ? (
+        formMode === "edit" ? (
           <>
             <Button
               variant="ghost"
-              onClick={() => setEditMode(false)}
+              onClick={() => setFormMode(null)}
               disabled={submitting}
             >
               Batal Edit
@@ -938,16 +1041,43 @@ function AttendanceDetailModal({
               Simpan
             </Button>
           </>
+        ) : formMode === "create" ? (
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setFormMode(null)}
+              disabled={submitting}
+            >
+              Batal
+            </Button>
+            <Button onClick={onSubmitCreate} loading={submitting}>
+              <CheckCircle2 className="size-4" aria-hidden /> Tandai Hadir
+            </Button>
+          </>
         ) : (
           <>
+            {canDeleteManual ? (
+              <Button
+                variant="ghost"
+                onClick={() => setConfirmDelete(true)}
+                className="text-danger-500 hover:bg-danger-100/50"
+              >
+                <Trash2 className="size-4" aria-hidden /> Hapus Entri
+              </Button>
+            ) : null}
             {canEdit && hasRecord ? (
-              <Button variant="outline" onClick={() => setEditMode(true)}>
+              <Button variant="outline" onClick={() => setFormMode("edit")}>
                 <Pencil className="size-4" aria-hidden /> Edit Status
               </Button>
             ) : null}
             <Button variant="ghost" onClick={onClose}>
               Tutup
             </Button>
+            {canCreate ? (
+              <Button onClick={() => setFormMode("create")}>
+                <CheckCircle2 className="size-4" aria-hidden /> Tandai Hadir
+              </Button>
+            ) : null}
           </>
         )
       }
@@ -965,12 +1095,15 @@ function AttendanceDetailModal({
           <div className="mt-0.5 text-base font-bold">{meta.legend}</div>
         </div>
 
-        {/* Sesi AE-63 phase8 — manual edit badge supaya HR tahu record ini
-          * sudah pernah di-override (e.g. konfirmasi izin, sakit). */}
-        {!editMode && detail.cell.manualEditAt ? (
+        {/* Sesi AE-63 phase8 / AE-162 — badge provenance: bedakan record
+          * yang DI-INPUT manual (backfill / koreksi) vs clock-in asli yang
+          * di-edit statusnya. HR perlu tahu mana data mock vs data real. */}
+        {formMode === null && detail.cell.manualEditAt ? (
           <div className="rounded-md border border-mahakan-green-700/30 bg-mahakan-green-50/40 p-2.5 text-xs">
             <div className="font-semibold text-mahakan-green-900">
-              ✎ Status sudah di-edit manual oleh HR
+              {isManualEntry
+                ? "🖊 Absen di-input manual oleh HR (bukan clock-in asli)"
+                : "✎ Status sudah di-edit manual oleh HR"}
             </div>
             {detail.cell.manualEditReason ? (
               <div className="mt-0.5 text-neutral-700">
@@ -986,9 +1119,89 @@ function AttendanceDetailModal({
           </div>
         ) : null}
 
+        {/* Sesi AE-162 — form input absen manual (Tandai Hadir) untuk hari
+          * Alpa. Jam ikut shift terjadwal; HR set telat/lembur opsional. */}
+        {formMode === "create" ? (
+          <div className="space-y-3 rounded-lg border border-mahakan-green-700/40 bg-mahakan-green-50/40 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wider text-mahakan-green-900">
+              Input Absen Manual — Tandai Hadir
+            </div>
+            <div className="rounded-md border border-mahakan-green-700/20 bg-white p-3 text-xs text-neutral-700">
+              {schedStart && schedEnd ? (
+                <>
+                  Jam kerja akan dicatat sesuai shift terjadwal:{" "}
+                  <span className="font-mono font-semibold text-neutral-900">
+                    {schedStart}–{schedEnd}
+                  </span>
+                  . Cocok untuk rekap absen lama / staff lupa clock-in.
+                </>
+              ) : (
+                <>Hari ini akan ditandai Hadir tanpa detail jam.</>
+              )}
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-neutral-700 mb-1">
+                Status Telat
+              </label>
+              <div className="flex gap-1.5">
+                {(
+                  [
+                    { v: "no", label: "Tidak Telat" },
+                    { v: "yes", label: "Telat" },
+                    { v: "unknown", label: "Tidak diketahui" },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.v}
+                    type="button"
+                    onClick={() => setEditIsLate(opt.v)}
+                    className={cn(
+                      "flex-1 rounded-md border px-3 py-2 text-xs font-medium transition-colors",
+                      editIsLate === opt.v
+                        ? "border-mahakan-green-700 bg-mahakan-green-700 text-white"
+                        : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                label="Telat (menit)"
+                type="text"
+                inputMode="numeric"
+                value={editIsLate === "yes" ? editLate : "0"}
+                disabled={editIsLate !== "yes"}
+                onChange={(e) => setEditLate(e.target.value)}
+              />
+              <Input
+                label="Overtime (menit)"
+                type="text"
+                inputMode="numeric"
+                value={editOT}
+                onChange={(e) => setEditOT(e.target.value)}
+              />
+            </div>
+            <Input
+              label="Alasan (wajib, min 3 karakter)"
+              placeholder="mis. rekap absen manual Mei, staff lupa clock-in"
+              value={editReason}
+              onChange={(e) => setEditReason(e.target.value)}
+              maxLength={500}
+            />
+            <p className="text-[10px] text-neutral-500">
+              Entri ini ditandai &ldquo;input manual&rdquo; (tanpa selfie/GPS),
+              ter-audit dengan nama kamu + alasan, dan akan dihitung saat
+              payroll di-Recompute.
+            </p>
+          </div>
+        ) : null}
+
         {/* Sesi AE-63 phase8 — inline edit form (HR manual override).
           * Force-set isLate/lateMinutes/overtimeMinutes + reason. */}
-        {editMode ? (
+        {formMode === "edit" ? (
           <div className="space-y-2 rounded-md border border-mahakan-green-700/40 bg-mahakan-green-50/40 p-3">
             <div className="text-xs font-semibold uppercase tracking-wider text-mahakan-green-900">
               Edit Status Manual
@@ -1162,9 +1375,18 @@ function AttendanceDetailModal({
           </div>
         ) : null}
 
-        {detail.cell.status === "alpa" ? (
+        {detail.cell.status === "alpa" && formMode !== "create" ? (
           <p className="rounded-md border border-danger-300 bg-danger-100/40 p-3 text-xs text-danger-500">
             ⚠️ Karyawan dijadwalkan kerja tapi tidak ada record clock-in.
+            {canCreate ? (
+              <span className="mt-1 block text-neutral-600">
+                Kalau sebenarnya hadir (lupa absen / data lama), klik{" "}
+                <span className="font-semibold text-mahakan-green-900">
+                  Tandai Hadir
+                </span>{" "}
+                di bawah.
+              </span>
+            ) : null}
           </p>
         ) : null}
         {detail.cell.status === "off" ? (
@@ -1177,6 +1399,253 @@ function AttendanceDetailModal({
             Tidak ada schedule + tidak ada record absen.
           </p>
         ) : null}
+      </div>
+
+      {/* Sesi AE-162 — konfirmasi hapus entri manual. */}
+      <Modal
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title="Hapus entri absen manual?"
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setConfirmDelete(false)}
+              disabled={deleting}
+            >
+              Batal
+            </Button>
+            <Button variant="destructive" onClick={onDelete} loading={deleting}>
+              Hapus
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-neutral-700">
+          Entri Hadir manual untuk{" "}
+          <span className="font-semibold">{detail.employeeName}</span> di
+          tanggal ini akan dihapus dan kembali jadi{" "}
+          <span className="font-semibold text-danger-500">Alpa</span>. Payroll
+          perlu di-Recompute setelah ini.
+        </p>
+      </Modal>
+    </Modal>
+  );
+}
+
+/** Format "HH:MM[:SS]" → "HH:MM". */
+function formatHm(hms: string): string {
+  return hms.slice(0, 5);
+}
+
+/**
+ * Sesi AE-162 — Backfill Hadir massal. HR Bayu: tandai Hadir semua hari
+ * Alpa (terjadwal kerja, lewat, belum ada record) dalam rentang tanggal.
+ * Power-tool buat mock data historis (mis. tgl 1–13 sebelum app dipakai)
+ * tanpa klik per sel. Jam ikut shift terjadwal.
+ */
+function BulkBackfillModal({
+  employees,
+  defaultFrom,
+  defaultTo,
+  onClose,
+  onDone,
+}: {
+  employees: ActiveEmployee[];
+  defaultFrom: string;
+  defaultTo: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [from, setFrom] = useState(defaultFrom);
+  const [to, setTo] = useState(defaultTo);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    () => new Set(employees.map((e) => e.id)),
+  );
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const allSelected = selectedIds.size === employees.length;
+
+  function toggle(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelectedIds(
+      allSelected ? new Set() : new Set(employees.map((e) => e.id)),
+    );
+  }
+
+  async function onSubmit() {
+    if (submitting) return;
+    if (to < from) {
+      toast.error("Tanggal akhir harus >= tanggal mulai");
+      return;
+    }
+    if (selectedIds.size === 0) {
+      toast.error("Pilih minimal 1 karyawan");
+      return;
+    }
+    if (reason.trim().length < 3) {
+      toast.error("Alasan minimal 3 karakter (mis. 'rekap absen manual Mei')");
+      return;
+    }
+    setSubmitting(true);
+    const res = await bulkBackfillAttendance({
+      from,
+      to,
+      employeeIds: allSelected ? undefined : Array.from(selectedIds),
+      isLate: "no",
+      reason: reason.trim(),
+    });
+    setSubmitting(false);
+    if (!res.success) {
+      toast.error(res.error.message);
+      return;
+    }
+    if (res.data.created === 0) {
+      toast.success(
+        "Tidak ada hari Alpa yang perlu ditandai di rentang ini (mungkin sudah terisi semua).",
+      );
+    } else {
+      toast.success(`${res.data.created} hari ditandai Hadir 🎉`);
+    }
+    onDone();
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Backfill Hadir Massal"
+      description="Tandai Hadir semua hari Alpa (terjadwal kerja, sudah lewat, belum ada absen) dalam rentang tanggal."
+      size="2xl"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+            Batal
+          </Button>
+          <Button onClick={onSubmit} loading={submitting}>
+            <CalendarCheck className="size-4" aria-hidden /> Backfill Hadir
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4 text-sm">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <label
+              htmlFor="bf-from"
+              className="block text-xs font-medium text-neutral-900"
+            >
+              Tanggal mulai
+            </label>
+            <input
+              id="bf-from"
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="h-9 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label
+              htmlFor="bf-to"
+              className="block text-xs font-medium text-neutral-900"
+            >
+              Tanggal sampai
+            </label>
+            <input
+              id="bf-to"
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="h-9 w-full rounded-md border border-neutral-300 bg-white px-3 text-sm focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+              Karyawan ({selectedIds.size}/{employees.length})
+            </label>
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="text-xs font-medium text-mahakan-green-700 hover:underline"
+            >
+              {allSelected ? "Hapus semua" : "Pilih semua"}
+            </button>
+          </div>
+          <div className="grid max-h-52 grid-cols-1 gap-1.5 overflow-y-auto rounded-md border border-neutral-200 bg-neutral-50 p-2 sm:grid-cols-2">
+            {employees.map((e) => {
+              const checked = selectedIds.has(e.id);
+              return (
+                <button
+                  key={e.id}
+                  type="button"
+                  onClick={() => toggle(e.id)}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors",
+                    checked
+                      ? "border-mahakan-green-700 bg-mahakan-green-50"
+                      : "border-neutral-200 bg-white hover:bg-neutral-50",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "flex size-4 flex-none items-center justify-center rounded border",
+                      checked
+                        ? "border-mahakan-green-700 bg-mahakan-green-700 text-white"
+                        : "border-neutral-300 bg-white",
+                    )}
+                    aria-hidden
+                  >
+                    {checked ? <CheckCircle2 className="size-3" /> : null}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium text-neutral-900">
+                      {e.fullName}
+                    </span>
+                    {e.position ? (
+                      <span className="block truncate text-[10px] text-neutral-500">
+                        {e.position}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <Input
+          label="Alasan (wajib, min 3 karakter)"
+          placeholder="mis. rekap absen manual sebelum app dipakai"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          maxLength={500}
+        />
+
+        <div className="rounded-md border border-mahakan-green-700/20 bg-mahakan-green-50/40 p-3 text-xs text-neutral-700">
+          <p className="font-semibold text-mahakan-green-900">
+            Yang akan terjadi:
+          </p>
+          <ul className="mt-1 list-inside list-disc space-y-0.5">
+            <li>Hanya hari Alpa (terjadwal kerja, sudah lewat) yang ditandai.</li>
+            <li>Hari libur (Off) &amp; yang sudah ada absen dilewati otomatis.</li>
+            <li>Jam kerja ikut shift terjadwal masing-masing.</li>
+            <li>Entri ditandai &ldquo;input manual&rdquo; &amp; ter-audit.</li>
+            <li>Jalankan Recompute di Payroll setelah ini.</li>
+          </ul>
+        </div>
       </div>
     </Modal>
   );

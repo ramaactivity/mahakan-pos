@@ -159,6 +159,11 @@ export const AUDIT_EVENT_TYPES = [
   /* Sesi AE-63 phase8 — HR manual edit attendance status / lateMinutes /
    * overtimeMinutes (special case: konfirmasi izin, sakit, dll). */
   "attendance.manual_edit",
+  /* Sesi AE-162 — HR input/backfill absen manual untuk hari tanpa clock-in
+   * (mock data historis + koreksi lupa absen) + hapus entri manual. */
+  "attendance.manual_create",
+  "attendance.manual_delete",
+  "attendance.manual_backfill",
   /* Sesi AE-62ag — mobile PIN endpoint audit. PIN-only auth tanpa session,
    * jadi userId NULL — context cukup pakai entityId / payload.summary. */
   "attendance_mobile.pin_invalid",

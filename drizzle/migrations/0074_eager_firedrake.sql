@@ -1,0 +1,1 @@
+ALTER TABLE "attendance_records" ADD COLUMN "is_manual_entry" boolean DEFAULT false NOT NULL;

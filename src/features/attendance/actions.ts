@@ -1,8 +1,13 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { db } from "@/db";
-import { attendanceRecords, employees, outlets } from "@/db/schema";
+import {
+  attendanceRecords,
+  employeeSchedules,
+  employees,
+  outlets,
+} from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
@@ -47,10 +52,16 @@ import {
   type ListAttendanceOptions,
 } from "./queries";
 import {
+  bulkBackfillAttendanceSchema,
   clockInSchema,
   clockOutSchema,
+  createManualAttendanceSchema,
+  deleteManualAttendanceSchema,
   editAttendanceManualSchema,
   listAttendanceSchema,
+  type BulkBackfillAttendanceInput,
+  type CreateManualAttendanceInput,
+  type DeleteManualAttendanceInput,
   type EditAttendanceManualInput,
 } from "./schemas";
 import {
@@ -414,6 +425,412 @@ export async function editAttendanceManual(
     );
 
     return ok(row);
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "attendance", "Operasi database gagal"),
+    );
+  }
+}
+
+// ---------- Manual entry / backfill (Sesi AE-162) ----------
+
+/** Bangun instant dari tanggal WIB + "HH:MM[:SS]". WIB = UTC+7 (no DST). */
+function buildWibInstant(dateStr: string, hms: string): Date {
+  const norm = hms.length === 5 ? `${hms}:00` : hms;
+  return new Date(`${dateStr}T${norm}+07:00`);
+}
+
+/** Tanggal +1 hari (YYYY-MM-DD), untuk shift lewat tengah malam. */
+function nextDateStr(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Turunkan clock-in/out + workMinutes dari shift terjadwal. NULL kalau
+ * tidak ada jadwal kerja (day-off / tanpa jam). Sadar cross-midnight. */
+function deriveManualShiftTimes(
+  shiftDate: string,
+  schedule: { dayOff: boolean; startTime: string | null; endTime: string | null } | null,
+): { clockInAt: Date; clockOutAt: Date | null; workMinutes: number | null } {
+  if (!schedule || schedule.dayOff || !schedule.startTime || !schedule.endTime) {
+    /* Fallback defensif (mestinya tak terpakai — UI hanya izinkan hari
+     * Alpa yang pasti terjadwal): catat siang hari, tanpa jam keluar. */
+    return {
+      clockInAt: buildWibInstant(shiftDate, "12:00:00"),
+      clockOutAt: null,
+      workMinutes: null,
+    };
+  }
+  const startMin = timeStringToMinutes(schedule.startTime);
+  const endMin = timeStringToMinutes(schedule.endTime);
+  const clockInAt = buildWibInstant(shiftDate, schedule.startTime);
+  const crossMidnight = endMin <= startMin;
+  const clockOutAt = buildWibInstant(
+    crossMidnight ? nextDateStr(shiftDate) : shiftDate,
+    schedule.endTime,
+  );
+  const workMinutes = Math.max(
+    0,
+    Math.round((clockOutAt.getTime() - clockInAt.getTime()) / 60_000),
+  );
+  return { clockInAt, clockOutAt, workMinutes };
+}
+
+/**
+ * Sesi AE-162 — CREATE record absen manual untuk satu hari yang tidak ada
+ * clock-in (status "alpa"). Jam diturunkan dari shift terjadwal; HR set
+ * telat/lembur opsional + alasan wajib. is_manual_entry=true.
+ */
+export async function createManualAttendance(
+  input: CreateManualAttendanceInput,
+): Promise<ApiResult<AttendanceRecord>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "attendance.manual_edit")) {
+    return fail(
+      "FORBIDDEN",
+      "Hanya Owner / Manager yang dapat input absen manual",
+    );
+  }
+  const parsed = createManualAttendanceSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  if (v.shiftDate > todayWibIso()) {
+    return fail(
+      "FUTURE_DATE",
+      "Tidak bisa input absen untuk tanggal yang belum tiba",
+    );
+  }
+
+  const [emp] = await db
+    .select()
+    .from(employees)
+    .where(eq(employees.id, v.employeeId))
+    .limit(1);
+  if (!emp) return fail("NOT_FOUND", "Karyawan tidak ditemukan");
+  if (emp.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Karyawan dari outlet lain");
+  }
+  if (emp.deletedAt !== null) {
+    return fail("EMPLOYEE_DELETED", "Karyawan sudah dihapus");
+  }
+
+  /* Cegah dobel — kalau sudah ada record (open / closed) di tanggal itu,
+   * arahkan ke Edit, bukan create baru. */
+  const [existing] = await db
+    .select({ id: attendanceRecords.id })
+    .from(attendanceRecords)
+    .where(
+      and(
+        eq(attendanceRecords.outletId, session.user.outletId),
+        eq(attendanceRecords.employeeId, v.employeeId),
+        eq(attendanceRecords.shiftDate, v.shiftDate),
+      ),
+    )
+    .limit(1);
+  if (existing) {
+    return fail(
+      "ALREADY_EXISTS",
+      "Sudah ada record absen di tanggal ini — pakai Edit, bukan input baru",
+    );
+  }
+
+  const schedule = await fetchScheduleByEmployeeAndDate(
+    v.employeeId,
+    v.shiftDate,
+  );
+  const { clockInAt, clockOutAt, workMinutes } = deriveManualShiftTimes(
+    v.shiftDate,
+    schedule,
+  );
+
+  const now = new Date();
+  try {
+    const [row] = await db
+      .insert(attendanceRecords)
+      .values({
+        outletId: session.user.outletId,
+        employeeId: v.employeeId,
+        shiftDate: v.shiftDate,
+        clockInAt,
+        clockOutAt,
+        clockedInBy: session.user.id,
+        clockedOutBy: clockOutAt ? session.user.id : null,
+        workMinutes,
+        isLate: v.isLate,
+        lateMinutes: v.lateMinutes,
+        overtimeMinutes: v.overtimeMinutes,
+        isManualEntry: true,
+        manualEditAt: now,
+        manualEditBy: session.user.id,
+        manualEditReason: v.reason,
+      })
+      .returning();
+
+    logAudit({
+      eventType: "attendance.manual_create",
+      userId: session.user.id,
+      entityType: "attendance",
+      entityId: row.id,
+      payload: {
+        summary: `Input absen manual (Hadir): ${emp.fullName} ${v.shiftDate}`,
+        after: {
+          shiftDate: v.shiftDate,
+          isLate: v.isLate,
+          lateMinutes: v.lateMinutes,
+          overtimeMinutes: v.overtimeMinutes,
+          workMinutes,
+        },
+        context: { reason: v.reason, employeeId: emp.id },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }).catch((e) => console.error("[audit attendance.manual_create]", e));
+
+    return ok(row);
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "attendance", "Operasi database gagal"),
+    );
+  }
+}
+
+/**
+ * Sesi AE-162 — hapus entri absen yang DIBUAT manual (revert ke Alpa).
+ * Guard: hanya is_manual_entry=true; record clock-in asli tidak bisa dihapus.
+ */
+export async function deleteManualAttendance(
+  input: DeleteManualAttendanceInput,
+): Promise<ApiResult<{ id: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "attendance.manual_edit")) {
+    return fail(
+      "FORBIDDEN",
+      "Hanya Owner / Manager yang dapat hapus absen manual",
+    );
+  }
+  const parsed = deleteManualAttendanceSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  const [current] = await db
+    .select()
+    .from(attendanceRecords)
+    .where(eq(attendanceRecords.id, v.recordId))
+    .limit(1);
+  if (!current) return fail("NOT_FOUND", "Record tidak ditemukan");
+  if (current.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Record dari outlet lain");
+  }
+  if (!current.isManualEntry) {
+    return fail(
+      "NOT_MANUAL",
+      "Hanya entri manual yang bisa dihapus. Record clock-in asli cuma bisa di-edit statusnya.",
+    );
+  }
+
+  try {
+    await db
+      .delete(attendanceRecords)
+      .where(eq(attendanceRecords.id, v.recordId));
+
+    logAudit({
+      eventType: "attendance.manual_delete",
+      userId: session.user.id,
+      entityType: "attendance",
+      entityId: v.recordId,
+      payload: {
+        summary: `Hapus entri absen manual ${current.employeeId} (${current.shiftDate})`,
+        before: {
+          shiftDate: current.shiftDate,
+          isLate: current.isLate,
+          workMinutes: current.workMinutes,
+        },
+        context: { reason: v.reason ?? null },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }).catch((e) => console.error("[audit attendance.manual_delete]", e));
+
+    return ok({ id: v.recordId });
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "attendance", "Operasi database gagal"),
+    );
+  }
+}
+
+/**
+ * Sesi AE-162 — backfill massal: tandai HADIR semua hari Alpa (terjadwal,
+ * lewat, belum ada record) dalam rentang tanggal untuk karyawan terpilih.
+ * Jam ikut shift terjadwal. Skip hari off / sudah ada record / masa depan.
+ */
+export async function bulkBackfillAttendance(
+  input: BulkBackfillAttendanceInput,
+): Promise<ApiResult<{ created: number; scanned: number; skipped: number }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "attendance.manual_edit")) {
+    return fail(
+      "FORBIDDEN",
+      "Hanya Owner / Manager yang dapat backfill absen",
+    );
+  }
+  const parsed = bulkBackfillAttendanceSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+  if (v.to < v.from) {
+    return fail("VALIDATION_ERROR", "Tanggal akhir harus >= tanggal mulai");
+  }
+
+  /* Enumerate tanggal (inclusive), cap 62 hari. */
+  const dates: string[] = [];
+  for (let d = v.from; d <= v.to; d = nextDateStr(d)) {
+    dates.push(d);
+    if (dates.length > 62) {
+      return fail("VALIDATION_ERROR", "Rentang maksimal 62 hari");
+    }
+  }
+  const today = todayWibIso();
+
+  /* Karyawan aktif (opsional difilter ke subset). */
+  const empConds = [
+    eq(employees.outletId, session.user.outletId),
+    isNull(employees.deletedAt),
+  ];
+  if (v.employeeIds && v.employeeIds.length > 0) {
+    empConds.push(inArray(employees.id, v.employeeIds));
+  }
+  const emps = await db
+    .select({ id: employees.id, fullName: employees.fullName })
+    .from(employees)
+    .where(and(...empConds));
+  if (emps.length === 0) {
+    return ok({ created: 0, scanned: 0, skipped: 0 });
+  }
+
+  const schedules = await db
+    .select({
+      employeeId: employeeSchedules.employeeId,
+      scheduleDate: employeeSchedules.scheduleDate,
+      dayOff: employeeSchedules.dayOff,
+      startTime: employeeSchedules.startTime,
+      endTime: employeeSchedules.endTime,
+    })
+    .from(employeeSchedules)
+    .where(
+      and(
+        eq(employeeSchedules.outletId, session.user.outletId),
+        gte(employeeSchedules.scheduleDate, v.from),
+        lte(employeeSchedules.scheduleDate, v.to),
+      ),
+    );
+  const scheduleMap = new Map<string, (typeof schedules)[number]>();
+  for (const s of schedules) {
+    scheduleMap.set(`${s.employeeId}|${s.scheduleDate}`, s);
+  }
+
+  const existing = await db
+    .select({
+      employeeId: attendanceRecords.employeeId,
+      shiftDate: attendanceRecords.shiftDate,
+    })
+    .from(attendanceRecords)
+    .where(
+      and(
+        eq(attendanceRecords.outletId, session.user.outletId),
+        gte(attendanceRecords.shiftDate, v.from),
+        lte(attendanceRecords.shiftDate, v.to),
+      ),
+    );
+  const existingSet = new Set(
+    existing.map((r) => `${r.employeeId}|${r.shiftDate}`),
+  );
+
+  const now = new Date();
+  const toInsert: (typeof attendanceRecords.$inferInsert)[] = [];
+  let scanned = 0;
+  for (const emp of emps) {
+    for (const date of dates) {
+      scanned += 1;
+      if (date > today) continue;
+      const sched = scheduleMap.get(`${emp.id}|${date}`);
+      if (!sched || sched.dayOff) continue; // hanya hari kerja terjadwal
+      if (existingSet.has(`${emp.id}|${date}`)) continue; // sudah ada record
+      const { clockInAt, clockOutAt, workMinutes } = deriveManualShiftTimes(
+        date,
+        sched,
+      );
+      toInsert.push({
+        outletId: session.user.outletId,
+        employeeId: emp.id,
+        shiftDate: date,
+        clockInAt,
+        clockOutAt,
+        clockedInBy: session.user.id,
+        clockedOutBy: clockOutAt ? session.user.id : null,
+        workMinutes,
+        isLate: v.isLate,
+        lateMinutes: v.isLate === "yes" ? null : 0,
+        overtimeMinutes: 0,
+        isManualEntry: true,
+        manualEditAt: now,
+        manualEditBy: session.user.id,
+        manualEditReason: v.reason,
+      });
+    }
+  }
+
+  if (toInsert.length === 0) {
+    return ok({ created: 0, scanned, skipped: scanned });
+  }
+
+  try {
+    await db.insert(attendanceRecords).values(toInsert);
+
+    logAudit({
+      eventType: "attendance.manual_backfill",
+      userId: session.user.id,
+      entityType: "attendance",
+      entityId: session.user.outletId,
+      payload: {
+        summary: `Backfill absen massal ${v.from}..${v.to}: ${toInsert.length} hari ditandai Hadir (${emps.length} karyawan)`,
+        after: { created: toInsert.length, from: v.from, to: v.to },
+        context: { reason: v.reason, employeeIds: v.employeeIds ?? "all" },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }).catch((e) => console.error("[audit attendance.manual_backfill]", e));
+
+    return ok({
+      created: toInsert.length,
+      scanned,
+      skipped: scanned - toInsert.length,
+    });
   } catch (e) {
     return fail(
       "DB_ERROR",

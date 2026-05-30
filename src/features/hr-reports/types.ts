@@ -87,6 +87,14 @@ export interface AttendanceCalendarCell {
   /** Indicator HR sudah edit manual record ini. UI tampilkan badge "edited". */
   manualEditAt?: string | null;
   manualEditReason?: string | null;
+  /** Sesi AE-162 — record ini DIBUAT manual oleh HR (backfill / koreksi),
+   * bukan clock-in asli. UI tampilkan badge "input manual" + izinkan hapus. */
+  isManualEntry?: boolean;
+  /** Sesi AE-162 — jam shift terjadwal (HH:MM:SS) untuk hari ini. Dipakai
+   * modal "Tandai Hadir" buat preview jam yang akan dicatat. NULL kalau
+   * tidak terjadwal / day-off. */
+  scheduleStartTime?: string | null;
+  scheduleEndTime?: string | null;
 }
 
 export interface AttendanceCalendarRow {

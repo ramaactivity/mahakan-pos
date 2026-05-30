@@ -6,6 +6,7 @@ import {
   timestamp,
   integer,
   date,
+  boolean,
   doublePrecision,
   index,
   uniqueIndex,
@@ -104,6 +105,14 @@ export const attendanceRecords = pgTable(
     manualEditAt: timestamp("manual_edit_at", { withTimezone: true }),
     manualEditBy: uuid("manual_edit_by").references(() => users.id),
     manualEditReason: text("manual_edit_reason"),
+
+    /** Sesi AE-162 — HR Bayu request: record yang DIBUAT manual oleh HR
+     * (backfill absen historis sebelum app dipakai, atau koreksi hari yang
+     * staff lupa clock-in). Beda dari clock-in asli: tidak ada selfie/GPS,
+     * jam diturunkan dari shift terjadwal. Dipakai untuk: badge "input
+     * manual" di grid + guard hapus (hanya entri manual yang boleh dihapus,
+     * record clock-in asli aman). */
+    isManualEntry: boolean("is_manual_entry").notNull().default(false),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
