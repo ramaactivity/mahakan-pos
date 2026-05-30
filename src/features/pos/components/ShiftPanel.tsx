@@ -416,10 +416,11 @@ export function ShiftPanel({
   const opener =
     "openedByName" in shift ? (shift as ShiftWithOpener) : null;
   const isOwnShift = shift.userId === session?.user.id;
-  /* canCloseAny = owner/manager can supervise-close staff shift. */
-  const canCloseAny =
-    session && hasPermission(session.user.role, "shift.close_any");
-  const canCloseThis = isOwnShift || canCloseAny;
+  /* Sesi AE-166 — Mahakan 1 register bersama: siapa pun staff di outlet
+   * boleh menutup shift aktif walau dibuka kolega (handover pagi→malam).
+   * close_own dimiliki semua role; penutup ter-audit di server. */
+  const canCloseThis =
+    !!session && hasPermission(session.user.role, "shift.close_own");
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4 sm:p-6">
@@ -442,9 +443,7 @@ export function ShiftPanel({
             variant="destructive"
             onClick={onRequestCloseShift}
             title={
-              !isOwnShift
-                ? "Tutup shift kolega (supervisor)"
-                : "Tutup shift kamu"
+              !isOwnShift ? "Tutup shift (handover)" : "Tutup shift kamu"
             }
           >
             <Lock className="size-4" aria-hidden /> Tutup Shift

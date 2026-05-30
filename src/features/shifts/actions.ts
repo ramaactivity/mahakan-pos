@@ -267,19 +267,14 @@ export async function closeShift(
 
   const current = await fetchShiftById(v.shiftId);
   if (!current) return fail("NOT_FOUND", "Shift tidak ditemukan");
-  /* Sesi AE-63 phase10 — outlet scope check + supervisor close.
-   * Workflow Mahakan: 1 shift per outlet, shared. Staff close shift sendiri
-   * normal; tapi owner/manager juga boleh close (supervise/handle edge case
-   * staff lupa close, urgensi handover, dll). */
+  /* Sesi AE-63 phase10 / AE-166 — outlet scope check.
+   * Workflow Mahakan: 1 register/shift per outlet, SHARED. Siapa pun staff
+   * di outlet yang sama boleh menutup shift aktif walau dibuka kolega
+   * (handover: mis. manager buka pagi, staff nutup malam). close_own sudah
+   * dicek di atas; outlet scope dicek di sini; penutup ter-audit (actorId
+   * di logAudit). Owner/manager tetap bisa via close_any lintas-skenario. */
   if (current.outletId !== session.user.outletId) {
     return fail("FORBIDDEN", "Shift dari outlet lain");
-  }
-  const canCloseAny = hasPermission(session.user.role, "shift.close_any");
-  if (current.userId !== session.user.id && !canCloseAny) {
-    return fail(
-      "NOT_OWNER_OF_SHIFT",
-      "Kamu tidak bisa tutup shift orang lain. Hubungi owner/manager.",
-    );
   }
   if (current.status === "closed") {
     return fail("ALREADY_CLOSED", "Shift sudah tutup");
