@@ -17,6 +17,7 @@ const APPROVER_ACTIONS: ReadonlyArray<Permission> = [
   "pos.transaction.void",
   "pos.transaction.refund",
   "pos.discount.apply",
+  "shift.opening_cash.correct",
 ];
 
 const bodySchema = z.object({

@@ -18,6 +18,7 @@ import type { OutletSettings } from "@/db/schema/outlets";
 import { pendingEntryChanges } from "@/db/schema/pending_entry_changes";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
+import { consumeApproverToken } from "@/lib/auth/approver";
 import { logAudit } from "@/lib/audit/logger";
 import { logAndSanitize } from "@/lib/server-error";
 import { todayWibRangeUtc, toJakartaDateOnly } from "@/lib/date";
@@ -746,4 +747,163 @@ export async function updateStandardOpeningCash(input: {
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
   }).catch((e) => console.error("[audit standard_opening_cash.update]", e));
   return ok({ standardOpeningCash: amount });
+}
+
+/**
+ * Sesi AE-167 — koreksi KAS AWAL (opening cash) shift yang salah input.
+ *
+ * Otorisasi: owner/manager langsung; staff/supervisor WAJIB approverToken
+ * (PIN owner/manager via verify-approver, actionType shift.opening_cash.correct).
+ *
+ * Shift BUKA: update openingCash saja (variance dihitung fresh saat tutup).
+ * Shift TUTUP: hanya boleh s/d 24:00 WIB hari shift ditutup. Variance digeser
+ *   eksak (newVariance = oldVariance − Δopening) — konsisten dgn formula close
+ *   tanpa refetch transaksi. Jurnal selisih kas di-reverse + post ulang
+ *   (postJournalForOpeningCashCorrection), idempoten untuk koreksi berulang.
+ */
+export async function correctOpeningCash(input: {
+  shiftId: string;
+  correctedOpeningCash: number;
+  reason: string;
+  approverToken?: string | null;
+}): Promise<ApiResult<Shift>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "shift.close_own")) {
+    return fail("FORBIDDEN", "Tidak punya hak");
+  }
+
+  const correctedOpeningCash = Math.round(input.correctedOpeningCash);
+  if (
+    !Number.isFinite(correctedOpeningCash) ||
+    correctedOpeningCash < 0 ||
+    correctedOpeningCash > 99_999_999
+  ) {
+    return fail("VALIDATION", "Kas awal tidak valid (0–99.999.999)");
+  }
+  const reason = (input.reason ?? "").trim();
+  if (reason.length < 3) {
+    return fail("VALIDATION", "Alasan koreksi wajib (min 3 karakter)");
+  }
+
+  const shift = await fetchShiftById(input.shiftId);
+  if (!shift) return fail("NOT_FOUND", "Shift tidak ditemukan");
+  if (shift.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Shift dari outlet lain");
+  }
+
+  /* Otorisasi: owner/manager (punya shift.opening_cash.correct) bisa langsung.
+   * Selain itu (staff/supervisor) wajib approver token owner/manager. */
+  const isSupervisor = hasPermission(
+    session.user.role,
+    "shift.opening_cash.correct",
+  );
+  if (!isSupervisor) {
+    if (!input.approverToken) {
+      return fail(
+        "APPROVAL_REQUIRED",
+        "Butuh persetujuan Owner/Manager (PIN) untuk koreksi kas awal",
+      );
+    }
+    try {
+      await consumeApproverToken(
+        input.approverToken,
+        "shift.opening_cash.correct",
+        input.shiftId,
+      );
+    } catch {
+      return fail(
+        "APPROVAL_INVALID",
+        "Persetujuan tidak valid / kadaluarsa — minta PIN ulang",
+      );
+    }
+  }
+
+  const oldOpening = shift.openingCash;
+  if (oldOpening === correctedOpeningCash) {
+    return fail("NO_CHANGE", "Kas awal sama — tidak ada yang dikoreksi");
+  }
+  const delta = correctedOpeningCash - oldOpening;
+
+  const auditCorrection = (extra: Record<string, unknown>) =>
+    logAudit({
+      eventType: "shift.opening_cash.correct",
+      userId: session.user.id,
+      entityType: "shift",
+      entityId: shift.id,
+      payload: {
+        summary: `Koreksi kas awal shift ${shift.id.slice(0, 8)}: Rp ${oldOpening.toLocaleString("id-ID")} → Rp ${correctedOpeningCash.toLocaleString("id-ID")}`,
+        before: { openingCash: oldOpening, variance: shift.variance ?? null },
+        after: { openingCash: correctedOpeningCash, ...extra },
+        context: { reason, status: shift.status },
+      },
+      metadata: {
+        outletId: shift.outletId,
+        actorRole: session.user.role,
+      },
+    }).catch((e) => console.error("[audit shift.opening_cash.correct]", e));
+
+  try {
+    /* ---------- Shift BUKA: update opening saja, no jurnal. ---------- */
+    if (shift.status === "open") {
+      const [updated] = await db
+        .update(shifts)
+        .set({ openingCash: correctedOpeningCash, updatedAt: new Date() })
+        .where(eq(shifts.id, shift.id))
+        .returning();
+      auditCorrection({ varianceImpact: null });
+      return ok(updated);
+    }
+
+    /* ---------- Shift TUTUP: window s/d 24:00 WIB + jurnal. ---------- */
+    if (!shift.closedAt) {
+      return fail("INVALID_STATE", "Shift tutup tanpa closedAt");
+    }
+    const closedWibDate = toJakartaDateOnly(shift.closedAt);
+    const todayWib = toJakartaDateOnly(new Date());
+    if (closedWibDate !== todayWib) {
+      return fail(
+        "TOO_LATE",
+        "Koreksi kas awal shift tutup hanya bisa di hari yang sama (s/d 24:00 WIB). Untuk koreksi shift lebih lama, gunakan Rebalance Shift.",
+      );
+    }
+
+    const oldVariance = shift.variance ?? 0;
+    const newVariance = oldVariance - delta;
+
+    const [updated] = await db
+      .update(shifts)
+      .set({
+        openingCash: correctedOpeningCash,
+        variance: newVariance,
+        updatedAt: new Date(),
+      })
+      .where(eq(shifts.id, shift.id))
+      .returning();
+
+    /* Jurnal: reverse selisih kas lama + post baru (fire-and-forget). */
+    const { fireJournalHook, postJournalForOpeningCashCorrection } =
+      await import("@/features/accounting/hooks");
+    fireJournalHook(
+      () =>
+        postJournalForOpeningCashCorrection({
+          outletId: shift.outletId,
+          shiftId: shift.id,
+          shiftLabel: `Shift ${shift.id.slice(0, 8)}`,
+          originalVariance: oldVariance,
+          correctedVariance: newVariance,
+          reason,
+          entryDate: closedWibDate,
+          actorId: session.user.id,
+        }),
+      "shift_opening_cash_correction",
+    );
+
+    auditCorrection({ varianceBefore: oldVariance, varianceAfter: newVariance });
+    return ok(updated);
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "shift.correct-opening-cash", "Operasi database gagal"),
+    );
+  }
 }

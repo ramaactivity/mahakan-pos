@@ -13,6 +13,7 @@ export { isOk } from "./types";
 
 export {
   closeShift,
+  correctOpeningCash,
   getActiveShift,
   getLastClosedShiftAtOutlet,
   getShift,

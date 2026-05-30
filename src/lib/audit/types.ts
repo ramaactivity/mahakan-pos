@@ -397,6 +397,7 @@ export type AuditEntityType =
   | "cash_deposit"
   | "aggregator_settlement"
   | "reconciliation_note"
+  | "shift"
   | "shift_rebalance"
   | "transaction_correction"
   | "pending_entry_change"

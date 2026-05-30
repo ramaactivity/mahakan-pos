@@ -48,6 +48,9 @@ export const permissions = {
   "shift.view_own": ["owner", "manager", "supervisor", "staff"],
   "shift.view_all": ["owner", "manager", "supervisor"],
   "shift.force_close": ["owner"],
+  /* Sesi AE-167 — koreksi kas awal shift (perlu izin owner/manager via PIN
+   * approver kalau diminta staff; owner/manager bisa langsung). */
+  "shift.opening_cash.correct": ["owner", "manager"],
   /* Sesi AE-62o — shift rebalancing dengan owner approval.
    * .request: kasir/manager submit correction request (email ke owner)
    * .approve: owner verify code → apply correction

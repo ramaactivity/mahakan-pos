@@ -40,6 +40,7 @@ import {
 import { cn } from "@/lib/utils";
 import { BelanjaSubmissionModal } from "./BelanjaSubmissionModal";
 import { CloseOpenBillModal } from "./CloseOpenBillModal";
+import { CorrectOpeningCashModal } from "./CorrectOpeningCashModal";
 
 /* Sesi AE-62t — variance threshold default 10k kalau prop tidak di-pass
  * dari parent. Owner bisa override via Pengaturan → Threshold (path
@@ -156,6 +157,16 @@ export function CloseShiftModal({
   >([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
+  /* Sesi AE-167 — koreksi kas awal in-place. Override lokal supaya preview
+   * (Kas Harusnya + variance) langsung update tanpa refetch prop dari parent. */
+  const [openingOverride, setOpeningOverride] = useState<number | null>(null);
+  const [correctOpen, setCorrectOpen] = useState(false);
+  const effectiveOpening = openingOverride ?? shift.openingCash;
+  /* Reset override saat modal dibuka / ganti shift (BUKAN saat refreshKey). */
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOpeningOverride(null);
+  }, [open, shift.id]);
 
   // 6 amount fields — raw digit strings (no separator).
   // Sesi AE-62n — tambah `qris` untuk kasir verify manual dari HP/app.
@@ -303,7 +314,7 @@ export function CloseShiftModal({
           totalAmount: refunded.reduce((s, t) => s + t.total, 0),
         },
         expectedCash:
-          shift.openingCash +
+          effectiveOpening +
           paidCash -
           refundedCash -
           pettyExpenseCash +
@@ -326,7 +337,8 @@ export function CloseShiftModal({
       cancelled = true;
     };
     // shift.id stable across parent re-renders — prevent re-fetch loop.
-  }, [open, shift.id, shift.openingCash, refreshKey]);
+    // effectiveOpening: re-run kalau kas awal dikoreksi in-place (AE-167).
+  }, [open, shift.id, effectiveOpening, refreshKey]);
 
   const parsedCash = useMemo(() => {
     try {
@@ -647,8 +659,10 @@ export function CloseShiftModal({
               style={{ overscrollBehavior: "contain" }}
             >
               <SummarySection
-                shift={shift}
                 summary={summary}
+                effectiveOpening={effectiveOpening}
+                openingCorrected={openingOverride !== null}
+                onCorrectOpening={() => setCorrectOpen(true)}
               />
               {/* Sesi AE-62n — 3-channel balance verification panel.
                   Owner request: kasir input fisik per channel supaya keliatan
@@ -772,6 +786,15 @@ export function CloseShiftModal({
         ownerPhone={ownerPhone}
         onClose={handleBelanjaClose}
       />
+      {/* Sesi AE-167 — koreksi kas awal in-place (shift masih buka). */}
+      <CorrectOpeningCashModal
+        open={correctOpen}
+        shiftId={shift.id}
+        currentOpeningCash={effectiveOpening}
+        shiftClosed={false}
+        onClose={() => setCorrectOpen(false)}
+        onCorrected={(updated) => setOpeningOverride(updated.openingCash)}
+      />
     </>
   );
 }
@@ -781,11 +804,16 @@ export function CloseShiftModal({
 // ============================================================
 
 function SummarySection({
-  shift,
   summary,
+  effectiveOpening,
+  openingCorrected,
+  onCorrectOpening,
 }: {
-  shift: Shift;
   summary: SummaryPreview;
+  /* Sesi AE-167 — kas awal efektif (setelah koreksi in-place) + handler. */
+  effectiveOpening: number;
+  openingCorrected: boolean;
+  onCorrectOpening: () => void;
 }) {
   /* Sesi AE-49 — display full formula breakdown supaya owner & kasir
    * paham angka Kas Harusnya dari mana. Petty cash sekarang TERMASUK di
@@ -797,10 +825,25 @@ function SummarySection({
         Ringkasan Shift
       </h3>
       <div className="space-y-1.5 text-sm">
-        <SummaryRow
-          label="Kas Awal"
-          value={formatRupiah(shift.openingCash)}
-        />
+        {/* Sesi AE-167 — Kas Awal + tombol koreksi (salah input saat buka). */}
+        <div className="flex items-center justify-between text-sm text-neutral-900">
+          <span className="inline-flex items-center gap-2">
+            Kas Awal
+            <button
+              type="button"
+              onClick={onCorrectOpening}
+              className="rounded border border-neutral-300 px-1.5 py-0.5 text-[10px] font-medium text-mahakan-green-700 hover:bg-mahakan-green-50"
+            >
+              Koreksi
+            </button>
+            {openingCorrected ? (
+              <span className="rounded bg-mahakan-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-mahakan-green-800">
+                dikoreksi
+              </span>
+            ) : null}
+          </span>
+          <span className="font-mono">{formatRupiah(effectiveOpening)}</span>
+        </div>
         <SummaryRow
           label={`Penjualan Tunai (${summary.paid.count} trx)`}
           value={`+ ${formatRupiah(summary.paid.cash)}`}

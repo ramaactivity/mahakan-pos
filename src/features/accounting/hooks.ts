@@ -803,6 +803,99 @@ export async function postJournalForShiftRebalance(args: {
   return { reverseEntryId, correctedEntryId };
 }
 
+/**
+ * Sesi AE-167 — koreksi KAS AWAL pada shift yang sudah ditutup mengubah
+ * expectedCash → variance. Helper ini reverse entry selisih kas yang CURRENT
+ * (posted, sourceType='shift_variance', sourceId=shiftId) lalu post entry baru
+ * (sourceId=shiftId juga). Beda dari rebalance (yang pakai rebalanceId sebagai
+ * sourceId baru): di sini sourceId tetap shiftId supaya koreksi BERULANG aman
+ * — tiap koreksi selalu reverse posted-terbaru by shiftId. No-op kalau
+ * auto-journal OFF. Fire-and-forget di caller.
+ */
+export async function postJournalForOpeningCashCorrection(args: {
+  outletId: string;
+  shiftId: string;
+  shiftLabel: string;
+  originalVariance: number;
+  correctedVariance: number;
+  reason: string;
+  entryDate: string;
+  actorId: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+
+  // Step 1: reverse current posted shift_variance entry (by shiftId).
+  if (args.originalVariance !== 0) {
+    const reverseLines = mapShiftVarianceReversal({
+      shiftId: args.shiftId,
+      shiftLabel: args.shiftLabel,
+      outletId: args.outletId,
+      entryDate: args.entryDate,
+      variance: args.originalVariance,
+      reason: args.reason,
+    });
+    if (reverseLines.length > 0) {
+      const result = await recordJournal({
+        outletId: args.outletId,
+        entryDate: args.entryDate,
+        description: `REVERSE selisih kas (koreksi kas awal) ${args.shiftLabel}: ${args.reason}`,
+        sourceType: "shift_variance_reversal",
+        sourceId: args.shiftId,
+        lines: reverseLines,
+        actorId: args.actorId,
+      });
+      const updated = await db
+        .update(journalEntries)
+        .set({
+          status: "reversed",
+          reversedByEntryId: result.entryId,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(journalEntries.outletId, args.outletId),
+            eq(journalEntries.sourceType, "shift_variance"),
+            eq(journalEntries.sourceId, args.shiftId),
+            sql`${journalEntries.status} = 'posted'`,
+          ),
+        )
+        .returning({ id: journalEntries.id });
+      if (updated.length > 0) {
+        await db
+          .update(journalEntries)
+          .set({
+            status: "reversed",
+            reversesEntryId: updated[0].id,
+            updatedAt: new Date(),
+          })
+          .where(eq(journalEntries.id, result.entryId));
+      }
+    }
+  }
+
+  // Step 2: post new variance entry (sourceId=shiftId) kalau != 0.
+  if (args.correctedVariance !== 0) {
+    const newLines = mapShiftVariance({
+      shiftId: args.shiftId,
+      shiftLabel: `${args.shiftLabel} (KOREKSI KAS AWAL)`,
+      outletId: args.outletId,
+      entryDate: args.entryDate,
+      variance: args.correctedVariance,
+    });
+    if (newLines.length > 0) {
+      await recordJournal({
+        outletId: args.outletId,
+        entryDate: args.entryDate,
+        description: `Selisih kas (koreksi kas awal) ${args.shiftLabel} (${args.correctedVariance > 0 ? "+" : ""}${args.correctedVariance}): ${args.reason}`,
+        sourceType: "shift_variance",
+        sourceId: args.shiftId,
+        lines: newLines,
+        actorId: args.actorId,
+      });
+    }
+  }
+}
+
 // ============================================================
 // POS Transaction Correction (Sesi AE-62r)
 // ============================================================

@@ -19,7 +19,8 @@ interface ApproverUser {
 type ApproverActionType =
   | "pos.transaction.void"
   | "pos.transaction.refund"
-  | "pos.discount.apply";
+  | "pos.discount.apply"
+  | "shift.opening_cash.correct";
 
 interface ApproverOverrideModalProps {
   open: boolean;

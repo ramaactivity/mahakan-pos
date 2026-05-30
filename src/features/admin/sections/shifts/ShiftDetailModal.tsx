@@ -17,6 +17,7 @@ import {
   type ShiftPettyBreakdown,
 } from "@/features/shifts";
 import { ShiftRebalanceModal } from "@/features/shifts/components/ShiftRebalanceModal";
+import { CorrectOpeningCashModal } from "@/features/pos/components/CorrectOpeningCashModal";
 import {
   isOk as isCashOk,
   listExpenseCategories,
@@ -51,7 +52,10 @@ export function ShiftDetailModal({
   const { session } = useSession();
   const role = session?.user.role ?? "staff";
   const canRequestRebalance = hasPermission(role, "shift.rebalance.request");
+  /* Sesi AE-167 — koreksi kas awal (owner/manager langsung). */
+  const canCorrectOpening = hasPermission(role, "shift.opening_cash.correct");
   const [rebalanceOpen, setRebalanceOpen] = useState(false);
+  const [correctOpen, setCorrectOpen] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [petty, setPetty] = useState<ShiftPettyBreakdown | null>(null);
   /* Sesi AE-65 — petty cash transaction-level detail (per shift date range).
@@ -218,6 +222,18 @@ export function ShiftDetailModal({
               title="Ajukan koreksi shift dengan approval Owner"
             >
               <Pencil className="size-4" aria-hidden /> Suggest Correction
+            </Button>
+          ) : null}
+          {/* Sesi AE-167 — koreksi kas awal langsung (owner/manager). */}
+          {canCorrectOpening ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setCorrectOpen(true)}
+              className={shift.status === "closed" && canRequestRebalance ? "" : "ml-auto"}
+              title="Koreksi kas awal yang salah input saat buka shift"
+            >
+              <Wallet className="size-4" aria-hidden /> Koreksi Kas Awal
             </Button>
           ) : null}
         </div>
@@ -612,6 +628,19 @@ export function ShiftDetailModal({
       onSubmitted={() => {
         setRebalanceOpen(false);
         onRebalanceRequested?.();
+      }}
+    />
+    {/* Sesi AE-167 — koreksi kas awal (owner/manager langsung). */}
+    <CorrectOpeningCashModal
+      open={correctOpen}
+      shiftId={shift.id}
+      currentOpeningCash={shift.openingCash}
+      shiftClosed={shift.status === "closed"}
+      onClose={() => setCorrectOpen(false)}
+      onCorrected={() => {
+        setCorrectOpen(false);
+        onRebalanceRequested?.();
+        onClose();
       }}
     />
     </>
