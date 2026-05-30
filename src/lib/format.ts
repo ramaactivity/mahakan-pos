@@ -9,6 +9,7 @@
 export {
   formatRupiah,
   formatRupiah as formatAmount,
+  formatRupiahPrecise,
   parseRupiah,
 } from "./money";
 

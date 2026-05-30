@@ -29,7 +29,7 @@ import {
 } from "@/features/market-list";
 import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
-import { formatRupiah } from "@/lib/format";
+import { formatRupiah, formatRupiahPrecise } from "@/lib/format";
 import { MarketItemFormModal } from "./MarketItemFormModal";
 import { MarketCsvImportModal } from "./MarketCsvImportModal";
 
@@ -377,7 +377,7 @@ export function MarketListView() {
                                 : "text-neutral-700")
                             }
                           >
-                            {formatRupiah(row.effectiveCostPerUnit)}
+                            {formatRupiahPrecise(row.effectiveCostPerUnit)}
                             <span className="text-[10px] font-normal text-neutral-500">
                               /{row.ingredientUnit}
                             </span>
@@ -391,7 +391,7 @@ export function MarketListView() {
                           row.ingredientPurchasePerRecipe !== 1 ? (
                             <div className="text-[10px] font-normal text-neutral-500">
                               ={" "}
-                              {formatRupiah(
+                              {formatRupiahPrecise(
                                 row.effectiveCostPerUnit *
                                   row.ingredientPurchasePerRecipe,
                               )}

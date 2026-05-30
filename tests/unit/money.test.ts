@@ -4,6 +4,7 @@ import {
   computeTotal,
   computeItemSubtotal,
   formatRupiah,
+  formatRupiahPrecise,
   parseRupiah,
   bankersRound,
   isValidPriceRange,
@@ -338,5 +339,38 @@ describe("isValidPriceRange", () => {
 
   it("rejects NaN", () => {
     expect(isValidPriceRange(NaN)).toBe(false);
+  });
+});
+
+/* Sesi AE-164 — formatRupiahPrecise: rate per-unit kecil (< Rp 1) tidak
+ * boleh tampil "Rp 0" (owner kira error). Tampilkan desimal. */
+describe("formatRupiahPrecise", () => {
+  it("nilai integer ≥ 100 → sama seperti formatRupiah (pemisah ribuan)", () => {
+    expect(formatRupiahPrecise(36_000)).toBe("Rp 36.000");
+    expect(formatRupiahPrecise(36)).toBe("Rp 36");
+  });
+
+  it("rate sub-Rp1/gram tampil desimal, bukan Rp 0", () => {
+    expect(formatRupiahPrecise(0.36)).toBe("Rp 0,36");
+    expect(formatRupiahPrecise(0.036)).toBe("Rp 0,036");
+  });
+
+  it("nilai 1–10 → 2 desimal, trailing zero dibuang", () => {
+    expect(formatRupiahPrecise(2.5)).toBe("Rp 2,5");
+    expect(formatRupiahPrecise(3)).toBe("Rp 3");
+  });
+
+  it("nilai 10–100 → 1 desimal", () => {
+    expect(formatRupiahPrecise(36.5)).toBe("Rp 36,5");
+  });
+
+  it("nol & non-finite aman", () => {
+    expect(formatRupiahPrecise(0)).toBe("Rp 0");
+    expect(formatRupiahPrecise(NaN)).toBe("Rp 0");
+    expect(formatRupiahPrecise(Infinity)).toBe("Rp 0");
+  });
+
+  it("negatif kecil tampil tanda minus + desimal", () => {
+    expect(formatRupiahPrecise(-0.5)).toBe("Rp -0,5");
   });
 });

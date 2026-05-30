@@ -131,6 +131,31 @@ export function formatRupiah(amount: number): string {
 }
 
 /**
+ * Sesi AE-164 — format Rupiah untuk nilai KECIL / rate per-unit yang bisa
+ * < Rp 1 (mis. effective cost per gram). `formatRupiah()` selalu membulatkan
+ * ke integer → Rp 0,36/g tampil "Rp 0" yang dikira error / belum terhitung.
+ * Helper ini menampilkan desimal saat |nilai| < 100; untuk ≥ 100 atau
+ * integer, delegasi ke formatRupiah (pemisah ribuan).
+ *
+ * Desimal adaptif: |x|≥10 → 1, |x|≥1 → 2, |x|<1 → 3. Trailing zero dibuang,
+ * pemisah desimal koma (konvensi Indonesia).
+ */
+export function formatRupiahPrecise(amount: number): string {
+  if (!Number.isFinite(amount)) return "Rp 0";
+  if (Number.isInteger(amount) || Math.abs(amount) >= 100) {
+    return formatRupiah(amount);
+  }
+  const abs = Math.abs(amount);
+  if (abs === 0) return "Rp 0";
+  const decimals = abs >= 10 ? 1 : abs >= 1 ? 2 : 3;
+  const sign = amount < 0 ? "-" : "";
+  let s = abs.toFixed(decimals);
+  s = s.replace(/\.?0+$/, ""); // buang trailing zero: "0.360"→"0.36"
+  s = s.replace(".", ","); // pemisah desimal Indonesia
+  return `Rp ${sign}${s}`;
+}
+
+/**
  * Parse rupiah string to integer.
  * Accepts: "1.250.000", "Rp 1.250.000", "1250000".
  * Throws on non-numeric input after stripping.

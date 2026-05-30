@@ -767,6 +767,13 @@ export function PurchaseFormModal({
   async function onSubmit() {
     if (submitting) return;
     setError(null);
+    /* Sesi AE-164 — owner feedback: klik Simpan Belanja tanpa isi → sistem
+     * diam. Inline error tenggelam di bawah form panjang (di atas footer
+     * sticky). Pakai toast (selalu terlihat) + tetap set inline untuk a11y. */
+    const fail = (msg: string) => {
+      setError(msg);
+      toast.error(msg);
+    };
 
     // Validate items.
     const validItems: Array<{
@@ -780,17 +787,17 @@ export function PurchaseFormModal({
         continue; // empty row, skip
       }
       if (!r.ingredientId) {
-        setError("Setiap baris pembelian wajib pilih bahan");
+        fail("Setiap baris pembelian wajib pilih bahan");
         return;
       }
       const qty = parseQtyDecimal(r.qty);
       if (!Number.isFinite(qty) || qty <= 0) {
-        setError(`Qty tidak valid untuk salah satu bahan`);
+        fail(`Qty tidak valid untuk salah satu bahan`);
         return;
       }
       const cost = parseRupiahSafe(r.unitCost);
       if (cost < 0) {
-        setError("Harga tidak boleh negatif");
+        fail("Harga tidak boleh negatif");
         return;
       }
       const ing = ingredientById.get(r.ingredientId);
@@ -808,12 +815,12 @@ export function PurchaseFormModal({
       });
     }
     if (validItems.length === 0) {
-      setError("Minimal isi 1 baris pembelian");
+      fail("Minimal isi 1 baris pembelian");
       return;
     }
     const ids = validItems.map((i) => i.ingredientId);
     if (new Set(ids).size !== ids.length) {
-      setError("Bahan duplikat dalam 1 purchase — gabungkan jadi 1 baris");
+      fail("Bahan duplikat dalam 1 purchase — gabungkan jadi 1 baris");
       return;
     }
 
@@ -833,19 +840,19 @@ export function PurchaseFormModal({
             null) as IngredientPackConversion[] | null,
       });
       if (!conv.ok) {
-        setError(`Bahan "${ing.name}": ${conv.message}`);
+        fail(`Bahan "${ing.name}": ${conv.message}`);
         return;
       }
     }
 
     const term = parseInt(paymentTerm, 10);
     if (paymentMethod === "top" && (!Number.isFinite(term) || term <= 0)) {
-      setError("TOP wajib > 0 hari");
+      fail("TOP wajib > 0 hari");
       return;
     }
 
     if (directMode && paymentMethod === "top") {
-      setError(
+      fail(
         "Pembelian langsung tidak bisa pakai TOP — pilih Cash atau Transfer.",
       );
       return;
@@ -876,7 +883,7 @@ export function PurchaseFormModal({
     setSubmitting(false);
 
     if (!isOk(res)) {
-      setError(res.error.message);
+      fail(res.error.message);
       return;
     }
 

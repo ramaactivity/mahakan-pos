@@ -28,7 +28,7 @@ import {
 } from "@/features/suppliers";
 import { compatibleUnitsFor, resolveUnit } from "@/lib/unit-conversion";
 import {
-  formatRupiah,
+  formatRupiahPrecise,
   parseIndonesianInt,
   parseIndonesianNumber,
 } from "@/lib/format";
@@ -187,8 +187,12 @@ export function MarketItemFormModal({
     const size = parseIndonesianNumber(packSize);
     if (!Number.isFinite(cost) || cost <= 0) return null;
     if (!Number.isFinite(size) || size <= 0) return null;
+    // Sesi AE-164 — JANGAN Math.round ke integer: untuk bahan per-gram, rate
+    // bisa < Rp 1 (mis. Rp 0,36/g) → ke-round jadi 0 dan terlihat error.
+    // Simpan 3 desimal; display pakai formatRupiahPrecise.
+    const round3 = (n: number) => Math.round(n * 1000) / 1000;
     if (packUnit === selectedIngredient.unit) {
-      return Math.round(cost / size);
+      return round3(cost / size);
     }
     const packMeta = resolveUnit(packUnit);
     const ingMeta = resolveUnit(selectedIngredient.unit);
@@ -197,32 +201,39 @@ export function MarketItemFormModal({
     if (packMeta.dimension === "discrete") return null;
     const qtyInIngUnit = (size * packMeta.toBase) / ingMeta.toBase;
     if (qtyInIngUnit === 0) return null;
-    return Math.round(cost / qtyInIngUnit);
+    return round3(cost / qtyInIngUnit);
   }, [selectedIngredient, unitCost, packSize, packUnit]);
 
   async function onSubmit() {
     if (submitting) return;
     setError(null);
+    /* Sesi AE-164 — owner feedback: klik Tambah tanpa isi → nggak ada pesan.
+     * Inline error tenggelam di bawah form. Pakai toast (selalu terlihat) +
+     * tetap set inline untuk a11y. */
+    const fail = (msg: string) => {
+      setError(msg);
+      toast.error(msg);
+    };
     if (!supplierId) {
-      setError("Pilih supplier dulu");
+      fail("Pilih supplier dulu");
       return;
     }
     if (!ingredientId) {
-      setError("Pilih bahan dulu");
+      fail("Pilih bahan dulu");
       return;
     }
     const cost = parseIndonesianInt(unitCost);
     if (!Number.isFinite(cost) || cost <= 0) {
-      setError("Harga harus angka > 0");
+      fail("Harga harus angka > 0");
       return;
     }
     const size = parseIndonesianNumber(packSize);
     if (!Number.isFinite(size) || size <= 0) {
-      setError("Pack size harus angka > 0");
+      fail("Pack size harus angka > 0");
       return;
     }
     if (!packUnit) {
-      setError("Pilih unit pack");
+      fail("Pilih unit pack");
       return;
     }
     setSubmitting(true);
@@ -252,7 +263,7 @@ export function MarketItemFormModal({
         });
     setSubmitting(false);
     if (!isOk(res)) {
-      setError(res.error.message);
+      fail(res.error.message);
       return;
     }
     toast.success(target ? "Market item diupdate" : "Market item ditambah");
@@ -370,17 +381,17 @@ export function MarketItemFormModal({
             {selectedIngredient && effectiveCost !== null ? (
               <div className="rounded-lg border border-info-300 bg-info-100/40 p-3 text-xs">
                 <div className="font-semibold text-info-500">
-                  Effective cost = {formatRupiah(effectiveCost)} /{" "}
+                  Effective cost = {formatRupiahPrecise(effectiveCost)} /{" "}
                   {selectedIngredient.unit}
                 </div>
                 <div className="mt-1 text-info-500/80">
                   Master cost {selectedIngredient.name} sekarang ={" "}
                   <span className="font-mono">
-                    {formatRupiah(selectedIngredient.costPerUnit)}
+                    {formatRupiahPrecise(selectedIngredient.costPerUnit)}
                   </span>
                   /{selectedIngredient.unit}
                   {isPrimary
-                    ? ` → akan di-update ke ${formatRupiah(effectiveCost)} kalau disimpan`
+                    ? ` → akan di-update ke ${formatRupiahPrecise(effectiveCost)} kalau disimpan`
                     : " (tidak diubah, cuma catat sebagai harga supplier alt)"}
                 </div>
               </div>
