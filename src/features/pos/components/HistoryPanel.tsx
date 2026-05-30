@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useVisibilityAwareInterval } from "@/lib/use-visibility-aware-interval";
 import {
   Banknote,
   CheckCheck,
@@ -104,10 +105,9 @@ export function HistoryPanel({
     };
   }, [statusFilter, refreshKey, tick]);
 
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 30_000);
-    return () => clearInterval(id);
-  }, []);
+  // Sesi AE-163 — auto-refresh visibility-aware (pause saat tab hidden),
+  // 30s → 60s. History paling tidak time-critical. Hemat Fluid CPU Vercel.
+  useVisibilityAwareInterval(() => setTick((t) => t + 1), 60_000);
 
   const filtered = useMemo(() => {
     if (!debouncedSearch) return transactions;

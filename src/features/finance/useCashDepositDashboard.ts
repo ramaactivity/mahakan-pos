@@ -32,10 +32,12 @@ export function useCashDepositDashboard() {
     },
     /* Stale 30s — owner cek dashboard tidak butuh real-time. */
     staleTime: 30 * 1000,
-    /* Background refetch 60s — kalau staf bikin setoran baru sambil owner
-     * buka admin, badge muncul dalam <1 menit. */
-    refetchInterval: 60 * 1000,
-    /* Refetch saat tab di-focus kembali. */
-    refetchOnWindowFocus: true,
+    /* Sesi AE-163 — hemat Fluid CPU: 60→120s. Setoran proses async (bukan
+     * real-time), badge telat ≤2 menit masih oke. refetchInterval otomatis
+     * pause saat window blur. */
+    refetchInterval: 120 * 1000,
+    /* Matikan refetch saat tab di-focus — dulu true bikin burst tiap owner
+     * pindah dari POS ke admin. Interval 120s sudah cukup. */
+    refetchOnWindowFocus: false,
   });
 }

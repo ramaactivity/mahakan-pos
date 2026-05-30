@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useVisibilityAwareInterval } from "@/lib/use-visibility-aware-interval";
 import {
   AlertTriangle,
   Banknote,
@@ -32,7 +33,7 @@ import {
 } from "@/components/ui";
 import { PrintStationButtons } from "./PrintStationButtons";
 import {
-  getTransaction,
+  getTransactionsByIds,
   isOk,
   listTransactions,
   markAllItemsDone,
@@ -152,31 +153,30 @@ export function OrderQueuePanel({
     };
   }, [refreshKey, tick]);
 
-  // Auto-refresh data + clock tick
+  // Sesi AE-163 — auto-refresh data visibility-aware (pause saat tab hidden,
+  // refetch instan saat balik visible). Hemat Fluid CPU Vercel: panel yang
+  // ditinggal di background tidak lagi nembak server tiap 30s. 30s → 45s.
+  useVisibilityAwareInterval(() => setTick((t) => t + 1), 45_000);
+  // Clock tick 15s untuk label urgency — client-only, tidak hit server.
   useEffect(() => {
-    const dataInterval = setInterval(() => setTick((t) => t + 1), 30_000);
     const clockInterval = setInterval(() => setNowMs(Date.now()), 15_000);
-    return () => {
-      clearInterval(dataInterval);
-      clearInterval(clockInterval);
-    };
+    return () => clearInterval(clockInterval);
   }, []);
 
-  // Lazy-fetch detail (with items) — parallel for speed
+  // Lazy-fetch detail (with items). Sesi AE-163 — batch via getTransactionsByIds
+  // (1 round-trip) menggantikan N× getTransaction. Hemat invocation + CPU
+  // Vercel tiap polling saat ada pesanan baru (mirror pola OpenBillPanel).
   useEffect(() => {
     let cancelled = false;
     async function loadDetails() {
-      const missing = transactions.filter((t) => !details[t.id]);
-      if (missing.length === 0) return;
-      const fetched = await Promise.all(
-        missing.map(async (t) => {
-          const res = await getTransaction(t.id);
-          return isOk(res) ? res.data : null;
-        }),
-      );
-      if (cancelled) return;
+      const missingIds = transactions
+        .filter((t) => !details[t.id])
+        .map((t) => t.id);
+      if (missingIds.length === 0) return;
+      const res = await getTransactionsByIds(missingIds);
+      if (cancelled || !isOk(res)) return;
       const next: Record<string, TransactionWithItems> = {};
-      for (const t of fetched) if (t) next[t.id] = t;
+      for (const t of res.data) next[t.id] = t;
       setDetails((prev) => ({ ...prev, ...next }));
     }
     void loadDetails();

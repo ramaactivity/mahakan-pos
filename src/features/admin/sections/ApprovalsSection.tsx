@@ -118,7 +118,11 @@ export function ApprovalsSection() {
     },
     enabled: canView,
     staleTime: 20 * 1000,
-    refetchOnWindowFocus: true,
+    /* Sesi AE-163 — hemat Fluid CPU: ganti burst refetchOnWindowFocus (dulu
+     * true) dengan interval 90s yang otomatis pause saat window blur. Daftar
+     * tetap auto-refresh sambil dilihat, tapi tab background tidak nembak. */
+    refetchInterval: 90 * 1000,
+    refetchOnWindowFocus: false,
   });
 
   const items = useMemo(() => {

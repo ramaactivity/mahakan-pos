@@ -37,7 +37,11 @@ export function useApprovalsSummary(enabled = true) {
     },
     enabled,
     staleTime: 30 * 1000,
-    refetchInterval: 60 * 1000,
-    refetchOnWindowFocus: true,
+    /* Sesi AE-163 — hemat Fluid CPU: interval 60→90s, dan matikan
+     * refetchOnWindowFocus (dulu true → burst refetch tiap pindah tab,
+     * padahal staff POS bolak-balik tab terus). refetchInterval otomatis
+     * pause saat window blur, jadi background tab tidak nembak server. */
+    refetchInterval: 90 * 1000,
+    refetchOnWindowFocus: false,
   });
 }

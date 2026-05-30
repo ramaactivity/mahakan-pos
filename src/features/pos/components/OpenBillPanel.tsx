@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useVisibilityAwareInterval } from "@/lib/use-visibility-aware-interval";
 import type { Transaction as TrxType } from "@/features/transactions";
 import {
   AlertTriangle,
@@ -136,15 +137,13 @@ export function OpenBillPanel({
     };
   }, [refreshKey, tick, onCountChange]);
 
-  // Auto-refresh every 30s — multi-cashier sync (another kasir may close
-  // a bill from a parallel device). Plus clock tick 15s untuk urgency.
+  // Sesi AE-163 — auto-refresh multi-cashier sync, visibility-aware (pause
+  // saat tab hidden, refetch instan saat balik). 30s → 45s. Hemat Fluid CPU.
+  useVisibilityAwareInterval(() => setTick((t) => t + 1), 45_000);
+  // Clock tick 15s untuk urgency — client-only, tidak hit server.
   useEffect(() => {
-    const dataInterval = setInterval(() => setTick((t) => t + 1), 30_000);
     const clockInterval = setInterval(() => setNowMs(Date.now()), 15_000);
-    return () => {
-      clearInterval(dataInterval);
-      clearInterval(clockInterval);
-    };
+    return () => clearInterval(clockInterval);
   }, []);
 
   // Batch-fetch TransactionWithItems for all missing bills in a single
