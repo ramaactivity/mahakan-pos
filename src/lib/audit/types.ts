@@ -167,6 +167,9 @@ export const AUDIT_EVENT_TYPES = [
   /* Sesi AE-165 — auto-settlement QRIS/EDC dari POS + config MDR. */
   "aggregator_settlement.auto_generate",
   "outlet.cashless_mdr.update",
+  /* Sesi AE-167 — kas awal standar + koreksi kas awal shift. */
+  "outlet.standard_opening_cash.update",
+  "shift.opening_cash.correct",
   /* Sesi AE-62ag — mobile PIN endpoint audit. PIN-only auth tanpa session,
    * jadi userId NULL — context cukup pakai entityId / payload.summary. */
   "attendance_mobile.pin_invalid",

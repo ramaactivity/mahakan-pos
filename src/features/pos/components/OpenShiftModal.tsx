@@ -7,13 +7,17 @@ import {
   Clock,
   MessageSquare,
   PackageSearch,
+  Pencil,
+  Sparkles,
   Wallet,
 } from "lucide-react";
-import { Button, Modal, toast } from "@/components/ui";
+import { Button, Input, Modal, toast } from "@/components/ui";
 import {
   getLastClosedShiftAtOutlet,
+  getStandardOpeningCash,
   isOk,
   openShift,
+  updateStandardOpeningCash,
   type Shift,
 } from "@/features/shifts";
 import { formatIndonesianDateTime } from "@/lib/date";
@@ -77,47 +81,52 @@ export function OpenShiftModal({
 }: OpenShiftModalProps) {
   const [step, setStep] = useState<Step>("cash");
   // Raw digit string (no separator) — formatted for display via formatRupiah.
-  const [openingCash, setOpeningCash] = useState("100000");
-  // Sesi AE-62f — track whether user manually edited the suggestion. If yes,
-  // don't overwrite when previousShift loads in.
-  const [userEditedOpening, setUserEditedOpening] = useState(false);
+  const [openingCash, setOpeningCash] = useState("200000");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [previousShift, setPreviousShift] = useState<Shift | null>(null);
   const [previousLoading, setPreviousLoading] = useState(true);
+  /* Sesi AE-167 — kas awal standar harian (flat float Mahakan = 200rb). */
+  const [standardCash, setStandardCash] = useState(200_000);
+  const [editingStandard, setEditingStandard] = useState(false);
+  const [standardDraft, setStandardDraft] = useState("");
+  const [savingStandard, setSavingStandard] = useState(false);
+  const isSupervisor = role === "owner" || role === "manager";
 
   useEffect(() => {
     if (!open) return;
     /* eslint-disable react-hooks/set-state-in-effect */
     setStep("cash");
-    setOpeningCash("100000");
-    setUserEditedOpening(false);
+    setOpeningCash(String(standardCash));
     setError(null);
     setSubmitting(false);
+    setEditingStandard(false);
     setPreviousShift(null);
     setPreviousLoading(true);
     /* eslint-enable react-hooks/set-state-in-effect */
 
     let cancelled = false;
     void (async () => {
-      const res = await getLastClosedShiftAtOutlet();
+      /* Sesi AE-167 — prefill kas awal dengan STANDAR harian (200rb),
+       * bukan carryover. Model Mahakan: float laci di-reset flat tiap hari.
+       * Cegah salah ketik — staff cukup konfirmasi / tap "Pakai Standar". */
+      const [stdRes, prevRes] = await Promise.all([
+        getStandardOpeningCash(),
+        getLastClosedShiftAtOutlet(),
+      ]);
       if (cancelled) return;
-      if (isOk(res)) {
-        const prev = res.data;
-        setPreviousShift(prev);
-        // Sesi AE-62f — auto-suggest opening cash dari previous shift's
-        // actualCash (petty cash float carryover). User confused karena
-        // dulu harus ketik manual setiap shift padahal float di laci sama.
-        // Only auto-fill kalau user belum manual-edit.
-        if (prev?.actualCash != null && prev.actualCash > 0) {
-          setOpeningCash(String(prev.actualCash));
-        }
+      if (isOk(stdRes)) {
+        setStandardCash(stdRes.data.standardOpeningCash);
+        setOpeningCash(String(stdRes.data.standardOpeningCash));
       }
+      if (isOk(prevRes)) setPreviousShift(prevRes.data);
       setPreviousLoading(false);
     })();
     return () => {
       cancelled = true;
     };
+    // standardCash sengaja TIDAK di-deps: cuma initial prefill saat open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const parsed = useMemo(() => {
@@ -152,7 +161,6 @@ export function OpenShiftModal({
   // Numpad press helpers — kept here so they can rely on closure state w/o re-render.
   function appendDigit(d: string) {
     if (submitting) return;
-    setUserEditedOpening(true);
     setOpeningCash((s) => {
       // Prevent leading zeros — "0" + "1" should become "1" not "01".
       if (s === "0" && d !== "0") return d;
@@ -162,28 +170,50 @@ export function OpenShiftModal({
   }
   function backspace() {
     if (submitting) return;
-    setUserEditedOpening(true);
     setOpeningCash((s) => (s.length <= 1 ? "0" : s.slice(0, -1)));
   }
   function clearAmount() {
     if (submitting) return;
-    setUserEditedOpening(true);
     setOpeningCash("0");
   }
   function setQuickAmount(v: string) {
     if (submitting) return;
-    setUserEditedOpening(true);
     setOpeningCash(v);
   }
-  // Track suggested value (so badge only shows when displayed value matches suggestion).
-  const suggestedFromPrev =
+  /* Sesi AE-167 — apakah nilai saat ini = standar (untuk badge konfirmasi). */
+  const usingStandard = parsed === standardCash;
+  /* Kas akhir shift sebelumnya — ditampilkan sebagai INFO/alternatif, bukan
+   * default (model flat 200rb). */
+  const carryoverValue =
     previousShift?.actualCash != null && previousShift.actualCash > 0
       ? previousShift.actualCash
       : null;
-  const showCarryoverHint =
-    !userEditedOpening &&
-    suggestedFromPrev !== null &&
-    parsed === suggestedFromPrev;
+  const carryoverDiffersFromStandard =
+    carryoverValue !== null && carryoverValue !== standardCash;
+
+  function applyStandard() {
+    if (submitting) return;
+    setOpeningCash(String(standardCash));
+  }
+
+  async function saveStandard() {
+    const amt = parseInt(standardDraft.replace(/\D/g, "") || "0", 10);
+    if (!Number.isFinite(amt) || amt < 0) {
+      toast.error("Nominal standar tidak valid");
+      return;
+    }
+    setSavingStandard(true);
+    const res = await updateStandardOpeningCash({ amount: amt });
+    setSavingStandard(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    setStandardCash(res.data.standardOpeningCash);
+    setOpeningCash(String(res.data.standardOpeningCash));
+    setEditingStandard(false);
+    toast.success(`Kas awal standar = ${formatRupiah(res.data.standardOpeningCash)}`);
+  }
 
   const today = useMemo(() => {
     return new Intl.DateTimeFormat("id-ID", {
@@ -360,11 +390,118 @@ export function OpenShiftModal({
                 {formatRupiah(parsed)}
               </div>
 
-              {showCarryoverHint ? (
-                <p className="text-[11px] text-mahakan-green-800 touch:text-[10px]">
-                  <span className="font-semibold">Carryover</span> dari kas
-                  akhir shift sebelumnya. Edit kalau hitungan ulang berbeda.
+              {/* Sesi AE-167 — Kas Awal Standar (flat 200rb). Tombol 1-tap
+                * prominent supaya staff nggak salah ketik. */}
+              <div className="rounded-xl border-2 border-mahakan-green-700/40 bg-mahakan-green-50/60 p-3 touch:p-2.5">
+                {editingStandard ? (
+                  <div className="space-y-2">
+                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-mahakan-green-900">
+                      Atur kas awal standar
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        value={
+                          standardDraft === ""
+                            ? ""
+                            : Number(
+                                standardDraft.replace(/\D/g, "") || "0",
+                              ).toLocaleString("id-ID")
+                        }
+                        onChange={(e) =>
+                          setStandardDraft(e.target.value.replace(/\D/g, ""))
+                        }
+                        placeholder="200.000"
+                        className="text-right font-mono"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={saveStandard}
+                        loading={savingStandard}
+                      >
+                        Simpan
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditingStandard(false)}
+                        disabled={savingStandard}
+                      >
+                        Batal
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        applyStandard();
+                      }}
+                      style={{ touchAction: "manipulation" }}
+                      disabled={submitting}
+                      className={cn(
+                        "inline-flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-bold transition-all active:scale-[0.98] touch:py-2",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                        "disabled:cursor-not-allowed disabled:opacity-50",
+                        usingStandard
+                          ? "bg-mahakan-green-700 text-white"
+                          : "border-2 border-mahakan-green-700 bg-white text-mahakan-green-900 hover:bg-mahakan-green-100",
+                      )}
+                    >
+                      {usingStandard ? (
+                        <CheckCircle2 className="size-4" aria-hidden />
+                      ) : (
+                        <Sparkles className="size-4" aria-hidden />
+                      )}
+                      {usingStandard ? "Pakai Standar ✓" : "Pakai Standar"} ·{" "}
+                      {formatRupiah(standardCash)}
+                    </button>
+                    {isSupervisor ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStandardDraft(String(standardCash));
+                          setEditingStandard(true);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-mahakan-green-800 hover:bg-mahakan-green-100"
+                        title="Atur kas awal standar (owner/manager)"
+                      >
+                        <Pencil className="size-3" aria-hidden /> Atur
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+                <p className="mt-1.5 text-[10px] text-neutral-600 touch:text-[9px]">
+                  Standar harian Mahakan. Ubah angka di bawah cuma kalau isi
+                  laci memang beda.
                 </p>
+              </div>
+
+              {/* Carryover info (alternatif, bukan default) */}
+              {carryoverDiffersFromStandard ? (
+                <button
+                  type="button"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    setQuickAmount(String(carryoverValue));
+                  }}
+                  style={{ touchAction: "manipulation" }}
+                  disabled={submitting}
+                  className="flex w-full items-center justify-between rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-[11px] text-neutral-600 hover:bg-neutral-50 touch:text-[10px]"
+                >
+                  <span>
+                    Kas akhir shift kemarin:{" "}
+                    <span className="font-mono font-semibold text-neutral-800">
+                      {formatRupiah(carryoverValue ?? 0)}
+                    </span>
+                  </span>
+                  <span className="font-semibold text-mahakan-green-700">
+                    Pakai ini →
+                  </span>
+                </button>
               ) : null}
 
               {/* Quick amounts */}

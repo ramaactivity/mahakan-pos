@@ -17,7 +17,9 @@ export {
   getLastClosedShiftAtOutlet,
   getShift,
   getShiftPettyBreakdown,
+  getStandardOpeningCash,
   listShifts,
   openShift,
+  updateStandardOpeningCash,
 } from "./actions";
 export type { ShiftPettyBreakdown } from "./queries";

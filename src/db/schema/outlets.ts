@@ -84,6 +84,13 @@ export type OutletSettings = {
     mdrQrisPct?: number;
     mdrEdcBcaPct?: number;
   };
+  /** Sesi AE-167 — pengaturan shift. */
+  shift?: {
+    /** Kas awal standar harian (float tetap di laci). Mahakan flat Rp 200rb
+     * tiap hari. Dipakai OpenShiftModal sebagai prefill + tombol 1-tap
+     * "Pakai Standar" untuk cegah salah ketik. Default 200000 kalau unset. */
+    standardOpeningCash?: number;
+  };
   /** Sesi AE-53 — Schedule shift templates editable per outlet.
    * HR pakai untuk quick-fill jam saat edit schedule (Pagi/Siang/Sore/Full).
    * Default kalau tidak set: lihat DEFAULT_SHIFT_TEMPLATES di SchedulesSection.tsx.

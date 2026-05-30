@@ -7,15 +7,18 @@ import {
   approvalCodes,
   expenses,
   incomes,
+  outlets,
   shiftRebalances,
   shifts,
   splitPayments,
   transactionCorrections,
   transactions,
 } from "@/db/schema";
+import type { OutletSettings } from "@/db/schema/outlets";
 import { pendingEntryChanges } from "@/db/schema/pending_entry_changes";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
+import { logAudit } from "@/lib/audit/logger";
 import { logAndSanitize } from "@/lib/server-error";
 import { todayWibRangeUtc, toJakartaDateOnly } from "@/lib/date";
 import {
@@ -672,4 +675,75 @@ export async function closeShift(
       depositError: autoDepositError,
     },
   });
+}
+
+// =========================================================================
+// Sesi AE-167 — Kas Awal Standar (float harian) + koreksi kas awal
+// =========================================================================
+
+const DEFAULT_STANDARD_OPENING_CASH = 200_000;
+
+/** Baca kas awal standar (float harian) outlet. Default Rp 200rb kalau unset.
+ * Boleh dibaca semua role yang bisa buka shift (dipakai OpenShiftModal). */
+export async function getStandardOpeningCash(): Promise<
+  ApiResult<{ standardOpeningCash: number }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "shift.open_own")) {
+    return fail("FORBIDDEN", "Tidak punya hak");
+  }
+  const [row] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  const v = row?.settings?.shift?.standardOpeningCash;
+  return ok({
+    standardOpeningCash:
+      typeof v === "number" && v >= 0 ? v : DEFAULT_STANDARD_OPENING_CASH,
+  });
+}
+
+/** Atur kas awal standar (owner/manager). */
+export async function updateStandardOpeningCash(input: {
+  amount: number;
+}): Promise<ApiResult<{ standardOpeningCash: number }>> {
+  const session = await requireSession();
+  /* close_any = owner/manager (sama gate dgn supervise close). */
+  if (!hasPermission(session.user.role, "shift.close_any")) {
+    return fail(
+      "FORBIDDEN",
+      "Hanya Owner/Manager yang bisa atur kas awal standar",
+    );
+  }
+  const amount = Math.round(input.amount);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 99_999_999) {
+    return fail("VALIDATION", "Nominal tidak valid (0–99.999.999)");
+  }
+  const [row] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  const current: OutletSettings = row?.settings ?? {};
+  const next: OutletSettings = {
+    ...current,
+    shift: { ...(current.shift ?? {}), standardOpeningCash: amount },
+  };
+  await db
+    .update(outlets)
+    .set({ settings: next })
+    .where(eq(outlets.id, session.user.outletId));
+  logAudit({
+    eventType: "outlet.standard_opening_cash.update",
+    userId: session.user.id,
+    entityType: "outlet",
+    entityId: session.user.outletId,
+    payload: {
+      summary: `Set kas awal standar = Rp ${amount.toLocaleString("id-ID")}`,
+      after: { standardOpeningCash: amount },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  }).catch((e) => console.error("[audit standard_opening_cash.update]", e));
+  return ok({ standardOpeningCash: amount });
 }
