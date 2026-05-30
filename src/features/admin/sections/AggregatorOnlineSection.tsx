@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -10,9 +10,12 @@ import {
   ExternalLink,
   FileText,
   Inbox,
+  Loader2,
   Plus,
   QrCode,
+  Settings2,
   ShoppingBag,
+  Sparkles,
   TrendingDown,
   TrendingUp,
   Upload,
@@ -33,9 +36,17 @@ import {
   CardContent,
   DateRangePicker,
   EmptyCard,
+  Input,
+  Modal,
   Skeleton,
+  toast,
 } from "@/components/ui";
-import { fetchAggregatorSettlements } from "@/features/finance/actions";
+import {
+  fetchAggregatorSettlements,
+  generateCashlessSettlementFromPos,
+  getCashlessMdrConfig,
+  updateCashlessMdrConfig,
+} from "@/features/finance/actions";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -141,6 +152,34 @@ export function AggregatorOnlineSection() {
   );
   const [detailId, setDetailId] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  /* Sesi AE-165 — auto-generate QRIS/EDC dari POS + config MDR. */
+  const [generating, setGenerating] = useState(false);
+  const [mdrOpen, setMdrOpen] = useState(false);
+
+  async function onGenerateFromPos() {
+    if (generating) return;
+    setGenerating(true);
+    const res = await generateCashlessSettlementFromPos({
+      from: range.from,
+      to: range.to,
+    });
+    setGenerating(false);
+    if (!res.ok) {
+      toast.error(res.error.message);
+      return;
+    }
+    const n = res.data.created.length;
+    if (n === 0) {
+      toast.success(
+        "Tidak ada settlement baru — semua hari di periode ini sudah ter-cover (atau belum ada transaksi QRIS/EDC).",
+      );
+    } else {
+      toast.success(`${n} settlement QRIS/EDC dibuat dari POS 🎉`);
+    }
+    void queryClient.invalidateQueries({
+      queryKey: ["admin", "aggregator-online"],
+    });
+  }
 
   const listQuery = useQuery({
     queryKey: ["admin", "aggregator-online", range.from, range.to],
@@ -238,13 +277,29 @@ export function AggregatorOnlineSection() {
             Laporan Online & Cashless
           </h1>
           <p className="mt-0.5 max-w-3xl text-sm text-neutral-700">
-            Settlement aggregator (GoFood, GrabFood, ShopeeFood) + cashless
-            (QRIS, EDC BCA). Klik row untuk drilldown detail per-order
-            (kalau ada dari CSV import).
+            Aggregator (GoFood/GrabFood/ShopeeFood) lewat Import CSV. QRIS &
+            EDC BCA otomatis dari POS — klik <b>Generate dari POS</b> (atau
+            jalan otomatis tiap hari). CSV jadi opsional buat cocokin bank.
           </p>
         </div>
-        <div className="flex shrink-0 gap-2">
-          <Button onClick={() => setWizardOpen(true)}>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setMdrOpen(true)}
+            aria-label="Atur rate MDR"
+          >
+            <Settings2 className="size-4" aria-hidden /> Rate MDR
+          </Button>
+          <Button size="sm" onClick={onGenerateFromPos} disabled={generating}>
+            {generating ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <Sparkles className="size-4" aria-hidden />
+            )}
+            Generate dari POS
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setWizardOpen(true)}>
             <Upload className="size-4" aria-hidden /> Import CSV
           </Button>
         </div>
@@ -551,16 +606,32 @@ export function AggregatorOnlineSection() {
                           )}
                         </td>
                         <td className="px-3 py-2">
-                          {r.lineItemsCount != null && r.lineItemsCount > 0 ? (
-                            <Badge variant="success">
-                              <FileText className="size-3" aria-hidden />
-                              {r.lineItemsCount} order
-                            </Badge>
-                          ) : (
-                            <span className="text-[11px] text-neutral-400">
-                              —
-                            </span>
-                          )}
+                          <div className="flex flex-wrap items-center gap-1">
+                            {r.source === "auto_pos" ? (
+                              <Badge variant="info">
+                                <Sparkles className="size-3" aria-hidden />
+                                Auto POS
+                              </Badge>
+                            ) : r.source === "csv" ? (
+                              <Badge variant="neutral">
+                                <Upload className="size-3" aria-hidden />
+                                CSV
+                              </Badge>
+                            ) : null}
+                            {r.lineItemsCount != null && r.lineItemsCount > 0 ? (
+                              <Badge variant="success">
+                                <FileText className="size-3" aria-hidden />
+                                {r.lineItemsCount} order
+                              </Badge>
+                            ) : null}
+                            {r.source === "manual" &&
+                            (r.lineItemsCount == null ||
+                              r.lineItemsCount === 0) ? (
+                              <span className="text-[11px] text-neutral-400">
+                                —
+                              </span>
+                            ) : null}
+                          </div>
                         </td>
                         <td className="px-3 py-2 text-right">
                           <button
@@ -594,7 +665,118 @@ export function AggregatorOnlineSection() {
         onClose={() => setWizardOpen(false)}
         onSaved={onWizardSaved}
       />
+      <CashlessMdrModal open={mdrOpen} onClose={() => setMdrOpen(false)} />
     </div>
+  );
+}
+
+/**
+ * Sesi AE-165 — atur rate MDR per channel cashless langsung (QRIS/EDC BCA),
+ * dipakai auto-generate settlement dari POS. Persen dari gross.
+ */
+function CashlessMdrModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [qris, setQris] = useState("");
+  const [edc, setEdc] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setLoading(true);
+    void (async () => {
+      const res = await getCashlessMdrConfig();
+      if (cancelled) return;
+      const cfg = res.ok ? res.data : { mdrQrisPct: 0.7, mdrEdcBcaPct: 0 };
+      setQris(String(cfg.mdrQrisPct));
+      setEdc(String(cfg.mdrEdcBcaPct));
+      setLoading(false);
+    })();
+    /* eslint-enable react-hooks/set-state-in-effect */
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  async function onSave() {
+    const q = Number(qris.replace(",", "."));
+    const e = Number(edc.replace(",", "."));
+    if (!Number.isFinite(q) || q < 0 || q > 10) {
+      toast.error("Rate QRIS harus 0–10%");
+      return;
+    }
+    if (!Number.isFinite(e) || e < 0 || e > 10) {
+      toast.error("Rate EDC BCA harus 0–10%");
+      return;
+    }
+    setSaving(true);
+    const res = await updateCashlessMdrConfig({
+      mdrQrisPct: q,
+      mdrEdcBcaPct: e,
+    });
+    setSaving(false);
+    if (!res.ok) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success("Rate MDR disimpan");
+    onClose();
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Rate MDR — QRIS & EDC BCA"
+      description="Potongan provider (persen dari gross). Dipakai saat auto-generate settlement dari POS: Net = Gross − (Gross × rate)."
+      size="md"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>
+            Batal
+          </Button>
+          <Button onClick={onSave} loading={saving} disabled={loading}>
+            Simpan
+          </Button>
+        </>
+      }
+    >
+      {loading ? (
+        <div className="flex h-24 items-center justify-center">
+          <Loader2 className="size-5 animate-spin text-neutral-400" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label="MDR QRIS (%)"
+            type="text"
+            inputMode="decimal"
+            value={qris}
+            onChange={(ev) => setQris(ev.target.value)}
+            placeholder="0.7"
+          />
+          <Input
+            label="MDR EDC BCA (%)"
+            type="text"
+            inputMode="decimal"
+            value={edc}
+            onChange={(ev) => setEdc(ev.target.value)}
+            placeholder="0"
+          />
+          <p className="col-span-2 text-[11px] text-neutral-500">
+            Default kalau belum diatur: QRIS 0,7% · EDC BCA 0%. Contoh: gross
+            Rp 1.000.000, MDR QRIS 0,7% → fee Rp 7.000, net Rp 993.000.
+          </p>
+        </div>
+      )}
+    </Modal>
   );
 }
 

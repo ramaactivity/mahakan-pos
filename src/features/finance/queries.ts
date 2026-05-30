@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   aggregatorSettlements,
@@ -1717,6 +1717,7 @@ export async function listAggregatorSettlements(opts: {
       referenceNo: string | null;
       notes: string | null;
       lineItemsCount: number | null;
+      source: "csv" | "auto_pos" | "manual";
       createdAt: Date;
       createdByName: string | null;
     }
@@ -1764,6 +1765,7 @@ export async function listAggregatorSettlements(opts: {
     notes: r.row.notes,
     /* Sesi AE-77 — quick count untuk badge "12 orders" tanpa fetch full JSON. */
     lineItemsCount: r.row.lineItemsCount ?? null,
+    source: (r.row.source ?? "manual") as "csv" | "auto_pos" | "manual",
     createdAt: r.row.createdAt,
     createdByName: r.creatorName ?? null,
   }));
@@ -1914,6 +1916,91 @@ export async function getShiftVarianceThreshold(
   const legacy = settings?.shift?.varianceThreshold;
   if (typeof legacy === "number" && legacy >= 0) return legacy;
   return 10_000;
+}
+
+/**
+ * Sesi AE-165 — gross QRIS & EDC BCA dari transaksi POS untuk satu hari WIB.
+ * Outlet-scoped (BUKAN session) supaya bisa dipakai cron + action generate.
+ * Split-aware: leg split_payments dijumlahkan, parent 'split' di-skip.
+ * Hanya transaksi status 'paid'. Day boundary [00:00 WIB, +24h).
+ */
+export async function getPosCashlessGrossByDay(
+  outletId: string,
+  dateIso: string,
+): Promise<{ qris: number; cardBca: number }> {
+  const start = new Date(`${dateIso}T00:00:00+07:00`);
+  const end = new Date(start.getTime() + 24 * 3600 * 1000);
+
+  const trxAgg = await db
+    .select({
+      paymentMethod: transactions.paymentMethod,
+      total: sql<string>`COALESCE(SUM(${transactions.total}), 0)`,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.outletId, outletId),
+        eq(transactions.status, "paid"),
+        gte(transactions.createdAt, start),
+        lt(transactions.createdAt, end),
+      ),
+    )
+    .groupBy(transactions.paymentMethod);
+
+  const splitAgg = await db
+    .select({
+      paymentMethod: splitPayments.paymentMethod,
+      total: sql<string>`COALESCE(SUM(${splitPayments.amount}), 0)`,
+    })
+    .from(splitPayments)
+    .innerJoin(transactions, eq(transactions.id, splitPayments.transactionId))
+    .where(
+      and(
+        eq(splitPayments.outletId, outletId),
+        eq(transactions.status, "paid"),
+        gte(transactions.createdAt, start),
+        lt(transactions.createdAt, end),
+      ),
+    )
+    .groupBy(splitPayments.paymentMethod);
+
+  let qris = 0;
+  let cardBca = 0;
+  for (const r of trxAgg) {
+    if (r.paymentMethod === "qris") qris += Number(r.total);
+    else if (r.paymentMethod === "card_bca") cardBca += Number(r.total);
+  }
+  for (const r of splitAgg) {
+    if (r.paymentMethod === "qris") qris += Number(r.total);
+    else if (r.paymentMethod === "card_bca") cardBca += Number(r.total);
+  }
+  return { qris, cardBca };
+}
+
+/**
+ * Sesi AE-165 — cek apakah sudah ada settlement channel ini yang periodenya
+ * MENCAKUP (overlap) tanggal tsb. Overlap (bukan exact-match) supaya kalau
+ * owner sudah import CSV rentang (mis. 1 bulan) yang mencakup hari itu,
+ * auto-generate harian TIDAK dobel-clear piutang. Dipakai dedup generate.
+ */
+export async function hasSettlementForDay(
+  outletId: string,
+  channel: "qris" | "edc_bca",
+  dateIso: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: aggregatorSettlements.id })
+    .from(aggregatorSettlements)
+    .where(
+      and(
+        eq(aggregatorSettlements.outletId, outletId),
+        eq(aggregatorSettlements.channel, channel),
+        lte(aggregatorSettlements.periodFrom, dateIso),
+        gte(aggregatorSettlements.periodTo, dateIso),
+      ),
+    )
+    .limit(1);
+  return !!row;
 }
 
 // Re-exports so consumers can `import { ... } from "@/features/finance"`.

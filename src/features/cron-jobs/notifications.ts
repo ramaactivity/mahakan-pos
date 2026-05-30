@@ -35,6 +35,7 @@ import {
   formatPeriodLabel,
 } from "@/features/operasional-tasks/period";
 import { getCompletionProgress } from "@/features/operasional-tasks/queries";
+import { generateCashlessForOutlet } from "@/features/finance/settlement-generate";
 
 export type CronJob =
   | "attendance-morning"
@@ -43,7 +44,9 @@ export type CronJob =
   /* Sesi AE-131 — Operasional Checklist reminders. */
   | "operasional-daily-closing"
   | "operasional-weekly-sunday"
-  | "operasional-monthly-day28";
+  | "operasional-monthly-day28"
+  /* Sesi AE-165 — auto-settlement QRIS/EDC harian dari POS. */
+  | "cashless-settlement";
 
 export interface CronJobResult {
   job: CronJob;
@@ -269,6 +272,71 @@ function todayWibIso(): string {
   }).format(new Date());
 }
 
+/**
+ * Sesi AE-165 — Job: cashless-settlement (01:00 WIB).
+ * Auto-generate settlement QRIS & EDC BCA dari transaksi POS untuk hari
+ * KEMARIN (WIB sudah komplit). Idempoten: hari yang sudah ada settlement
+ * (CSV/auto) di-skip → aman dijalankan ulang. createdBy = owner outlet.
+ * Tidak push notif — murni materialisasi data (+ clear piutang kalau
+ * auto-journal ON).
+ */
+export async function runCashlessSettlementJob(): Promise<CronJobResult> {
+  const result: CronJobResult = {
+    job: "cashless-settlement",
+    outletsProcessed: 0,
+    notifSent: 0,
+    errors: [],
+  };
+  try {
+    const yDate = new Date(`${todayWibIso()}T00:00:00Z`);
+    yDate.setUTCDate(yDate.getUTCDate() - 1);
+    const yesterday = yDate.toISOString().slice(0, 10);
+
+    const outletList = await db
+      .select({ id: outlets.id })
+      .from(outlets)
+      .where(isNull(outlets.deletedAt));
+
+    for (const outlet of outletList) {
+      result.outletsProcessed++;
+      try {
+        /* createdBy butuh user nyata (FK) — pakai owner aktif pertama. */
+        const [owner] = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(
+            and(
+              eq(users.outletId, outlet.id),
+              eq(users.role, "owner"),
+              isNull(users.deletedAt),
+            ),
+          )
+          .limit(1);
+        if (!owner) {
+          result.errors.push(`outlet ${outlet.id}: tidak ada user owner`);
+          continue;
+        }
+        const gen = await generateCashlessForOutlet({
+          outletId: outlet.id,
+          createdBy: owner.id,
+          actorRole: "system",
+          from: yesterday,
+          to: yesterday,
+        });
+        /* notifSent dipakai sebagai counter "settlement dibuat" untuk log. */
+        result.notifSent += gen.created.length;
+      } catch (e) {
+        result.errors.push(
+          `outlet ${outlet.id}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+  } catch (e) {
+    result.errors.push(e instanceof Error ? e.message : String(e));
+  }
+  return result;
+}
+
 /* ============================================================
  * Sesi AE-131 — Operasional Checklist reminders.
  *
@@ -470,6 +538,7 @@ export function getJobForCurrentHour(): CronJob | null {
   const wibHour = wibDate.getUTCHours();
   const wibDay = wibDate.getUTCDate(); // 1..31
   const wibDow = wibDate.getUTCDay(); // 0=Sun ... 6=Sat
+  if (wibHour === 1) return "cashless-settlement";
   if (wibHour === 6) return "attendance-morning";
   if (wibHour === 8) return "low-stock-scan";
   if (wibHour === 10 && wibDay === 28) return "operasional-monthly-day28";
@@ -481,6 +550,8 @@ export function getJobForCurrentHour(): CronJob | null {
 
 export async function runJob(job: CronJob): Promise<CronJobResult> {
   switch (job) {
+    case "cashless-settlement":
+      return runCashlessSettlementJob();
     case "attendance-morning":
       return runAttendanceMorningJob();
     case "low-stock-scan":

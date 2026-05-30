@@ -117,6 +117,8 @@ export const createAggregatorSettlementSchema = z
     bankAccountId: z.string().uuid().nullish(),
     /** Optional — saat dari CSV import, sertakan per-order rows untuk drilldown. */
     lineItems: z.array(aggregatorLineItemSchema).max(10_000).nullish(),
+    /** Sesi AE-165 — asal data (csv/auto_pos/manual). Default 'manual'. */
+    source: z.enum(["csv", "auto_pos", "manual"]).optional(),
   })
   .refine((v) => v.periodTo >= v.periodFrom, {
     message: "Periode akhir harus >= periode awal",
@@ -137,4 +139,22 @@ export const updateAggregatorSettlementSchema = z.object({
   bankCreditedAt: z.union([z.date(), z.string()]).nullish(),
   referenceNo: z.string().trim().max(64).nullish(),
   notes: z.string().trim().max(500).nullish(),
+});
+
+/** Sesi AE-165 — generate settlement QRIS/EDC harian dari POS untuk rentang
+ * tanggal (inclusive). Tiap hari yang sudah ada settlement (overlap) di-skip. */
+export const generateCashlessSettlementSchema = z
+  .object({
+    from: isoDate,
+    to: isoDate,
+  })
+  .refine((v) => v.to >= v.from, {
+    message: "Tanggal akhir harus >= tanggal mulai",
+    path: ["to"],
+  });
+
+/** Sesi AE-165 — rate MDR per channel cashless langsung. Persen 0..10. */
+export const updateCashlessMdrSchema = z.object({
+  mdrQrisPct: z.number().min(0).max(10),
+  mdrEdcBcaPct: z.number().min(0).max(10),
 });

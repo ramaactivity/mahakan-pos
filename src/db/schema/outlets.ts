@@ -76,6 +76,14 @@ export type OutletSettings = {
       radiusMeters: number;
     };
   };
+  /** Sesi AE-165 — rate MDR (Merchant Discount Rate) per channel cashless
+   * langsung (QRIS / EDC BCA), dipakai auto-generate settlement harian dari
+   * transaksi POS. Persen dari gross (mis. 0.7 = 0,7%). Net = gross −
+   * round(gross × pct/100). Default kalau unset: QRIS 0.7%, EDC BCA 0%. */
+  cashless?: {
+    mdrQrisPct?: number;
+    mdrEdcBcaPct?: number;
+  };
   /** Sesi AE-53 — Schedule shift templates editable per outlet.
    * HR pakai untuk quick-fill jam saat edit schedule (Pagi/Siang/Sore/Full).
    * Default kalau tidak set: lihat DEFAULT_SHIFT_TEMPLATES di SchedulesSection.tsx.

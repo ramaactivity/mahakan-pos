@@ -26,6 +26,8 @@ const VALID_JOBS: ReadonlyArray<CronJob> = [
   "operasional-daily-closing",
   "operasional-weekly-sunday",
   "operasional-monthly-day28",
+  /* Sesi AE-165 — auto-settlement QRIS/EDC harian. */
+  "cashless-settlement",
 ];
 
 export async function GET(request: NextRequest) {

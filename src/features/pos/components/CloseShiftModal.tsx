@@ -272,16 +272,27 @@ export function CloseShiftModal({
       const pettyExpenseCash = cashSummary?.expenses.cash ?? 0;
       const pettyIncomeCash = cashSummary?.income.manual.cash ?? 0;
 
+      const paidQris = paid
+        .filter((t) => t.paymentMethod === "qris")
+        .reduce((s, t) => s + t.total, 0);
+      const paidCardBca = paid
+        .filter((t) => t.paymentMethod === "card_bca")
+        .reduce((s, t) => s + t.total, 0);
+
+      /* Sesi AE-165 — prefill Reported QRIS/EDC dari POS (auto + boleh
+       * override). Nilai QRIS/EDC sudah tercatat di POS, jadi kasir tidak
+       * perlu input ulang — cukup cek/koreksi kalau total mesin/app berbeda.
+       * (Konsisten dgn summary preview; settlement harian di Online &
+       * Cashless pakai agregasi server yang split-aware.) */
+      setQris(String(paidQris));
+      setEdc(String(paidCardBca));
+
       setSummary({
         paid: {
           count: paid.length,
           cash: paidCash,
-          qris: paid
-            .filter((t) => t.paymentMethod === "qris")
-            .reduce((s, t) => s + t.total, 0),
-          cardBca: paid
-            .filter((t) => t.paymentMethod === "card_bca")
-            .reduce((s, t) => s + t.total, 0),
+          qris: paidQris,
+          cardBca: paidCardBca,
         },
         voided: {
           count: voided.length,

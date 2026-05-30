@@ -6,10 +6,12 @@ import {
   aggregatorSettlements,
   cashDeposits,
   chartOfAccounts,
+  outlets,
   reconciliationNotes,
   splitPayments,
   transactions,
 } from "@/db/schema";
+import type { OutletSettings } from "@/db/schema/outlets";
 import { sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
@@ -17,10 +19,12 @@ import { logAudit } from "@/lib/audit/logger";
 import {
   createAggregatorSettlementSchema,
   createCashDepositSchema,
+  generateCashlessSettlementSchema,
   rejectCashDepositSchema,
   unverifyCashDepositSchema,
   updateAggregatorSettlementSchema,
   updateCashDepositSchema,
+  updateCashlessMdrSchema,
   verifyCashDepositSchema,
 } from "./schemas";
 import {
@@ -37,6 +41,13 @@ import {
   listOutstandingTopForFinance,
 } from "./queries";
 import {
+  DEFAULT_MDR_EDC_BCA_PCT,
+  DEFAULT_MDR_QRIS_PCT,
+  enumerateDatesIso,
+  fireSettlementJournalHook,
+  generateCashlessForOutlet,
+} from "./settlement-generate";
+import {
   fail,
   ok,
   type AggregatorSettlement,
@@ -45,10 +56,12 @@ import {
   type CashDepositDashboard,
   type CashDepositStatus,
   type CashFlowLedgerReport,
+  type CashlessMdrConfig,
   type CashOnHandSnapshot,
   type CreateAggregatorSettlementInput,
   type CreateCashDepositInput,
   type DailySettlementReport,
+  type GenerateCashlessResult,
   type AggregatorChannel,
   type ReconciliationDrillDown,
   type RejectCashDepositInput,
@@ -866,6 +879,7 @@ export async function createAggregatorSettlement(
       notes: v.notes ?? null,
       lineItems: lineItemsArr,
       lineItemsCount: lineItemsArr ? lineItemsArr.length : null,
+      source: v.source ?? "manual",
       createdBy: session.user.id,
     })
     .returning();
@@ -887,48 +901,108 @@ export async function createAggregatorSettlement(
 
   // Sesi T — Accounting auto-journal hook (settlement create). Channel-aware:
   // QRIS/EDC clear piutang; GoFood/Grab/Shopee recognize revenue ke 4104.
-  {
-    const { fireJournalHook, postJournalForAggregatorSettlement } = await import(
-      "@/features/accounting/hooks"
-    );
-    let bankAccountCode: string | null = null;
-    if (row.bankAccountId) {
-      const [bankAcc] = await db
-        .select({ code: chartOfAccounts.code })
-        .from(chartOfAccounts)
-        .where(eq(chartOfAccounts.id, row.bankAccountId))
-        .limit(1);
-      bankAccountCode = bankAcc?.code ?? null;
-    }
-    const entryDate = row.bankCreditedAt
-      ? new Date(row.bankCreditedAt).toISOString().slice(0, 10)
-      : new Date().toISOString().slice(0, 10);
-    fireJournalHook(
-      () =>
-        postJournalForAggregatorSettlement({
-          outletId: session.user.outletId,
-          settlementId: row.id,
-          channel: row.channel as
-            | "edc_bca"
-            | "gofood"
-            | "grabfood"
-            | "shopeefood"
-            | "qris",
-          grossAmount: Number(row.grossAmount),
-          feeAmount: Number(row.feeAmount),
-          netAmount: Number(row.netAmount),
-          bankAccountCode,
-          periodFrom: String(row.periodFrom),
-          periodTo: String(row.periodTo),
-          entryDate,
-          referenceNo: row.referenceNo,
-          actorId: session.user.id,
-        }),
-      "aggregator_settlement",
-    );
-  }
+  await fireSettlementJournalHook(row, session.user.id, session.user.outletId);
 
   return ok(row);
+}
+
+// =========================================================================
+// Sesi AE-165 — Auto-settlement QRIS / EDC BCA dari POS + config MDR
+// Core (no-session) di ./settlement-generate (server-only) supaya tidak
+// ke-expose sebagai server action publik tanpa auth.
+// =========================================================================
+
+/** Baca rate MDR per channel dari outlet.settings (fallback default). */
+export async function getCashlessMdrConfig(): Promise<
+  ApiResult<CashlessMdrConfig>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "aggregator_settlement.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak akses");
+  }
+  const [row] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  const c = row?.settings?.cashless;
+  return ok({
+    mdrQrisPct: c?.mdrQrisPct ?? DEFAULT_MDR_QRIS_PCT,
+    mdrEdcBcaPct: c?.mdrEdcBcaPct ?? DEFAULT_MDR_EDC_BCA_PCT,
+  });
+}
+
+/** Update rate MDR per channel (owner/manager). */
+export async function updateCashlessMdrConfig(input: {
+  mdrQrisPct: number;
+  mdrEdcBcaPct: number;
+}): Promise<ApiResult<CashlessMdrConfig>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "aggregator_settlement.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak atur MDR");
+  }
+  const parsed = updateCashlessMdrSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail("VALIDATION", parsed.error.issues[0]?.message ?? "Invalid");
+  }
+  const [row] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  const current: OutletSettings = row?.settings ?? {};
+  const next: OutletSettings = {
+    ...current,
+    cashless: {
+      ...(current.cashless ?? {}),
+      mdrQrisPct: parsed.data.mdrQrisPct,
+      mdrEdcBcaPct: parsed.data.mdrEdcBcaPct,
+    },
+  };
+  await db
+    .update(outlets)
+    .set({ settings: next })
+    .where(eq(outlets.id, session.user.outletId));
+  logAudit({
+    eventType: "outlet.cashless_mdr.update",
+    userId: session.user.id,
+    entityType: "outlet",
+    entityId: session.user.outletId,
+    payload: {
+      summary: `Update rate MDR — QRIS ${parsed.data.mdrQrisPct}%, EDC BCA ${parsed.data.mdrEdcBcaPct}%`,
+      after: parsed.data,
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  }).catch((e) => console.error("[audit cashless_mdr.update]", e));
+  return ok(parsed.data);
+}
+
+/** Session action — generate dari POS untuk rentang tanggal (owner/manager). */
+export async function generateCashlessSettlementFromPos(input: {
+  from: string;
+  to: string;
+}): Promise<ApiResult<GenerateCashlessResult>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "aggregator_settlement.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak generate settlement");
+  }
+  const parsed = generateCashlessSettlementSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail("VALIDATION", parsed.error.issues[0]?.message ?? "Invalid");
+  }
+  /* Cap rentang 62 hari supaya tidak terlalu berat. */
+  const dates = enumerateDatesIso(parsed.data.from, parsed.data.to);
+  if (dates.length > 62) {
+    return fail("RANGE_TOO_LARGE", "Rentang maksimal 62 hari");
+  }
+  const res = await generateCashlessForOutlet({
+    outletId: session.user.outletId,
+    createdBy: session.user.id,
+    actorRole: session.user.role,
+    from: parsed.data.from,
+    to: parsed.data.to,
+  });
+  return ok(res);
 }
 
 export async function updateAggregatorSettlement(

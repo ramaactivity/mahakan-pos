@@ -121,6 +121,27 @@ export type CreateAggregatorSettlementInput = {
   bankAccountId?: string | null;
   /** Optional — saat dari CSV import, sertakan per-order rows untuk drilldown. */
   lineItems?: AggregatorLineItem[] | null;
+  /** Sesi AE-165 — asal data (csv/auto_pos/manual). Default 'manual'. */
+  source?: "csv" | "auto_pos" | "manual";
+};
+
+/** Sesi AE-165 — rate MDR per channel cashless langsung. */
+export type CashlessMdrConfig = {
+  mdrQrisPct: number;
+  mdrEdcBcaPct: number;
+};
+
+/** Sesi AE-165 — hasil generate settlement QRIS/EDC dari POS. */
+export type GenerateCashlessResult = {
+  created: Array<{
+    channel: "qris" | "edc_bca";
+    date: string;
+    gross: number;
+    fee: number;
+    net: number;
+  }>;
+  skipped: number;
+  daysScanned: number;
 };
 
 export type UpdateAggregatorSettlementInput = {

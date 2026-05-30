@@ -39,6 +39,18 @@ export const aggregatorSettlements = pgTable(
     periodFrom: date("period_from").notNull(),
     periodTo: date("period_to").notNull(),
 
+    /** Sesi AE-165 — asal data settlement:
+     *  - 'csv'      : hasil Import CSV (aggregator / rekonsiliasi bank)
+     *  - 'auto_pos' : auto-generate harian dari transaksi POS (QRIS/EDC BCA)
+     *  - 'manual'   : entry manual lama
+     * Dipakai untuk badge UI + guard regen (hanya auto_pos yang aman di-
+     * regenerate). Default 'manual' untuk baris lama (backward compat). */
+    source: text("source", {
+      enum: ["csv", "auto_pos", "manual"],
+    })
+      .notNull()
+      .default("manual"),
+
     grossAmount: bigint("gross_amount", { mode: "number" }).notNull(),
     feeAmount: bigint("fee_amount", { mode: "number" }).notNull().default(0),
     netAmount: bigint("net_amount", { mode: "number" }).notNull(),
