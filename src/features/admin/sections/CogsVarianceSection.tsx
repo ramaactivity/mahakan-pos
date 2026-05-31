@@ -37,6 +37,7 @@ import {
 import { Lock, LockOpen } from "lucide-react";
 import { Modal } from "@/components/ui";
 import { currentJakartaMonth } from "@/lib/date";
+import { displayUnit } from "@/lib/unit-conversion";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "./reports/menu-engineering-csv";
@@ -391,7 +392,7 @@ function VarianceTab({ report }: { report: CogsReport }) {
       lines.push(
         [
           escapeCsv(r.name),
-          r.unit,
+          displayUnit(r.unit),
           r.section ?? "",
           r.theoreticalUsageQty,
           r.theoreticalUsageCost,
@@ -507,7 +508,7 @@ function VarianceRow({ r }: { r: IngredientCogsRow }) {
           </div>
         ) : null}
       </td>
-      <td className="px-3 py-1.5 text-neutral-500">{r.unit}</td>
+      <td className="px-3 py-1.5 text-neutral-500">{displayUnit(r.unit)}</td>
       <td className="px-3 py-1.5 text-right font-mono">
         {formatNum(r.theoreticalUsageQty)}
       </td>
@@ -554,7 +555,7 @@ function CogsTab({ report }: { report: CogsReport }) {
       lines.push(
         [
           escapeCsv(r.name),
-          r.unit,
+          displayUnit(r.unit),
           r.section ?? "",
           r.stockAwalQty,
           r.stockAwalAvgPrice,
@@ -712,7 +713,7 @@ function CogsRow({ r }: { r: IngredientCogsRow }) {
           <div className="text-[10px] text-neutral-500">{r.section}</div>
         ) : null}
       </td>
-      <td className="px-2 py-1 text-neutral-500">{r.unit}</td>
+      <td className="px-2 py-1 text-neutral-500">{displayUnit(r.unit)}</td>
       <td className="px-2 py-1 text-right font-mono">
         {formatRupiah(r.averagePrice)}
       </td>

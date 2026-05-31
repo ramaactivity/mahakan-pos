@@ -14,6 +14,7 @@ import {
   parseIndonesianNumber,
   parseRupiah,
 } from "@/lib/format";
+import { displayUnit } from "@/lib/unit-conversion";
 
 interface IngredientFormModalProps {
   open: boolean;
@@ -24,25 +25,27 @@ interface IngredientFormModalProps {
 
 /* Sesi AE-148 — Categorized unit groups (owner feedback: lebih rapih,
  * tidak terbang ke "...lainnya"). Picker pakai Radix Select groups. */
+/* Sesi AE-173 — value satuan KANONIK (selaras displayUnit / UNIT_TABLE) supaya
+ * konsisten lintas modul (belanja, opname, market list, COGS). */
 const RECIPE_UNIT_GROUPS = [
   {
     label: "Berat & Volume",
     options: [
-      { value: "g", label: "g", hint: "gram" },
+      { value: "gr", label: "gr", hint: "gram" },
       { value: "ml", label: "ml", hint: "mililiter" },
     ],
   },
   {
     label: "Hitungan",
-    options: [{ value: "pcs", label: "pcs", hint: "pieces" }],
+    options: [{ value: "Pcs", label: "Pcs", hint: "pieces" }],
   },
   {
     label: "Per Wadah / Kemasan",
     options: [
-      { value: "kg", label: "kg", hint: "kilogram (jarang untuk recipe)" },
+      { value: "Kg", label: "Kg", hint: "kilogram (jarang untuk recipe)" },
       { value: "L", label: "L", hint: "liter (jarang untuk recipe)" },
-      { value: "pack", label: "pack" },
-      { value: "btl", label: "btl", hint: "botol" },
+      { value: "Pack", label: "Pack" },
+      { value: "Btl", label: "Btl", hint: "botol" },
       { value: "set", label: "set" },
     ],
   },
@@ -52,8 +55,8 @@ const PURCHASE_UNIT_GROUPS = [
   {
     label: "Berat",
     options: [
-      { value: "kg", label: "kg", hint: "kilogram" },
-      { value: "g", label: "g", hint: "gram" },
+      { value: "Kg", label: "Kg", hint: "kilogram" },
+      { value: "gr", label: "gr", hint: "gram" },
     ],
   },
   {
@@ -67,15 +70,15 @@ const PURCHASE_UNIT_GROUPS = [
   {
     label: "Wadah / Kemasan",
     options: [
-      { value: "btl", label: "btl", hint: "botol" },
+      { value: "Btl", label: "Btl", hint: "botol" },
       { value: "kaleng", label: "kaleng" },
-      { value: "pack", label: "pack" },
+      { value: "Pack", label: "Pack" },
       { value: "dus", label: "dus" },
-      { value: "karton", label: "karton" },
+      { value: "Karton", label: "Karton" },
       { value: "kotak", label: "kotak" },
       { value: "sachet", label: "sachet" },
       { value: "renceng", label: "renceng" },
-      { value: "bks", label: "bks", hint: "bungkus" },
+      { value: "Bks", label: "Bks", hint: "bungkus" },
       { value: "bal", label: "bal" },
       { value: "pail", label: "pail" },
       { value: "ikat", label: "ikat" },
@@ -84,8 +87,8 @@ const PURCHASE_UNIT_GROUPS = [
   {
     label: "Hitungan",
     options: [
-      { value: "pcs", label: "pcs", hint: "pieces" },
-      { value: "lusin", label: "lusin" },
+      { value: "Pcs", label: "Pcs", hint: "pieces" },
+      { value: "Lusin", label: "Lusin" },
       { value: "set", label: "set" },
       { value: "pax", label: "pax" },
     ],
@@ -106,6 +109,16 @@ const COMMON_RECIPE_UNITS: string[] = RECIPE_UNIT_GROUPS.flatMap((g) =>
 const COMMON_PURCHASE_UNITS: string[] = PURCHASE_UNIT_GROUPS.flatMap((g) =>
   g.options.map((o) => o.value),
 );
+
+/* Sesi AE-173 — cocokkan unit tersimpan (mis. "kg"/"g" legacy) ke value preset
+ * KANONIK secara case/alias-tolerant. Return value preset ("Kg"/"gr") kalau
+ * cocok, else null → tampilkan input custom. Bikin dropdown tak pernah blank
+ * + konsisten walau data lama masih huruf kecil. */
+function matchPresetUnit(presets: string[], unit: string): string | null {
+  if (!unit) return null;
+  const c = displayUnit(unit).toLowerCase();
+  return presets.find((p) => displayUnit(p).toLowerCase() === c) ?? null;
+}
 
 const SECTION_OPTIONS: Array<{
   value: IngredientSection | "__none";
@@ -368,10 +381,10 @@ export function IngredientFormModal({
                     ],
                   },
                 ]}
-                value={COMMON_RECIPE_UNITS.includes(unit) ? unit : "__custom"}
+                value={matchPresetUnit(COMMON_RECIPE_UNITS, unit) ?? "__custom"}
                 onValueChange={(v) => {
                   if (v === "__custom") {
-                    if (COMMON_RECIPE_UNITS.includes(unit)) setUnit("");
+                    if (matchPresetUnit(COMMON_RECIPE_UNITS, unit)) setUnit("");
                   } else {
                     setUnit(v);
                   }
@@ -379,7 +392,7 @@ export function IngredientFormModal({
                 size="sm"
               />
             </div>
-            {!COMMON_RECIPE_UNITS.includes(unit) ? (
+            {!matchPresetUnit(COMMON_RECIPE_UNITS, unit) ? (
               <input
                 type="text"
                 placeholder="custom"
@@ -429,16 +442,15 @@ export function IngredientFormModal({
                 value={
                   unitBelanja === ""
                     ? "__none"
-                    : COMMON_PURCHASE_UNITS.includes(unitBelanja)
-                      ? unitBelanja
-                      : "__custom"
+                    : (matchPresetUnit(COMMON_PURCHASE_UNITS, unitBelanja) ??
+                      "__custom")
                 }
                 onValueChange={(v) => {
                   if (v === "__none") {
                     setUnitBelanja("");
                     setUnitBelanjaPerCogs("");
                   } else if (v === "__custom") {
-                    if (COMMON_PURCHASE_UNITS.includes(unitBelanja))
+                    if (matchPresetUnit(COMMON_PURCHASE_UNITS, unitBelanja))
                       setUnitBelanja("");
                   } else {
                     setUnitBelanja(v);
@@ -448,7 +460,7 @@ export function IngredientFormModal({
               />
             </div>
             {unitBelanja !== "" &&
-            !COMMON_PURCHASE_UNITS.includes(unitBelanja) ? (
+            !matchPresetUnit(COMMON_PURCHASE_UNITS, unitBelanja) ? (
               <input
                 type="text"
                 placeholder="custom"

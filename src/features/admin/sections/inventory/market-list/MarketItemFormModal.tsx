@@ -26,46 +26,21 @@ import {
   isOk as supIsOk,
   type Supplier,
 } from "@/features/suppliers";
-import { compatibleUnitsFor, resolveUnit } from "@/lib/unit-conversion";
+import {
+  buildUnitSelectOptions,
+  CANONICAL_UNIT_PRESETS,
+  compatibleUnitsFor,
+  displayUnit,
+  resolveUnit,
+} from "@/lib/unit-conversion";
 import {
   formatRupiahPrecise,
   parseIndonesianInt,
   parseIndonesianNumber,
 } from "@/lib/format";
 
-/* Sesi AE-137 — Expand pack unit preset selaras dengan Purchase Unit
- * di IngredientFormModal supaya owner minim ke "lainnya". Case
- * di-preserve sesuai display Indonesian Excel/Sheets (Kg, Btl, Pack)
- * tapi pack unit ke-resolve berbasis case-insensitive di
- * computeEffectiveCost via resolveUnit. */
-const COMMON_PACK_UNITS = [
-  "gr",
-  "g",
-  "ml",
-  "Kg",
-  "L",
-  "Btl",
-  "galon",
-  "kaleng",
-  "Pack",
-  "Karton",
-  "dus",
-  "sachet",
-  "renceng",
-  "Pcs",
-  "Lusin",
-  "ikat",
-  "kotak",
-  "Bks",
-  "bal",
-  "pail",
-  "tabung",
-  "set",
-  "roll",
-  "pax",
-  "Krat",
-  "Box",
-];
+/* Sesi AE-173 — pack unit preset diganti CANONICAL_UNIT_PRESETS (1 sumber
+ * lintas modul, lihat unit-conversion.ts). */
 
 interface Props {
   open: boolean;
@@ -153,27 +128,33 @@ export function MarketItemFormModal({
 
   /** Pack unit options — kalau ingredient dipilih, batasi ke unit
    *  yang compatible dengan master unit (mass / volume / count). */
+  /* Sesi AE-173 — dropdown pack unit KANONIK + anti-blank (1 sumber lintas
+   * modul). Untuk bahan continuous, batasi ke satuan se-dimensi (compat);
+   * untuk discrete, tawarkan semua preset. Nilai terpilih dijamin selalu ada. */
   const packUnitOptions = useMemo(() => {
     if (!selectedIngredient)
-      return COMMON_PACK_UNITS.map((u) => ({ value: u, label: u }));
-    const compat = compatibleUnitsFor(selectedIngredient.unit).map((o) => ({
-      value: o.value,
-      label: o.label,
-    }));
+      return buildUnitSelectOptions({
+        presets: CANONICAL_UNIT_PRESETS,
+        current: packUnit,
+      }).options;
     const meta = resolveUnit(selectedIngredient.unit);
-    if (!meta || meta.dimension === "discrete") {
-      const set = new Set([selectedIngredient.unit, ...COMMON_PACK_UNITS]);
-      return Array.from(set).map((u) => ({ value: u, label: u }));
-    }
-    return compat;
-  }, [selectedIngredient]);
+    const presets =
+      !meta || meta.dimension === "discrete"
+        ? CANONICAL_UNIT_PRESETS
+        : compatibleUnitsFor(selectedIngredient.unit).map((o) => o.value);
+    return buildUnitSelectOptions({
+      presets,
+      packLabels: [selectedIngredient.unit],
+      current: packUnit,
+    }).options;
+  }, [selectedIngredient, packUnit]);
 
-  // Auto-set pack unit ke master unit kalau belum dipilih.
+  // Auto-set pack unit ke master unit (kanonik) kalau belum dipilih.
   useEffect(() => {
     if (!open) return;
     if (!packUnit && selectedIngredient) {
       /* eslint-disable react-hooks/set-state-in-effect */
-      setPackUnit(selectedIngredient.unit);
+      setPackUnit(displayUnit(selectedIngredient.unit));
       /* eslint-enable react-hooks/set-state-in-effect */
     }
   }, [open, selectedIngredient, packUnit]);
@@ -371,7 +352,7 @@ export function MarketItemFormModal({
               />
               <Select
                 label="Pack Unit"
-                value={packUnit}
+                value={displayUnit(packUnit)}
                 onValueChange={setPackUnit}
                 options={packUnitOptions}
                 placeholder="Pilih…"
