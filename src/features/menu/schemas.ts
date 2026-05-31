@@ -15,6 +15,8 @@ const baseFields = {
   categoryId: z.uuid(),
   isSignature: z.boolean().optional().default(false),
   displayOrder: z.number().int().nonnegative().optional().default(999),
+  /** Sesi AE-173 — HPP manual (Rp). NULL/undefined = belum diisi (fallback resep). */
+  cost: z.number().int().nonnegative().max(999_999_999).nullable().optional(),
 };
 
 export const createMenuItemSchema = z.discriminatedUnion("priceType", [

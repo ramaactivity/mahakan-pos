@@ -119,6 +119,7 @@ export async function createMenuItem(
       priceFixed: v.priceType === "fixed" ? v.priceFixed : null,
       priceHot: v.priceType === "variant" ? v.priceHot : null,
       priceIced: v.priceType === "variant" ? v.priceIced : null,
+      cost: v.cost ?? null,
       isSignature: v.isSignature ?? false,
       displayOrder: v.displayOrder ?? 999,
       createdBy: session.user.id,
@@ -138,6 +139,7 @@ export async function createMenuItem(
         priceFixed: row.priceFixed,
         priceHot: row.priceHot,
         priceIced: row.priceIced,
+        cost: row.cost,
       },
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
@@ -171,6 +173,7 @@ export async function updateMenuItem(
       priceFixed: v.priceType === "fixed" ? v.priceFixed : null,
       priceHot: v.priceType === "variant" ? v.priceHot : null,
       priceIced: v.priceType === "variant" ? v.priceIced : null,
+      cost: v.cost ?? null,
       isSignature: v.isSignature ?? false,
       displayOrder: v.displayOrder ?? 999,
       updatedAt: new Date(),
@@ -187,6 +190,7 @@ export async function updateMenuItem(
     priceHot: before.priceHot,
     priceIced: before.priceIced,
     priceType: before.priceType,
+    cost: before.cost,
   };
   const afterSnap = {
     name: row.name,
@@ -194,6 +198,7 @@ export async function updateMenuItem(
     priceHot: row.priceHot,
     priceIced: row.priceIced,
     priceType: row.priceType,
+    cost: row.cost,
   };
   const diff = diffShallow(beforeSnap, afterSnap);
   if (diff) {

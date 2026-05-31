@@ -84,6 +84,11 @@ export const menuItems = pgTable(
     priceHot: bigint("price_hot", { mode: "number" }),
     priceIced: bigint("price_iced", { mode: "number" }),
 
+    /** Sesi AE-173 — HPP manual per menu (Rp). NULL = belum diisi → fallback ke
+     * COGS dari resep (perilaku lama). Kalau diisi, angka ini yang dipakai jadi
+     * COGS saat jual (snapshot), tanpa waste factor. Margin% = (harga−cost)/harga. */
+    cost: bigint("cost", { mode: "number" }),
+
     isSignature: boolean("is_signature").notNull().default(false),
     isSoldOut: boolean("is_sold_out").notNull().default(false),
     isActive: boolean("is_active").notNull().default(true),
@@ -116,5 +121,6 @@ export const menuItems = pgTable(
         AND (${t.priceHot} IS NULL OR ${t.priceHot} >= 0)
         AND (${t.priceIced} IS NULL OR ${t.priceIced} >= 0)`,
     ),
+    check("ck_menu_items_cost_nonneg", sql`${t.cost} IS NULL OR ${t.cost} >= 0`),
   ],
 );

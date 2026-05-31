@@ -1,0 +1,2 @@
+ALTER TABLE "menu_items" ADD COLUMN "cost" bigint;--> statement-breakpoint
+ALTER TABLE "menu_items" ADD CONSTRAINT "ck_menu_items_cost_nonneg" CHECK ("menu_items"."cost" IS NULL OR "menu_items"."cost" >= 0);

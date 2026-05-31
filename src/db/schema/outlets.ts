@@ -30,6 +30,14 @@ export type OutletSettings = {
      * Owner bisa override per item. Default 250% kalau tidak set. Range
      * 0..500. */
     defaultMarkupPct?: number;
+    /** Sesi AE-173 — INVENTORY MODE (periodic vs perpetual).
+     * Default UNDEFINED = true = perpetual (perilaku lama). Owner set false
+     * untuk mode periodic: stok HANYA bergerak dari Opname.
+     * - perpetualStockSales=false  → penjualan TIDAK mengurangi stok.
+     * - perpetualStockPurchases=false → pembelian TIDAK menambah stok/WAC.
+     * Reversibel: nyalakan lagi kapan saja tanpa nulis ulang kode. */
+    perpetualStockSales?: boolean;
+    perpetualStockPurchases?: boolean;
   };
   receipt?: {
     /** Existing: short text below "Terima kasih" line. */

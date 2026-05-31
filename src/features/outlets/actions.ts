@@ -236,6 +236,10 @@ const featuresSchema = z.object({
   /** Phase 7.2 — markup% untuk auto-suggest harga jual dari BOM cost.
    * Range 0-500. Default 250% kalau tidak set. */
   defaultMarkupPct: z.number().int().min(0).max(500).optional(),
+  /** Sesi AE-173 — inventory mode. Default (undefined) = perpetual (lama).
+   * false → stok hanya dari Opname (penjualan/pembelian tak menggerakkan stok). */
+  perpetualStockSales: z.boolean().optional(),
+  perpetualStockPurchases: z.boolean().optional(),
 });
 
 const attendanceSettingsSchema = z.object({
