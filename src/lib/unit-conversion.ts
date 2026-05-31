@@ -751,15 +751,19 @@ export function buildOpnameUnitContext(
     }
   }
 
-  /* 4. Same-dimension legacy units (kg↔gr, L↔ml) via UNIT_TABLE. Skip kalau
-   *    sudah ada purchase tier yang dominan supaya picker tidak ramai. */
-  if (!purchaseUnit) {
+  /* 4. Same-dimension units (kg↔gr, L↔ml) via UNIT_TABLE.
+   * Sesi AE-173 — owner feedback: beberapa item tidak bisa opname pakai satuan
+   * terbesar. Dulu di-skip kalau purchaseUnit ada (anti-ramai AE-148); sekarang
+   * SELALU tawarkan supaya satuan terbesar (mis. kg untuk master g) selalu
+   * tersedia. Dedup (label + multiplier) tetap cegah duplikat. */
+  {
     const dimComp = compatibleUnitsFor(recipeUnit, null);
     for (const d of dimComp) {
       const lc = norm(d.value);
       if (seen.has(lc)) continue;
       const conv = convertQty(1, d.value, recipeUnit);
       if (conv === null || conv <= 0) continue;
+      if (seenMultipliers.has(conv)) continue;
       opts.push({
         value: d.value,
         label: d.label,
@@ -769,6 +773,7 @@ export function buildOpnameUnitContext(
       });
       multipliers.set(d.value, conv);
       seen.add(lc);
+      seenMultipliers.add(conv);
     }
   }
 

@@ -1244,6 +1244,19 @@ function CountRow({
           </div>
         </div>
 
+        {/* Sesi AE-173 — tandai kosong/habis: set actual=0 supaya TETAP tercatat
+            sudah diopname walau stoknya nol (bukan "belum dihitung"). */}
+        <button
+          type="button"
+          onClick={() => {
+            onLooseChange("");
+            onPrimaryChange("0");
+          }}
+          className="self-end rounded text-[11px] font-medium text-neutral-500 underline-offset-2 hover:text-mahakan-green-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700/40"
+        >
+          Tandai kosong / habis (0)
+        </button>
+
         {/* Loose input — only when primary unit != recipe AND ratio > 1.
             Pakai untuk kasus pack tidak full (Yakult 3 pack + 2 pcs lepas). */}
         {showLooseField ? (
