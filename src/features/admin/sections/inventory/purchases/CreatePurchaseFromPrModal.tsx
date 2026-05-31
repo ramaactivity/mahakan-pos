@@ -56,6 +56,7 @@ import {
   applyTotalChange,
   applyUnitCostChange,
   buildPurchaseUnitOptions,
+  computePrLineDefault,
   formatPurchaseQty,
   parsePurchaseQty,
   parseRupiahSafe,
@@ -80,6 +81,22 @@ const PAYMENT_OPTIONS: Array<{ value: PaymentMethod; label: string }> = [
   { value: "transfer_other", label: "Transfer lain" },
   { value: "top", label: "TOP (kredit)" },
 ];
+
+/* Sesi AE-173 — baca tier "satuan belanja" ingredient (mis. 1 Kg = 1000 g).
+ * `unitBelanjaPerCogs` di-store sebagai numeric → string saat runtime, jadi
+ * di-parse defensif. Return perCogs hanya kalau valid & > 0. */
+function readBelanjaTier(ing: Ingredient | null | undefined): {
+  unit: string | null;
+  perCogs: number | null;
+} {
+  const unit = ing?.unitBelanja?.trim() || null;
+  const raw = ing?.unitBelanjaPerCogs;
+  const parsed =
+    raw != null && String(raw).trim() !== "" ? parseFloat(String(raw)) : NaN;
+  const perCogs =
+    unit && Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  return { unit: perCogs ? unit : null, perCogs };
+}
 
 /* Sesi AE-122 — Extended row type dengan smart math + qty/cost as STRING
  * (mirror PurchaseFormModal). Original PrPurchaseItemRow di pure helper
@@ -168,21 +185,32 @@ export function CreatePurchaseFromPrModal({
         pr.items.map((i) => {
           const ing = i.ingredientId ? ingredientById.get(i.ingredientId) : null;
           const masterUnit = ing?.unit ?? i.unit;
-          const qty = i.outstandingQty;
-          const cost = i.suggestedUnitCost ?? 0;
+          /* Sesi AE-173 — default ke SATUAN BELANJA (mis. Kg) + konversi qty
+           * & harga lewat pure helper, biar konsisten dgn "Catat Pembelian".
+           * Tanpa ini qty satuan-COGS (gram) × harga-per-kg = total meledak. */
+          const belanja = readBelanjaTier(ing);
+          const d = computePrLineDefault({
+            outstandingQty: i.outstandingQty,
+            costPerUnit: ing?.costPerUnit ?? 0,
+            suggestedUnitCost: i.suggestedUnitCost,
+            masterUnit,
+            prUnit: i.unit,
+            belanjaUnit: belanja.unit,
+            belanjaPerCogs: belanja.perCogs,
+          });
           const total =
-            qty > 0 && cost > 0 ? String(Math.round(qty * cost)) : "";
+            d.qty > 0 && d.unitCost > 0
+              ? String(Math.round(d.qty * d.unitCost))
+              : "";
           return {
             purchaseRequestItemId: i.purchaseRequestItemId,
             ingredientId: i.ingredientId ?? "",
             ingredientName: i.ingredientName,
             prUnit: i.unit,
             outstandingQty: i.outstandingQty,
-            qty: String(qty),
-            /* Default unit = PR snapshot. Kalau ingredient master beda,
-             * owner bisa override via dropdown. */
-            unit: i.unit || masterUnit,
-            unitCost: cost > 0 ? String(cost) : "",
+            qty: formatPurchaseQty(d.qty),
+            unit: d.unit,
+            unitCost: d.unitCost > 0 ? String(d.unitCost) : "",
             total,
             inputMode: "unit" as SmartMathInputMode,
             supplierId: i.suggestedSupplierId,
@@ -199,6 +227,7 @@ export function CreatePurchaseFromPrModal({
   useEffect(() => {
     if (!open || !prefilledPrId || prList.length === 0) return;
     const pr = prList.find((p) => p.requestId === prefilledPrId);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (pr) handleSelectPr(pr);
   }, [open, prefilledPrId, prList, handleSelectPr]);
 
@@ -320,12 +349,21 @@ export function CreatePurchaseFromPrModal({
         const cost = parseRupiahSafe(it.unitCost);
         const ing = it.ingredientId ? ingredientById.get(it.ingredientId) : null;
         const masterUnit = ing?.unit ?? it.prUnit;
+        const chosenUnit = it.unit || it.prUnit;
+        /* Sesi AE-173 — outstanding di-rekam dalam satuan COGS. Kalau baris
+         * pakai satuan belanja, convert dulu biar warning "lebih dari
+         * request" apple-to-apple (mis. 5.726 Kg vs 5.726 Kg, bukan vs 5726 g). */
+        const belanja = readBelanjaTier(ing);
+        const outstandingInUnit =
+          belanja.perCogs != null && chosenUnit === belanja.unit
+            ? it.outstandingQty / belanja.perCogs
+            : it.outstandingQty;
         return {
           purchaseRequestItemId: it.purchaseRequestItemId,
           ingredientId: it.ingredientId,
           ingredientName: it.ingredientName,
-          unit: it.unit || it.prUnit,
-          outstandingQty: it.outstandingQty,
+          unit: chosenUnit,
+          outstandingQty: outstandingInUnit,
           qty: Number.isFinite(qty) ? qty : 0,
           supplierId: it.supplierId,
           unitCost: Number.isFinite(cost) ? cost : 0,

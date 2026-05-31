@@ -48,6 +48,68 @@ export function buildPurchaseUnitOptions(
 }
 
 /**
+ * Sesi AE-173 — Default satu baris saat "Tarik ke Pembelian" dari PR.
+ *
+ * Masalah yang diperbaiki: PR di-rekam staff dalam satuan COGS (mis. gram),
+ * tapi owner belanja + ngisi harga dalam satuan belanja (mis. Kg). Sebelum
+ * ini modal default ke satuan COGS lalu owner ngetik harga-per-kg → qty(gram)
+ * × harga(per-kg) = total meledak (5.726 g × Rp 50.000 = Rp 286 juta).
+ *
+ * Aturan (mirror "Catat Pembelian"):
+ *  - Kalau ingredient punya tier belanja valid (unit + perCogs > 0):
+ *      unit     = satuan belanja (Kg)
+ *      qty      = outstandingQty (COGS) ÷ perCogs  → 5726 g ÷ 1000 = 5.726 Kg
+ *      unitCost = costPerUnit (per COGS) × perCogs → per Kg
+ *  - Kalau tidak: pakai satuan COGS apa adanya (perilaku lama, tetap benar
+ *    secara matematis — cuma ditampilkan dalam satuan kecil).
+ *  - unitCost fallback ke suggested supplier cost kalau master cost = 0.
+ *
+ * Server (`createPurchase`) yang jadi source-of-truth: dia convert qty +
+ * unitCost (lewat `convertPurchaseQty`) balik ke satuan COGS saat write,
+ * termasuk bump `receivedQty` PR dalam satuan COGS. Helper ini murni untuk
+ * default tampilan yang masuk akal buat owner.
+ */
+export interface PrLineDefaultInput {
+  outstandingQty: number;
+  /** Master cost per satuan COGS (Rp). 0 kalau belum ke-set. */
+  costPerUnit: number;
+  /** Suggested supplier cost (fallback). null kalau tak ada. */
+  suggestedUnitCost: number | null;
+  masterUnit: string;
+  prUnit: string;
+  /** Satuan belanja ter-validasi (null kalau tier belanja tak dipakai). */
+  belanjaUnit: string | null;
+  /** Faktor 1 satuan belanja = ? satuan COGS (>0), null kalau tak dipakai. */
+  belanjaPerCogs: number | null;
+}
+
+export function computePrLineDefault(input: PrLineDefaultInput): {
+  unit: string;
+  qty: number;
+  unitCost: number;
+} {
+  const perCogs =
+    input.belanjaUnit &&
+    input.belanjaPerCogs != null &&
+    Number.isFinite(input.belanjaPerCogs) &&
+    input.belanjaPerCogs > 0
+      ? input.belanjaPerCogs
+      : null;
+  const useBelanja = perCogs != null;
+  const unit = useBelanja
+    ? input.belanjaUnit!
+    : input.prUnit || input.masterUnit;
+  const qty = useBelanja ? input.outstandingQty / perCogs : input.outstandingQty;
+  const scaledMasterCost =
+    input.costPerUnit > 0
+      ? Math.round(input.costPerUnit * (useBelanja ? perCogs : 1))
+      : 0;
+  const unitCost =
+    scaledMasterCost > 0 ? scaledMasterCost : input.suggestedUnitCost ?? 0;
+  return { unit, qty, unitCost };
+}
+
+/**
  * Parse decimal qty dari user input. Accept koma OR titik sebagai
  * separator (staff Indo biasa pakai koma di Sheets). Return NaN kalau
  * tidak valid.
