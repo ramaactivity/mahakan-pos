@@ -51,6 +51,10 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     // Sesi AE-173 — ON (default) = stok dikurangi saat jual (perpetual);
     // OFF = mode periodic (stok hanya dari Opname).
     deductStockOnSale: outlet.settings?.features?.perpetualStockSales !== false,
+    // Sesi AE-173 — ON (default) = pembelian menambah stok/WAC; OFF = pembelian
+    // hanya catatan pengeluaran (stok hanya dari Opname).
+    addStockOnPurchase:
+      outlet.settings?.features?.perpetualStockPurchases !== false,
     defaultMarkupPct: outlet.settings?.features?.defaultMarkupPct ?? 250,
     lateGraceMinutes: outlet.settings?.attendance?.lateGraceMinutes ?? 5,
     gpsLat: existingGps?.lat ?? DEFAULT_GPS.lat,
@@ -69,6 +73,9 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
   );
   const [deductStockOnSale, setDeductStockOnSale] = useState(
     initial.deductStockOnSale,
+  );
+  const [addStockOnPurchase, setAddStockOnPurchase] = useState(
+    initial.addStockOnPurchase,
   );
   const [defaultMarkupPct, setDefaultMarkupPct] = useState(
     String(initial.defaultMarkupPct),
@@ -97,6 +104,7 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setShowHpp(initial.showHpp);
     setAccountingAutoJournal(initial.accountingAutoJournal);
     setDeductStockOnSale(initial.deductStockOnSale);
+    setAddStockOnPurchase(initial.addStockOnPurchase);
     setDefaultMarkupPct(String(initial.defaultMarkupPct));
     setLateGraceMinutes(String(initial.lateGraceMinutes));
     setGpsLat(String(initial.gpsLat));
@@ -213,6 +221,17 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
         return;
       }
       last = r3s.data;
+    }
+    if (addStockOnPurchase !== initial.addStockOnPurchase) {
+      const r3p = await updateFeatures({
+        perpetualStockPurchases: addStockOnPurchase,
+      });
+      if (!isOk(r3p)) {
+        setError(r3p.error.message);
+        setSubmitting(false);
+        return;
+      }
+      last = r3p.data;
     }
     const parsedMarkup = parseInt(defaultMarkupPct, 10);
     if (
@@ -400,6 +419,16 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
             }
             checked={deductStockOnSale}
             onChange={setDeductStockOnSale}
+          />
+          <ToggleRow
+            label="Tambah stok otomatis saat pembelian"
+            hint={
+              addStockOnPurchase
+                ? "Aktif (perpetual) — setiap pembelian menambah stok bahan + update harga rata-rata (WAC)."
+                : "OFF (periodic) — pembelian TIDAK menambah stok, hanya tercatat sebagai pengeluaran. Stok hanya dari Opname. Bisa dinyalakan lagi kapan saja."
+            }
+            checked={addStockOnPurchase}
+            onChange={setAddStockOnPurchase}
           />
           <Input
             label="Default Markup % (BOM-based pricing)"

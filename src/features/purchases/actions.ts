@@ -16,6 +16,7 @@ import {
 } from "@/db/schema";
 import { computeNewWac } from "@/features/cogs/cogs-calc";
 import { cascadeCostUpdate } from "@/features/inventory/preparation-flow";
+import { getStockMode } from "@/features/inventory/flag";
 import { computePrStatus } from "@/features/purchase-requests/group-items-pure";
 import { fetchLastFinalizedOpname } from "@/features/stock-opname/queries";
 import { auth } from "@/lib/auth";
@@ -417,6 +418,14 @@ export async function createPurchase(
       backdateStatusOut = backdateStatus;
       skippedStockUpdateOut = skipStockUpdate;
 
+      /* Sesi AE-173 — mode periodic (addOnPurchase=false): pembelian TIDAK
+       * menambah stok/WAC. Diperlakukan seperti skip-stock (anti-double-count):
+       * stok/WAC/cost-history di-skip, movement di-flag skippedStockUpdate,
+       * TAPI baris pembelian + expense (pencatatan pengeluaran) tetap dibuat.
+       * Reversibel: nyalakan lagi via toggle kapan saja. */
+      const { addOnPurchase } = await getStockMode(session.user.outletId);
+      const skipStockEffect = skipStockUpdate || !addOnPurchase;
+
       // Sesi AE-129 — multi-nota. UI baru kirim `receiptImageUrls`. Legacy
        // single URL field di-mirror dengan item pertama dari array supaya
        // existing list/detail views (yang masih baca receiptImageUrl) tetap
@@ -509,7 +518,7 @@ export async function createPurchase(
         const totalCostMaster = Math.round(qtyMaster * unitCostMaster);
 
         let newWacCost = oldCostBefore;
-        if (v.updateCost && !skipStockUpdate) {
+        if (v.updateCost && !skipStockEffect) {
           const wac = computeNewWac({
             oldQty: oldQtyDecimal,
             oldCost: oldCostBefore,
@@ -519,7 +528,7 @@ export async function createPurchase(
           newWacCost = wac.newCost;
         }
         const costChanged =
-          v.updateCost && !skipStockUpdate && newWacCost !== oldCostBefore;
+          v.updateCost && !skipStockEffect && newWacCost !== oldCostBefore;
 
         /* Sesi AE-130 — kalau backdated (skipStockUpdate=true): JANGAN
          * touch currentStock/currentStockDecimal/costPerUnit. Stock fisik
@@ -530,7 +539,7 @@ export async function createPurchase(
          *
          * updatedAt/updatedBy juga di-skip — ingredient state effectively
          * tidak berubah dari sisi domain. */
-        if (!skipStockUpdate) {
+        if (!skipStockEffect) {
           const updateValues: Record<string, unknown> = {
             currentStock: newStock.bigint,
             currentStockDecimal: newStock.decimal,
@@ -596,14 +605,16 @@ export async function createPurchase(
             unitCostAtMovement: unitCostMaster,
             referenceType: "manual",
             referenceId: created.id,
-            reason: v.invoiceNo
-              ? skipStockUpdate
-                ? `Purchase ${v.invoiceNo} (backdate, no stock add)`
-                : `Purchase ${v.invoiceNo}`
-              : skipStockUpdate
-                ? `Purchase ${created.id.slice(0, 8)} (backdate, no stock add)`
-                : `Purchase ${created.id.slice(0, 8)}`,
-            skippedStockUpdate: skipStockUpdate,
+            reason: (() => {
+              const label = v.invoiceNo ?? created.id.slice(0, 8);
+              const note = skipStockEffect
+                ? skipStockUpdate
+                  ? " (backdate, no stock add)"
+                  : " (periodic, no stock add)"
+                : "";
+              return `Purchase ${label}${note}`;
+            })(),
+            skippedStockUpdate: skipStockEffect,
             createdBy: session.user.id,
           })
           .returning({ id: inventoryMovements.id });
@@ -956,6 +967,7 @@ export async function cancelPurchase(
           purchaseItem: purchaseItems,
           movementQtyDeltaDecimal: inventoryMovements.qtyDeltaDecimal,
           movementUnitCost: inventoryMovements.unitCostAtMovement,
+          movementSkippedStock: inventoryMovements.skippedStockUpdate,
         })
         .from(purchaseItems)
         .leftJoin(
@@ -964,7 +976,18 @@ export async function cancelPurchase(
         )
         .where(eq(purchaseItems.purchaseId, v.id));
 
-      for (const { purchaseItem: item, movementQtyDeltaDecimal, movementUnitCost } of items) {
+      for (const {
+        purchaseItem: item,
+        movementQtyDeltaDecimal,
+        movementUnitCost,
+        movementSkippedStock,
+      } of items) {
+        /* Sesi AE-173 — kalau movement original TIDAK menambah stok
+         * (skippedStockUpdate: backdate ATAU mode periodic), JANGAN kurangi
+         * stok saat cancel — tidak ada yang perlu dibalik. Memperbaiki bug
+         * laten cancel-backdate sekaligus mendukung mode periodic. */
+        if (movementSkippedStock) continue;
+
         const [ing] = await tx
           .select()
           .from(ingredients)
