@@ -133,10 +133,10 @@ export function MenuLayoutSwitcher({
  *  column counts so menu cards aren't cramped on 1340×800 with right cart open. */
 export const LAYOUT_GRID_CLASS: Record<MenuLayoutMode, string> = {
   compact:
-    "grid grid-cols-3 gap-2 sm:grid-cols-4 tablet-landscape:grid-cols-5 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7",
+    "grid grid-cols-3 gap-2 sm:grid-cols-4 tablet-landscape:grid-cols-5 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 3xl:grid-cols-8",
   normal:
-    "grid grid-cols-2 gap-3 sm:grid-cols-3 tablet-landscape:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5",
+    "grid grid-cols-2 gap-3 sm:grid-cols-3 tablet-landscape:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6",
   comfy:
-    "grid grid-cols-1 gap-3 sm:grid-cols-2 tablet-landscape:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4",
+    "grid grid-cols-1 gap-3 sm:grid-cols-2 tablet-landscape:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5",
   list: "flex flex-col gap-2",
 };

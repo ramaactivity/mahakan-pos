@@ -274,6 +274,9 @@ export function PosShell() {
 
   const [tab, setTab] = useState<PosTab>("cashier");
   const [rightPanel, setRightPanel] = useState<RightPanelState>({ kind: "idle" });
+  /* Sesi AE-172 — di HP (<sm) kolom cart jadi drawer overlay supaya kolom menu
+   * dapat lebar penuh; state ini inert di tablet/desktop (kelas max-sm: only). */
+  const [mobileCartOpen, setMobileCartOpen] = useState(false);
   const [openBillsCount, setOpenBillsCount] = useState(0);
   // Phase 2.2 (sesi AB) — derived from outlet.operationalHours[today].closeTime
   // when the outlet config loads; null if outlet operates 24h or hari ini tutup.
@@ -320,6 +323,9 @@ export function PosShell() {
   const total = useCartStore((s) =>
     activeDraftId ? s.getTotal(activeDraftId) : 0,
   );
+  // Sesi AE-172 — jumlah item di keranjang aktif, buat badge FAB drawer HP.
+  const mobileCartCount =
+    activeDraft?.items.reduce((n, it) => n + it.quantity, 0) ?? 0;
   const addItem = useCartStore((s) => s.addItem);
   const updateQuantity = useCartStore((s) => s.updateQuantity);
   const removeItem = useCartStore((s) => s.removeItem);
@@ -1192,6 +1198,7 @@ export function PosShell() {
     }
     setRightPanel({ kind: "idle" });
     setHistoryRefreshKey((k) => k + 1);
+    setMobileCartOpen(false); // sesi AE-172 — tutup drawer HP setelah transaksi
   }
 
   async function handleLogout() {
@@ -1203,7 +1210,7 @@ export function PosShell() {
   return (
     <div
       data-pos-kiosk
-      className="flex h-[calc(100vh-4rem)] w-full max-w-full overflow-hidden bg-neutral-50 touch:h-[calc(100vh-3.5rem)]"
+      className="flex h-[calc(100dvh-4rem)] w-full max-w-full overflow-hidden bg-neutral-50 touch:h-[calc(100dvh-3.5rem)]"
     >
       <PosLeftNav
         activeTab={tab}
@@ -1320,7 +1327,40 @@ export function PosShell() {
        * back to Kasir.
        */}
       {tab === "cashier" ? (
-        <aside className="flex w-[280px] shrink-0 flex-col overflow-hidden border-l border-neutral-200 bg-white sm:w-[320px] tablet-landscape:w-[300px] lg:w-[360px] xl:w-[380px]">
+        <>
+          {/* Sesi AE-172 — backdrop drawer (HP only). Tap di luar = tutup. */}
+          {mobileCartOpen ? (
+            <button
+              type="button"
+              aria-label="Tutup keranjang"
+              onClick={() => setMobileCartOpen(false)}
+              className="fixed inset-0 z-40 bg-black/40 sm:hidden"
+            />
+          ) : null}
+          <aside
+            className={cn(
+              "flex w-[280px] shrink-0 flex-col overflow-hidden border-l border-neutral-200 bg-white sm:w-[320px] tablet-landscape:w-[300px] lg:w-[360px] xl:w-[380px] 2xl:w-[400px] 3xl:w-[440px]",
+              // HP (<sm): overlay drawer dari kanan; geser keluar saat tertutup.
+              "max-sm:fixed max-sm:inset-y-0 max-sm:right-0 max-sm:z-50 max-sm:w-[88vw] max-sm:max-w-[360px] max-sm:border-l-0 max-sm:shadow-2xl max-sm:transition-transform max-sm:duration-300",
+              mobileCartOpen
+                ? "max-sm:translate-x-0"
+                : "max-sm:translate-x-full",
+            )}
+          >
+          {/* HP only — header tutup drawer */}
+          <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-2.5 sm:hidden">
+            <span className="text-sm font-semibold text-neutral-800">
+              Keranjang
+            </span>
+            <button
+              type="button"
+              onClick={() => setMobileCartOpen(false)}
+              aria-label="Tutup keranjang"
+              className="flex size-9 items-center justify-center rounded-lg text-neutral-500 hover:bg-neutral-100"
+            >
+              <X className="size-5" aria-hidden />
+            </button>
+          </div>
           {rightPanel.kind === "idle" ? (
             <IdlePanel
               drafts={drafts}
@@ -1368,7 +1408,25 @@ export function PosShell() {
               userRole={session.user.role}
             />
           ) : null}
-        </aside>
+          </aside>
+          {/* Sesi AE-172 — FAB buka keranjang (HP only). Badge jumlah item +
+           * total biar kasir tahu isi keranjang tanpa buka drawer. */}
+          {!mobileCartOpen ? (
+            <button
+              type="button"
+              onClick={() => setMobileCartOpen(true)}
+              aria-label="Buka keranjang"
+              className="fixed bottom-4 right-4 z-30 flex items-center gap-2 rounded-full bg-mahakan-green-700 px-5 py-3 text-white shadow-lg active:scale-95 sm:hidden"
+            >
+              <ShoppingCart className="size-5 shrink-0" aria-hidden />
+              <span className="text-sm font-semibold">
+                {mobileCartCount > 0
+                  ? `${mobileCartCount} · ${formatRupiah(total)}`
+                  : "Keranjang"}
+              </span>
+            </button>
+          ) : null}
+        </>
       ) : null}
 
       {/* Sesi AE-63 phase2 P2.2 — semua 15 modal di-lazy-load dalam Suspense
@@ -1727,8 +1785,8 @@ function CashierMiddle({
         onUnpin={onUnpinFavorite}
       />
       <header className="flex flex-col gap-3 border-b border-neutral-200 bg-white p-4">
-        <div className="flex items-center gap-3">
-          <div className="flex-1">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex-1 max-sm:basis-full">
             <Input
               type="text"
               value={searchQuery}
@@ -1751,7 +1809,7 @@ function CashierMiddle({
           <MenuSortSelect
             mode={sortMode}
             onChange={setSortMode}
-            className="w-44 shrink-0"
+            className="w-44 shrink-0 max-sm:w-auto max-sm:flex-1"
           />
           <MenuLayoutSwitcher mode={layoutMode} onChange={setLayoutMode} />
         </div>

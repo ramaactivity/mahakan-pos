@@ -47,6 +47,11 @@
      `touch:` custom variant below for accurate device targeting. */
   --breakpoint-tablet: 48rem;     /* 768px — tablet portrait+ */
   --breakpoint-tablet-lg: 80rem;  /* 1280px — tablet landscape baseline */
+
+  /* Sesi AE-172 — large-desktop step. A7 Lite landscape (1340px) never reaches
+     2xl (1536px), so `2xl:`/`3xl:` are safe to widen layouts on big monitors
+     WITHOUT touching tablet-first behaviour (sm/md/lg/xl/tablet-landscape). */
+  --breakpoint-3xl: 120rem;       /* 1920px — full-HD desktop & ultrawide */
 }
 
 /* Touch-device variant — POS tablet, kiosk, mobile (pointer: coarse). */
