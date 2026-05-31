@@ -72,6 +72,83 @@ export function resolveUnit(unit: string | null | undefined): UnitMeta | null {
   return null;
 }
 
+/**
+ * Sesi AE-173 — Label satuan KANONIK untuk DISPLAY + value dropdown.
+ * Case-tolerant: "kg"/"KG"/"Kg" → "Kg", "g"/"gr"/"Gr" → "gr",
+ * "ml"/"ML" → "ml", "pcs"/"Pcs" → "Pcs". Label custom yang tak dikenal
+ * UNIT_TABLE (mis. "botol", "galon", "Karung") dikembalikan apa adanya
+ * (trim) supaya konversi pack tetap match.
+ *
+ * BEDA dgn normalizeUnitLabel (lowercase + strip plural, dipakai dedup
+ * internal opname). `displayUnit` = bentuk tampilan RESMI (UNIT_TABLE label)
+ * — dipakai di SEMUA dropdown & teks satuan biar konsisten + tak pernah blank.
+ */
+export function displayUnit(u: string | null | undefined): string {
+  if (!u) return "";
+  return resolveUnit(u)?.label ?? u.trim();
+}
+
+/** Sesi AE-173 — daftar satuan umum KANONIK (1 sumber untuk semua form
+ *  belanja/opname/bahan). Registry units pakai label UNIT_TABLE; discrete
+ *  custom (galon/kaleng/dst) lowercase konsisten. */
+export const CANONICAL_UNIT_PRESETS = [
+  "Kg",
+  "gr",
+  "L",
+  "ml",
+  "Pcs",
+  "Lusin",
+  "Btl",
+  "Pack",
+  "Bks",
+  "Krat",
+  "Karton",
+  "Box",
+  "Sdm",
+  "Sdt",
+  "galon",
+  "kaleng",
+  "dus",
+  "sachet",
+  "renceng",
+  "bal",
+  "pail",
+  "ikat",
+  "kotak",
+  "tabung",
+  "roll",
+  "set",
+  "pax",
+] as const;
+
+/**
+ * Sesi AE-173 — Bangun options dropdown satuan yang DIJAMIN tak pernah blank.
+ * Semua value dikanonikkan via `displayUnit` + dedup case-insensitive, dan
+ * nilai terpilih (`current`) selalu diikutkan paling depan. Return juga
+ * `value` (bentuk kanonik dari current) untuk dipasang ke <Select value=...>.
+ */
+export function buildUnitSelectOptions(args: {
+  presets?: ReadonlyArray<string>;
+  packLabels?: ReadonlyArray<string>;
+  current?: string | null;
+}): { options: Array<{ value: string; label: string }>; value: string } {
+  const seen = new Set<string>();
+  const out: Array<{ value: string; label: string }> = [];
+  const add = (raw: string | null | undefined) => {
+    const v = displayUnit(raw);
+    if (!v) return;
+    const k = v.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ value: v, label: v });
+  };
+  const current = displayUnit(args.current);
+  if (current) add(current);
+  for (const p of args.packLabels ?? []) add(p);
+  for (const p of args.presets ?? []) add(p);
+  return { options: out, value: current };
+}
+
 /** Convert qty `from` unit `to` unit. Returns null kalau dimensi beda
  *  atau salah satu unit unknown / discrete. */
 export function convertQty(

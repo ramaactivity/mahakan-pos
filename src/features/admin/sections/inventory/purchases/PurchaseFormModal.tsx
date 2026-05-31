@@ -32,17 +32,19 @@ import { lookupMarketPriceForPurchase } from "@/features/market-list";
 import { getLastFinalizedOpname } from "@/features/stock-opname";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import {
+  buildUnitSelectOptions,
+  CANONICAL_UNIT_PRESETS,
   classifyPurchaseAgainstOpname,
   convertPurchaseQty,
   convertQty,
+  displayUnit,
   jakartaDateIso,
-  resolveUnit,
-  scaleCostOnUnitChange,
   shouldSkipStockUpdate,
   type BackdateStatus,
   type IngredientPackConversion,
   type PackInfo,
 } from "@/lib/unit-conversion";
+import { applyUnitChange } from "./purchase-line-helpers";
 import { cn } from "@/lib/utils";
 
 interface PurchaseFormModalProps {
@@ -95,22 +97,6 @@ function newRow(): ItemRow {
 // Sesi AE — list satuan umum yang staff Mahakan biasa pakai. Master unit
 // dari ingredient akan otomatis pre-select; staff bisa override per-line
 // (mis. master "Kg", staff input "gr" untuk belanja kecil).
-const COMMON_UNITS = [
-  "Kg",
-  "gr",
-  "L",
-  "ml",
-  "Btl",
-  "Pcs",
-  "Packs",
-  "Bks",
-  "Krat",
-  "Lusin",
-  "Sdm",
-  "Sdt",
-  "Karton",
-] as const;
-
 /* Sesi AE-129 — localStorage draft autosave. Anisa feedback: saat sedang
  * catat pembelian sering perlu keluar modal untuk tambah ingredient ke
  * Market List dulu — data form ke-reset semua. Draft autosave (debounced
@@ -212,23 +198,8 @@ function draftSummary(d: PurchaseDraftPayload): string {
   return parts.length > 0 ? parts.join(" · ") : "draft kosong";
 }
 
-function buildUnitOptions(
-  masterUnit: string | undefined,
-  ingredientPacks?: IngredientPackConversion[] | null,
-): Array<{ value: string; label: string }> {
-  const set = new Set<string>(COMMON_UNITS);
-  if (masterUnit) set.add(masterUnit);
-  /* Sesi AE-62af — include ingredient-scoped pack conversions (mis. "packs"
-   * untuk Lychee Kaleng yang master pcs). Tanpa ini, staff tidak bisa pilih
-   * "packs" saat catat pembelian walau sudah set di Edit Satuan Bahan. */
-  if (ingredientPacks && ingredientPacks.length > 0) {
-    for (const p of ingredientPacks) {
-      const label = p.unitLabel.trim();
-      if (label.length > 0) set.add(label);
-    }
-  }
-  return Array.from(set).map((u) => ({ value: u, label: u }));
-}
+/* Sesi AE-173 — buildUnitOptions lama diganti buildUnitSelectOptions (kanonik
+ * + anti-blank, 1 sumber lintas form). Lihat src/lib/unit-conversion.ts. */
 
 function parseQtyDecimal(s: string): number {
   // Accept koma OR titik sebagai decimal separator (staff Indo biasa pakai
@@ -617,42 +588,20 @@ export function PurchaseFormModal({
     setItems((prev) =>
       prev.map((r) => {
         if (r.id !== rowId) return r;
-        /* Sesi AE-78 — kalau row di mode "total", harga per satuan adalah
-         * derived dari total/qty. Total tidak perlu di-scale (ngga ada
-         * unit dimension untuk total). Cuma re-derive harga supaya
-         * tampilannya match unit baru.
-         *
-         * Kalau row di mode "unit" (default), scale harga sama unit
-         * (existing AE-63 phase6 behavior). */
-        if (r.inputMode === "total") {
-          const qtyN = parseQtyDecimal(r.qty);
-          const totalN = parseTotalSafe(r.total);
-          const newCost =
-            Number.isFinite(qtyN) && qtyN > 0 && totalN >= 0
-              ? String(Math.round(totalN / qtyN))
-              : r.unitCost;
-          return { ...r, unit: newUnit, unitCost: newCost };
-        }
-        const scaledRaw = scaleCostOnUnitChange({
-          oldUnit: r.unit,
+        /* Sesi AE-173 — ganti satuan: konversi QTY + scale harga (pure helper
+         * applyUnitChange) supaya jumlah fisik & total tetap. Dulu cuma harga
+         * yang di-scale, qty dibiarkan → total salah saat Kg↔gr. */
+        const result = applyUnitChange(
+          {
+            qty: r.qty,
+            unitCost: r.unitCost,
+            total: r.total,
+            inputMode: r.inputMode,
+          },
+          r.unit,
           newUnit,
-          oldCost: parseRupiahSafe(r.unitCost),
-        });
-        if (scaledRaw === null) {
-          return { ...r, unit: newUnit };
-        }
-        const newCost = String(Math.round(scaledRaw));
-        const qtyN = parseQtyDecimal(r.qty);
-        const newTotal =
-          Number.isFinite(qtyN) && qtyN > 0
-            ? String(Math.round(qtyN * scaledRaw))
-            : r.total;
-        return {
-          ...r,
-          unit: newUnit,
-          unitCost: newCost,
-          total: newTotal,
-        };
+        );
+        return { ...r, unit: newUnit, ...result };
       }),
     );
   }
@@ -688,7 +637,7 @@ export function PurchaseFormModal({
     const belanjaPerCogs = ing.unitBelanjaPerCogs
       ? parseFloat(ing.unitBelanjaPerCogs)
       : null;
-    const defaultUnit = belanjaUnit || ing.unit;
+    const defaultUnit = displayUnit(belanjaUnit || ing.unit);
     const costScale =
       belanjaUnit && belanjaPerCogs && belanjaPerCogs > 0
         ? belanjaPerCogs
@@ -1237,11 +1186,21 @@ export function PurchaseFormModal({
                 const hasQty = Number.isFinite(qtyN) && qtyN > 0;
                 const lineTotal =
                   hasQty && costN >= 0 ? Math.round(qtyN * costN) : 0;
-                const unit = row.unit || ing?.unit || "";
                 const ingredientPacks =
                   (ing?.packConversions ??
                     null) as IngredientPackConversion[] | null;
-                const unitOptions = buildUnitOptions(ing?.unit, ingredientPacks);
+                /* Sesi AE-173 — dropdown satuan KANONIK + anti-blank. */
+                const { options: unitOptions, value: unit } =
+                  buildUnitSelectOptions({
+                    presets: CANONICAL_UNIT_PRESETS,
+                    packLabels: [
+                      ing?.unit ?? "",
+                      ing?.unitBelanja ?? "",
+                      ing?.unitTracking ?? "",
+                      ...(ingredientPacks?.map((p) => p.unitLabel) ?? []),
+                    ],
+                    current: row.unit || ing?.unit || "",
+                  });
                 /* Sesi AE-43 — preview konversi qty → master unit. Hanya
                  * compute kalau ada ingredient + qty valid + unit beda
                  * dari master. Server akan re-validate, tapi UI feedback
@@ -1256,9 +1215,7 @@ export function PurchaseFormModal({
                         ingredientPacks,
                       })
                     : null;
-                const masterLabel = ing
-                  ? resolveUnit(ing.unit)?.label ?? ing.unit
-                  : "";
+                const masterLabel = ing ? displayUnit(ing.unit) : "";
                 const unitChanged =
                   ing && unit && unit !== ing.unit && unit !== masterLabel;
                 /* Sesi AE-63 phase6 — equivalent harga per master unit

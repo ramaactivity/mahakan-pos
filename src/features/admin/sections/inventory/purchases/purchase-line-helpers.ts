@@ -6,7 +6,11 @@
  * Helper ini pure (no DOM / no server). Aman di-import dari client.
  */
 
-import type { IngredientPackConversion } from "@/lib/unit-conversion";
+import {
+  convertQty,
+  scaleCostOnUnitChange,
+  type IngredientPackConversion,
+} from "@/lib/unit-conversion";
 import { parseRupiah } from "@/lib/format";
 
 /* Sesi AE — list satuan umum yang staff Mahakan biasa pakai.  Master
@@ -240,4 +244,54 @@ export function applyQtyChange(
     };
   }
   return { ...row, qty: newQty };
+}
+
+/**
+ * Sesi AE-173 — Recompute row saat user GANTI SATUAN di form pembelian.
+ *
+ * Bug yang diperbaiki: dulu ganti satuan cuma scale HARGA, qty dibiarkan →
+ * mis. 5.726 Kg diganti ke gr → qty tetap 5.726 (harusnya 5726) → total
+ * salah (Rp 326 bukan Rp 326.382). Sekarang QTY ikut dikonversi.
+ *
+ * Aturan:
+ *  - Same-dimension (Kg↔gr, L↔ml): qty dikonversi (×/÷ faktor) + harga
+ *    di-scale terbalik → jumlah fisik & TOTAL tetap (invariant).
+ *  - Beda dimensi / label custom (convertQty null): qty dibiarkan, cuma
+ *    label satuan yang ganti (harga di-scale kalau bisa, else apa adanya).
+ *  - Mode "total": total dikunci, harga = total ÷ qty-baru.
+ */
+export function applyUnitChange(
+  row: SmartMathRow,
+  oldUnit: string,
+  newUnit: string,
+): SmartMathRow {
+  const qtyN = parsePurchaseQty(row.qty);
+  const converted =
+    row.qty.trim() !== "" && Number.isFinite(qtyN) && oldUnit
+      ? convertQty(qtyN, oldUnit, newUnit)
+      : null;
+  const newQty = converted !== null ? formatPurchaseQty(converted) : row.qty;
+  const qtyForCalc = parsePurchaseQty(newQty);
+
+  if (row.inputMode === "total") {
+    const totalN = parseTotalRupiah(row.total);
+    const newCost =
+      Number.isFinite(qtyForCalc) && qtyForCalc > 0 && totalN >= 0
+        ? String(Math.round(totalN / qtyForCalc))
+        : row.unitCost;
+    return { ...row, qty: newQty, unitCost: newCost };
+  }
+
+  const scaled = scaleCostOnUnitChange({
+    oldUnit,
+    newUnit,
+    oldCost: parseRupiahSafe(row.unitCost),
+  });
+  const newCost = scaled !== null ? String(Math.round(scaled)) : row.unitCost;
+  const costForCalc = parseRupiahSafe(newCost);
+  const newTotal =
+    Number.isFinite(qtyForCalc) && qtyForCalc > 0 && costForCalc >= 0
+      ? String(Math.round(qtyForCalc * costForCalc))
+      : row.total;
+  return { ...row, qty: newQty, unitCost: newCost, total: newTotal };
 }

@@ -45,17 +45,18 @@ import {
 } from "@/features/inventory";
 import { formatRupiah } from "@/lib/format";
 import {
+  buildUnitSelectOptions,
+  CANONICAL_UNIT_PRESETS,
   convertPurchaseQty,
   convertQty,
-  resolveUnit,
-  scaleCostOnUnitChange,
+  displayUnit,
   type IngredientPackConversion,
 } from "@/lib/unit-conversion";
 import {
   applyQtyChange,
   applyTotalChange,
+  applyUnitChange,
   applyUnitCostChange,
-  buildPurchaseUnitOptions,
   computePrLineDefault,
   formatPurchaseQty,
   parsePurchaseQty,
@@ -209,7 +210,7 @@ export function CreatePurchaseFromPrModal({
             prUnit: i.unit,
             outstandingQty: i.outstandingQty,
             qty: formatPurchaseQty(d.qty),
-            unit: d.unit,
+            unit: displayUnit(d.unit),
             unitCost: d.unitCost > 0 ? String(d.unitCost) : "",
             total,
             inputMode: "unit" as SmartMathInputMode,
@@ -297,40 +298,19 @@ export function CreatePurchaseFromPrModal({
     setItems((prev) => {
       const next = [...prev];
       const row = next[idx];
-      /* Sesi AE-63 phase6 — scale harga saat ganti unit (same dimension
-       * like Kg↔gr). Defensive: kalau mode "total", harga = derived
-       * dari total/qty, tidak perlu di-scale terpisah. */
-      if (row.inputMode === "total") {
-        const qtyN = parsePurchaseQty(row.qty);
-        const totalN = parseTotalRupiah(row.total);
-        const newCost =
-          Number.isFinite(qtyN) && qtyN > 0 && totalN >= 0
-            ? String(Math.round(totalN / qtyN))
-            : row.unitCost;
-        next[idx] = { ...row, unit: newUnit, unitCost: newCost };
-        return next;
-      }
-      const scaledRaw = scaleCostOnUnitChange({
-        oldUnit: row.unit,
+      /* Sesi AE-173 — ganti satuan: konversi QTY + scale harga (lewat pure
+       * helper applyUnitChange) supaya jumlah fisik & total tetap. */
+      const result = applyUnitChange(
+        {
+          qty: row.qty,
+          unitCost: row.unitCost,
+          total: row.total,
+          inputMode: row.inputMode,
+        },
+        row.unit,
         newUnit,
-        oldCost: parseRupiahSafe(row.unitCost),
-      });
-      if (scaledRaw === null) {
-        next[idx] = { ...row, unit: newUnit };
-        return next;
-      }
-      const newCost = String(Math.round(scaledRaw));
-      const qtyN = parsePurchaseQty(row.qty);
-      const newTotal =
-        Number.isFinite(qtyN) && qtyN > 0
-          ? String(Math.round(qtyN * scaledRaw))
-          : row.total;
-      next[idx] = {
-        ...row,
-        unit: newUnit,
-        unitCost: newCost,
-        total: newTotal,
-      };
+      );
+      next[idx] = { ...row, unit: newUnit, ...result };
       return next;
     });
   }
@@ -355,7 +335,9 @@ export function CreatePurchaseFromPrModal({
          * request" apple-to-apple (mis. 5.726 Kg vs 5.726 Kg, bukan vs 5726 g). */
         const belanja = readBelanjaTier(ing);
         const outstandingInUnit =
-          belanja.perCogs != null && chosenUnit === belanja.unit
+          belanja.perCogs != null &&
+          belanja.unit != null &&
+          displayUnit(chosenUnit) === displayUnit(belanja.unit)
             ? it.outstandingQty / belanja.perCogs
             : it.outstandingQty;
         return {
@@ -924,15 +906,24 @@ function PurchaseLineRow({
   const costN = parseRupiahSafe(row.unitCost);
   const hasQty = Number.isFinite(qtyN) && qtyN > 0;
   const lineTotal = hasQty && costN >= 0 ? Math.round(qtyN * costN) : 0;
-  const unit = row.unit || ingredient?.unit || row.prUnit;
   const masterUnit = ingredient?.unit ?? row.prUnit;
   const ingredientPacks =
     (ingredient?.packConversions ??
       null) as IngredientPackConversion[] | null;
-  const unitOptions = buildPurchaseUnitOptions(masterUnit, ingredientPacks);
-  const masterLabel = ingredient
-    ? (resolveUnit(ingredient.unit)?.label ?? ingredient.unit)
-    : masterUnit;
+  /* Sesi AE-173 — dropdown satuan KANONIK + anti-blank: value & options
+   * selalu pakai label kanonik (mis. "kg" tersimpan → tampil "Kg"), dan
+   * nilai terpilih dijamin selalu ada di options. */
+  const { options: unitOptions, value: unit } = buildUnitSelectOptions({
+    presets: CANONICAL_UNIT_PRESETS,
+    packLabels: [
+      masterUnit,
+      ingredient?.unitBelanja ?? "",
+      ingredient?.unitTracking ?? "",
+      ...(ingredientPacks?.map((p) => p.unitLabel) ?? []),
+    ],
+    current: row.unit || ingredient?.unit || row.prUnit,
+  });
+  const masterLabel = displayUnit(ingredient?.unit ?? masterUnit);
   const unitChanged =
     !!ingredient &&
     !!unit &&
