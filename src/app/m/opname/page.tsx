@@ -715,7 +715,7 @@ function LineRow({
           className="flex-1 rounded-md border border-neutral-300 bg-white px-3 py-2 text-base font-mono tabular-nums text-neutral-900 placeholder:text-neutral-400 focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
         />
         {canPickUnit ? (
-          <div className="w-[88px] flex-none">
+          <div className="w-[116px] flex-none">
             <Select
               size="md"
               ariaLabel={`Satuan ${line.ingredient.name}`}
@@ -733,11 +733,23 @@ function LineRow({
             />
           </div>
         ) : (
-          <span className="flex shrink-0 items-center rounded-md border border-neutral-200 bg-neutral-50 px-3 text-sm font-medium text-neutral-700">
+          <span className="flex w-[72px] shrink-0 items-center justify-center rounded-md border border-neutral-200 bg-neutral-50 px-2 text-sm font-medium text-neutral-700">
             {masterUnit}
           </span>
         )}
       </div>
+
+      {/* Sesi AE-173 — tandai kosong/habis (parity dengan back office). */}
+      <button
+        type="button"
+        onClick={() => {
+          onChange("0");
+          onBlur("0");
+        }}
+        className="mt-2 inline-flex items-center gap-1 rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 transition-colors active:scale-95 hover:border-mahakan-green-700 hover:bg-mahakan-green-50 hover:text-mahakan-green-700"
+      >
+        Tandai kosong / habis (0)
+      </button>
       {/* Auto-convert preview — staff lihat hasil conversion sebelum save. */}
       {parsedActual !== null &&
       inputUnit !== masterUnit &&

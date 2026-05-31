@@ -1030,9 +1030,10 @@ function CountRow({
   const packAlts = ctx.options.filter((o) => o.source === "pack-alt");
 
   return (
-    <li className="flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-neutral-50/40 sm:flex-row sm:items-start sm:gap-5">
-      {/* LEFT: status + name + chips + flow */}
-      <div className="flex flex-1 items-start gap-3 min-w-0">
+    <li className="flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-neutral-50/40 sm:flex-row sm:items-start sm:gap-6">
+      {/* LEFT: status + name + chips + flow — di-cap supaya input tidak
+          terdorong mepet ke tepi kanan (area tengah kepakai). */}
+      <div className="flex flex-1 items-start gap-3 min-w-0 sm:max-w-[560px]">
         <div
           className={cn(
             "mt-1 flex size-7 flex-none items-center justify-center rounded-full text-xs font-bold",
@@ -1194,7 +1195,7 @@ function CountRow({
             value={state.primaryInput}
             onChange={(e) => onPrimaryChange(e.target.value)}
             className={cn(
-              "h-12 flex-1 rounded-md border bg-white px-3 text-right font-mono text-lg tabular-nums shadow-sm transition focus:outline-none focus:ring-2",
+              "h-12 min-w-0 flex-1 rounded-md border bg-white px-3 text-right font-mono text-lg tabular-nums shadow-sm transition focus:outline-none focus:ring-2",
               state.status === "error"
                 ? "border-danger-500 focus:ring-danger-500"
                 : "border-neutral-300 focus:border-mahakan-green-700 focus:ring-mahakan-green-700/40",
@@ -1202,7 +1203,7 @@ function CountRow({
             data-testid={`count-input-${ingredientId}`}
           />
           {canPickUnit ? (
-            <div className="w-[96px] flex-none">
+            <div className="w-[116px] flex-none">
               <Select
                 size="md"
                 ariaLabel={`Satuan ${name}`}
@@ -1217,45 +1218,44 @@ function CountRow({
               />
             </div>
           ) : (
-            <span className="flex h-12 w-[60px] flex-none items-center justify-center rounded-md border border-neutral-200 bg-neutral-50 text-sm font-medium text-neutral-700">
+            <span className="flex h-12 w-[72px] flex-none items-center justify-center rounded-md border border-neutral-200 bg-neutral-50 text-sm font-medium text-neutral-700">
               {ctx.recipeUnit}
             </span>
           )}
-          <div
-            className="flex w-5 flex-none items-center justify-center"
-            aria-live="polite"
-          >
-            {state.status === "saving" ? (
-              <Loader2
-                className="size-4 animate-spin text-neutral-400"
-                aria-label="Menyimpan"
-              />
-            ) : state.status === "saved" ? (
-              <Check
-                className="size-5 text-mahakan-green-700"
-                aria-label="Tersimpan"
-              />
-            ) : state.status === "error" ? (
-              <AlertCircle
-                className="size-5 text-danger-500"
-                aria-label="Gagal"
-              />
-            ) : null}
-          </div>
         </div>
 
-        {/* Sesi AE-173 — tandai kosong/habis: set actual=0 supaya TETAP tercatat
-            sudah diopname walau stoknya nol (bukan "belum dihitung"). */}
-        <button
-          type="button"
-          onClick={() => {
-            onLooseChange("");
-            onPrimaryChange("0");
-          }}
-          className="self-end rounded text-[11px] font-medium text-neutral-500 underline-offset-2 hover:text-mahakan-green-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700/40"
-        >
-          Tandai kosong / habis (0)
-        </button>
+        {/* Status (di DALAM zona, tidak floating di tepi) + tombol tandai kosong. */}
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px]" aria-live="polite">
+            {state.status === "saving" ? (
+              <span className="inline-flex items-center gap-1 text-neutral-400">
+                <Loader2 className="size-3.5 animate-spin" /> Menyimpan…
+              </span>
+            ) : state.status === "saved" || counted ? (
+              <span className="inline-flex items-center gap-1 font-medium text-mahakan-green-700">
+                <Check className="size-3.5" /> Tersimpan
+              </span>
+            ) : state.status === "error" ? (
+              <span className="inline-flex items-center gap-1 font-medium text-danger-500">
+                <AlertCircle className="size-3.5" /> Gagal
+              </span>
+            ) : (
+              <span className="text-neutral-400">Belum dihitung</span>
+            )}
+          </span>
+          {/* Sesi AE-173 — tandai kosong/habis: set actual=0 → tetap tercatat
+              sudah diopname walau nol. Tombol jelas (bukan link samar). */}
+          <button
+            type="button"
+            onClick={() => {
+              onLooseChange("");
+              onPrimaryChange("0");
+            }}
+            className="inline-flex flex-none items-center gap-1 rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-[11px] font-medium text-neutral-600 transition-colors hover:border-mahakan-green-700 hover:bg-mahakan-green-50 hover:text-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700/40"
+          >
+            Tandai kosong (0)
+          </button>
+        </div>
 
         {/* Loose input — only when primary unit != recipe AND ratio > 1.
             Pakai untuk kasus pack tidak full (Yakult 3 pack + 2 pcs lepas). */}
