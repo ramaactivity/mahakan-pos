@@ -29,6 +29,7 @@ import {
   type ShiftWithOpener,
 } from "@/features/shifts";
 import { ShiftRebalanceModal } from "@/features/shifts/components/ShiftRebalanceModal";
+import { PosPanelSkeleton } from "./PanelSkeleton";
 import { listTransactions, isOk } from "@/features/transactions";
 import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
@@ -281,11 +282,8 @@ export function ShiftPanel({
   }, [shift]);
 
   if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <Spinner className="size-6 text-mahakan-green-700" />
-      </div>
-    );
+    /* Sesi AE-171 — skeleton (bukan spinner) supaya mulus di device apa pun. */
+    return <PosPanelSkeleton />;
   }
 
   if (!shift) {

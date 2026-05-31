@@ -7,7 +7,6 @@ import {
   ChevronDown,
   FileText,
   Gift,
-  Loader2,
   MoreHorizontal,
   Percent,
   Plus,
@@ -50,6 +49,7 @@ import {
   useMenuSort,
 } from "@/features/pos/components/MenuSortSelect";
 import { MenuTile } from "@/features/pos/components/MenuTile";
+import { PosPanelSkeleton } from "@/features/pos/components/PanelSkeleton";
 import { PosDashboardView } from "@/features/pos/components/PosDashboardView";
 import { PosLeftNav, type PosTab } from "@/features/pos/components/PosLeftNav";
 
@@ -180,16 +180,11 @@ const ShiftPanel = lazy(() =>
   })),
 );
 
-/* Suspense fallback untuk panel switch (one-time fetch chunk). */
+/* Suspense fallback untuk panel switch (one-time fetch chunk). Sesi AE-171 —
+ * pakai skeleton panel (bukan spinner) supaya pindah tab kerasa mulus + rapi
+ * di device apa pun. */
 function PanelFallback() {
-  return (
-    <div className="flex h-full items-center justify-center p-6">
-      <div className="flex items-center gap-2 text-neutral-500">
-        <Loader2 className="size-5 animate-spin" />
-        <span className="text-sm">Memuat…</span>
-      </div>
-    </div>
-  );
+  return <PosPanelSkeleton />;
 }
 import { buildLineItem, useCartStore } from "@/features/pos/cartStore";
 import { useSession } from "@/features/auth/SessionProvider";
