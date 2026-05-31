@@ -169,6 +169,11 @@ const KasOwnerPanel = lazy(() =>
     default: m.KasOwnerPanel,
   })),
 );
+const GoodsReceivePanel = lazy(() =>
+  import("@/features/pos/components/GoodsReceivePanel").then((m) => ({
+    default: m.GoodsReceivePanel,
+  })),
+);
 const PosSettingsPanel = lazy(() =>
   import("@/features/pos/components/PosSettingsPanel").then((m) => ({
     default: m.PosSettingsPanel,
@@ -1299,6 +1304,8 @@ export function PosShell() {
               <PettyCashPanel />
             ) : tab === "kas" ? (
               <KasOwnerPanel viewerRole={session.user.role} />
+            ) : tab === "goods_receive" ? (
+              <GoodsReceivePanel />
             ) : (
               <PosSettingsPanel
                 shift={shift}

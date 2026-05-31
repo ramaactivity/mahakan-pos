@@ -13,6 +13,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
+  Truck,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
@@ -28,6 +29,7 @@ export type PosTab =
   | "shifts"
   | "petty_cash"
   | "kas"
+  | "goods_receive"
   | "settings";
 
 interface PosLeftNavProps {
@@ -67,6 +69,13 @@ const TABS: TabConfig[] = [
   { key: "shifts", label: "Shift", Icon: Wallet },
   { key: "petty_cash", label: "Petty Cash", Icon: Coins },
   { key: "kas", label: "Kas", Icon: Landmark, gate: "cash_deposit.view" },
+  // Sesi AE-173 — Terima Barang (GR) dari PO. Staff bisa nerima kiriman.
+  {
+    key: "goods_receive",
+    label: "Terima Barang",
+    Icon: Truck,
+    gate: "purchase.goods_receive",
+  },
   { key: "settings", label: "Pengaturan", Icon: Settings },
 ];
 

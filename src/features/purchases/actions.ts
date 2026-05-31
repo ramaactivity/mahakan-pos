@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   expenseCategories,
@@ -13,6 +13,7 @@ import {
   purchaseRequests,
   purchases,
   supplierIngredients,
+  suppliers,
 } from "@/db/schema";
 import { computeNewWac } from "@/features/cogs/cogs-calc";
 import { cascadeCostUpdate } from "@/features/inventory/preparation-flow";
@@ -1490,7 +1491,7 @@ export async function confirmGoodsReceipt(input: {
   id: string;
 }): Promise<ApiResult<{ id: string }>> {
   const session = await requireSession();
-  if (!hasPermission(session.user.role, "purchase.create")) {
+  if (!hasPermission(session.user.role, "purchase.goods_receive")) {
     return fail("FORBIDDEN", "Tidak punya hak terima barang");
   }
   if (!input?.id) return fail("VALIDATION_ERROR", "ID PO tidak valid");
@@ -1901,4 +1902,48 @@ export async function confirmGoodsReceipt(input: {
   }
 
   return ok({ id: input.id });
+}
+
+/**
+ * Sesi AE-173 — daftar PO yang masih 'ordered' (untuk Goods Receive).
+ * Staff-callable (purchase.goods_receive) supaya bisa dipakai dari aplikasi POS.
+ */
+export async function listPendingGoodsReceipts(): Promise<
+  ApiResult<
+    Array<{
+      id: string;
+      purchaseDate: string;
+      supplierName: string | null;
+      paymentMethod: PaymentMethod;
+      totalAmount: number;
+      itemCount: number;
+    }>
+  >
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.goods_receive")) {
+    return fail("FORBIDDEN", "Tidak punya hak terima barang");
+  }
+  const rows = await db
+    .select({
+      id: purchases.id,
+      purchaseDate: purchases.purchaseDate,
+      supplierName: suppliers.name,
+      paymentMethod: purchases.paymentMethod,
+      totalAmount: purchases.totalAmount,
+      itemCount: sql<number>`(
+        select count(*)::int from ${purchaseItems}
+        where ${purchaseItems.purchaseId} = ${purchases.id}
+      )`,
+    })
+    .from(purchases)
+    .leftJoin(suppliers, eq(suppliers.id, purchases.supplierId))
+    .where(
+      and(
+        eq(purchases.outletId, session.user.outletId),
+        eq(purchases.receiptStatus, "ordered"),
+      ),
+    )
+    .orderBy(desc(purchases.purchaseDate), desc(purchases.createdAt));
+  return ok(rows);
 }

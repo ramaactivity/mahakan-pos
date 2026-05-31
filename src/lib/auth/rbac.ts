@@ -322,6 +322,9 @@ export const permissions = {
   "purchase.update": ["owner", "manager"],
   "purchase.cancel": ["owner", "manager"],
   "purchase.mark_paid": ["owner", "manager"],
+  /* Sesi AE-173 — Goods Receive (terima barang dari PO). Owner/Manager di
+   * Back Office + Staff dari aplikasi POS (mereka yang sering nerima kiriman). */
+  "purchase.goods_receive": ["owner", "manager", "supervisor", "staff"],
 
   // Purchase Requests (Phase 6.5+6.6, sesi AC-3) — list belanja dari kasir
   // saat tutup shift; admin receive di "Permintaan Belanja" section.

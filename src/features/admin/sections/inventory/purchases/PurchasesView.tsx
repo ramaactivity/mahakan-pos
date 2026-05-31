@@ -115,6 +115,9 @@ export function PurchasesView() {
   const canCancel = role
     ? hasPermission(role, "purchase.cancel")
     : false;
+  const canReceive = role
+    ? hasPermission(role, "purchase.goods_receive")
+    : false;
 
   const [items, setItems] = useState<PurchaseListItem[]>([]);
   const sort = useColumnSort("purchases.view", "purchaseDate", "desc");
@@ -452,7 +455,7 @@ export function PurchasesView() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
-                          {canCancel &&
+                          {canReceive &&
                           p.receiptStatus === "ordered" &&
                           p.status !== "cancelled" ? (
                             <Button
