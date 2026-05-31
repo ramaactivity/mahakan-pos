@@ -15,6 +15,8 @@
 import { and, asc, desc, eq, gte, isNull, lt, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  goodsReceiptItems,
+  goodsReceipts,
   ingredients,
   inventoryMovements,
   outlets,
@@ -199,7 +201,53 @@ export async function getCogsReport(args: {
     );
   }
 
-  const purchaseRows = await db
+  /* Sesi AE-173 — Pembelian = barang DITERIMA (GR) di periode. Dua sumber,
+   * tanpa double-count:
+   *  (a) GR receipts (goods_receipt_items) by goods_receipts.received_date —
+   *      mendukung partial (PO 'partial') + atribusi ke tanggal TERIMA.
+   *  (b) Instant purchase (createPurchase, receiptStatus='received', TANPA GR
+   *      record) by purchase_date. */
+  const pembelianByIng = new Map<string, { qty: number; total: number }>();
+
+  // (a) GR receipts dalam periode (by received_date).
+  const grRows = await db
+    .select({
+      ingredientId: goodsReceiptItems.ingredientId,
+      movementQty: inventoryMovements.qtyDeltaDecimal,
+      receivedRaw: goodsReceiptItems.receivedQtyDecimal,
+      totalCost: goodsReceiptItems.totalCost,
+    })
+    .from(goodsReceiptItems)
+    .innerJoin(
+      goodsReceipts,
+      eq(goodsReceipts.id, goodsReceiptItems.goodsReceiptId),
+    )
+    .leftJoin(
+      inventoryMovements,
+      eq(goodsReceiptItems.movementId, inventoryMovements.id),
+    )
+    .where(
+      and(
+        eq(goodsReceipts.outletId, args.outletId),
+        gte(goodsReceipts.receivedDate, period.fromDate),
+        lte(goodsReceipts.receivedDate, period.toDate),
+      ),
+    );
+  for (const r of grRows) {
+    const qty =
+      r.movementQty != null
+        ? Number(r.movementQty)
+        : r.receivedRaw != null
+          ? Number(r.receivedRaw)
+          : 0;
+    const cur = pembelianByIng.get(r.ingredientId) ?? { qty: 0, total: 0 };
+    cur.qty += qty;
+    cur.total += r.totalCost;
+    pembelianByIng.set(r.ingredientId, cur);
+  }
+
+  // (b) Instant purchase (received, TANPA GR record) by purchase_date.
+  const instantRows = await db
     .select({
       ingredientId: purchaseItems.ingredientId,
       movementQtyDeltaDecimal: inventoryMovements.qtyDeltaDecimal,
@@ -219,25 +267,15 @@ export async function getCogsReport(args: {
         gte(purchases.purchaseDate, period.fromDate),
         lte(purchases.purchaseDate, period.toDate),
         sql`${purchases.status} != 'cancelled'`,
-        /* Sesi AE-173 — pembelian = GR (barang sudah diterima). PO yang masih
-         * 'ordered' (belum diterima) TIDAK dihitung sebagai pembelian COGS.
-         * Default 'received' → pembelian instant/legacy tetap masuk. */
         eq(purchases.receiptStatus, "received"),
+        sql`NOT EXISTS (SELECT 1 FROM goods_receipts gr WHERE gr.purchase_id = ${purchases.id})`,
       ),
     );
-
-  const pembelianByIng = new Map<string, { qty: number; total: number }>();
-  for (const r of purchaseRows) {
-    /* Master unit qty — fallback ke purchase_items.qty_decimal kalau
-     * movement row hilang (legacy/corrupt). */
+  for (const r of instantRows) {
     let qty: number;
-    if (r.movementQtyDeltaDecimal !== null && r.movementQtyDeltaDecimal !== undefined) {
-      qty = Number(r.movementQtyDeltaDecimal);
-    } else if (r.qtyDecimalRaw !== null && r.qtyDecimalRaw !== undefined) {
-      qty = Number(r.qtyDecimalRaw);
-    } else {
-      qty = r.qtyBigint;
-    }
+    if (r.movementQtyDeltaDecimal != null) qty = Number(r.movementQtyDeltaDecimal);
+    else if (r.qtyDecimalRaw != null) qty = Number(r.qtyDecimalRaw);
+    else qty = r.qtyBigint;
     const cur = pembelianByIng.get(r.ingredientId) ?? { qty: 0, total: 0 };
     cur.qty += qty;
     cur.total += r.totalCost;
