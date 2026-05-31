@@ -5,10 +5,12 @@ import { db } from "@/db";
 import {
   ingredients,
   inventoryMovements,
+  menuItems,
   recipes,
 } from "@/db/schema";
 import { expandRecipeToAtomicLeaves } from "./preparation-flow";
 import { splitLineForMovement } from "./preparation-flow-pure";
+import { resolveLineCogs } from "./transaction-flow-pure";
 
 /**
  * Internal helper module that links transactions ↔ inventory.
@@ -85,25 +87,31 @@ export async function computeStockFlowForOrder(
 
   const menuItemIds = Array.from(new Set(items.map((i) => i.menuItemId)));
 
-  const recipeRows = await tx
-    .select({
-      id: recipes.id,
-      menuItemId: recipes.menuItemId,
-      variant: recipes.variant,
-      wasteFactorPct: recipes.wasteFactorPct,
-    })
-    .from(recipes)
-    .where(
-      and(
-        inArray(recipes.menuItemId, menuItemIds),
-        eq(recipes.isActive, true),
+  // Sesi AE-173 — ambil HPP manual (menu_items.cost) sejajar dengan resep.
+  // Kalau cost diisi, dia menang jadi COGS (tanpa waste); kalau null fallback
+  // ke COGS resep (perilaku lama). Item tanpa resep TETAP boleh dapat COGS
+  // dari manual cost — jadi jangan early-return sebelum loop.
+  const [recipeRows, menuCostRows] = await Promise.all([
+    tx
+      .select({
+        id: recipes.id,
+        menuItemId: recipes.menuItemId,
+        variant: recipes.variant,
+        wasteFactorPct: recipes.wasteFactorPct,
+      })
+      .from(recipes)
+      .where(
+        and(
+          inArray(recipes.menuItemId, menuItemIds),
+          eq(recipes.isActive, true),
+        ),
       ),
-    );
-
-  if (recipeRows.length === 0) {
-    flow.itemsWithoutRecipe = items.map((i) => i.transactionItemId);
-    return flow;
-  }
+    tx
+      .select({ id: menuItems.id, cost: menuItems.cost })
+      .from(menuItems)
+      .where(inArray(menuItems.id, menuItemIds)),
+  ]);
+  const menuCostById = new Map(menuCostRows.map((r) => [r.id, r.cost]));
 
   // Expand each unique recipe to atomic leaves once + load atomic costs.
   // Sesi AE-34 — parallelize recipe expansion. Sebelumnya sequential await
@@ -112,75 +120,87 @@ export async function computeStockFlowForOrder(
   const recipeKeyToRecipeId = new Map<string, string>();
   const recipeIdToWaste = new Map<string, number>();
   const recipeIdToLeaves = new Map<string, Map<string, number>>();
-  const validRecipes = recipeRows.filter((r) => r.menuItemId !== null);
-  const expandedLeaves = await Promise.all(
-    validRecipes.map((r) => expandRecipeToAtomicLeaves(tx, r.id, outletId)),
-  );
-  for (let i = 0; i < validRecipes.length; i++) {
-    const r = validRecipes[i]!;
-    const key = `${r.menuItemId}|${r.variant ?? ""}`;
-    recipeKeyToRecipeId.set(key, r.id);
-    recipeIdToWaste.set(r.id, r.wasteFactorPct);
-    recipeIdToLeaves.set(r.id, expandedLeaves[i]!);
-  }
+  if (recipeRows.length > 0) {
+    const validRecipes = recipeRows.filter((r) => r.menuItemId !== null);
+    const expandedLeaves = await Promise.all(
+      validRecipes.map((r) => expandRecipeToAtomicLeaves(tx, r.id, outletId)),
+    );
+    for (let i = 0; i < validRecipes.length; i++) {
+      const r = validRecipes[i]!;
+      const key = `${r.menuItemId}|${r.variant ?? ""}`;
+      recipeKeyToRecipeId.set(key, r.id);
+      recipeIdToWaste.set(r.id, r.wasteFactorPct);
+      recipeIdToLeaves.set(r.id, expandedLeaves[i]!);
+    }
 
-  // Collect all atomic ingredient ids touched + load their cost_per_unit.
-  const allLeafIds = new Set<string>();
-  for (const leaves of recipeIdToLeaves.values()) {
-    for (const id of leaves.keys()) allLeafIds.add(id);
-  }
-  if (allLeafIds.size > 0) {
-    const costRows = await tx
-      .select({ id: ingredients.id, costPerUnit: ingredients.costPerUnit })
-      .from(ingredients)
-      .where(inArray(ingredients.id, Array.from(allLeafIds)));
-    for (const r of costRows) {
-      flow.ingredientCostSnapshot.set(r.id, r.costPerUnit);
+    // Collect all atomic ingredient ids touched + load their cost_per_unit.
+    const allLeafIds = new Set<string>();
+    for (const leaves of recipeIdToLeaves.values()) {
+      for (const id of leaves.keys()) allLeafIds.add(id);
+    }
+    if (allLeafIds.size > 0) {
+      const costRows = await tx
+        .select({ id: ingredients.id, costPerUnit: ingredients.costPerUnit })
+        .from(ingredients)
+        .where(inArray(ingredients.id, Array.from(allLeafIds)));
+      for (const r of costRows) {
+        flow.ingredientCostSnapshot.set(r.id, r.costPerUnit);
+      }
     }
   }
 
-  // Per-item: scale leaves × quantity, accumulate deductions + COGS.
+  // Per-item: hitung COGS resep + deduksi (kalau ada resep), lalu biarkan
+  // resolveLineCogs memutuskan manual-cost-menang. Deduksi stok SELALU dari
+  // resep (manual cost cuma override angka COGS, bukan qty fisik).
   for (const item of items) {
+    const manualCost = menuCostById.get(item.menuItemId) ?? null;
     const key = `${item.menuItemId}|${item.variant ?? ""}`;
     const recipeId = recipeKeyToRecipeId.get(key);
-    if (!recipeId) {
-      flow.itemsWithoutRecipe.push(item.transactionItemId);
-      flow.itemCogsByTrxItemId.set(item.transactionItemId, 0);
-      continue;
-    }
-    const leaves = recipeIdToLeaves.get(recipeId);
-    const wasteFactor = recipeIdToWaste.get(recipeId) ?? 30;
-    if (!leaves || leaves.size === 0) {
-      flow.itemsWithoutRecipe.push(item.transactionItemId);
-      flow.itemCogsByTrxItemId.set(item.transactionItemId, 0);
-      continue;
-    }
+    const leaves = recipeId ? recipeIdToLeaves.get(recipeId) : undefined;
+    const wasteFactor = recipeId ? recipeIdToWaste.get(recipeId) ?? 30 : 30;
 
-    let lineCogsRaw = 0;
-    for (const [ingredientId, perOrderQty] of leaves) {
-      const cost = flow.ingredientCostSnapshot.get(ingredientId) ?? 0;
-      const totalRawQty = perOrderQty * item.quantity;
+    let recipeLineCogs = 0;
+    const hasRecipe = Boolean(leaves && leaves.size > 0);
+    if (leaves && leaves.size > 0) {
+      let lineCogsRaw = 0;
+      for (const [ingredientId, perOrderQty] of leaves) {
+        const cost = flow.ingredientCostSnapshot.get(ingredientId) ?? 0;
+        const totalRawQty = perOrderQty * item.quantity;
 
-      const split = splitLineForMovement(totalRawQty, wasteFactor);
-      flow.deductionsByIngredient.set(
-        ingredientId,
-        (flow.deductionsByIngredient.get(ingredientId) ?? 0) + split.leanQty,
-      );
-      if (split.wasteQty > 0) {
-        flow.wasteByIngredient.set(
+        const split = splitLineForMovement(totalRawQty, wasteFactor);
+        flow.deductionsByIngredient.set(
           ingredientId,
-          (flow.wasteByIngredient.get(ingredientId) ?? 0) + split.wasteQty,
+          (flow.deductionsByIngredient.get(ingredientId) ?? 0) + split.leanQty,
         );
-      }
+        if (split.wasteQty > 0) {
+          flow.wasteByIngredient.set(
+            ingredientId,
+            (flow.wasteByIngredient.get(ingredientId) ?? 0) + split.wasteQty,
+          );
+        }
 
-      lineCogsRaw += perOrderQty * cost;
+        lineCogsRaw += perOrderQty * cost;
+      }
+      // Apply waste to COGS once per item, then scale by quantity, round once.
+      recipeLineCogs = Math.round(
+        lineCogsRaw * (1 + wasteFactor / 100) * item.quantity,
+      );
     }
-    // Apply waste to COGS once per item, then scale by quantity, round once.
-    const totalLineCogs = Math.round(
-      lineCogsRaw * (1 + wasteFactor / 100) * item.quantity,
-    );
-    flow.itemCogsByTrxItemId.set(item.transactionItemId, totalLineCogs);
-    flow.totalCogs += totalLineCogs;
+
+    const resolved = resolveLineCogs({
+      manualCostPerUnit: manualCost,
+      recipeLineCogs,
+      quantity: item.quantity,
+    });
+
+    // Item dianggap "punya sumber COGS" kalau ada resep ATAU manual cost.
+    if (!hasRecipe && !resolved.usedManual) {
+      flow.itemsWithoutRecipe.push(item.transactionItemId);
+      flow.itemCogsByTrxItemId.set(item.transactionItemId, 0);
+      continue;
+    }
+    flow.itemCogsByTrxItemId.set(item.transactionItemId, resolved.lineCogs);
+    flow.totalCogs += resolved.lineCogs;
   }
 
   return flow;

@@ -181,6 +181,20 @@ export function isValidPriceRange(amount: number): boolean {
   );
 }
 
+/**
+ * Sesi AE-173 — gross margin % terhadap HARGA JUAL (bukan markup ke cost).
+ * margin% = (harga − cost) / harga × 100. Mengembalikan angka dibulatkan ke
+ * 1 desimal (mis. 65.7), atau null kalau cost belum diisi / harga <= 0.
+ * Cocokkan referensi: Rp35.000 harga, Rp12.000 cost → 65.7%.
+ */
+export function computeGrossMarginPct(
+  price: number | null | undefined,
+  cost: number | null | undefined,
+): number | null {
+  if (cost == null || price == null || price <= 0) return null;
+  return Math.round(((price - cost) / price) * 1000) / 10;
+}
+
 function assertIntegerAmount(
   n: number,
   fieldName: string,

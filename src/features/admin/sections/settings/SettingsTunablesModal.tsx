@@ -48,6 +48,9 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     showHpp: outlet.settings?.features?.showHppToStaff ?? false,
     accountingAutoJournal:
       outlet.settings?.features?.accounting_auto_journal ?? false,
+    // Sesi AE-173 — ON (default) = stok dikurangi saat jual (perpetual);
+    // OFF = mode periodic (stok hanya dari Opname).
+    deductStockOnSale: outlet.settings?.features?.perpetualStockSales !== false,
     defaultMarkupPct: outlet.settings?.features?.defaultMarkupPct ?? 250,
     lateGraceMinutes: outlet.settings?.attendance?.lateGraceMinutes ?? 5,
     gpsLat: existingGps?.lat ?? DEFAULT_GPS.lat,
@@ -63,6 +66,9 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
   const [showHpp, setShowHpp] = useState(initial.showHpp);
   const [accountingAutoJournal, setAccountingAutoJournal] = useState(
     initial.accountingAutoJournal,
+  );
+  const [deductStockOnSale, setDeductStockOnSale] = useState(
+    initial.deductStockOnSale,
   );
   const [defaultMarkupPct, setDefaultMarkupPct] = useState(
     String(initial.defaultMarkupPct),
@@ -90,6 +96,7 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setVariance(String(initial.variance));
     setShowHpp(initial.showHpp);
     setAccountingAutoJournal(initial.accountingAutoJournal);
+    setDeductStockOnSale(initial.deductStockOnSale);
     setDefaultMarkupPct(String(initial.defaultMarkupPct));
     setLateGraceMinutes(String(initial.lateGraceMinutes));
     setGpsLat(String(initial.gpsLat));
@@ -195,6 +202,17 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
         return;
       }
       last = r3a.data;
+    }
+    if (deductStockOnSale !== initial.deductStockOnSale) {
+      const r3s = await updateFeatures({
+        perpetualStockSales: deductStockOnSale,
+      });
+      if (!isOk(r3s)) {
+        setError(r3s.error.message);
+        setSubmitting(false);
+        return;
+      }
+      last = r3s.data;
     }
     const parsedMarkup = parseInt(defaultMarkupPct, 10);
     if (
@@ -372,6 +390,16 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
             }
             checked={accountingAutoJournal}
             onChange={setAccountingAutoJournal}
+          />
+          <ToggleRow
+            label="Kurangi stok otomatis saat penjualan"
+            hint={
+              deductStockOnSale
+                ? "Aktif (perpetual) — setiap penjualan mengurangi stok bahan otomatis dari resep."
+                : "OFF (periodic) — penjualan TIDAK mengurangi stok. Stok hanya bergerak dari Opname. HPP menu diisi manual. Bisa dinyalakan lagi kapan saja."
+            }
+            checked={deductStockOnSale}
+            onChange={setDeductStockOnSale}
           />
           <Input
             label="Default Markup % (BOM-based pricing)"

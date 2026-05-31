@@ -26,6 +26,7 @@ import {
   reevaluateSoldOutForIngredients,
   restoreStockForTransaction,
 } from "@/features/inventory/transaction-flow";
+import { getStockMode } from "@/features/inventory/flag";
 import {
   bumpCustomerRedeemInTx,
   computeRedemptionAmount,
@@ -859,7 +860,10 @@ export async function createTransaction(
       // Sesi AE-62x — defer stock kalau saveAsOpenBill (deferStock=true).
       // Direct sale: deduct sekarang + stamp stock_deducted_at.
       // Open bill: skip + leave NULL → closeOpenBill akan deduct.
-      if (!opts.deferStock) {
+      // Sesi AE-173 — mode periodic (deductOnSale=false): TIDAK deduct, biarkan
+      // stock_deducted_at NULL. COGS tetap ke-stamp (flow di atas).
+      const { deductOnSale } = await getStockMode(session.user.outletId, tx);
+      if (!opts.deferStock && deductOnSale) {
         await applyStockDeductions(
           tx,
           session.user.outletId,
@@ -2785,6 +2789,12 @@ export async function closeOpenBill(
        * SEKARANG (di close time) — kasir/customer-visible total tidak
        * berubah, tapi COGS-side jadi reflect cost saat ingredient actually
        * dipakai (mirip direct sale). */
+      // Sesi AE-173 — mode periodic: tetap hitung & stamp COGS, tapi TIDAK
+      // deduct stok; biarkan stock_deducted_at NULL (lihat stockDeductedAtFinal).
+      const { deductOnSale: closeDeductOnSale } = await getStockMode(
+        session.user.outletId,
+        tx,
+      );
       if (locked.stockDeductedAt === null) {
         const itemsForClose = await tx
           .select({
@@ -2806,13 +2816,15 @@ export async function closeOpenBill(
               quantity: it.quantity,
             })),
           );
-          await applyStockDeductions(
-            tx,
-            session.user.outletId,
-            session.user.id,
-            input.transactionId,
-            flow,
-          );
+          if (closeDeductOnSale) {
+            await applyStockDeductions(
+              tx,
+              session.user.outletId,
+              session.user.id,
+              input.transactionId,
+              flow,
+            );
+          }
           /* Patch trx.cogs + per-item cogs juga di sini supaya report COGS
            * accurate dengan ingredient cost saat actual deduction. */
           const hasAnyCogs =
@@ -2870,10 +2882,14 @@ export async function closeOpenBill(
           : null;
 
       /* Sesi AE-131 — derive final stockDeductedAt sekali, reuse di kedua
-       * branch + capture untuk return state (skip blocking refetch). */
+       * branch + capture untuk return state (skip blocking refetch).
+       * Sesi AE-173 — mode periodic (closeDeductOnSale=false): tidak ada
+       * deduksi, jadi stamp tetap NULL supaya void/refund restore = no-op. */
       const stockDeductedAtFinal =
         locked.stockDeductedAt === null
-          ? finalUpdatedAt
+          ? closeDeductOnSale
+            ? finalUpdatedAt
+            : null
           : locked.stockDeductedAt;
 
       if (freshHasPriorSplits) {

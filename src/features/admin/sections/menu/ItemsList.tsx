@@ -44,7 +44,17 @@ import {
 } from "@/features/menu";
 import { useSession } from "@/features/auth/SessionProvider";
 import { formatRupiah } from "@/lib/format";
+import { computeGrossMarginPct } from "@/lib/money";
 import { cn } from "@/lib/utils";
+
+/** Sesi AE-173 — harga representatif untuk margin (fixed→fixed, variant→max). */
+function representativePrice(i: MenuItem): number {
+  return i.priceType === "fixed"
+    ? (i.priceFixed ?? 0)
+    : i.priceType === "variant"
+      ? Math.max(i.priceHot ?? 0, i.priceIced ?? 0)
+      : 0;
+}
 
 type Mode =
   | { kind: "create"; prefillPrice?: number; prefillSource?: string }
@@ -146,6 +156,10 @@ export function ItemsList() {
           return i.priceFixed !== null ? "Tunggal" : "Hot/Iced";
         case "price":
           return i.priceFixed ?? i.priceHot ?? i.priceIced ?? 0;
+        case "cost":
+          return i.cost ?? -1;
+        case "margin":
+          return computeGrossMarginPct(representativePrice(i), i.cost) ?? -1;
         case "status":
           return i.isSoldOut ? "Habis" : "Tersedia";
         default:
@@ -432,6 +446,18 @@ export function ItemsList() {
                       align="right"
                     />
                     <SortableHeader
+                      columnKey="cost"
+                      label="Cost"
+                      sort={sort}
+                      align="right"
+                    />
+                    <SortableHeader
+                      columnKey="margin"
+                      label="Margin %"
+                      sort={sort}
+                      align="right"
+                    />
+                    <SortableHeader
                       columnKey="status"
                       label="Status"
                       sort={sort}
@@ -509,6 +535,33 @@ export function ItemsList() {
                         </td>
                         <td className="px-4 py-3 text-right font-mono">
                           {priceLabel}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-neutral-700">
+                          {item.cost !== null && item.cost !== undefined
+                            ? formatRupiah(item.cost)
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono">
+                          {(() => {
+                            const m = computeGrossMarginPct(
+                              representativePrice(item),
+                              item.cost,
+                            );
+                            if (m === null)
+                              return <span className="text-neutral-400">—</span>;
+                            return (
+                              <span
+                                className={cn(
+                                  "font-medium",
+                                  m >= 0
+                                    ? "text-mahakan-green-700"
+                                    : "text-danger-500",
+                                )}
+                              >
+                                {m.toFixed(1)}%
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="px-4 py-3 text-center">
                           {item.isSoldOut ? (

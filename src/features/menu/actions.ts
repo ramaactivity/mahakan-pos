@@ -17,6 +17,7 @@ import {
 } from "./queries";
 import { fetchRecipesForMenuItem } from "@/features/inventory/queries";
 import { expandRecipeToAtomicLeaves } from "@/features/inventory/preparation-flow";
+import { computeGrossMarginPct } from "@/lib/money";
 import { ingredients, outlets } from "@/db/schema";
 import { inArray } from "drizzle-orm";
 import {
@@ -947,6 +948,7 @@ export async function exportMenuCsv(): Promise<ApiResult<string>> {
       priceFixed: menuItems.priceFixed,
       priceHot: menuItems.priceHot,
       priceIced: menuItems.priceIced,
+      cost: menuItems.cost,
       isSignature: menuItems.isSignature,
       isSoldOut: menuItems.isSoldOut,
       isActive: menuItems.isActive,
@@ -972,6 +974,8 @@ export async function exportMenuCsv(): Promise<ApiResult<string>> {
     "priceFixed",
     "priceHot",
     "priceIced",
+    "cost",
+    "marginPct",
     "isSignature",
     "isSoldOut",
     "isActive",
@@ -980,6 +984,14 @@ export async function exportMenuCsv(): Promise<ApiResult<string>> {
   ];
   const lines = [headers.join(",")];
   for (const r of rows) {
+    // Sesi AE-173 — harga representatif: fixed→fixed, variant→max(hot,iced).
+    const repPrice =
+      r.priceType === "fixed"
+        ? (r.priceFixed ?? 0)
+        : r.priceType === "variant"
+          ? Math.max(r.priceHot ?? 0, r.priceIced ?? 0)
+          : 0;
+    const margin = computeGrossMarginPct(repPrice, r.cost);
     lines.push(
       [
         r.id,
@@ -989,6 +1001,8 @@ export async function exportMenuCsv(): Promise<ApiResult<string>> {
         r.priceFixed,
         r.priceHot,
         r.priceIced,
+        r.cost,
+        margin === null ? "" : margin.toFixed(1),
         r.isSignature,
         r.isSoldOut,
         r.isActive,
