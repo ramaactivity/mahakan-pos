@@ -182,6 +182,7 @@ export async function getCogsReport(args: {
     WHERE p.outlet_id = ${args.outletId}
       AND p.purchase_date >= ${period.fromDate}
       AND p.purchase_date <= ${period.toDate}
+      AND p.receipt_status = 'received'
     GROUP BY p.status
   `);
   const psArr = ((purchaseStatsRows as unknown as { rows?: unknown[] }).rows ?? []) as Array<{ status: string; count: string }>;
@@ -218,6 +219,10 @@ export async function getCogsReport(args: {
         gte(purchases.purchaseDate, period.fromDate),
         lte(purchases.purchaseDate, period.toDate),
         sql`${purchases.status} != 'cancelled'`,
+        /* Sesi AE-173 — pembelian = GR (barang sudah diterima). PO yang masih
+         * 'ordered' (belum diterima) TIDAK dihitung sebagai pembelian COGS.
+         * Default 'received' → pembelian instant/legacy tetap masuk. */
+        eq(purchases.receiptStatus, "received"),
       ),
     );
 
