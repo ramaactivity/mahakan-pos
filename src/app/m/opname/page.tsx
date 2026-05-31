@@ -28,8 +28,9 @@ import { AddOpnameItemModal } from "@/features/admin/sections/inventory/opname/A
 import {
   buildOpnameUnitContext,
   cogsToTracking,
-  convertQtyWithIngredientPacks,
+  computeOpnameQtyFromSplit,
   type IngredientPackConversion,
+  type OpnameUnitContext,
   type IngredientUnitTiers,
 } from "@/lib/unit-conversion";
 import { parseIndonesianNumber } from "@/lib/format";
@@ -53,6 +54,8 @@ const SECTION_TABS: SectionTab[] = [
 
 interface LineDraft {
   input: string;
+  /** Sesi AE-173 — "sisa lepas" optional dalam RECIPE unit (mis. 3 pack + 200 g). */
+  loose?: string;
   /** Sesi AE-20 — unit yang dipakai staff input (boleh beda dari master).
    *  Default = master unit; staff pilih lain via picker, qty di-konversi
    *  saat save. Decimal allowed (0.5 Kg = 500 gr). */
@@ -198,61 +201,62 @@ function OpnameView() {
   async function handleSaveLine(
     line: OpnameLineWithIngredient,
     raw: string,
+    looseRaw: string,
     inputUnit: string,
   ) {
     if (!detail) return;
     const trimmed = raw.trim();
+    const looseTrim = looseRaw.trim();
+    const base: Omit<LineDraft, "status"> = { input: raw, loose: looseRaw, inputUnit };
+
+    /* Sesi AE-136 — strict Indonesian parser: koma desimal, titik ribuan. */
+    const primaryParsed =
+      trimmed.length > 0 ? parseIndonesianNumber(trimmed) : null;
+    const looseParsed =
+      looseTrim.length > 0 ? parseIndonesianNumber(looseTrim) : null;
+
+    const invalid = (v: number | null) =>
+      v !== null && (!Number.isFinite(v) || v < 0);
+    if (invalid(primaryParsed) || invalid(looseParsed)) {
+      setDrafts((d) => ({
+        ...d,
+        [line.ingredientId]: {
+          ...base,
+          status: "error",
+          errorMsg:
+            "Format angka invalid. Pakai koma untuk desimal (mis. 0,5 bukan 0.5).",
+        },
+      }));
+      return;
+    }
+
     let actualQty: number | null = null;
-    if (trimmed.length > 0) {
-      /* Sesi AE-136 — strict Indonesian parser: koma desimal, titik
-       * ribuan. Tolak format Inggris ("0.5" → NaN). */
-      const parsed = parseIndonesianNumber(trimmed);
-      if (!Number.isFinite(parsed) || parsed < 0) {
+    if (primaryParsed !== null || looseParsed !== null) {
+      // Sesi AE-173 — gabung "penuh" (inputUnit) + "sisa lepas" (recipe unit)
+      // → recipe unit via computeOpnameQtyFromSplit (sama dengan back office).
+      const ctx = buildOpnameCtxFor(line.ingredient);
+      actualQty = computeOpnameQtyFromSplit({
+        primaryQty: primaryParsed,
+        primaryUnit: inputUnit,
+        looseQtyRecipe: looseParsed,
+        context: ctx,
+      });
+      if (actualQty === null) {
         setDrafts((d) => ({
           ...d,
           [line.ingredientId]: {
-            input: raw,
-            inputUnit,
+            ...base,
             status: "error",
-            errorMsg:
-              "Format angka invalid. Pakai koma untuk desimal (mis. 0,5 bukan 0.5).",
+            errorMsg: `Tidak bisa convert ${inputUnit} ke ${line.ingredient.unit}`,
           },
         }));
         return;
-      }
-      // Sesi AE-20 → AE-62y — convert ke master unit kalau staff pilih unit
-      // lain. Pakai convertQtyWithIngredientPacks supaya ingredient-scoped
-      // pack conversions (mis. 1 packs = 20 pcs untuk Lychee Kaleng) bisa
-      // di-honor. Fallback ke same-dimension (Kg↔gr) lewat helper internal.
-      const masterUnit = line.ingredient.unit;
-      if (inputUnit !== masterUnit) {
-        const convertRes = convertQtyWithIngredientPacks(
-          parsed,
-          inputUnit,
-          masterUnit,
-          line.ingredient.packConversions ?? null,
-        );
-        if (!convertRes.ok || convertRes.qtyMaster === null) {
-          setDrafts((d) => ({
-            ...d,
-            [line.ingredientId]: {
-              input: raw,
-              inputUnit,
-              status: "error",
-              errorMsg: `Tidak bisa convert ${inputUnit} ke ${masterUnit}`,
-            },
-          }));
-          return;
-        }
-        actualQty = convertRes.qtyMaster;
-      } else {
-        actualQty = parsed;
       }
     }
 
     setDrafts((d) => ({
       ...d,
-      [line.ingredientId]: { input: raw, inputUnit, status: "saving" },
+      [line.ingredientId]: { ...base, status: "saving" },
     }));
 
     const res = await saveOpnameCount({
@@ -265,8 +269,7 @@ function OpnameView() {
       setDrafts((d) => ({
         ...d,
         [line.ingredientId]: {
-          input: raw,
-          inputUnit,
+          ...base,
           status: "error",
           errorMsg: res.error.message,
         },
@@ -277,7 +280,7 @@ function OpnameView() {
 
     setDrafts((d) => ({
       ...d,
-      [line.ingredientId]: { input: raw, inputUnit, status: "saved" },
+      [line.ingredientId]: { ...base, status: "saved" },
     }));
 
     // Update detail line.actualQty so revisit shows saved value
@@ -450,6 +453,18 @@ function OpnameView() {
                     ...d,
                     [line.ingredientId]: {
                       input,
+                      loose: d[line.ingredientId]?.loose ?? "",
+                      inputUnit,
+                      status: "idle",
+                    },
+                  }));
+                }}
+                onLooseChange={(loose) => {
+                  setDrafts((d) => ({
+                    ...d,
+                    [line.ingredientId]: {
+                      input: d[line.ingredientId]?.input ?? "",
+                      loose,
                       inputUnit,
                       status: "idle",
                     },
@@ -459,28 +474,34 @@ function OpnameView() {
                   setDrafts((d) => ({
                     ...d,
                     [line.ingredientId]: {
-                      input: draft?.input ?? "",
+                      input: d[line.ingredientId]?.input ?? "",
+                      loose: d[line.ingredientId]?.loose ?? "",
                       inputUnit: nextUnit,
-                      status: draft?.status === "saved" ? "idle" : (draft?.status ?? "idle"),
+                      status:
+                        d[line.ingredientId]?.status === "saved"
+                          ? "idle"
+                          : (d[line.ingredientId]?.status ?? "idle"),
                     },
                   }));
                 }}
-                onBlur={(input) => {
+                onBlur={(input, loose) => {
                   const current = drafts[line.ingredientId];
                   if (
                     current?.status === "saved" &&
                     current.input === input &&
+                    (current.loose ?? "") === loose &&
                     current.inputUnit === inputUnit
                   ) {
                     return;
                   }
                   if (
                     input.trim() === "" &&
+                    loose.trim() === "" &&
                     line.actualQty === null
                   ) {
                     return;
                   }
-                  void handleSaveLine(line, input, inputUnit);
+                  void handleSaveLine(line, input, loose, inputUnit);
                 }}
               />
             );
@@ -525,11 +546,46 @@ function OpnameView() {
   );
 }
 
+/** Sesi AE-173 — context satuan opname (merge base + tier packs), dipakai
+ *  bareng LineRow & handleSaveLine supaya konversi konsisten. */
+function buildOpnameCtxFor(
+  ingredient: OpnameLineWithIngredient["ingredient"],
+): OpnameUnitContext {
+  const basePacks = (ingredient.packConversions ??
+    null) as IngredientPackConversion[] | null;
+  const tierPacks: IngredientPackConversion[] = [];
+  if (ingredient.unitTracking && ingredient.unitTrackingPerCogs) {
+    const per = parseFloat(ingredient.unitTrackingPerCogs);
+    if (Number.isFinite(per) && per > 0)
+      tierPacks.push({ unitLabel: ingredient.unitTracking, qtyPerBase: per });
+  }
+  if (ingredient.unitBelanja && ingredient.unitBelanjaPerCogs) {
+    const per = parseFloat(ingredient.unitBelanjaPerCogs);
+    if (Number.isFinite(per) && per > 0)
+      tierPacks.push({ unitLabel: ingredient.unitBelanja, qtyPerBase: per });
+  }
+  const merged: IngredientPackConversion[] = [];
+  const seen = new Set<string>();
+  for (const p of [...(basePacks ?? []), ...tierPacks]) {
+    const lc = p.unitLabel.trim().toLowerCase();
+    if (!lc || seen.has(lc)) continue;
+    seen.add(lc);
+    merged.push(p);
+  }
+  return buildOpnameUnitContext({
+    recipeUnit: ingredient.unit,
+    unitBelanja: ingredient.unitBelanja,
+    unitBelanjaPerCogs: ingredient.unitBelanjaPerCogs,
+    packConversions: merged.length > 0 ? merged : null,
+  });
+}
+
 function LineRow({
   line,
   draft,
   inputUnit,
   onChange,
+  onLooseChange,
   onUnitChange,
   onBlur,
 }: {
@@ -537,8 +593,9 @@ function LineRow({
   draft: LineDraft | undefined;
   inputUnit: string;
   onChange: (raw: string) => void;
+  onLooseChange: (raw: string) => void;
   onUnitChange: (nextUnit: string) => void;
-  onBlur: (raw: string) => void;
+  onBlur: (primary: string, loose: string) => void;
 }) {
   // Sesi AE-15 — prefer decimal mirror untuk display + diff calc.
   const masterUnit = line.ingredient.unit;
@@ -557,65 +614,38 @@ function LineRow({
     if (Number.isFinite(p) && p >= 0) parsedActual = p;
   }
 
-  /* Sesi AE-130 — extend ingredientPacks dengan tier labels (tracking +
-   * belanja) supaya staff bisa pilih label "Kotak"/"Karung"/"L" di
-   * unit picker tanpa harus duplicate ke packConversions JSONB. */
-  const basePacks = (line.ingredient.packConversions ??
-    null) as IngredientPackConversion[] | null;
-  const tierPacks: IngredientPackConversion[] = [];
-  if (
-    line.ingredient.unitTracking &&
-    line.ingredient.unitTrackingPerCogs
-  ) {
-    const per = parseFloat(line.ingredient.unitTrackingPerCogs);
-    if (Number.isFinite(per) && per > 0) {
-      tierPacks.push({
-        unitLabel: line.ingredient.unitTracking,
-        qtyPerBase: per,
-      });
-    }
+  /* Sisa lepas (recipe unit) — Sesi AE-173 split input parity dgn back office. */
+  const looseValue = draft?.loose ?? "";
+  let looseParsed: number | null = null;
+  const looseTrim = looseValue.trim();
+  if (looseTrim.length > 0) {
+    const p = parseIndonesianNumber(looseTrim);
+    if (Number.isFinite(p) && p >= 0) looseParsed = p;
   }
-  if (line.ingredient.unitBelanja && line.ingredient.unitBelanjaPerCogs) {
-    const per = parseFloat(line.ingredient.unitBelanjaPerCogs);
-    if (Number.isFinite(per) && per > 0) {
-      tierPacks.push({
-        unitLabel: line.ingredient.unitBelanja,
-        qtyPerBase: per,
-      });
-    }
-  }
-  const ingredientPacks: IngredientPackConversion[] | null = (() => {
-    const merged: IngredientPackConversion[] = [];
-    const seen = new Set<string>();
-    for (const p of basePacks ?? []) {
-      const lc = p.unitLabel.trim().toLowerCase();
-      if (!lc || seen.has(lc)) continue;
-      seen.add(lc);
-      merged.push(p);
-    }
-    for (const p of tierPacks) {
-      const lc = p.unitLabel.trim().toLowerCase();
-      if (!lc || seen.has(lc)) continue;
-      seen.add(lc);
-      merged.push(p);
-    }
-    return merged.length > 0 ? merged : null;
-  })();
 
-  let convertedToMaster: number | null = parsedActual;
-  if (parsedActual !== null && inputUnit !== masterUnit) {
-    const r = convertQtyWithIngredientPacks(
-      parsedActual,
-      inputUnit,
-      masterUnit,
-      ingredientPacks,
-    );
-    convertedToMaster = r.qtyMaster;
-  }
-  const diff =
-    convertedToMaster !== null
-      ? convertedToMaster - expectedQtyValue
+  /* Context satuan (shared dgn handleSaveLine: merge base + tier packs). */
+  const opnameCtx = buildOpnameCtxFor(line.ingredient);
+  const canPickUnit = opnameCtx.options.length > 1;
+  const purchaseMultiplier =
+    opnameCtx.purchaseUnit !== null
+      ? (opnameCtx.multipliers.get(opnameCtx.purchaseUnit) ?? 1)
       : null;
+  const showLooseField =
+    opnameCtx.supportsSplitInput && inputUnit !== masterUnit;
+
+  /* Gabung "penuh" (inputUnit) + "sisa lepas" (recipe) → recipe unit,
+   * sama persis dengan yang disimpan handleSaveLine. */
+  const convertedToMaster =
+    parsedActual !== null || looseParsed !== null
+      ? computeOpnameQtyFromSplit({
+          primaryQty: parsedActual,
+          primaryUnit: inputUnit,
+          looseQtyRecipe: looseParsed,
+          context: opnameCtx,
+        })
+      : null;
+  const diff =
+    convertedToMaster !== null ? convertedToMaster - expectedQtyValue : null;
 
   const fmt = (n: number) =>
     new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(n);
@@ -631,21 +661,6 @@ function LineRow({
   const trackingPreview =
     convertedToMaster !== null && line.ingredient.unitTracking
       ? cogsToTracking(convertedToMaster, tiers)
-      : null;
-
-  /* Sesi AE-148 — Pakai buildOpnameUnitContext (sama dengan desktop)
-   * supaya dedup + ordering konsisten. Context bundle purchase + recipe
-   * + pack alternatives dengan dedup case+plural+multiplier. */
-  const opnameCtx = buildOpnameUnitContext({
-    recipeUnit: masterUnit,
-    unitBelanja: line.ingredient.unitBelanja,
-    unitBelanjaPerCogs: line.ingredient.unitBelanjaPerCogs,
-    packConversions: ingredientPacks,
-  });
-  const canPickUnit = opnameCtx.options.length > 1;
-  const purchaseMultiplier =
-    opnameCtx.purchaseUnit !== null
-      ? (opnameCtx.multipliers.get(opnameCtx.purchaseUnit) ?? 1)
       : null;
 
   return (
@@ -710,9 +725,9 @@ function LineRow({
           inputMode="decimal"
           value={inputValue}
           onChange={(e) => onChange(e.target.value)}
-          onBlur={(e) => onBlur(e.target.value)}
+          onBlur={(e) => onBlur(e.target.value, looseValue)}
           placeholder="0"
-          className="flex-1 rounded-md border border-neutral-300 bg-white px-3 py-2 text-base font-mono tabular-nums text-neutral-900 placeholder:text-neutral-400 focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+          className="min-w-0 flex-1 rounded-md border border-neutral-300 bg-white px-3 py-2 text-base font-mono tabular-nums text-neutral-900 placeholder:text-neutral-400 focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
         />
         {canPickUnit ? (
           <div className="w-[116px] flex-none">
@@ -728,7 +743,7 @@ function LineRow({
               onValueChange={(v) => {
                 onUnitChange(v);
                 /* Save dengan unit baru — match prev onBlur behavior. */
-                onBlur(inputValue);
+                onBlur(inputValue, looseValue);
               }}
             />
           </div>
@@ -739,24 +754,48 @@ function LineRow({
         )}
       </div>
 
+      {/* Sesi AE-173 — "+ sisa lepas" (split): pack tidak full, mis. 3 pack +
+          200 g. Hanya muncul saat satuan ≠ resep & punya konversi. */}
+      {showLooseField ? (
+        <div className="mt-2 flex items-stretch gap-2">
+          <span className="flex flex-none items-center px-0.5 text-[11px] font-medium text-neutral-500">
+            + sisa lepas
+          </span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={looseValue}
+            onChange={(e) => onLooseChange(e.target.value)}
+            onBlur={(e) => onBlur(inputValue, e.target.value)}
+            placeholder="0"
+            className="min-w-0 flex-1 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-mono tabular-nums text-neutral-900 placeholder:text-neutral-400 focus:border-mahakan-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+          />
+          <span className="flex w-[72px] flex-none items-center justify-center rounded-md border border-neutral-200 bg-neutral-50 px-2 text-sm font-medium text-neutral-700">
+            {masterUnit}
+          </span>
+        </div>
+      ) : null}
+
       {/* Sesi AE-173 — tandai kosong/habis (parity dengan back office). */}
       <button
         type="button"
         onClick={() => {
           onChange("0");
-          onBlur("0");
+          onLooseChange("");
+          onBlur("0", "");
         }}
         className="mt-2 inline-flex items-center gap-1 rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 transition-colors active:scale-95 hover:border-mahakan-green-700 hover:bg-mahakan-green-50 hover:text-mahakan-green-700"
       >
         Tandai kosong / habis (0)
       </button>
-      {/* Auto-convert preview — staff lihat hasil conversion sebelum save. */}
-      {parsedActual !== null &&
-      inputUnit !== masterUnit &&
-      convertedToMaster !== null ? (
+      {/* Total preview — gabungan penuh + sisa lepas dalam recipe unit. */}
+      {convertedToMaster !== null &&
+      (inputUnit !== masterUnit || looseParsed !== null) ? (
         <p className="mt-1 text-[11px] text-neutral-600">
-          ={" "}
-          <span className="font-mono">{fmt(convertedToMaster)}</span>{" "}
+          Total:{" "}
+          <span className="font-mono font-semibold">
+            {fmt(convertedToMaster)}
+          </span>{" "}
           {masterUnit}
         </p>
       ) : null}
@@ -803,7 +842,7 @@ function LineRow({
  * Konvensi 2-unit baru: input + display pakai Purchase Unit (kg/L/btl)
  * kalau ingredient punya unitBelanja set, fallback ke Recipe Unit (g/ml)
  * untuk legacy data. Internal storage tetap di Recipe Unit untuk presisi
- * — konversi di-handle di handleSaveLine via convertQtyWithIngredientPacks.
+ * — konversi di-handle di handleSaveLine via computeOpnameQtyFromSplit.
  * ============================================================ */
 
 interface IngredientWithTiers {
