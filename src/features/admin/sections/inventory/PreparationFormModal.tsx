@@ -38,7 +38,10 @@ interface PreparationFormModalProps {
   onSaved: () => void;
 }
 
-const COMMON_UNITS = ["g", "kg", "ml", "L", "pcs"];
+/* Sesi AE-168 — "porsi" ditambah: owner mau yield bisa per-porsi (sekali bikin
+ * prep = untuk N porsi). Cost prep = total resep ÷ yield, deduct bahan = resep
+ * × (qty menu ÷ yield) — unit cuma label, jadi "porsi" aman. */
+const COMMON_UNITS = ["g", "kg", "ml", "L", "pcs", "porsi"];
 
 interface LineDraft {
   key: string;
@@ -360,9 +363,9 @@ export function PreparationFormModal({
       onClose={onClose}
       title={edit ? "Edit Preparation" : "Tambah Preparation"}
       description="Sub-resep dengan yield + Q Factor. Cost auto-computed dari resep + cascade ke menu yang merefer."
-      /* Sesi AE-138 — widen xl supaya recipe builder + cost preview muat
-       * lebih nyaman di tablet dan desktop. */
-      size="xl"
+      /* Sesi AE-138 — widen supaya recipe builder + cost preview muat nyaman.
+       * Sesi AE-168 — owner minta lebih lebar → 3xl. */
+      size="3xl"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -434,15 +437,20 @@ export function PreparationFormModal({
           <div>
             <Input
               label={`Yield per Batch (${unit || "unit"})`}
-              placeholder="mis. 45 (untuk Prep-Espresso-HB)"
+              placeholder={
+                unit === "porsi"
+                  ? "mis. 20 (1× resep = 20 porsi)"
+                  : "mis. 45 (untuk Prep-Espresso-HB)"
+              }
               value={preparationYield}
               onChange={(e) => setPreparationYield(e.target.value)}
               type="text"
               inputMode="numeric"
             />
             <p className="mt-1 text-xs text-neutral-500">
-              Jumlah unit dari 1× resep. Pakai titik untuk ribuan (mis.
-              1.000).
+              {unit === "porsi"
+                ? "Berapa PORSI yang dihasilkan dari 1× resep di bawah. Cost per porsi & pemakaian bahan otomatis dibagi rata."
+                : "Jumlah unit dari 1× resep. Pakai titik untuk ribuan (mis. 1.000)."}
             </p>
           </div>
           <div>

@@ -53,6 +53,10 @@ const UNIT_TABLE: Record<string, UnitMeta> = {
   Sdm: { label: "Sdm", dimension: "discrete", toBase: 1 },
   Sdt: { label: "Sdt", dimension: "discrete", toBase: 1 },
   Box: { label: "Box", dimension: "discrete", toBase: 1 },
+  /* Sesi AE-168 — yield preparation per-porsi. Discrete (tiap porsi unik,
+   * tidak dikonversi ke pcs). */
+  porsi: { label: "porsi", dimension: "discrete", toBase: 1 },
+  Porsi: { label: "porsi", dimension: "discrete", toBase: 1 },
 };
 
 /** Resolve unit string ke meta — case-tolerant for common typos. */
