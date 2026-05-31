@@ -19,6 +19,7 @@ import { cascadeCostUpdate } from "@/features/inventory/preparation-flow";
 import { getStockMode } from "@/features/inventory/flag";
 import { computePrStatus } from "@/features/purchase-requests/group-items-pure";
 import { fetchLastFinalizedOpname } from "@/features/stock-opname/queries";
+import { toJakartaDateOnly } from "@/lib/date";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
@@ -956,6 +957,24 @@ export async function cancelPurchase(
       if (!p) throw new Error("NOT_FOUND");
       if (p.status === "cancelled") throw new Error("BAD_STATE");
 
+      /* Sesi AE-173 — PO yang masih 'ordered' belum punya efek apa pun
+       * (tidak ada stok/movement/expense/jurnal). Cukup set cancelled tanpa
+       * reversal — mencegah reversal stok hantu. */
+      if (p.receiptStatus === "ordered") {
+        await tx
+          .update(purchases)
+          .set({
+            status: "cancelled",
+            receiptStatus: "cancelled",
+            cancelledAt: new Date(),
+            cancelledBy: session.user.id,
+            cancelReason: v.reason,
+            updatedAt: new Date(),
+          })
+          .where(eq(purchases.id, v.id));
+        return;
+      }
+
       /* Sesi AE-43 — reverse pakai `inventory_movements.qty_delta_decimal`
        * (master unit) via join `movementId`, BUKAN `purchase_items.qty_decimal`
        * (raw input staff). Untuk legacy purchase pre-AE-43 keduanya identik
@@ -1329,4 +1348,557 @@ export async function getPurchaseRaw(
     return fail("FORBIDDEN", "Tidak punya hak lihat pembelian");
   }
   return ok(await fetchPurchaseById(id, session.user.outletId));
+}
+
+/* ============================================================================
+ * Sesi AE-173 — Alur PR → PO → GR.
+ *
+ * createPurchase (di atas) TIDAK diubah = jalur "Langsung Terima" (instant),
+ * default receiptStatus='received'. Dua fungsi di bawah menambah tahap:
+ *   createPurchaseOrder  → buat PO (ordered): catat pesanan, NOL efek.
+ *   confirmGoodsReceipt  → GR: barulah expense + (stok kalau perpetual) + PR
+ *                          bump + jurnal terjadi (mirror createPurchase).
+ * ========================================================================== */
+
+/** Buat Purchase Order (tahap 'ordered'). Tanpa efek stok/expense/jurnal. */
+export async function createPurchaseOrder(
+  input: CreatePurchaseInput,
+): Promise<ApiResult<{ id: string; totalAmount: number }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak buat pembelian");
+  }
+  const parsed = createPurchaseSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+  const isTop = v.paymentMethod === "top";
+  const dueDate = isTop ? addDaysIso(v.purchaseDate, v.paymentTermDays) : null;
+
+  let resultId = "";
+  let totalAmount = 0;
+  try {
+    const result = await db.transaction(async (tx) => {
+      const ingIds = v.items.map((i) => i.ingredientId);
+      const ingRows = await tx
+        .select()
+        .from(ingredients)
+        .where(
+          and(inArray(ingredients.id, ingIds), isNull(ingredients.deletedAt)),
+        );
+      const ingById = new Map(ingRows.map((r) => [r.id, r] as const));
+      for (const item of v.items) {
+        const row = ingById.get(item.ingredientId);
+        if (!row) throw new Error("INGREDIENT_NOT_FOUND");
+        if (row.outletId !== session.user.outletId) {
+          throw new Error("OUTLET_MISMATCH");
+        }
+      }
+      let total = 0;
+      for (const item of v.items) total += Math.round(item.qty * item.unitCost);
+
+      const urlsRaw = v.receiptImageUrls ?? null;
+      const legacyUrl = v.receiptImageUrl ?? null;
+      const receiptImageUrls =
+        urlsRaw && urlsRaw.length > 0 ? urlsRaw : legacyUrl ? [legacyUrl] : null;
+      const receiptImageUrl =
+        receiptImageUrls && receiptImageUrls.length > 0
+          ? receiptImageUrls[0]
+          : null;
+
+      const [created] = await tx
+        .insert(purchases)
+        .values({
+          outletId: session.user.outletId,
+          supplierId: v.supplierId,
+          purchaseDate: v.purchaseDate,
+          paymentMethod: v.paymentMethod,
+          paymentTermDays: v.paymentTermDays,
+          dueDate,
+          invoiceNo: v.invoiceNo ?? null,
+          notes: v.notes ?? null,
+          receiptImageUrl,
+          receiptImageUrls,
+          // PO belum dibayar & belum diterima sampai GR.
+          status: "pending_payment",
+          receiptStatus: "ordered",
+          totalAmount: total,
+          createdBy: session.user.id,
+          updatedBy: session.user.id,
+        })
+        .returning();
+      if (!created) throw new Error("INSERT_FAILED");
+
+      for (const item of v.items) {
+        const ing = ingById.get(item.ingredientId)!;
+        await tx.insert(purchaseItems).values({
+          purchaseId: created.id,
+          ingredientId: item.ingredientId,
+          qty: Math.max(1, Math.round(item.qty)),
+          qtyDecimal: item.qty.toFixed(4),
+          unitCost: item.unitCost,
+          totalCost: Math.round(item.qty * item.unitCost),
+          movementId: null,
+          ingredientNameSnapshot: ing.name,
+          unitSnapshot: ing.unit,
+          unitOverride: item.unit?.trim() || null,
+          sectionSnapshot: ing.section,
+          purchaseRequestItemId: item.purchaseRequestItemId ?? null,
+        });
+      }
+      return { created, total };
+    });
+    resultId = result.created.id;
+    totalAmount = result.total;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg === "INGREDIENT_NOT_FOUND")
+      return fail("NOT_FOUND", "Salah satu bahan tidak ditemukan / non-aktif");
+    if (msg === "OUTLET_MISMATCH")
+      return fail("FORBIDDEN", "Bahan dari outlet lain — kontak admin");
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "purchases.order_create", "Gagal menyimpan PO"),
+    );
+  }
+
+  await logAudit({
+    eventType: "purchase.order_create",
+    userId: session.user.id,
+    entityType: "purchase",
+    entityId: resultId,
+    payload: {
+      summary: `PO ${paymentMethodLabel(v.paymentMethod)} ${v.purchaseDate} (${v.items.length} item, total ${totalAmount})`,
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  return ok({ id: resultId, totalAmount });
+}
+
+/**
+ * Goods Receive (GR) — terima barang dari PO yang masih 'ordered'.
+ * Di sinilah expense ("kolom pembelian") bertambah + (stok kalau perpetual) +
+ * PR receivedQty bump + jurnal. Mirror efek createPurchase, pakai tanggal hari
+ * ini (WIB) sebagai tanggal terima untuk anti-double-count & expense.
+ */
+export async function confirmGoodsReceipt(input: {
+  id: string;
+}): Promise<ApiResult<{ id: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak terima barang");
+  }
+  if (!input?.id) return fail("VALIDATION_ERROR", "ID PO tidak valid");
+
+  const grDate = toJakartaDateOnly(new Date());
+
+  try {
+    await db.transaction(async (tx) => {
+      const [po] = await tx
+        .select()
+        .from(purchases)
+        .where(
+          and(
+            eq(purchases.id, input.id),
+            eq(purchases.outletId, session.user.outletId),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!po) throw new Error("NOT_FOUND");
+      if (po.receiptStatus !== "ordered") throw new Error("BAD_STATE");
+
+      const isTop = po.paymentMethod === "top";
+
+      // Load items + lock ingredients.
+      const poItems = await tx
+        .select()
+        .from(purchaseItems)
+        .where(eq(purchaseItems.purchaseId, po.id));
+      const ingIds = poItems.map((i) => i.ingredientId);
+      const ingRows =
+        ingIds.length > 0
+          ? await tx
+              .select()
+              .from(ingredients)
+              .where(inArray(ingredients.id, ingIds))
+              .for("update")
+          : [];
+      const ingById = new Map(ingRows.map((r) => [r.id, r] as const));
+
+      // Pack info dari supplier (sama seperti createPurchase) untuk konversi.
+      const packMap = new Map<string, PackInfo>();
+      if (po.supplierId && ingIds.length > 0) {
+        const packRows = await tx
+          .select({
+            ingredientId: supplierIngredients.ingredientId,
+            packSize: supplierIngredients.packSize,
+            packUnit: supplierIngredients.packUnit,
+          })
+          .from(supplierIngredients)
+          .where(
+            and(
+              eq(supplierIngredients.outletId, session.user.outletId),
+              eq(supplierIngredients.supplierId, po.supplierId),
+              inArray(supplierIngredients.ingredientId, ingIds),
+              isNull(supplierIngredients.deletedAt),
+            ),
+          );
+        for (const r of packRows) {
+          const size = parseFloat(r.packSize);
+          if (Number.isFinite(size) && size > 0) {
+            packMap.set(r.ingredientId, { packSize: size, packUnit: r.packUnit });
+          }
+        }
+      }
+
+      // Anti-double-count vs opname pakai tanggal GR (hari ini).
+      const lastOpname = await fetchLastFinalizedOpname(session.user.outletId);
+      const backdateStatus = classifyPurchaseAgainstOpname({
+        purchaseDateIso: grDate,
+        lastOpnameFinalizedAt: lastOpname?.finalizedAt ?? null,
+      });
+      const { addOnPurchase } = await getStockMode(session.user.outletId);
+      const skipStockEffect =
+        shouldSkipStockUpdate(backdateStatus) || !addOnPurchase;
+
+      // Per item: resolve konversi → movement (+ stok/WAC kalau perpetual).
+      for (const it of poItems) {
+        const ing = ingById.get(it.ingredientId);
+        if (!ing) continue;
+
+        const existingPacks =
+          (ing.packConversions as
+            | Array<{ unitLabel: string; qtyPerBase: number }>
+            | null) ?? [];
+        const tierPacks: Array<{ unitLabel: string; qtyPerBase: number }> = [];
+        if (ing.unitBelanja && ing.unitBelanjaPerCogs) {
+          const per = parseFloat(ing.unitBelanjaPerCogs);
+          if (Number.isFinite(per) && per > 0)
+            tierPacks.push({ unitLabel: ing.unitBelanja, qtyPerBase: per });
+        }
+        if (ing.unitTracking && ing.unitTrackingPerCogs) {
+          const per = parseFloat(ing.unitTrackingPerCogs);
+          if (Number.isFinite(per) && per > 0)
+            tierPacks.push({ unitLabel: ing.unitTracking, qtyPerBase: per });
+        }
+        const mergedPacks = mergePackConversions(existingPacks, tierPacks);
+
+        const rawQty = parseFloat(it.qtyDecimal ?? "") || it.qty;
+        const conv = convertPurchaseQty({
+          qty: rawQty,
+          fromUnit: it.unitOverride ?? it.unitSnapshot ?? ing.unit,
+          masterUnit: ing.unit,
+          pack: packMap.get(it.ingredientId) ?? null,
+          ingredientPacks: mergedPacks,
+        });
+        if (!conv.ok) throw new Error(`UNIT_ERROR:${ing.name}:${conv.message}`);
+
+        const qtyMaster = conv.qtyMaster;
+        const unitCostMaster = Math.max(
+          0,
+          Math.round(it.unitCost / conv.costFactor),
+        );
+        const totalCostMaster = Math.round(qtyMaster * unitCostMaster);
+        const movementDelta = formatMovementDelta(qtyMaster);
+
+        if (!skipStockEffect) {
+          const newStock = computeNewStock({
+            currentBigint: ing.currentStock,
+            currentDecimal: ing.currentStockDecimal,
+            delta: qtyMaster,
+          });
+          const oldCostBefore = ing.costPerUnit;
+          const wac = computeNewWac({
+            oldQty: Number(ing.currentStockDecimal ?? 0),
+            oldCost: oldCostBefore,
+            purchaseQty: qtyMaster,
+            purchaseTotal: totalCostMaster,
+          });
+          const newWacCost = wac.newCost;
+          const costChanged = newWacCost !== oldCostBefore;
+          const updateValues: Record<string, unknown> = {
+            currentStock: newStock.bigint,
+            currentStockDecimal: newStock.decimal,
+            costPerUnit: newWacCost,
+            updatedAt: new Date(),
+            updatedBy: session.user.id,
+          };
+          if (costChanged) updateValues.costLastChangedAt = new Date();
+          await tx
+            .update(ingredients)
+            .set(updateValues)
+            .where(eq(ingredients.id, it.ingredientId));
+          // refresh in-memory cost so next item with same ingredient is correct
+          ingById.set(it.ingredientId, {
+            ...ing,
+            currentStock: newStock.bigint,
+            currentStockDecimal: newStock.decimal,
+            costPerUnit: newWacCost,
+          });
+          if (costChanged) {
+            await tx.insert(ingredientCostHistory).values({
+              outletId: session.user.outletId,
+              ingredientId: it.ingredientId,
+              oldCostPerUnit: oldCostBefore,
+              newCostPerUnit: newWacCost,
+              triggerType: "purchase_wac",
+              triggerRefType: "purchase",
+              triggerRefId: po.id,
+              changedQty: qtyMaster.toFixed(4),
+              changedValue: totalCostMaster,
+              actorId: session.user.id,
+              notes: `GR ${po.invoiceNo ?? po.id.slice(0, 8)}`,
+            });
+            try {
+              await cascadeCostUpdate(
+                tx,
+                session.user.outletId,
+                it.ingredientId,
+                session.user.id,
+              );
+            } catch {
+              // fail-soft
+            }
+          }
+        }
+
+        const [movement] = await tx
+          .insert(inventoryMovements)
+          .values({
+            outletId: session.user.outletId,
+            ingredientId: it.ingredientId,
+            kind: "purchase",
+            qtyDelta: movementDelta.bigint,
+            qtyDeltaDecimal: movementDelta.decimal,
+            unitCostAtMovement: unitCostMaster,
+            referenceType: "manual",
+            referenceId: po.id,
+            reason: `GR ${po.invoiceNo ?? po.id.slice(0, 8)}${
+              skipStockEffect ? " (no stock add)" : ""
+            }`,
+            skippedStockUpdate: skipStockEffect,
+            createdBy: session.user.id,
+          })
+          .returning({ id: inventoryMovements.id });
+
+        await tx
+          .update(purchaseItems)
+          .set({ movementId: movement.id })
+          .where(eq(purchaseItems.id, it.id));
+      }
+
+      // PR receivedQty bump + status auto-promote.
+      const prItemIds = poItems
+        .map((i) => i.purchaseRequestItemId)
+        .filter((id): id is string => Boolean(id));
+      if (prItemIds.length > 0) {
+        const prItemRows = await tx
+          .select()
+          .from(purchaseRequestItems)
+          .where(inArray(purchaseRequestItems.id, prItemIds))
+          .for("update");
+        const prItemMap = new Map(prItemRows.map((r) => [r.id, r] as const));
+        const requestIds = Array.from(
+          new Set(prItemRows.map((r) => r.requestId)),
+        );
+        for (const it of poItems) {
+          if (!it.purchaseRequestItemId) continue;
+          const prItem = prItemMap.get(it.purchaseRequestItemId);
+          if (!prItem) continue;
+          const ing = ingById.get(it.ingredientId);
+          const rawQty = parseFloat(it.qtyDecimal ?? "") || it.qty;
+          // best-effort master qty (sama unit kalau resolve gagal)
+          let addQtyDecimal = rawQty;
+          if (ing) {
+            const conv = convertPurchaseQty({
+              qty: rawQty,
+              fromUnit: it.unitOverride ?? it.unitSnapshot ?? ing.unit,
+              masterUnit: ing.unit,
+              pack: packMap.get(it.ingredientId) ?? null,
+              ingredientPacks: [],
+            });
+            if (conv.ok) addQtyDecimal = conv.qtyMaster;
+          }
+          const addQty = Math.max(1, Math.round(addQtyDecimal));
+          const newReceivedQty = Number(prItem.receivedQty) + addQty;
+          const newDecimal = (
+            (prItem.receivedQtyDecimal ? Number(prItem.receivedQtyDecimal) : 0) +
+            addQtyDecimal
+          ).toFixed(4);
+          await tx
+            .update(purchaseRequestItems)
+            .set({
+              receivedQty: newReceivedQty,
+              receivedQtyDecimal: newDecimal,
+              updatedAt: new Date(),
+            })
+            .where(eq(purchaseRequestItems.id, prItem.id));
+          prItemMap.set(prItem.id, {
+            ...prItem,
+            receivedQty: newReceivedQty,
+            receivedQtyDecimal: newDecimal,
+          });
+        }
+        for (const requestId of requestIds) {
+          const allItems = await tx
+            .select()
+            .from(purchaseRequestItems)
+            .where(eq(purchaseRequestItems.requestId, requestId));
+          const newStatus = computePrStatus(
+            allItems.map((r) => ({
+              requestedQty: Number(r.requestedQty),
+              receivedQty: Number(r.receivedQty),
+              rejectedAt: r.rejectedAt,
+            })),
+          );
+          const [pr] = await tx
+            .select()
+            .from(purchaseRequests)
+            .where(eq(purchaseRequests.id, requestId))
+            .limit(1);
+          const updates: Record<string, unknown> = { updatedAt: new Date() };
+          if (pr && newStatus !== pr.status && newStatus !== "cancelled") {
+            updates.status = newStatus;
+            if (newStatus === "completed") updates.completedAt = new Date();
+          }
+          await tx
+            .update(purchaseRequests)
+            .set(updates)
+            .where(eq(purchaseRequests.id, requestId));
+        }
+      }
+
+      // Expense (pencatatan pengeluaran) — non-TOP saja, tanggal GR.
+      let expenseId: string | null = null;
+      if (!isTop) {
+        const [defaultCat] = await tx
+          .select()
+          .from(expenseCategories)
+          .where(
+            and(
+              eq(expenseCategories.outletId, session.user.outletId),
+              isNull(expenseCategories.deletedAt),
+            ),
+          )
+          .orderBy(asc(expenseCategories.displayOrder))
+          .limit(1);
+        if (defaultCat) {
+          const [exp] = await tx
+            .insert(expenses)
+            .values({
+              outletId: session.user.outletId,
+              expenseDate: grDate,
+              categoryId: defaultCat.id,
+              description: `Pembelanjaan ${paymentMethodLabel(po.paymentMethod)} (GR)${
+                po.invoiceNo ? ` · ${po.invoiceNo}` : ""
+              }`,
+              amount: po.totalAmount,
+              paymentMethod: expensePaymentMethod(po.paymentMethod),
+              sourceType: "purchase",
+              purchaseId: po.id,
+              createdBy: session.user.id,
+            })
+            .returning({ id: expenses.id });
+          expenseId = exp.id;
+        }
+      }
+
+      // Finalisasi header: received + pembayaran.
+      await tx
+        .update(purchases)
+        .set({
+          receiptStatus: "received",
+          receivedAt: new Date(),
+          status: isTop ? "pending_payment" : "paid",
+          paidAt: isTop ? null : new Date(),
+          paidBy: isTop ? null : session.user.id,
+          expenseId: expenseId ?? po.expenseId,
+          updatedAt: new Date(),
+          updatedBy: session.user.id,
+        })
+        .where(eq(purchases.id, po.id));
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg === "NOT_FOUND") return fail("NOT_FOUND", "PO tidak ditemukan");
+    if (msg === "BAD_STATE")
+      return fail("BAD_STATE", "PO sudah diterima / dibatalkan");
+    if (msg.startsWith("UNIT_ERROR:")) {
+      const rest = msg.slice("UNIT_ERROR:".length);
+      const sep = rest.indexOf(":");
+      const ingName = sep > 0 ? rest.slice(0, sep) : "?";
+      const userMsg = sep > 0 ? rest.slice(sep + 1) : rest;
+      return fail("VALIDATION_ERROR", `Bahan "${ingName}": ${userMsg}`);
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "purchases.goods_receive", "Gagal terima barang"),
+    );
+  }
+
+  await logAudit({
+    eventType: "purchase.goods_receive",
+    userId: session.user.id,
+    entityType: "purchase",
+    entityId: input.id,
+    payload: { summary: `Goods Receive PO ${input.id.slice(0, 8)} (${grDate})` },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  // Jurnal akuntansi (post-commit) — tanggal GR.
+  {
+    const items = await db
+      .select({
+        section: purchaseItems.sectionSnapshot,
+        totalCost: purchaseItems.totalCost,
+      })
+      .from(purchaseItems)
+      .where(eq(purchaseItems.purchaseId, input.id));
+    const bySection = new Map<string, number>();
+    for (const it of items) {
+      const key = it.section ?? "null";
+      bySection.set(key, (bySection.get(key) ?? 0) + Number(it.totalCost));
+    }
+    const sectionLines = Array.from(bySection.entries()).map(([key, amount]) => ({
+      section: (key === "null" ? null : key) as
+        | "kitchen"
+        | "bar"
+        | "supporting"
+        | "cleaning"
+        | null,
+      amount,
+    }));
+    const [poRow] = await db
+      .select()
+      .from(purchases)
+      .where(eq(purchases.id, input.id))
+      .limit(1);
+    if (poRow) {
+      const { fireJournalHook, postJournalForPurchaseCreate } = await import(
+        "@/features/accounting/hooks"
+      );
+      fireJournalHook(
+        () =>
+          postJournalForPurchaseCreate({
+            outletId: session.user.outletId,
+            purchaseId: input.id,
+            purchaseLabel: poRow.invoiceNo ?? `GR ${grDate}`,
+            paymentMethod: poRow.paymentMethod,
+            total: poRow.totalAmount,
+            lines: sectionLines,
+            entryDate: grDate,
+            actorId: session.user.id,
+          }),
+        "purchase_create",
+      );
+    }
+  }
+
+  return ok({ id: input.id });
 }

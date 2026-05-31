@@ -27,6 +27,8 @@ export {
   getPurchase,
   listTopOutstanding,
   createPurchase,
+  createPurchaseOrder,
+  confirmGoodsReceipt,
   cancelPurchase,
   markPurchasePaid,
 } from "./actions";

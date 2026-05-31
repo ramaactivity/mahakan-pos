@@ -62,6 +62,20 @@ export const purchases = pgTable(
       .notNull()
       .default("pending_payment"),
 
+    /** Sesi AE-173 — dimensi RECEIPT (terpisah dari `status` pembayaran),
+     * mendukung alur PR → PO → GR. Default 'received' supaya SEMUA baris lama
+     * + jalur instant `createPurchase` = perilaku kini (tanpa backfill).
+     *  - 'ordered'   = PO dibuat, barang belum diterima (no expense/stok/jurnal)
+     *  - 'received'  = GR/Goods Receive → expense + (stok kalau perpetual) + jurnal
+     *  - 'cancelled' = PO dibatalkan sebelum GR. */
+    receiptStatus: text("receipt_status", {
+      enum: ["ordered", "received", "cancelled"],
+    })
+      .notNull()
+      .default("received"),
+    /** Stempel waktu GR (barang diterima). NULL untuk PO yang masih 'ordered'. */
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+
     /** Denormalized total: sum(items.total_cost). Stamped on insert/update
      * for fast list rendering tanpa join. */
     totalAmount: bigint("total_amount", { mode: "number" })

@@ -127,6 +127,9 @@ export const AUDIT_EVENT_TYPES = [
   "purchase.cancel",
   "purchase.mark_paid",
   "purchase.unmark_paid",
+  // Sesi AE-173 — alur PR→PO→GR.
+  "purchase.order_create",
+  "purchase.goods_receive",
   // Purchase Requests (Phase 6.5+6.6, sesi AC-3)
   "purchase_request.create",
   "purchase_request.receive",
