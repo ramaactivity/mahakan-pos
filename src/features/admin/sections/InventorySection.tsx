@@ -8,23 +8,18 @@ import { IngredientsList } from "./inventory/IngredientsList";
 import { MarketListView } from "./inventory/market-list/MarketListView";
 import { MovementsList } from "./inventory/MovementsList";
 import { OpnameTab } from "./inventory/opname/OpnameTab";
-import { PurchasesView } from "./inventory/purchases/PurchasesView";
-import { TopTrackerView } from "./inventory/purchases/TopTrackerView";
 import type { AdminSection } from "../components/AdminLeftNav";
 
+// Sesi AE-173 — tab "Pembelian" & "Hutang Dagang" dipindah ke halaman Purchasing.
 type InventoryTab =
   | "ingredients"
   | "market_list"
   | "opname"
-  | "purchases"
-  | "top"
   | "movements";
 
 const TABS: Array<{ key: InventoryTab; label: string; soon?: boolean }> = [
   { key: "ingredients", label: "Bahan" },
   { key: "market_list", label: "Market List" },
-  { key: "purchases", label: "Pembelian" },
-  { key: "top", label: "Hutang Dagang" },
   { key: "opname", label: "Opname" },
   { key: "movements", label: "Pergerakan" },
 ];
@@ -49,8 +44,8 @@ export function InventorySection({ onNavigate }: InventorySectionProps = {}) {
             Inventory
           </h1>
           <p className="text-sm text-neutral-700">
-            Kelola bahan baku, terima stok, pembelian, opname, dan pantau
-            pergerakan inventory. Resep & Preparation dipindah ke menu Menu.
+            Kelola bahan baku, opname, dan pantau pergerakan inventory.
+            Pembelian/PO/GR & Hutang Dagang dipindah ke menu Purchasing.
           </p>
         </div>
         <Button variant="outline" onClick={() => setCalcOpen(true)}>
@@ -76,12 +71,6 @@ export function InventorySection({ onNavigate }: InventorySectionProps = {}) {
       </TabPanel>
       <TabPanel value="market_list">
         <MarketListView />
-      </TabPanel>
-      <TabPanel value="purchases">
-        <PurchasesView />
-      </TabPanel>
-      <TabPanel value="top">
-        <TopTrackerView />
       </TabPanel>
       <TabPanel value="opname">
         <OpnameTab />

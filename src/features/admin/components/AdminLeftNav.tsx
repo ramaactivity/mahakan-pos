@@ -9,7 +9,7 @@ import {
   Briefcase,
   Calculator,
   CheckSquare,
-  ClipboardList,
+  ShoppingCart,
   Clock,
   Coffee,
   FileText,
@@ -42,6 +42,7 @@ export type AdminSection =
   | "inventory"
   | "suppliers"
   | "purchase_requests"
+  | "purchasing"
   | "customers"
   | "staff"
   | "employees"
@@ -111,7 +112,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "inventory", label: "Inventory", Icon: Package },
       { key: "suppliers", label: "Supplier", Icon: Truck },
-      { key: "purchase_requests", label: "Permintaan Belanja", Icon: ClipboardList },
+      { key: "purchasing", label: "Purchasing", Icon: ShoppingCart },
     ],
   },
   {

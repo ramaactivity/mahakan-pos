@@ -106,7 +106,19 @@ function monthStartIso(): string {
   return today.slice(0, 7) + "-01";
 }
 
-export function PurchasesView() {
+/**
+ * Sesi AE-173 — `variant`:
+ *  - "purchases" (default) = tab PO: semua pembelian/pesanan + aksi (Catat,
+ *    Buat PO, Tarik dari PR) + tombol Terima pada PO yang belum diterima.
+ *  - "receipts" = tab GR: hanya yang sudah diterima (receiptStatus='received'),
+ *    read-only log, tanpa tombol buat.
+ */
+export function PurchasesView({
+  variant = "purchases",
+}: {
+  variant?: "purchases" | "receipts";
+} = {}) {
+  const isReceipts = variant === "receipts";
   const { session } = useSession();
   const role = session?.user.role;
   const canCreate = role
@@ -140,8 +152,11 @@ export function PurchasesView() {
           return p.purchaseDate;
       }
     };
-    return [...items].sort(compareBy(sort.dir, getValue));
-  }, [items, sort.key, sort.dir]);
+    const base = isReceipts
+      ? items.filter((p) => p.receiptStatus === "received")
+      : items;
+    return [...base].sort(compareBy(sort.dir, getValue));
+  }, [items, sort.key, sort.dir, isReceipts]);
   const [suppliersList, setSuppliersList] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -208,11 +223,11 @@ export function PurchasesView() {
 
   const total = useMemo(
     () =>
-      items.reduce(
+      sortedItems.reduce(
         (acc, p) => (p.status === "cancelled" ? acc : acc + p.totalAmount),
         0,
       ),
-    [items],
+    [sortedItems],
   );
 
   function refresh() {
@@ -272,16 +287,18 @@ export function PurchasesView() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="flex items-center gap-2 text-lg font-semibold text-neutral-900">
-            <ShoppingBag className="size-5" aria-hidden /> Pembelian (
-            {items.length})
+            <ShoppingBag className="size-5" aria-hidden />{" "}
+            {isReceipts ? "Barang Diterima (GR)" : "Pembelian / PO"} (
+            {sortedItems.length})
           </h2>
           <p className="text-xs text-neutral-500">
-            Replace Form Pembelanjaan Cash + TOP. Stok auto-update saat
-            simpan; kas otomatis tercatat untuk Cash.
+            {isReceipts
+              ? "Riwayat barang yang sudah diterima (GR). Pengeluaran tercatat saat barang diterima."
+              : "Catat pembelian / buat PO. Pengeluaran & stok (mode perpetual) tercatat saat barang diterima."}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {canCreate ? (
+          {canCreate && !isReceipts ? (
             <>
               <Button
                 variant="outline"

@@ -64,6 +64,11 @@ const PurchaseRequestsSection = lazy(() =>
     default: m.PurchaseRequestsSection,
   })),
 );
+const PurchasingSection = lazy(() =>
+  import("@/features/admin/sections/PurchasingSection").then((m) => ({
+    default: m.PurchasingSection,
+  })),
+);
 const CustomersSection = lazy(() =>
   import("@/features/admin/sections/CustomersSection").then((m) => ({
     default: m.CustomersSection,
@@ -159,6 +164,7 @@ const VALID_SECTIONS: ReadonlySet<AdminSection> = new Set([
   "inventory",
   "suppliers",
   "purchase_requests",
+  "purchasing",
   "customers",
   "staff",
   "employees",
@@ -357,6 +363,8 @@ export function AdminShell() {
               <InventorySection onNavigate={setSection} />
             ) : section === "suppliers" ? (
               <SuppliersSection />
+            ) : section === "purchasing" ? (
+              <PurchasingSection />
             ) : section === "purchase_requests" ? (
               <PurchaseRequestsSection />
             ) : section === "customers" ? (
