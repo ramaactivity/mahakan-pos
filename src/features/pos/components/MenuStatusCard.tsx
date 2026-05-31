@@ -1,7 +1,13 @@
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
-import { ChevronDown, ChevronRight, EyeOff, Search } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  EyeOff,
+  Loader2,
+  Search,
+} from "lucide-react";
 import {
   Badge,
   Card,
@@ -12,33 +18,27 @@ import {
   toast,
 } from "@/components/ui";
 import { isOk, toggleSoldOut, type Category, type MenuItem } from "@/features/menu";
-// IMPORTANT: import from rbac directly, NOT from "@/lib/auth" barrel.
-// The barrel runs NextAuth(authConfig) at module load → pulls @/db
-// → DATABASE_URL throw in browser. See docs/CLIENT-IMPORT-RULES.md.
-import { hasPermission, type Role } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface MenuStatusCardProps {
   menuItems: MenuItem[];
   categories: Category[];
-  role: Role;
   /** Called after a successful toggle so PosShell can update its lifted state. */
   onItemUpdated: (next: MenuItem) => void;
 }
 
 /**
  * In-POS sold-out / available toggle for menu items. Lives in Pengaturan tab so
- * Staff + Manager can mark sold-out tanpa perlu login admin. Same RBAC as the
- * admin ItemsList — Staff can mark sold-out, only Owner/Manager can revert.
+ * semua role (Staff/Supervisor/Manager/Owner) bisa nyalakan/matikan menu tanpa
+ * perlu login admin (sesi AE-170 — RBAC dilonggarkan, operasional jangan
+ * ke-block nunggu atasan).
  */
 export function MenuStatusCard({
   menuItems,
   categories,
-  role,
   onItemUpdated,
 }: MenuStatusCardProps) {
-  const canMarkAvailable = hasPermission(role, "pos.menu.mark_available");
   const [search, setSearch] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   // Track in-flight toggles per item to prevent double-tap.
@@ -77,10 +77,6 @@ export function MenuStatusCard({
 
   async function handleToggle(item: MenuItem) {
     if (pending[item.id]) return;
-    if (item.isSoldOut && !canMarkAvailable) {
-      toast.error("Hanya Owner/Manager yang bisa kembalikan ke tersedia");
-      return;
-    }
     setPending((p) => ({ ...p, [item.id]: true }));
     // Optimistic update — flip immediately, rollback on error.
     onItemUpdated({ ...item, isSoldOut: !item.isSoldOut });
@@ -134,19 +130,15 @@ export function MenuStatusCard({
           />
         </form>
 
-        {!canMarkAvailable ? (
-          <p className="rounded-md bg-warning-100/40 p-2 text-xs text-warning-500">
-            Sebagai Staff, kamu bisa <em>mark sold-out</em> tapi gak bisa
-            kembalikan ke tersedia. Minta Manager/Owner untuk reverse.
-          </p>
-        ) : null}
-
         {grouped.length === 0 ? (
           <p className="py-6 text-center text-sm text-neutral-500">
             {search.trim() ? "Tidak ada item yang cocok." : "Tidak ada menu aktif."}
           </p>
         ) : (
-          <div className="space-y-2">
+          /* Sesi AE-170 — flow kategori ke 2 kolom di layar lebar (tablet/desktop)
+           * supaya area kiri-kanan terisi. break-inside-avoid jaga 1 kategori
+           * tidak terpotong antar kolom. */
+          <div className="gap-3 [column-fill:balance] lg:columns-2 [&>*]:mb-3 [&>*]:break-inside-avoid">
             {grouped.map(({ category, items }) => {
               const isCollapsed = collapsed[category.id] ?? false;
               const soldOutInCat = items.filter((i) => i.isSoldOut).length;
@@ -188,12 +180,12 @@ export function MenuStatusCard({
                       {items.map((item) => (
                         <li
                           key={item.id}
-                          className="flex items-center justify-between gap-3 px-3 py-2"
+                          className="flex items-center justify-between gap-3 px-3 py-2.5 touch:py-3"
                         >
                           <div className="min-w-0 flex-1">
                             <p
                               className={cn(
-                                "truncate text-sm",
+                                "truncate text-sm touch:text-[15px]",
                                 item.isSoldOut
                                   ? "font-medium text-neutral-500 line-through"
                                   : "font-medium text-neutral-900",
@@ -213,10 +205,7 @@ export function MenuStatusCard({
                           </div>
                           <SoldOutToggle
                             soldOut={item.isSoldOut}
-                            disabled={
-                              pending[item.id] ||
-                              (item.isSoldOut && !canMarkAvailable)
-                            }
+                            disabled={Boolean(pending[item.id])}
                             pending={Boolean(pending[item.id])}
                             onToggle={() => handleToggle(item)}
                             label={item.name}
@@ -235,6 +224,12 @@ export function MenuStatusCard({
   );
 }
 
+/**
+ * Sesi AE-170 — redesign: dulu switch kecil (h-6 w-11) yang "penyok" di tablet.
+ * Sekarang pill berlabel status: hijau "Tersedia" / oranye "Habis". Tap untuk
+ * flip. Touch target besar (h-9, tablet h-11), label jelas — staff langsung
+ * paham status tanpa nebak warna switch.
+ */
 function SoldOutToggle({
   soldOut,
   disabled,
@@ -252,24 +247,33 @@ function SoldOutToggle({
     <button
       type="button"
       role="switch"
-      aria-checked={soldOut}
-      aria-label={`Sold-out ${label}`}
+      aria-checked={!soldOut}
+      aria-label={`Status ${label}: ${soldOut ? "habis" : "tersedia"} — tap untuk ubah`}
       disabled={disabled}
       onClick={onToggle}
       className={cn(
-        "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700 focus-visible:ring-offset-2",
-        soldOut ? "bg-warning-500" : "bg-neutral-300",
-        disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+        "inline-flex h-9 min-w-[112px] shrink-0 items-center justify-center gap-1.5 rounded-full border px-3.5 text-sm font-semibold transition-all touch:h-11 touch:min-w-[124px] touch:text-[15px]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1",
+        soldOut
+          ? "border-warning-300 bg-warning-100 text-warning-600 focus-visible:ring-warning-500"
+          : "border-mahakan-green-300 bg-mahakan-green-50 text-mahakan-green-800 focus-visible:ring-mahakan-green-700",
+        disabled
+          ? "cursor-not-allowed opacity-60"
+          : "cursor-pointer hover:brightness-[0.97] active:scale-95",
       )}
     >
-      <span
-        className={cn(
-          "inline-block size-5 transform rounded-full bg-white shadow transition-transform",
-          soldOut ? "translate-x-5" : "translate-x-0.5",
-          pending ? "animate-pulse" : "",
-        )}
-      />
+      {pending ? (
+        <Loader2 className="size-4 animate-spin" aria-hidden />
+      ) : (
+        <span
+          className={cn(
+            "size-2 rounded-full",
+            soldOut ? "bg-warning-500" : "bg-mahakan-green-600",
+          )}
+          aria-hidden
+        />
+      )}
+      {soldOut ? "Habis" : "Tersedia"}
     </button>
   );
 }

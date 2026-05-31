@@ -612,7 +612,6 @@ export function OpenShiftModal({
             <MenuStatusCard
               menuItems={menuItems}
               categories={categories}
-              role={role}
               onItemUpdated={onItemUpdated}
             />
           </div>

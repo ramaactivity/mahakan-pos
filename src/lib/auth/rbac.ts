@@ -35,8 +35,11 @@ export const permissions = {
   "pos.receipt.reprint": ["owner", "manager", "supervisor", "staff"],
 
   // POS — Menu
+  // Sesi AE-170 — staff request: semua role bisa nyalakan/matikan menu
+  // (sold-out + tersedia). Dulu staff cuma bisa matikan → operasional
+  // ke-block nunggu manager/owner nyalain lagi.
   "pos.menu.mark_sold_out": ["owner", "manager", "supervisor", "staff"],
-  "pos.menu.mark_available": ["owner", "manager", "supervisor"],
+  "pos.menu.mark_available": ["owner", "manager", "supervisor", "staff"],
 
   // Shift
   "shift.open_own": ["owner", "manager", "supervisor", "staff"],

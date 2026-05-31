@@ -5,11 +5,14 @@ import {
   CheckCircle2,
   CloudOff,
   Cloud,
+  EyeOff,
   Info,
   Loader2,
+  Printer,
   RefreshCw,
   Settings as SettingsIcon,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   Badge,
   Button,
@@ -31,6 +34,19 @@ import { MenuStatusCard } from "./MenuStatusCard";
 
 const APP_VERSION = "Phase 2 Tier 1.1 (M22.X)";
 
+type SettingsTab = "menu" | "printer" | "sync" | "info";
+
+const SETTINGS_TABS: Array<{
+  key: SettingsTab;
+  label: string;
+  icon: typeof EyeOff;
+}> = [
+  { key: "menu", label: "Status Menu", icon: EyeOff },
+  { key: "printer", label: "Printer", icon: Printer },
+  { key: "sync", label: "Sinkronisasi", icon: Cloud },
+  { key: "info", label: "Info", icon: Info },
+];
+
 interface PosSettingsPanelProps {
   shift: Shift | null;
   menuItems: MenuItem[];
@@ -44,12 +60,13 @@ export function PosSettingsPanel({
   categories,
   onMenuItemUpdated,
 }: PosSettingsPanelProps) {
-  const { session } = useSession();
-  const role = session?.user.role;
+  /* Sesi AE-170 — sub-tab biar nggak scroll jauh + card dilebarin (max-w-6xl).
+   * Default ke Status Menu (paling sering dipakai operasional). */
+  const [tab, setTab] = useState<SettingsTab>("menu");
 
   return (
-    <div className="h-full overflow-y-auto bg-neutral-50 p-6">
-      <div className="mx-auto max-w-3xl space-y-4">
+    <div className="h-full overflow-y-auto bg-neutral-50 p-4 touch:p-3 lg:p-6">
+      <div className="mx-auto max-w-6xl space-y-4">
         <div className="flex items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-lg bg-mahakan-green-100 text-mahakan-green-900">
             <SettingsIcon className="size-5" aria-hidden />
@@ -64,17 +81,43 @@ export function PosSettingsPanel({
           </div>
         </div>
 
-        <PrinterCard />
-        {role ? (
+        {/* Sub-tab bar */}
+        <div className="flex gap-1 overflow-x-auto rounded-xl border border-neutral-200 bg-white p-1">
+          {SETTINGS_TABS.map((t) => {
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setTab(t.key)}
+                className={cn(
+                  "flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors touch:py-2.5 touch:text-[15px]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                  tab === t.key
+                    ? "bg-mahakan-green-700 text-white"
+                    : "text-neutral-700 hover:bg-neutral-100",
+                )}
+              >
+                <Icon className="size-4" aria-hidden />
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {tab === "menu" ? (
           <MenuStatusCard
             menuItems={menuItems}
             categories={categories}
-            role={role}
             onItemUpdated={onMenuItemUpdated}
           />
-        ) : null}
-        <SyncCard />
-        <AboutCard shift={shift} />
+        ) : tab === "printer" ? (
+          <PrinterCard />
+        ) : tab === "sync" ? (
+          <SyncCard />
+        ) : (
+          <AboutCard shift={shift} />
+        )}
       </div>
     </div>
   );
