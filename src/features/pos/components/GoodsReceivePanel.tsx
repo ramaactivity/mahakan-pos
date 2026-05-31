@@ -4,9 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { PackageCheck, Truck } from "lucide-react";
 import { Badge, Button, toast } from "@/components/ui";
 import {
-  confirmGoodsReceipt,
+  fetchReceivablePurchase,
   isOk,
   listPendingGoodsReceipts,
+  receiveGoods,
 } from "@/features/purchases";
 import { formatRupiah } from "@/lib/format";
 import { PosPanelSkeleton } from "./PanelSkeleton";
@@ -45,14 +46,30 @@ export function GoodsReceivePanel() {
   async function handleReceive(po: PendingPo) {
     if (receiving) return;
     setReceiving(po.id);
-    const res = await confirmGoodsReceipt({ id: po.id });
+    // Sesi AE-173 — terima PENUH (semua sisa) lewat receiveGoods (model GR baru:
+    // buat record GR + movement + expense). Partial per-item ada di Back Office.
+    const detail = await fetchReceivablePurchase(po.id);
+    if (!isOk(detail)) {
+      setReceiving(null);
+      toast.error(detail.error.message);
+      return;
+    }
+    const recvItems = detail.data.items
+      .filter((it) => it.remainingQty > 0)
+      .map((it) => ({ purchaseItemId: it.purchaseItemId, qty: it.remainingQty }));
+    if (recvItems.length === 0) {
+      setReceiving(null);
+      toast.error("Tidak ada sisa untuk diterima");
+      void refresh();
+      return;
+    }
+    const res = await receiveGoods({ purchaseId: po.id, items: recvItems });
     setReceiving(null);
     if (!isOk(res)) {
       toast.error(res.error.message);
       return;
     }
     toast.success("Barang diterima — pengeluaran tercatat");
-    // optimistik: buang dari daftar + refetch buat sinkron.
     setItems((prev) => prev.filter((x) => x.id !== po.id));
     void refresh();
   }

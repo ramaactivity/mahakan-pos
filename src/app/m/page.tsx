@@ -13,6 +13,7 @@ import {
   Fingerprint,
   LogOut,
   PackageSearch,
+  Truck,
 } from "lucide-react";
 import { Spinner, toast } from "@/components/ui";
 import { useSession } from "@/features/auth/SessionProvider";
@@ -53,10 +54,18 @@ const MODULES: ModuleCard[] = [
   },
   {
     href: "/m/po",
-    title: "Purchase Order",
+    title: "Permintaan Belanja (PR)",
     description:
-      "Buat permintaan belanja saat bahan menipis. Owner approve via WhatsApp.",
+      "Ajukan belanja saat bahan menipis. Owner/Manager approve & buat PO.",
     icon: <ClipboardList className="size-6" aria-hidden />,
+    status: "live",
+  },
+  {
+    href: "/m/gr",
+    title: "Terima Barang (GR)",
+    description:
+      "Terima barang dari PO yang sudah dipesan. Catat qty diterima (boleh sebagian).",
+    icon: <Truck className="size-6" aria-hidden />,
     status: "live",
   },
   {
