@@ -25,7 +25,9 @@ interface MenuItemFormModalProps {
   mode: Mode | null;
   categories: Category[];
   onClose: () => void;
-  onSaved: () => void;
+  /** Sesi AE-168 — bawa item yang baru dibuat supaya caller (tab Resep)
+   * bisa langsung buka editor resep. Undefined saat edit. */
+  onSaved: (created?: MenuItem) => void;
 }
 
 export function MenuItemFormModal({
@@ -149,16 +151,16 @@ export function MenuItemFormModal({
     }
 
     toast.success(
-      mode.kind === "create" ? "Item ditambahkan" : "Item disimpan",
+      mode.kind === "create" ? "Menu ditambahkan" : "Menu disimpan",
     );
-    onSaved();
+    onSaved(mode.kind === "create" ? res.data : undefined);
   }
 
   return (
     <Modal
       open={open && mode !== null}
       onClose={onClose}
-      title={mode?.kind === "edit" ? "Edit Menu Item" : "Tambah Menu Item"}
+      title={mode?.kind === "edit" ? "Edit Menu" : "Tambah Menu"}
       size="lg"
       footer={
         <>
@@ -173,7 +175,7 @@ export function MenuItemFormModal({
     >
       <div className="space-y-4">
         <Input
-          label="Nama Item"
+          label="Nama Menu"
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
@@ -330,7 +332,7 @@ export function MenuItemFormModal({
           </div>
         ) : (
           <p className="rounded-md bg-info-100 p-3 text-sm text-info-500">
-            Open-price item (e.g. Manual Brew). Harga di-input barista per
+            Menu open-price (mis. Manual Brew). Harga di-input barista per
             transaksi.
           </p>
         )}
@@ -343,7 +345,7 @@ export function MenuItemFormModal({
             className="size-4 rounded border-neutral-300 text-mahakan-green-700 focus:ring-mahakan-green-700"
           />
           <span className="text-sm text-neutral-900">
-            Signature item (♥ icon di POS)
+            Menu signature (♥ icon di POS)
           </span>
         </label>
 

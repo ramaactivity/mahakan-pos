@@ -267,7 +267,7 @@ export function ItemsList() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-neutral-900">
-            Menu Items ({items.length})
+            Daftar Menu ({items.length})
             {!loading && items.length > 0 ? (
               <span className="ml-2 text-sm font-normal text-neutral-500">
                 · {counts.available} tersedia
@@ -277,7 +277,7 @@ export function ItemsList() {
             ) : null}
           </h2>
           <p className="text-xs text-neutral-500">
-            Kelola item menu, harga, dan status sold-out.
+            Kelola menu, harga, dan status sold-out.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -287,7 +287,7 @@ export function ItemsList() {
             </Button>
           )}
           <Button onClick={() => setMode({ kind: "create" })}>
-            <Plus className="size-4" aria-hidden /> Tambah Item
+            <Plus className="size-4" aria-hidden /> Tambah Menu
           </Button>
         </div>
       </header>

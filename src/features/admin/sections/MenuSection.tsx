@@ -16,7 +16,7 @@ type MenuTab =
   | "preparations";
 
 const TABS: Array<{ key: MenuTab; label: string }> = [
-  { key: "items", label: "Items" },
+  { key: "items", label: "Menu" },
   { key: "categories", label: "Kategori" },
   { key: "modifiers", label: "Modifier" },
   { key: "recipes", label: "Resep" },

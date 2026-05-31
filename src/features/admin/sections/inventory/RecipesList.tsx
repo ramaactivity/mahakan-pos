@@ -7,6 +7,7 @@ import {
   ChefHat,
   Coffee,
   FileSpreadsheet,
+  Plus,
 } from "lucide-react";
 import {
   Badge,
@@ -33,6 +34,7 @@ import {
 } from "@/features/inventory";
 import { RecipeEditorModal } from "./RecipeEditorModal";
 import { RecipeExcelImportModal } from "./RecipeExcelImportModal";
+import { MenuItemFormModal } from "../menu/MenuItemFormModal";
 
 interface RecipeStatus {
   hot?: { id: string; wasteFactorPct: number };
@@ -53,6 +55,9 @@ export function RecipesList() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [editTarget, setEditTarget] = useState<MenuItem | null>(null);
   const [excelOpen, setExcelOpen] = useState(false);
+  /* Sesi AE-168 — tambah menu baru langsung dari tab Resep, lalu lanjut isi
+   * resepnya (auto-buka editor resep kalau bukan open-price). */
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,13 +164,18 @@ export function RecipesList() {
             resep supaya COGS dan auto-deduct stok bisa jalan saat transaksi.
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => setExcelOpen(true)}
-          title="Import / export Excel"
-        >
-          <FileSpreadsheet className="size-4" aria-hidden /> Excel
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setCreateMenuOpen(true)}>
+            <Plus className="size-4" aria-hidden /> Tambah Menu
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setExcelOpen(true)}
+            title="Import / export Excel"
+          >
+            <FileSpreadsheet className="size-4" aria-hidden /> Excel
+          </Button>
+        </div>
       </header>
 
       <Card>
@@ -254,6 +264,22 @@ export function RecipesList() {
         open={excelOpen}
         onClose={() => setExcelOpen(false)}
         onApplied={() => setRefreshKey((k) => k + 1)}
+      />
+
+      {/* Sesi AE-168 — tambah menu baru dari tab Resep → lanjut isi resep. */}
+      <MenuItemFormModal
+        open={createMenuOpen}
+        mode={createMenuOpen ? { kind: "create" } : null}
+        categories={categories}
+        onClose={() => setCreateMenuOpen(false)}
+        onSaved={(created) => {
+          setCreateMenuOpen(false);
+          setRefreshKey((k) => k + 1);
+          /* Menu non-open-price wajib resep → langsung buka editor resep. */
+          if (created && created.priceType !== "open") {
+            setEditTarget(created);
+          }
+        }}
       />
     </div>
   );
