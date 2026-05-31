@@ -19,7 +19,11 @@ import {
   toast,
   type ComboboxGroup,
 } from "@/components/ui";
-import { createPurchase, isOk } from "@/features/purchases";
+import {
+  createPurchase,
+  createPurchaseOrder,
+  isOk,
+} from "@/features/purchases";
 import type { PaymentMethod } from "@/features/purchases";
 import { listOpenPurchaseRequestsForPurchase } from "@/features/purchase-requests/actions";
 import {
@@ -116,6 +120,8 @@ export function CreatePurchaseFromPrModal({
   const [purchaseDate, setPurchaseDate] = useState(todayJakartaIso());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [submitting, setSubmitting] = useState(false);
+  // Sesi AE-173 — false = Langsung Terima; true = Buat PO dulu (GR nanti).
+  const [asPurchaseOrder, setAsPurchaseOrder] = useState(false);
   const [updateCost, setUpdateCost] = useState(true);
   /* Sesi AE-122 — sort PR list (newest first default). */
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
@@ -392,7 +398,7 @@ export function CreatePurchaseFromPrModal({
     let successCount = 0;
     const errors: string[] = [];
     for (const group of grossGroupsToSubmit) {
-      const res = await createPurchase({
+      const payload = {
         supplierId: group.supplierId,
         purchaseDate,
         paymentMethod,
@@ -407,7 +413,10 @@ export function CreatePurchaseFromPrModal({
           unit: i.unitOverride ?? null,
           purchaseRequestItemId: i.purchaseRequestItemId,
         })),
-      });
+      };
+      const res = asPurchaseOrder
+        ? await createPurchaseOrder(payload)
+        : await createPurchase(payload);
       if (isOk(res)) successCount++;
       else errors.push(`${group.supplierName}: ${res.error.message}`);
     }
@@ -415,7 +424,9 @@ export function CreatePurchaseFromPrModal({
 
     if (errors.length === 0) {
       toast.success(
-        `${successCount} pembelian dibuat dari PR (${selectedCount} item ter-link)`,
+        asPurchaseOrder
+          ? `${successCount} PO dibuat dari PR — tekan "Terima" saat barang datang`
+          : `${successCount} pembelian dibuat dari PR (${selectedCount} item ter-link)`,
       );
       onSaved();
     } else if (successCount > 0) {
@@ -477,8 +488,10 @@ export function CreatePurchaseFromPrModal({
               )}
               Buat{" "}
               {grossGroupsToSubmit.length > 0
-                ? `${grossGroupsToSubmit.length} Pembelian`
-                : "Pembelian"}{" "}
+                ? `${grossGroupsToSubmit.length} ${asPurchaseOrder ? "PO" : "Pembelian"}`
+                : asPurchaseOrder
+                  ? "PO"
+                  : "Pembelian"}{" "}
               · {formatRupiah(totalAmount)}
             </Button>
           </>
@@ -499,7 +512,39 @@ export function CreatePurchaseFromPrModal({
           onSelect={handleSelectPr}
         />
       ) : selectedPr ? (
-        <Step2Wizard
+        <>
+          {/* Sesi AE-173 — pilih tahap: langsung terima vs buat PO dulu. */}
+          <div className="mb-3 grid grid-cols-2 gap-2 rounded-lg border border-neutral-200 bg-neutral-50 p-1.5">
+            {[
+              { v: false, label: "Langsung Terima", hint: "Barang sudah di tangan" },
+              { v: true, label: "Buat PO dulu", hint: "Pesan dulu, terima nanti (GR)" },
+            ].map((opt) => (
+              <button
+                key={String(opt.v)}
+                type="button"
+                onClick={() => setAsPurchaseOrder(opt.v)}
+                className={cn(
+                  "rounded-md px-3 py-2 text-left text-sm transition-colors",
+                  asPurchaseOrder === opt.v
+                    ? "bg-mahakan-green-700 text-white shadow-sm"
+                    : "text-neutral-700 hover:bg-neutral-100",
+                )}
+              >
+                <span className="block font-semibold">{opt.label}</span>
+                <span
+                  className={cn(
+                    "block text-xs",
+                    asPurchaseOrder === opt.v
+                      ? "text-mahakan-green-50"
+                      : "text-neutral-500",
+                  )}
+                >
+                  {opt.hint}
+                </span>
+              </button>
+            ))}
+          </div>
+          <Step2Wizard
           pr={selectedPr}
           items={items}
           groups={groups}
@@ -519,6 +564,7 @@ export function CreatePurchaseFromPrModal({
           onPaymentMethod={setPaymentMethod}
           onUpdateCost={setUpdateCost}
         />
+        </>
       ) : null}
     </Modal>
   );
