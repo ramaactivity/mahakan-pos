@@ -337,7 +337,7 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
       open={open}
       onClose={onClose}
       title="Receipt, Threshold & Feature Flags"
-      size="lg"
+      size="3xl"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
