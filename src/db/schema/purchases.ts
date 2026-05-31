@@ -153,8 +153,22 @@ export const purchaseItems = pgTable(
      * prefer this kalau available. */
     qtyDecimal: numeric("qty_decimal", { precision: 15, scale: 4 }),
 
-    /** Backlink to inventoryMovements row created on purchase confirm. */
+    /** Backlink to inventoryMovements row created on purchase confirm.
+     * Sesi AE-173 — legacy: untuk instant purchase 1 movement per line. Untuk
+     * alur PO→GR partial, movement dibuat per goods_receipt_items (bisa >1). */
     movementId: uuid("movement_id").references(() => inventoryMovements.id),
+
+    /** Sesi AE-173 — qty yang SUDAH diterima (GR) kumulatif, dalam satuan RAW
+     * sama dengan `qty`. Dipakai untuk partial receive: PO 'ordered' → 'partial'
+     * → 'received' saat received_qty mencapai qty di semua line. Instant purchase
+     * (createPurchase) langsung di-set = qty (fully received). */
+    receivedQty: bigint("received_qty", { mode: "number" }).notNull().default(0),
+    receivedQtyDecimal: numeric("received_qty_decimal", {
+      precision: 15,
+      scale: 4,
+    })
+      .notNull()
+      .default("0"),
 
     /** Sesi AE-57 — link ke PR item kalau purchase ini ditarik dari Permintaan
      * Belanja. NULL untuk manual entry langsung. Saat di-set:
@@ -189,5 +203,81 @@ export const purchaseItems = pgTable(
     check("ck_purchase_items_qty_pos", sql`${t.qty} > 0`),
     check("ck_purchase_items_unit_cost_nonneg", sql`${t.unitCost} >= 0`),
     check("ck_purchase_items_total_nonneg", sql`${t.totalCost} >= 0`),
+  ],
+);
+
+/* ============================================================================
+ * Sesi AE-173 — Goods Receipt (GR) partial. Satu PO bisa diterima bertahap
+ * (beberapa GR). Tiap GR mencatat qty diterima per line → akumulasi ke
+ * purchase_items.received_qty; PO 'ordered' → 'partial' → 'received'.
+ * Tiap GR membuat expense (pengeluaran) + inventory_movements per line.
+ * ========================================================================== */
+export const goodsReceipts = pgTable(
+  "goods_receipts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    outletId: uuid("outlet_id")
+      .notNull()
+      .references(() => outlets.id),
+    purchaseId: uuid("purchase_id")
+      .notNull()
+      .references(() => purchases.id, { onDelete: "cascade" }),
+    /** Tanggal barang diterima (WIB date). Dipakai utk anti-double-count + expense. */
+    receivedDate: date("received_date").notNull(),
+    notes: text("notes"),
+    /** Total nilai GR ini (sum gr_items.total_cost). */
+    totalAmount: bigint("total_amount", { mode: "number" }).notNull().default(0),
+    /** Backlink ke expense (pengeluaran) yang dibuat saat GR ini. */
+    expenseId: uuid("expense_id").references(() => expenses.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+  },
+  (t) => [
+    index("idx_goods_receipts_purchase").on(t.purchaseId),
+    index("idx_goods_receipts_outlet_date").on(t.outletId, t.receivedDate),
+    check("ck_goods_receipts_total_nonneg", sql`${t.totalAmount} >= 0`),
+  ],
+);
+
+export const goodsReceiptItems = pgTable(
+  "goods_receipt_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    goodsReceiptId: uuid("goods_receipt_id")
+      .notNull()
+      .references(() => goodsReceipts.id, { onDelete: "cascade" }),
+    purchaseItemId: uuid("purchase_item_id")
+      .notNull()
+      .references(() => purchaseItems.id),
+    ingredientId: uuid("ingredient_id")
+      .notNull()
+      .references(() => ingredients.id),
+    /** Qty diterima GR ini (RAW unit, sama dgn purchase_items.qty). */
+    receivedQty: bigint("received_qty", { mode: "number" }).notNull(),
+    receivedQtyDecimal: numeric("received_qty_decimal", {
+      precision: 15,
+      scale: 4,
+    }),
+    unitCost: bigint("unit_cost", { mode: "number" }).notNull(),
+    totalCost: bigint("total_cost", { mode: "number" }).notNull(),
+    /** Movement (kind='purchase') yang dibuat utk line GR ini. */
+    movementId: uuid("movement_id").references(() => inventoryMovements.id),
+    ingredientNameSnapshot: text("ingredient_name_snapshot").notNull(),
+    unitSnapshot: text("unit_snapshot").notNull(),
+    sectionSnapshot: text("section_snapshot"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("idx_gr_items_gr").on(t.goodsReceiptId),
+    index("idx_gr_items_purchase_item").on(t.purchaseItemId),
+    index("idx_gr_items_ingredient").on(t.ingredientId),
+    check("ck_gr_items_received_qty_pos", sql`${t.receivedQty} > 0`),
+    check("ck_gr_items_total_nonneg", sql`${t.totalCost} >= 0`),
   ],
 );
