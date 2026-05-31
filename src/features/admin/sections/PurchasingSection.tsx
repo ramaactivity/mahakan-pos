@@ -7,6 +7,7 @@ import { PurchaseRequestsSection } from "./PurchaseRequestsSection";
 import { PurchasesView } from "./inventory/purchases/PurchasesView";
 import { TopTrackerView } from "./inventory/purchases/TopTrackerView";
 import { GoodsReceiptModal } from "./inventory/purchases/GoodsReceiptModal";
+import { GoodsReceiptsList } from "./inventory/purchases/GoodsReceiptsList";
 
 type PurchasingTab = "pr" | "po" | "gr" | "top";
 
@@ -68,7 +69,7 @@ export function PurchasingSection() {
               <Plus className="size-4" aria-hidden /> Buat GR
             </Button>
           </div>
-          <PurchasesView key={grRefresh} variant="receipts" />
+          <GoodsReceiptsList refreshKey={grRefresh} />
         </div>
       </TabPanel>
       <TabPanel value="top">

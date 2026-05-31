@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   expenseCategories,
@@ -2024,6 +2024,97 @@ export async function fetchReceivablePurchase(
       };
     }),
   });
+}
+
+/** Sesi AE-173 — daftar record GR (goods_receipts) untuk tab GR. */
+export async function listGoodsReceipts(opts?: {
+  dateFrom?: string;
+  dateTo?: string;
+}): Promise<
+  ApiResult<
+    Array<{
+      id: string;
+      receivedDate: string;
+      supplierName: string | null;
+      poInvoiceNo: string | null;
+      poId: string;
+      receiptStatus: string;
+      totalAmount: number;
+      itemCount: number;
+    }>
+  >
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.goods_receive")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat GR");
+  }
+  const conds = [eq(goodsReceipts.outletId, session.user.outletId)];
+  if (opts?.dateFrom) conds.push(gte(goodsReceipts.receivedDate, opts.dateFrom));
+  if (opts?.dateTo) conds.push(lte(goodsReceipts.receivedDate, opts.dateTo));
+  const rows = await db
+    .select({
+      id: goodsReceipts.id,
+      receivedDate: goodsReceipts.receivedDate,
+      supplierName: suppliers.name,
+      poInvoiceNo: purchases.invoiceNo,
+      poId: goodsReceipts.purchaseId,
+      receiptStatus: purchases.receiptStatus,
+      totalAmount: goodsReceipts.totalAmount,
+      itemCount: sql<number>`(
+        select count(*)::int from ${goodsReceiptItems}
+        where ${goodsReceiptItems.goodsReceiptId} = ${goodsReceipts.id}
+      )`,
+    })
+    .from(goodsReceipts)
+    .leftJoin(purchases, eq(purchases.id, goodsReceipts.purchaseId))
+    .leftJoin(suppliers, eq(suppliers.id, purchases.supplierId))
+    .where(and(...conds))
+    .orderBy(desc(goodsReceipts.receivedDate), desc(goodsReceipts.createdAt));
+  return ok(rows.map((r) => ({ ...r, receiptStatus: r.receiptStatus ?? "received" })));
+}
+
+/** Sesi AE-173 — item-item dari sebuah GR record. */
+export async function fetchGoodsReceiptItems(grId: string): Promise<
+  ApiResult<
+    Array<{
+      ingredientName: string;
+      unit: string;
+      receivedQty: number;
+      unitCost: number;
+      totalCost: number;
+    }>
+  >
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.goods_receive")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat GR");
+  }
+  // Verify GR belongs to outlet.
+  const [gr] = await db
+    .select({ id: goodsReceipts.id })
+    .from(goodsReceipts)
+    .where(
+      and(
+        eq(goodsReceipts.id, grId),
+        eq(goodsReceipts.outletId, session.user.outletId),
+      ),
+    )
+    .limit(1);
+  if (!gr) return fail("NOT_FOUND", "GR tidak ditemukan");
+  const rows = await db
+    .select()
+    .from(goodsReceiptItems)
+    .where(eq(goodsReceiptItems.goodsReceiptId, grId))
+    .orderBy(goodsReceiptItems.ingredientNameSnapshot);
+  return ok(
+    rows.map((r) => ({
+      ingredientName: r.ingredientNameSnapshot,
+      unit: r.unitSnapshot,
+      receivedQty: Number(r.receivedQtyDecimal ?? r.receivedQty),
+      unitCost: r.unitCost,
+      totalCost: r.totalCost,
+    })),
+  );
 }
 
 /**
