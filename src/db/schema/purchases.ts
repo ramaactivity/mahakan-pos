@@ -66,10 +66,11 @@ export const purchases = pgTable(
      * mendukung alur PR → PO → GR. Default 'received' supaya SEMUA baris lama
      * + jalur instant `createPurchase` = perilaku kini (tanpa backfill).
      *  - 'ordered'   = PO dibuat, barang belum diterima (no expense/stok/jurnal)
+     *  - 'partial'   = sebagian item sudah di-GR, sisanya belum (Sesi AE-173)
      *  - 'received'  = GR/Goods Receive → expense + (stok kalau perpetual) + jurnal
      *  - 'cancelled' = PO dibatalkan sebelum GR. */
     receiptStatus: text("receipt_status", {
-      enum: ["ordered", "received", "cancelled"],
+      enum: ["ordered", "partial", "received", "cancelled"],
     })
       .notNull()
       .default("received"),

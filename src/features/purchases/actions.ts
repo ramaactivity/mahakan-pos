@@ -5,6 +5,8 @@ import { db } from "@/db";
 import {
   expenseCategories,
   expenses,
+  goodsReceipts,
+  goodsReceiptItems,
   ingredientCostHistory,
   ingredients,
   inventoryMovements,
@@ -632,6 +634,9 @@ export async function createPurchase(
           ingredientId: item.ingredientId,
           qty: rawQtyBigint,
           qtyDecimal: qtyDecimalStr,
+          // Sesi AE-173 — instant purchase = langsung diterima penuh.
+          receivedQty: rawQtyBigint,
+          receivedQtyDecimal: qtyDecimalStr,
           unitCost: item.unitCost,
           totalCost,
           movementId: movement.id,
@@ -1946,4 +1951,492 @@ export async function listPendingGoodsReceipts(): Promise<
     )
     .orderBy(desc(purchases.purchaseDate), desc(purchases.createdAt));
   return ok(rows);
+}
+
+/**
+ * Sesi AE-173 — Goods Receipt PARTIAL. Terima qty per-line dari sebuah PO.
+ * Bisa terima bertahap: PO 'ordered' → 'partial' → 'received' saat received_qty
+ * mencapai qty di semua line. Tiap GR membuat record goods_receipts + gr_items,
+ * movement (kind='purchase') per line (stok/WAC kalau perpetual), bump PR
+ * receivedQty, dan expense (pengeluaran) untuk total GR ini.
+ *
+ * `items[].qty` = qty diterima GR INI (increment), dalam satuan RAW line.
+ */
+export async function receiveGoods(input: {
+  purchaseId: string;
+  receivedDate?: string;
+  items: Array<{ purchaseItemId: string; qty: number }>;
+}): Promise<ApiResult<{ goodsReceiptId: string; receiptStatus: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.goods_receive")) {
+    return fail("FORBIDDEN", "Tidak punya hak terima barang");
+  }
+  if (!input?.purchaseId) return fail("VALIDATION_ERROR", "ID PO tidak valid");
+  const recvLines = (input.items ?? []).filter((i) => i.qty > 0);
+  if (recvLines.length === 0)
+    return fail("VALIDATION_ERROR", "Isi minimal 1 qty diterima");
+
+  const grDate = input.receivedDate ?? toJakartaDateOnly(new Date());
+  const recvByItem = new Map<string, number>();
+  for (const r of recvLines) {
+    recvByItem.set(r.purchaseItemId, (recvByItem.get(r.purchaseItemId) ?? 0) + r.qty);
+  }
+
+  let resultGrId = "";
+  let resultStatus: "partial" | "received" = "partial";
+  try {
+    await db.transaction(async (tx) => {
+      const [po] = await tx
+        .select()
+        .from(purchases)
+        .where(
+          and(
+            eq(purchases.id, input.purchaseId),
+            eq(purchases.outletId, session.user.outletId),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!po) throw new Error("NOT_FOUND");
+      if (po.receiptStatus !== "ordered" && po.receiptStatus !== "partial")
+        throw new Error("BAD_STATE");
+      const isTop = po.paymentMethod === "top";
+
+      const poItems = await tx
+        .select()
+        .from(purchaseItems)
+        .where(eq(purchaseItems.purchaseId, po.id));
+      const itemById = new Map(poItems.map((i) => [i.id, i] as const));
+      // Validasi: line ada di PO + tidak over-receive.
+      for (const [piId, qty] of recvByItem) {
+        const pi = itemById.get(piId);
+        if (!pi) throw new Error("ITEM_NOT_IN_PO");
+        const already = Number(pi.receivedQtyDecimal ?? pi.receivedQty);
+        const ordered = parseFloat(pi.qtyDecimal ?? "") || pi.qty;
+        if (already + qty > ordered + 1e-6)
+          throw new Error(`OVER_RECEIVE:${pi.ingredientNameSnapshot}`);
+      }
+
+      const ingIds = Array.from(new Set(poItems.map((i) => i.ingredientId)));
+      const ingRows =
+        ingIds.length > 0
+          ? await tx
+              .select()
+              .from(ingredients)
+              .where(inArray(ingredients.id, ingIds))
+              .for("update")
+          : [];
+      const ingById = new Map(ingRows.map((r) => [r.id, r] as const));
+
+      const packMap = new Map<string, PackInfo>();
+      if (po.supplierId && ingIds.length > 0) {
+        const packRows = await tx
+          .select({
+            ingredientId: supplierIngredients.ingredientId,
+            packSize: supplierIngredients.packSize,
+            packUnit: supplierIngredients.packUnit,
+          })
+          .from(supplierIngredients)
+          .where(
+            and(
+              eq(supplierIngredients.outletId, session.user.outletId),
+              eq(supplierIngredients.supplierId, po.supplierId),
+              inArray(supplierIngredients.ingredientId, ingIds),
+              isNull(supplierIngredients.deletedAt),
+            ),
+          );
+        for (const r of packRows) {
+          const size = parseFloat(r.packSize);
+          if (Number.isFinite(size) && size > 0)
+            packMap.set(r.ingredientId, { packSize: size, packUnit: r.packUnit });
+        }
+      }
+
+      const lastOpname = await fetchLastFinalizedOpname(session.user.outletId);
+      const backdateStatus = classifyPurchaseAgainstOpname({
+        purchaseDateIso: grDate,
+        lastOpnameFinalizedAt: lastOpname?.finalizedAt ?? null,
+      });
+      const { addOnPurchase } = await getStockMode(session.user.outletId);
+      const skipStockEffect =
+        shouldSkipStockUpdate(backdateStatus) || !addOnPurchase;
+
+      // Header GR.
+      const [gr] = await tx
+        .insert(goodsReceipts)
+        .values({
+          outletId: session.user.outletId,
+          purchaseId: po.id,
+          receivedDate: grDate,
+          createdBy: session.user.id,
+        })
+        .returning({ id: goodsReceipts.id });
+      resultGrId = gr.id;
+
+      let grTotal = 0;
+      const prBumpByItem: Array<{ piId: string; masterQty: number }> = [];
+
+      for (const [piId, recvQtyRaw] of recvByItem) {
+        const it = itemById.get(piId)!;
+        const ing = ingById.get(it.ingredientId);
+        if (!ing) continue;
+
+        const existingPacks =
+          (ing.packConversions as
+            | Array<{ unitLabel: string; qtyPerBase: number }>
+            | null) ?? [];
+        const tierPacks: Array<{ unitLabel: string; qtyPerBase: number }> = [];
+        if (ing.unitBelanja && ing.unitBelanjaPerCogs) {
+          const per = parseFloat(ing.unitBelanjaPerCogs);
+          if (Number.isFinite(per) && per > 0)
+            tierPacks.push({ unitLabel: ing.unitBelanja, qtyPerBase: per });
+        }
+        if (ing.unitTracking && ing.unitTrackingPerCogs) {
+          const per = parseFloat(ing.unitTrackingPerCogs);
+          if (Number.isFinite(per) && per > 0)
+            tierPacks.push({ unitLabel: ing.unitTracking, qtyPerBase: per });
+        }
+        const mergedPacks = mergePackConversions(existingPacks, tierPacks);
+
+        const conv = convertPurchaseQty({
+          qty: recvQtyRaw,
+          fromUnit: it.unitOverride ?? it.unitSnapshot ?? ing.unit,
+          masterUnit: ing.unit,
+          pack: packMap.get(it.ingredientId) ?? null,
+          ingredientPacks: mergedPacks,
+        });
+        if (!conv.ok) throw new Error(`UNIT_ERROR:${ing.name}:${conv.message}`);
+
+        const qtyMaster = conv.qtyMaster;
+        const unitCostMaster = Math.max(0, Math.round(it.unitCost / conv.costFactor));
+        const totalCostMaster = Math.round(qtyMaster * unitCostMaster);
+        // Nilai GR pakai RAW (sama dgn nota): recvQtyRaw × unitCost line.
+        const lineTotalRaw = Math.round(recvQtyRaw * it.unitCost);
+        grTotal += lineTotalRaw;
+        const movementDelta = formatMovementDelta(qtyMaster);
+
+        if (!skipStockEffect) {
+          const newStock = computeNewStock({
+            currentBigint: ing.currentStock,
+            currentDecimal: ing.currentStockDecimal,
+            delta: qtyMaster,
+          });
+          const oldCostBefore = ing.costPerUnit;
+          const wac = computeNewWac({
+            oldQty: Number(ing.currentStockDecimal ?? 0),
+            oldCost: oldCostBefore,
+            purchaseQty: qtyMaster,
+            purchaseTotal: totalCostMaster,
+          });
+          const newWacCost = wac.newCost;
+          const costChanged = newWacCost !== oldCostBefore;
+          const updateValues: Record<string, unknown> = {
+            currentStock: newStock.bigint,
+            currentStockDecimal: newStock.decimal,
+            costPerUnit: newWacCost,
+            updatedAt: new Date(),
+            updatedBy: session.user.id,
+          };
+          if (costChanged) updateValues.costLastChangedAt = new Date();
+          await tx
+            .update(ingredients)
+            .set(updateValues)
+            .where(eq(ingredients.id, it.ingredientId));
+          ingById.set(it.ingredientId, {
+            ...ing,
+            currentStock: newStock.bigint,
+            currentStockDecimal: newStock.decimal,
+            costPerUnit: newWacCost,
+          });
+          if (costChanged) {
+            await tx.insert(ingredientCostHistory).values({
+              outletId: session.user.outletId,
+              ingredientId: it.ingredientId,
+              oldCostPerUnit: oldCostBefore,
+              newCostPerUnit: newWacCost,
+              triggerType: "purchase_wac",
+              triggerRefType: "purchase",
+              triggerRefId: po.id,
+              changedQty: qtyMaster.toFixed(4),
+              changedValue: totalCostMaster,
+              actorId: session.user.id,
+              notes: `GR ${po.invoiceNo ?? po.id.slice(0, 8)}`,
+            });
+            try {
+              await cascadeCostUpdate(
+                tx,
+                session.user.outletId,
+                it.ingredientId,
+                session.user.id,
+              );
+            } catch {
+              // fail-soft
+            }
+          }
+        }
+
+        const [movement] = await tx
+          .insert(inventoryMovements)
+          .values({
+            outletId: session.user.outletId,
+            ingredientId: it.ingredientId,
+            kind: "purchase",
+            qtyDelta: movementDelta.bigint,
+            qtyDeltaDecimal: movementDelta.decimal,
+            unitCostAtMovement: unitCostMaster,
+            referenceType: "manual",
+            referenceId: po.id,
+            reason: `GR ${po.invoiceNo ?? po.id.slice(0, 8)}${
+              skipStockEffect ? " (no stock add)" : ""
+            }`,
+            skippedStockUpdate: skipStockEffect,
+            createdBy: session.user.id,
+          })
+          .returning({ id: inventoryMovements.id });
+
+        await tx.insert(goodsReceiptItems).values({
+          goodsReceiptId: gr.id,
+          purchaseItemId: it.id,
+          ingredientId: it.ingredientId,
+          receivedQty: Math.max(1, Math.round(recvQtyRaw)),
+          receivedQtyDecimal: recvQtyRaw.toFixed(4),
+          unitCost: it.unitCost,
+          totalCost: lineTotalRaw,
+          movementId: movement.id,
+          ingredientNameSnapshot: it.ingredientNameSnapshot,
+          unitSnapshot: it.unitSnapshot,
+          sectionSnapshot: it.sectionSnapshot,
+        });
+
+        // Akumulasi received_qty di purchase_items.
+        const newReceived =
+          Number(it.receivedQtyDecimal ?? it.receivedQty) + recvQtyRaw;
+        await tx
+          .update(purchaseItems)
+          .set({
+            receivedQty: Math.round(newReceived),
+            receivedQtyDecimal: newReceived.toFixed(4),
+            movementId: movement.id,
+          })
+          .where(eq(purchaseItems.id, it.id));
+        itemById.set(it.id, {
+          ...it,
+          receivedQty: Math.round(newReceived),
+          receivedQtyDecimal: newReceived.toFixed(4),
+        });
+        prBumpByItem.push({ piId: it.id, masterQty: qtyMaster });
+      }
+
+      // PR receivedQty bump (per received increment).
+      const prItemIds = poItems
+        .map((i) => i.purchaseRequestItemId)
+        .filter((id): id is string => Boolean(id));
+      if (prItemIds.length > 0) {
+        const prItemRows = await tx
+          .select()
+          .from(purchaseRequestItems)
+          .where(inArray(purchaseRequestItems.id, prItemIds))
+          .for("update");
+        const prItemMap = new Map(prItemRows.map((r) => [r.id, r] as const));
+        const requestIds = Array.from(new Set(prItemRows.map((r) => r.requestId)));
+        for (const bump of prBumpByItem) {
+          const pi = itemById.get(bump.piId);
+          if (!pi?.purchaseRequestItemId) continue;
+          const prItem = prItemMap.get(pi.purchaseRequestItemId);
+          if (!prItem) continue;
+          const addQty = Math.max(1, Math.round(bump.masterQty));
+          const newReceivedQty = Number(prItem.receivedQty) + addQty;
+          const newDecimal = (
+            (prItem.receivedQtyDecimal ? Number(prItem.receivedQtyDecimal) : 0) +
+            bump.masterQty
+          ).toFixed(4);
+          await tx
+            .update(purchaseRequestItems)
+            .set({ receivedQty: newReceivedQty, receivedQtyDecimal: newDecimal, updatedAt: new Date() })
+            .where(eq(purchaseRequestItems.id, prItem.id));
+          prItemMap.set(prItem.id, {
+            ...prItem,
+            receivedQty: newReceivedQty,
+            receivedQtyDecimal: newDecimal,
+          });
+        }
+        for (const requestId of requestIds) {
+          const allItems = await tx
+            .select()
+            .from(purchaseRequestItems)
+            .where(eq(purchaseRequestItems.requestId, requestId));
+          const newStatus = computePrStatus(
+            allItems.map((r) => ({
+              requestedQty: Number(r.requestedQty),
+              receivedQty: Number(r.receivedQty),
+              rejectedAt: r.rejectedAt,
+            })),
+          );
+          const [pr] = await tx
+            .select()
+            .from(purchaseRequests)
+            .where(eq(purchaseRequests.id, requestId))
+            .limit(1);
+          const updates: Record<string, unknown> = { updatedAt: new Date() };
+          if (pr && newStatus !== pr.status && newStatus !== "cancelled") {
+            updates.status = newStatus;
+            if (newStatus === "completed") updates.completedAt = new Date();
+          }
+          await tx
+            .update(purchaseRequests)
+            .set(updates)
+            .where(eq(purchaseRequests.id, requestId));
+        }
+      }
+
+      // Expense untuk GR ini (non-TOP).
+      let expenseId: string | null = null;
+      if (!isTop && grTotal > 0) {
+        const [defaultCat] = await tx
+          .select()
+          .from(expenseCategories)
+          .where(
+            and(
+              eq(expenseCategories.outletId, session.user.outletId),
+              isNull(expenseCategories.deletedAt),
+            ),
+          )
+          .orderBy(asc(expenseCategories.displayOrder))
+          .limit(1);
+        if (defaultCat) {
+          const [exp] = await tx
+            .insert(expenses)
+            .values({
+              outletId: session.user.outletId,
+              expenseDate: grDate,
+              categoryId: defaultCat.id,
+              description: `Pembelanjaan ${paymentMethodLabel(po.paymentMethod)} (GR)${
+                po.invoiceNo ? ` · ${po.invoiceNo}` : ""
+              }`,
+              amount: grTotal,
+              paymentMethod: expensePaymentMethod(po.paymentMethod),
+              sourceType: "purchase",
+              purchaseId: po.id,
+              createdBy: session.user.id,
+            })
+            .returning({ id: expenses.id });
+          expenseId = exp.id;
+        }
+      }
+      await tx
+        .update(goodsReceipts)
+        .set({ totalAmount: grTotal, expenseId })
+        .where(eq(goodsReceipts.id, gr.id));
+
+      // Status PO: fully received kalau SEMUA line received >= ordered.
+      const fully = poItems.every((pi) => {
+        const cur = itemById.get(pi.id)!;
+        const received = Number(cur.receivedQtyDecimal ?? cur.receivedQty);
+        const ordered = parseFloat(pi.qtyDecimal ?? "") || pi.qty;
+        return received + 1e-6 >= ordered;
+      });
+      resultStatus = fully ? "received" : "partial";
+      await tx
+        .update(purchases)
+        .set({
+          receiptStatus: resultStatus,
+          receivedAt: fully ? new Date() : po.receivedAt,
+          status: fully ? (isTop ? "pending_payment" : "paid") : po.status,
+          paidAt: fully && !isTop ? new Date() : po.paidAt,
+          paidBy: fully && !isTop ? session.user.id : po.paidBy,
+          expenseId: expenseId ?? po.expenseId,
+          updatedAt: new Date(),
+          updatedBy: session.user.id,
+        })
+        .where(eq(purchases.id, po.id));
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg === "NOT_FOUND") return fail("NOT_FOUND", "PO tidak ditemukan");
+    if (msg === "BAD_STATE")
+      return fail("BAD_STATE", "PO sudah diterima penuh / dibatalkan");
+    if (msg === "ITEM_NOT_IN_PO")
+      return fail("VALIDATION_ERROR", "Ada item yang bukan bagian PO ini");
+    if (msg.startsWith("OVER_RECEIVE:"))
+      return fail(
+        "VALIDATION_ERROR",
+        `Qty diterima "${msg.slice("OVER_RECEIVE:".length)}" melebihi yang dipesan`,
+      );
+    if (msg.startsWith("UNIT_ERROR:")) {
+      const rest = msg.slice("UNIT_ERROR:".length);
+      const sep = rest.indexOf(":");
+      const ingName = sep > 0 ? rest.slice(0, sep) : "?";
+      const userMsg = sep > 0 ? rest.slice(sep + 1) : rest;
+      return fail("VALIDATION_ERROR", `Bahan "${ingName}": ${userMsg}`);
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "purchases.receive_goods", "Gagal terima barang"),
+    );
+  }
+
+  await logAudit({
+    eventType: "purchase.goods_receive",
+    userId: session.user.id,
+    entityType: "purchase",
+    entityId: input.purchaseId,
+    payload: {
+      summary: `GR ${resultGrId.slice(0, 8)} — PO ${input.purchaseId.slice(0, 8)} (${grDate}, ${resultStatus})`,
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  // Jurnal akuntansi (post-commit) — section lines dari gr_items GR ini.
+  {
+    const items = await db
+      .select({
+        section: goodsReceiptItems.sectionSnapshot,
+        totalCost: goodsReceiptItems.totalCost,
+      })
+      .from(goodsReceiptItems)
+      .where(eq(goodsReceiptItems.goodsReceiptId, resultGrId));
+    const bySection = new Map<string, number>();
+    for (const it of items) {
+      const key = it.section ?? "null";
+      bySection.set(key, (bySection.get(key) ?? 0) + Number(it.totalCost));
+    }
+    const sectionLines = Array.from(bySection.entries()).map(([key, amount]) => ({
+      section: (key === "null" ? null : key) as
+        | "kitchen"
+        | "bar"
+        | "supporting"
+        | "cleaning"
+        | null,
+      amount,
+    }));
+    const total = sectionLines.reduce((s, l) => s + l.amount, 0);
+    if (total > 0) {
+      const [poRow] = await db
+        .select()
+        .from(purchases)
+        .where(eq(purchases.id, input.purchaseId))
+        .limit(1);
+      if (poRow) {
+        const { fireJournalHook, postJournalForPurchaseCreate } = await import(
+          "@/features/accounting/hooks"
+        );
+        fireJournalHook(
+          () =>
+            postJournalForPurchaseCreate({
+              outletId: session.user.outletId,
+              purchaseId: input.purchaseId,
+              purchaseLabel: poRow.invoiceNo ?? `GR ${grDate}`,
+              paymentMethod: poRow.paymentMethod,
+              total,
+              lines: sectionLines,
+              entryDate: grDate,
+              actorId: session.user.id,
+            }),
+          "purchase_create",
+        );
+      }
+    }
+  }
+
+  return ok({ goodsReceiptId: resultGrId, receiptStatus: resultStatus });
 }

@@ -29,6 +29,7 @@ export {
   createPurchase,
   createPurchaseOrder,
   confirmGoodsReceipt,
+  receiveGoods,
   listPendingGoodsReceipts,
   cancelPurchase,
   markPurchasePaid,
