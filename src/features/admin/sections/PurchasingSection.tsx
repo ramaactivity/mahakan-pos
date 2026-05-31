@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Tab, TabList, TabPanel, Tabs } from "@/components/ui";
+import { Plus } from "lucide-react";
+import { Button, Tab, TabList, TabPanel, Tabs } from "@/components/ui";
 import { PurchaseRequestsSection } from "./PurchaseRequestsSection";
 import { PurchasesView } from "./inventory/purchases/PurchasesView";
 import { TopTrackerView } from "./inventory/purchases/TopTrackerView";
+import { GoodsReceiptModal } from "./inventory/purchases/GoodsReceiptModal";
 
 type PurchasingTab = "pr" | "po" | "gr" | "top";
 
@@ -15,6 +17,8 @@ type PurchasingTab = "pr" | "po" | "gr" | "top";
  */
 export function PurchasingSection() {
   const [tab, setTab] = useState<PurchasingTab>("pr");
+  const [grOpen, setGrOpen] = useState(false);
+  const [grRefresh, setGrRefresh] = useState(0);
 
   return (
     <Tabs
@@ -50,8 +54,21 @@ export function PurchasingSection() {
         </div>
       </TabPanel>
       <TabPanel value="gr">
-        <div className="p-6">
-          <PurchasesView variant="receipts" />
+        <div className="space-y-4 p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-mahakan-green-200 bg-mahakan-green-50/50 p-4">
+            <div>
+              <h3 className="text-sm font-semibold text-mahakan-green-900">
+                Terima Barang dari PO
+              </h3>
+              <p className="text-xs text-neutral-600">
+                Tarik data dari PO, isi qty diterima per bahan (bisa sebagian).
+              </p>
+            </div>
+            <Button onClick={() => setGrOpen(true)}>
+              <Plus className="size-4" aria-hidden /> Buat GR
+            </Button>
+          </div>
+          <PurchasesView key={grRefresh} variant="receipts" />
         </div>
       </TabPanel>
       <TabPanel value="top">
@@ -59,6 +76,15 @@ export function PurchasingSection() {
           <TopTrackerView />
         </div>
       </TabPanel>
+
+      <GoodsReceiptModal
+        open={grOpen}
+        onClose={() => setGrOpen(false)}
+        onSaved={() => {
+          setGrOpen(false);
+          setGrRefresh((k) => k + 1);
+        }}
+      />
     </Tabs>
   );
 }

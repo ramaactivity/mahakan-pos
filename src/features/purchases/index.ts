@@ -31,6 +31,7 @@ export {
   confirmGoodsReceipt,
   receiveGoods,
   listPendingGoodsReceipts,
+  fetchReceivablePurchase,
   cancelPurchase,
   markPurchasePaid,
 } from "./actions";

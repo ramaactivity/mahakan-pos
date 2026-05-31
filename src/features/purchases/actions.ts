@@ -1946,11 +1946,84 @@ export async function listPendingGoodsReceipts(): Promise<
     .where(
       and(
         eq(purchases.outletId, session.user.outletId),
-        eq(purchases.receiptStatus, "ordered"),
+        inArray(purchases.receiptStatus, ["ordered", "partial"]),
       ),
     )
     .orderBy(desc(purchases.purchaseDate), desc(purchases.createdAt));
   return ok(rows);
+}
+
+/**
+ * Sesi AE-173 — detail PO untuk modal GR: header + item dengan qty dipesan,
+ * sudah diterima, dan sisa. Hanya PO 'ordered'/'partial'. Staff-callable.
+ */
+export async function fetchReceivablePurchase(
+  purchaseId: string,
+): Promise<
+  ApiResult<{
+    id: string;
+    supplierName: string | null;
+    purchaseDate: string;
+    paymentMethod: PaymentMethod;
+    receiptStatus: string;
+    items: Array<{
+      purchaseItemId: string;
+      ingredientName: string;
+      unit: string;
+      orderedQty: number;
+      receivedQty: number;
+      remainingQty: number;
+      unitCost: number;
+    }>;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.goods_receive")) {
+    return fail("FORBIDDEN", "Tidak punya hak terima barang");
+  }
+  const [po] = await db
+    .select({
+      id: purchases.id,
+      supplierName: suppliers.name,
+      purchaseDate: purchases.purchaseDate,
+      paymentMethod: purchases.paymentMethod,
+      receiptStatus: purchases.receiptStatus,
+    })
+    .from(purchases)
+    .leftJoin(suppliers, eq(suppliers.id, purchases.supplierId))
+    .where(
+      and(
+        eq(purchases.id, purchaseId),
+        eq(purchases.outletId, session.user.outletId),
+      ),
+    )
+    .limit(1);
+  if (!po) return fail("NOT_FOUND", "PO tidak ditemukan");
+  const items = await db
+    .select()
+    .from(purchaseItems)
+    .where(eq(purchaseItems.purchaseId, purchaseId))
+    .orderBy(purchaseItems.ingredientNameSnapshot);
+  return ok({
+    id: po.id,
+    supplierName: po.supplierName,
+    purchaseDate: po.purchaseDate,
+    paymentMethod: po.paymentMethod,
+    receiptStatus: po.receiptStatus,
+    items: items.map((it) => {
+      const ordered = parseFloat(it.qtyDecimal ?? "") || it.qty;
+      const received = Number(it.receivedQtyDecimal ?? it.receivedQty) || 0;
+      return {
+        purchaseItemId: it.id,
+        ingredientName: it.ingredientNameSnapshot,
+        unit: it.unitOverride ?? it.unitSnapshot,
+        orderedQty: ordered,
+        receivedQty: received,
+        remainingQty: Math.max(0, ordered - received),
+        unitCost: it.unitCost,
+      };
+    }),
+  });
 }
 
 /**
