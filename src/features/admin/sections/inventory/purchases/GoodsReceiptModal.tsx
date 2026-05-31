@@ -165,13 +165,11 @@ export function GoodsReceiptModal({
             </label>
             <Select
               ariaLabel="Pilih PO"
-              options={[
-                { value: "", label: "— Pilih PO —" },
-                ...pos.map((p) => ({
-                  value: p.id,
-                  label: `${p.supplierName ?? "Pembelian langsung"} · ${p.purchaseDate} · ${p.itemCount} bahan`,
-                })),
-              ]}
+              placeholder="— Pilih PO —"
+              options={pos.map((p) => ({
+                value: p.id,
+                label: `${p.supplierName ?? "Pembelian langsung"} · ${p.purchaseDate} · ${p.itemCount} bahan`,
+              }))}
               value={poId}
               onValueChange={onPickPo}
             />
