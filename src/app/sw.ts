@@ -16,13 +16,16 @@ declare const self: ServiceWorkerGlobalScope;
 // dari pre-AD-12). Mengubah konstanta ini = sw.js byte-diff = forced
 // reinstall di client → activate listener jalan → entries ke-/m + ke-/login
 // di-delete dari semua runtime cache.
-const SW_TAG = "ae135-push-banner-reset";
+const SW_TAG = "ae173-purchasing-rename";
 const STALE_PATH_PATTERNS = [
   /\/m(\/|$|\?)/,
   /\/login(\/|$|\?)/,
   /\/icon-staff-/,
   /\/manifest-staff/,
   /\/manifest\.webmanifest/,
+  // Sesi AE-173 — evict admin manifest cache (shortcut "Permintaan Belanja"
+  // → "Purchasing"); tanpa ini tablet PWA lama tetap nampilin label lama.
+  /\/manifest-admin\.webmanifest/,
 ];
 
 const serwist = new Serwist({

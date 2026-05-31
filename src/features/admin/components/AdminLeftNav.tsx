@@ -7,7 +7,6 @@ import {
   Bike,
   BookOpen,
   Briefcase,
-  Calculator,
   CheckSquare,
   ShoppingCart,
   Clock,
@@ -119,7 +118,7 @@ const NAV_GROUPS: NavGroup[] = [
     heading: "Menu",
     items: [
       { key: "menu", label: "Menu", Icon: Coffee },
-      { key: "cogs_variance", label: "COGS & Variance", Icon: Calculator },
+      { key: "cogs_variance", label: "Persediaan Bahan Baku", Icon: Package },
     ],
   },
   {

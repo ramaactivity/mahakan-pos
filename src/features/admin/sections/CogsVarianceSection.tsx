@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
-  ChevronDown,
   Calculator,
   CalendarDays,
   Download,
@@ -15,7 +14,6 @@ import {
   TrendingUp,
 } from "lucide-react";
 import {
-  Badge,
   Button,
   Card,
   CardContent,
@@ -42,12 +40,18 @@ import { currentJakartaMonth } from "@/lib/date";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "./reports/menu-engineering-csv";
+import { ClipboardList } from "lucide-react";
+import { OpnameTab } from "./inventory/opname/OpnameTab";
+import { getOwnOutlet } from "@/features/outlets";
 
-type TabKey = "variance" | "cogs";
+type TabKey = "opname" | "variance" | "cogs";
 
 export function CogsVarianceSection() {
   const [ym, setYm] = useState<string>(currentJakartaMonth());
-  const [tab, setTab] = useState<TabKey>("variance");
+  // Sesi AE-173 — default ke Stock Opname (gaya Little Sindbad "Persediaan").
+  const [tab, setTab] = useState<TabKey>("opname");
+  // Variance Cost butuh deduksi resep → sembunyikan saat mode periodic.
+  const [showVariance, setShowVariance] = useState(true);
   const [report, setReport] = useState<CogsReport | null>(null);
   const [closeStatus, setCloseStatus] = useState<CogsPeriodCloseResult | null>(
     null,
@@ -86,6 +90,25 @@ export function CogsVarianceSection() {
       cancelled = true;
     };
   }, [ym, refreshKey]);
+
+  // Sesi AE-173 — mode periodic (perpetualStockSales=false) → sembunyikan
+  // Variance Cost (butuh deduksi resep). Kalau tab aktif "variance" tapi
+  // disembunyikan, pindah ke "cogs".
+  useEffect(() => {
+    let cancelled = false;
+    getOwnOutlet().then((res) => {
+      if (cancelled || !res.success) return;
+      const perp = res.data.settings?.features?.perpetualStockSales;
+      const show = perp !== false;
+      setShowVariance(show);
+      if (!show) {
+        setTab((t) => (t === "variance" ? "cogs" : t));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleClose() {
     setClosing(true);
@@ -126,14 +149,19 @@ export function CogsVarianceSection() {
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold text-mahakan-green-900">
-            <Calculator className="size-6" aria-hidden /> COGS & Variance
+            <Calculator className="size-6" aria-hidden /> Persediaan Bahan Baku
           </h1>
           <p className="text-sm text-neutral-700">
-            Weighted Average Cost (WAC) per bulan + theoretical-vs-actual
-            usage variance. Sumber: opname akhir bulan + pembelian + sales.
+            Stock Opname + COGS (Weighted Average Cost) per bulan. Stok awal =
+            opname bulan lalu, stok akhir = opname bulan ini, pembelian = GR.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div
+          className={cn(
+            "flex items-center gap-2",
+            tab === "opname" && "hidden",
+          )}
+        >
           <div className="flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
             <CalendarDays className="size-4 text-neutral-500" />
             <select
@@ -248,7 +276,64 @@ export function CogsVarianceSection() {
         </div>
       </Modal>
 
-      {/* Banners */}
+      {/* Tabs — Stock Opname selalu ada; Variance hanya saat mode perpetual. */}
+      <Tabs value={tab} onChange={(v) => setTab(v as TabKey)}>
+        <TabList ariaLabel="Persediaan tabs">
+          <Tab value="opname">
+            <span className="inline-flex items-center gap-1.5">
+              <ClipboardList className="size-4" /> Stock Opname
+            </span>
+          </Tab>
+          {showVariance ? (
+            <Tab value="variance">
+              <span className="inline-flex items-center gap-1.5">
+                <TrendingUp className="size-4" /> Variance Cost
+              </span>
+            </Tab>
+          ) : null}
+          <Tab value="cogs">
+            <span className="inline-flex items-center gap-1.5">
+              <Calculator className="size-4" /> Cost of Goods Sold
+            </span>
+          </Tab>
+        </TabList>
+
+        <TabPanel value="opname">
+          <OpnameTab />
+        </TabPanel>
+
+        {showVariance ? (
+          <TabPanel value="variance">
+            <ReportArea loading={loading} error={error} report={report}>
+              {report ? <VarianceTab report={report} /> : null}
+            </ReportArea>
+          </TabPanel>
+        ) : null}
+
+        <TabPanel value="cogs">
+          <ReportArea loading={loading} error={error} report={report}>
+            {report ? <CogsTab report={report} /> : null}
+          </ReportArea>
+        </TabPanel>
+      </Tabs>
+    </div>
+  );
+}
+
+/** Sesi AE-173 — area konten COGS/Variance: banner + loading/error + isi. */
+function ReportArea({
+  loading,
+  error,
+  report,
+  children,
+}: {
+  loading: boolean;
+  error: string | null;
+  report: CogsReport | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-3">
       {report?.banners && report.banners.length > 0 ? (
         <div className="space-y-1">
           {report.banners.map((b, i) => (
@@ -262,8 +347,6 @@ export function CogsVarianceSection() {
           ))}
         </div>
       ) : null}
-
-      {/* Loading / Error states */}
       {loading ? (
         <Card>
           <CardContent className="flex items-center justify-center py-12">
@@ -276,28 +359,8 @@ export function CogsVarianceSection() {
             {error}
           </CardContent>
         </Card>
-      ) : !report ? null : (
-        <Tabs value={tab} onChange={(v) => setTab(v as TabKey)}>
-          <TabList ariaLabel="COGS tabs">
-            <Tab value="variance">
-              <span className="inline-flex items-center gap-1.5">
-                <TrendingUp className="size-4" /> Variance Cost
-              </span>
-            </Tab>
-            <Tab value="cogs">
-              <span className="inline-flex items-center gap-1.5">
-                <Calculator className="size-4" /> Cost of Goods Sold
-              </span>
-            </Tab>
-          </TabList>
-
-          <TabPanel value="variance">
-            <VarianceTab report={report} />
-          </TabPanel>
-          <TabPanel value="cogs">
-            <CogsTab report={report} />
-          </TabPanel>
-        </Tabs>
+      ) : (
+        children
       )}
     </div>
   );

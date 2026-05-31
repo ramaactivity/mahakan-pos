@@ -51,9 +51,9 @@
       ]
     },
     {
-      "name": "Permintaan Belanja",
-      "short_name": "PR",
-      "url": "/dashboard?source=pwa-shortcut#purchase_requests",
+      "name": "Purchasing",
+      "short_name": "Purchasing",
+      "url": "/dashboard?source=pwa-shortcut#purchasing",
       "icons": [
         { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }
       ]
