@@ -14,6 +14,7 @@ import {
 } from "@/components/ui";
 import {
   createPurchase,
+  createPurchaseOrder,
   isOk,
   type PaymentMethod,
 } from "@/features/purchases";
@@ -298,6 +299,9 @@ export function PurchaseFormModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [updateCost, setUpdateCost] = useState(true);
   const [createKas, setCreateKas] = useState(true);
+  // Sesi AE-173 — false = Langsung Terima (createPurchase, efek sekarang);
+  // true = Buat PO dulu (createPurchaseOrder, efek nanti saat GR).
+  const [asPurchaseOrder, setAsPurchaseOrder] = useState(false);
   const [items, setItems] = useState<ItemRow[]>([newRow(), newRow()]);
   /* Sesi AE-43 — pack info dari Market List per ingredient. Dipakai
    * untuk live preview konversi (mis. "1 Pack = 1000 gr") + diteruskan
@@ -867,8 +871,7 @@ export function PurchaseFormModal({
           .join(" — ")
       : notes.trim();
 
-    setSubmitting(true);
-    const res = await createPurchase({
+    const payload = {
       supplierId: directMode ? null : supplierId,
       purchaseDate,
       paymentMethod,
@@ -879,7 +882,26 @@ export function PurchaseFormModal({
       updateCost,
       createKasEntry: createKas,
       items: validItems,
-    });
+    };
+
+    setSubmitting(true);
+    // Sesi AE-173 — Buat PO dulu → createPurchaseOrder (efek nanti saat GR).
+    if (asPurchaseOrder) {
+      const res = await createPurchaseOrder(payload);
+      setSubmitting(false);
+      if (!isOk(res)) {
+        fail(res.error.message);
+        return;
+      }
+      clearDraft();
+      toast.success(
+        `PO dibuat — total ${formatRupiah(res.data.totalAmount)}. Tekan "Terima Barang" saat barang datang.`,
+      );
+      onSaved();
+      return;
+    }
+
+    const res = await createPurchase(payload);
     setSubmitting(false);
 
     if (!isOk(res)) {
@@ -919,7 +941,7 @@ export function PurchaseFormModal({
             Batal
           </Button>
           <Button onClick={onSubmit} loading={submitting}>
-            Simpan Belanja
+            {asPurchaseOrder ? "Buat PO" : "Simpan Belanja"}
           </Button>
         </>
       }
@@ -928,6 +950,52 @@ export function PurchaseFormModal({
         <p className="text-sm text-neutral-500">Memuat data…</p>
       ) : (
         <div className="space-y-4">
+          {/* Sesi AE-173 — pilih tahap: langsung terima vs buat PO dulu (GR). */}
+          <div className="grid grid-cols-2 gap-2 rounded-lg border border-neutral-200 bg-neutral-50 p-1.5">
+            {[
+              {
+                v: false,
+                label: "Langsung Terima",
+                hint: "Barang sudah di tangan",
+              },
+              {
+                v: true,
+                label: "Buat PO dulu",
+                hint: "Pesan dulu, terima nanti (GR)",
+              },
+            ].map((opt) => (
+              <button
+                key={String(opt.v)}
+                type="button"
+                onClick={() => setAsPurchaseOrder(opt.v)}
+                className={cn(
+                  "rounded-md px-3 py-2 text-left text-sm transition-colors",
+                  asPurchaseOrder === opt.v
+                    ? "bg-mahakan-green-700 text-white shadow-sm"
+                    : "text-neutral-700 hover:bg-neutral-100",
+                )}
+              >
+                <span className="block font-semibold">{opt.label}</span>
+                <span
+                  className={cn(
+                    "block text-xs",
+                    asPurchaseOrder === opt.v
+                      ? "text-mahakan-green-50"
+                      : "text-neutral-500",
+                  )}
+                >
+                  {opt.hint}
+                </span>
+              </button>
+            ))}
+          </div>
+          {asPurchaseOrder ? (
+            <p className="rounded-md border border-info-300 bg-info-50 px-3 py-2 text-xs text-info-600">
+              Mode PO: stok & pengeluaran <strong>belum</strong> dicatat. Nanti
+              tekan <strong>“Terima Barang”</strong> di daftar pembelian saat
+              barang datang (GR).
+            </p>
+          ) : null}
           {/* Sesi AE-129 — banner draft autosave restore. Muncul kalau ada
               draft di localStorage yang belum di-submit (mis. modal ke-close
               accidental, refresh tab, atau staff keluar buat tambah item ke

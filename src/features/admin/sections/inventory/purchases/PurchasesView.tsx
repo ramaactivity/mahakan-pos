@@ -33,6 +33,7 @@ import {
 } from "@/components/ui";
 import {
   cancelPurchase,
+  confirmGoodsReceipt,
   getPurchase,
   isOk,
   listPurchases,
@@ -248,6 +249,21 @@ export function PurchasesView() {
     refresh();
   }
 
+  // Sesi AE-173 — Goods Receive: PO 'ordered' → terima barang (expense + GR).
+  const [grSubmitting, setGrSubmitting] = useState<string | null>(null);
+  async function handleGoodsReceive(p: PurchaseListItem) {
+    if (grSubmitting) return;
+    setGrSubmitting(p.id);
+    const res = await confirmGoodsReceipt({ id: p.id });
+    setGrSubmitting(null);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success("Barang diterima — pengeluaran tercatat");
+    refresh();
+  }
+
   return (
     <div className="space-y-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
@@ -424,12 +440,31 @@ export function PurchasesView() {
                         {formatRupiah(p.totalAmount)}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge variant={STATUS_TONE[p.status]}>
-                          {STATUS_LABELS[p.status]}
-                        </Badge>
+                        <div className="flex flex-wrap items-center gap-1">
+                          {p.receiptStatus === "ordered" ? (
+                            <Badge variant="info">PO · belum diterima</Badge>
+                          ) : (
+                            <Badge variant={STATUS_TONE[p.status]}>
+                              {STATUS_LABELS[p.status]}
+                            </Badge>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
+                          {canCancel &&
+                          p.receiptStatus === "ordered" &&
+                          p.status !== "cancelled" ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleGoodsReceive(p)}
+                              loading={grSubmitting === p.id}
+                              title="Terima Barang (GR)"
+                            >
+                              <Truck className="size-4" aria-hidden /> Terima
+                            </Button>
+                          ) : null}
                           <Button
                             size="sm"
                             variant="ghost"
