@@ -60,7 +60,7 @@ import { cn } from "@/lib/utils";
 import { downloadCsv } from "../reports/menu-engineering-csv";
 import { exportIngredientsCsv } from "@/features/inventory/csv-actions";
 import { BulkCsvImportModal } from "./BulkCsvImportModal";
-import { IngredientFormModal } from "./IngredientFormModal";
+import { IngredientManagerModal } from "./IngredientManagerModal";
 import { IngredientMovementsModal } from "./IngredientMovementsModal";
 import { StockReceiveModal } from "./StockReceiveModal";
 import { StockAdjustModal } from "./StockAdjustModal";
@@ -904,9 +904,9 @@ export function IngredientsList() {
         </CardContent>
       </Card>
 
-      <IngredientFormModal
+      <IngredientManagerModal
         open={createOpen || target?.kind === "edit"}
-        edit={target?.kind === "edit" ? target.ingredient : null}
+        ingredientId={target?.kind === "edit" ? target.ingredient.id : null}
         onClose={() => {
           setCreateOpen(false);
           setTarget(null);

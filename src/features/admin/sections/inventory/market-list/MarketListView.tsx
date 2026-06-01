@@ -30,7 +30,7 @@ import {
 import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
 import { formatRupiah, formatRupiahPrecise } from "@/lib/format";
-import { MarketItemFormModal } from "./MarketItemFormModal";
+import { IngredientManagerModal } from "../IngredientManagerModal";
 import { MarketCsvImportModal } from "./MarketCsvImportModal";
 
 export function MarketListView() {
@@ -440,9 +440,9 @@ export function MarketListView() {
         </div>
       )}
 
-      <MarketItemFormModal
+      <IngredientManagerModal
         open={createOpen || editTarget !== null}
-        target={editTarget}
+        ingredientId={editTarget?.ingredientId ?? null}
         onClose={() => {
           setCreateOpen(false);
           setEditTarget(null);

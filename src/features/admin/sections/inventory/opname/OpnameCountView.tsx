@@ -42,7 +42,7 @@ import type { Role } from "@/lib/auth/rbac";
 import { downloadCountSheet } from "./opname-csv";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { EditUnitModal } from "./EditUnitModal";
+import { IngredientManagerModal } from "../IngredientManagerModal";
 import { AddOpnameItemModal } from "./AddOpnameItemModal";
 import {
   buildOpnameUnitContext,
@@ -915,32 +915,13 @@ export function OpnameCountView({
       </Modal>
 
       {editUnitFor ? (
-        <EditUnitModal
+        <IngredientManagerModal
           open
-          onClose={() => setEditUnitFor(null)}
           ingredientId={editUnitFor.id}
-          ingredientName={editUnitFor.name}
-          currentUnit={editUnitFor.unit}
-          currentUnitBelanja={editUnitFor.unitBelanja}
-          currentUnitBelanjaPerCogs={editUnitFor.unitBelanjaPerCogs}
-          currentPackConversions={editUnitFor.packConversions ?? null}
-          onSaved={(newUnit) => {
-            // Optimistic UI: push override so the row updates instantly,
-            // independent of when the parent's silent refetch completes.
-            // Server-side updateIngredient already updates ingredient.unit
-            // AND stockOpnameLines.unitSnapshot for in_progress sessions
-            // atomically (sesi AA backend fix).
-            const ingId = editUnitFor.id;
-            setUnitOverrides((prev) => {
-              const next = new Map(prev);
-              next.set(ingId, newUnit);
-              return next;
-            });
+          onClose={() => setEditUnitFor(null)}
+          onSaved={() => {
             setEditUnitFor(null);
-            // Still trigger parent refresh so HppEstimate + history reflect
-            // the new unit AND new packConversions on next render. The
-            // override hides the race for unit; packConversions tampak
-            // setelah refresh next.
+            /* Refresh penuh — satuan + packConversions + cost terbaru. */
             onChanged();
           }}
         />
