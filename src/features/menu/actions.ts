@@ -120,7 +120,11 @@ export async function createMenuItem(
       priceFixed: v.priceType === "fixed" ? v.priceFixed : null,
       priceHot: v.priceType === "variant" ? v.priceHot : null,
       priceIced: v.priceType === "variant" ? v.priceIced : null,
-      cost: v.cost ?? null,
+      // Sesi AE-175 — variant pakai HPP per-varian (cost_hot/cost_iced),
+      // fixed/open pakai `cost` tunggal. Yang tak relevan di-null biar tak ambigu.
+      cost: v.priceType === "variant" ? null : v.cost ?? null,
+      costHot: v.priceType === "variant" ? v.costHot ?? null : null,
+      costIced: v.priceType === "variant" ? v.costIced ?? null : null,
       isSignature: v.isSignature ?? false,
       displayOrder: v.displayOrder ?? 999,
       createdBy: session.user.id,
@@ -141,6 +145,8 @@ export async function createMenuItem(
         priceHot: row.priceHot,
         priceIced: row.priceIced,
         cost: row.cost,
+        costHot: row.costHot,
+        costIced: row.costIced,
       },
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
@@ -174,7 +180,10 @@ export async function updateMenuItem(
       priceFixed: v.priceType === "fixed" ? v.priceFixed : null,
       priceHot: v.priceType === "variant" ? v.priceHot : null,
       priceIced: v.priceType === "variant" ? v.priceIced : null,
-      cost: v.cost ?? null,
+      // Sesi AE-175 — variant pakai HPP per-varian; fixed/open pakai `cost`.
+      cost: v.priceType === "variant" ? null : v.cost ?? null,
+      costHot: v.priceType === "variant" ? v.costHot ?? null : null,
+      costIced: v.priceType === "variant" ? v.costIced ?? null : null,
       isSignature: v.isSignature ?? false,
       displayOrder: v.displayOrder ?? 999,
       updatedAt: new Date(),
@@ -192,6 +201,8 @@ export async function updateMenuItem(
     priceIced: before.priceIced,
     priceType: before.priceType,
     cost: before.cost,
+    costHot: before.costHot,
+    costIced: before.costIced,
   };
   const afterSnap = {
     name: row.name,
@@ -200,6 +211,8 @@ export async function updateMenuItem(
     priceIced: row.priceIced,
     priceType: row.priceType,
     cost: row.cost,
+    costHot: row.costHot,
+    costIced: row.costIced,
   };
   const diff = diffShallow(beforeSnap, afterSnap);
   if (diff) {
@@ -949,6 +962,8 @@ export async function exportMenuCsv(): Promise<ApiResult<string>> {
       priceHot: menuItems.priceHot,
       priceIced: menuItems.priceIced,
       cost: menuItems.cost,
+      costHot: menuItems.costHot,
+      costIced: menuItems.costIced,
       isSignature: menuItems.isSignature,
       isSoldOut: menuItems.isSoldOut,
       isActive: menuItems.isActive,
@@ -975,6 +990,8 @@ export async function exportMenuCsv(): Promise<ApiResult<string>> {
     "priceHot",
     "priceIced",
     "cost",
+    "costHot",
+    "costIced",
     "marginPct",
     "isSignature",
     "isSoldOut",
@@ -984,14 +1001,21 @@ export async function exportMenuCsv(): Promise<ApiResult<string>> {
   ];
   const lines = [headers.join(",")];
   for (const r of rows) {
-    // Sesi AE-173 — harga representatif: fixed→fixed, variant→max(hot,iced).
+    // Sesi AE-173/AE-175 — harga representatif: fixed→fixed, variant→max(hot,iced).
+    // HPP representatif: variant pakai max(costHot,costIced) fallback cost legacy.
     const repPrice =
       r.priceType === "fixed"
         ? (r.priceFixed ?? 0)
         : r.priceType === "variant"
           ? Math.max(r.priceHot ?? 0, r.priceIced ?? 0)
           : 0;
-    const margin = computeGrossMarginPct(repPrice, r.cost);
+    const repCost =
+      r.priceType === "variant"
+        ? (r.costHot ?? r.costIced ?? r.cost) != null
+          ? Math.max(r.costHot ?? 0, r.costIced ?? 0, r.cost ?? 0)
+          : null
+        : r.cost;
+    const margin = computeGrossMarginPct(repPrice, repCost);
     lines.push(
       [
         r.id,
@@ -1002,6 +1026,8 @@ export async function exportMenuCsv(): Promise<ApiResult<string>> {
         r.priceHot,
         r.priceIced,
         r.cost,
+        r.costHot,
+        r.costIced,
         margin === null ? "" : margin.toFixed(1),
         r.isSignature,
         r.isSoldOut,

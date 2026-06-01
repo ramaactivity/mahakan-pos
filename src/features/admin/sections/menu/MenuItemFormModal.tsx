@@ -45,8 +45,11 @@ export function MenuItemFormModal({
   const [priceFixed, setPriceFixed] = useState("");
   const [priceHot, setPriceHot] = useState("");
   const [priceIced, setPriceIced] = useState("");
-  // Sesi AE-173 — HPP manual (Rp). Kosong = belum diisi (fallback resep).
+  // Sesi AE-173 — HPP manual (Rp) untuk menu fixed. Kosong = fallback resep.
   const [cost, setCost] = useState("");
+  // Sesi AE-175 — HPP manual per varian (Rp) untuk menu Hot/Iced.
+  const [costHot, setCostHot] = useState("");
+  const [costIced, setCostIced] = useState("");
   const [isSignature, setIsSignature] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +73,22 @@ export function MenuItemFormModal({
       setPriceHot(it.priceHot !== null ? String(it.priceHot) : "");
       setPriceIced(it.priceIced !== null ? String(it.priceIced) : "");
       setCost(it.cost !== null && it.cost !== undefined ? String(it.cost) : "");
+      // Sesi AE-175 — prefill HPP per varian. Data lama (variant) cuma punya
+      // `cost` tunggal → jadikan starting point biar owner tinggal sesuaikan.
+      const legacyVariantCost =
+        it.priceType === "variant" && it.cost !== null && it.cost !== undefined
+          ? String(it.cost)
+          : "";
+      setCostHot(
+        it.costHot !== null && it.costHot !== undefined
+          ? String(it.costHot)
+          : legacyVariantCost,
+      );
+      setCostIced(
+        it.costIced !== null && it.costIced !== undefined
+          ? String(it.costIced)
+          : legacyVariantCost,
+      );
       setIsSignature(it.isSignature);
       // Fetch BOM-based price suggestion async — doesn't block the form
       void (async () => {
@@ -89,6 +108,8 @@ export function MenuItemFormModal({
       setPriceHot("");
       setPriceIced("");
       setCost("");
+      setCostHot("");
+      setCostIced("");
       setIsSignature(false);
     }
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -120,35 +141,38 @@ export function MenuItemFormModal({
   const parsedIced =
     priceIced.trim() === "" ? null : parseInt(priceIced, 10) || 0;
   const parsedCost = cost.trim() === "" ? null : parseInt(cost, 10) || 0;
+  const parsedCostHot =
+    costHot.trim() === "" ? null : parseInt(costHot, 10) || 0;
+  const parsedCostIced =
+    costIced.trim() === "" ? null : parseInt(costIced, 10) || 0;
 
-  // Sesi AE-173 — isi HPP dari COGS resep (pakai suggestion yang sudah di-fetch).
-  // fixed → variant 'fixed'; variant → max(hot,iced) biar tak under-cost.
+  // Sesi AE-173 — isi HPP fixed dari COGS resep 'fixed'.
   function applyRecipeCost() {
     if (!suggestion) return;
-    const cogsList = suggestion.perVariant
-      .filter((s) =>
-        priceType === "fixed"
-          ? s.variant === "fixed"
-          : s.variant === "hot" || s.variant === "iced",
-      )
-      .map((s) => s.cogs);
-    const picked =
-      cogsList.length > 0
-        ? Math.max(...cogsList)
-        : (suggestion.perVariant[0]?.cogs ?? 0);
+    const fixed = suggestion.perVariant.find((s) => s.variant === "fixed");
+    const picked = fixed?.cogs ?? suggestion.perVariant[0]?.cogs ?? 0;
     setCost(String(picked));
     toast.success("HPP terisi dari resep");
   }
 
-  // Harga representatif untuk preview margin (fixed → priceFixed, variant →
-  // max hot/iced, open → tak ada).
-  const representativePrice =
-    priceType === "fixed"
-      ? parsedFixed
-      : priceType === "variant"
-        ? Math.max(parsedHot ?? 0, parsedIced ?? 0)
-        : 0;
-  const marginPct = computeGrossMarginPct(representativePrice, parsedCost);
+  // Sesi AE-175 — isi HPP Hot & Iced dari COGS resep masing-masing varian.
+  function applyRecipeCostVariant() {
+    if (!suggestion) return;
+    const hot = suggestion.perVariant.find((s) => s.variant === "hot");
+    const iced = suggestion.perVariant.find((s) => s.variant === "iced");
+    if (hot) setCostHot(String(hot.cogs));
+    if (iced) setCostIced(String(iced.cogs));
+    if (!hot && !iced) {
+      toast.error("Resep belum punya varian Hot/Iced");
+      return;
+    }
+    toast.success("HPP Hot & Iced terisi dari resep");
+  }
+
+  // Margin per konteks: fixed pakai (priceFixed, cost); variant per varian.
+  const marginPct = computeGrossMarginPct(parsedFixed, parsedCost);
+  const marginHot = computeGrossMarginPct(parsedHot, parsedCostHot);
+  const marginIced = computeGrossMarginPct(parsedIced, parsedCostIced);
 
   async function onSubmit() {
     if (submitting || !mode) return;
@@ -160,18 +184,24 @@ export function MenuItemFormModal({
       description: description.trim() || null,
       categoryId,
       isSignature,
-      cost: parsedCost,
       displayOrder: mode.kind === "edit" ? mode.item.displayOrder : 999,
     };
     const input =
       priceType === "fixed"
-        ? { ...common, priceType: "fixed" as const, priceFixed: parsedFixed }
+        ? {
+            ...common,
+            priceType: "fixed" as const,
+            priceFixed: parsedFixed,
+            cost: parsedCost,
+          }
         : priceType === "variant"
           ? {
               ...common,
               priceType: "variant" as const,
               priceHot: parsedHot,
               priceIced: parsedIced,
+              costHot: parsedCostHot,
+              costIced: parsedCostIced,
             }
           : { ...common, priceType: "open" as const };
 
@@ -197,7 +227,7 @@ export function MenuItemFormModal({
       open={open && mode !== null}
       onClose={onClose}
       title={mode?.kind === "edit" ? "Edit Menu" : "Tambah Menu"}
-      size="lg"
+      size="3xl"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
@@ -373,57 +403,116 @@ export function MenuItemFormModal({
           </p>
         )}
 
-        {/* Sesi AE-173 — HPP manual + Hitung dari resep + preview margin. */}
-        <div className="space-y-1.5 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-          <div className="flex items-end gap-2">
-            <div className="flex-1">
-              <Input
-                label="HPP / Cost (Rp)"
-                type="text"
-                inputMode="numeric"
-                value={cost}
-                onChange={(e) => setCost(e.target.value.replace(/[^\d]/g, ""))}
-                placeholder="contoh: 12000"
-                hint={
-                  parsedCost !== null && parsedCost > 0
-                    ? `Preview: ${formatRupiah(parsedCost)}`
-                    : "Kosongkan kalau belum dihitung"
-                }
-              />
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={applyRecipeCost}
-              disabled={!suggestion}
-              className="mb-[2px] shrink-0"
-            >
-              <Calculator className="size-4" aria-hidden /> Hitung dari resep
-            </Button>
-          </div>
-          {marginPct !== null ? (
-            <p className="text-xs text-neutral-600">
-              Margin:{" "}
-              <strong
-                className={cn(
-                  marginPct >= 0 ? "text-mahakan-green-700" : "text-danger-500",
-                )}
+        {/* Sesi AE-173/AE-175 — HPP manual + Hitung dari resep + preview margin.
+            Menu variant punya kolom HPP Hot & Iced terpisah (bisa beda). */}
+        {priceType === "variant" ? (
+          <div className="space-y-2.5 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium text-neutral-900">
+                HPP / Cost per Varian (Rp)
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={applyRecipeCostVariant}
+                disabled={!suggestion}
+                className="shrink-0"
               >
-                {marginPct.toFixed(1)}%
-              </strong>{" "}
-              (dari harga {formatRupiah(representativePrice)})
-            </p>
-          ) : (
-            <p className="text-xs text-neutral-500">
-              {mode?.kind === "create"
-                ? "Tombol “Hitung dari resep” aktif setelah menu disimpan (butuh resep)."
-                : !suggestion
-                  ? "Belum ada resep — isi HPP manual."
-                  : "Isi HPP untuk lihat margin."}
-            </p>
-          )}
-        </div>
+                <Calculator className="size-4" aria-hidden /> Hitung dari resep
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5 rounded-md border border-neutral-200 bg-white p-2.5">
+                <Input
+                  label="HPP Hot"
+                  type="text"
+                  inputMode="numeric"
+                  value={costHot}
+                  onChange={(e) =>
+                    setCostHot(e.target.value.replace(/[^\d]/g, ""))
+                  }
+                  placeholder="contoh: 4000"
+                  hint={
+                    parsedCostHot !== null && parsedCostHot > 0
+                      ? `Preview: ${formatRupiah(parsedCostHot)}`
+                      : "Kosongkan kalau hot tak dijual / fallback resep"
+                  }
+                />
+                <MarginLine
+                  marginPct={marginHot}
+                  price={parsedHot}
+                  emptyHint="Isi harga & HPP Hot untuk lihat margin."
+                />
+              </div>
+              <div className="space-y-1.5 rounded-md border border-neutral-200 bg-white p-2.5">
+                <Input
+                  label="HPP Iced"
+                  type="text"
+                  inputMode="numeric"
+                  value={costIced}
+                  onChange={(e) =>
+                    setCostIced(e.target.value.replace(/[^\d]/g, ""))
+                  }
+                  placeholder="contoh: 15000"
+                  hint={
+                    parsedCostIced !== null && parsedCostIced > 0
+                      ? `Preview: ${formatRupiah(parsedCostIced)}`
+                      : "Kosongkan kalau iced tak dijual / fallback resep"
+                  }
+                />
+                <MarginLine
+                  marginPct={marginIced}
+                  price={parsedIced}
+                  emptyHint="Isi harga & HPP Iced untuk lihat margin."
+                />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-1.5 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Input
+                  label="HPP / Cost (Rp)"
+                  type="text"
+                  inputMode="numeric"
+                  value={cost}
+                  onChange={(e) =>
+                    setCost(e.target.value.replace(/[^\d]/g, ""))
+                  }
+                  placeholder="contoh: 12000"
+                  hint={
+                    parsedCost !== null && parsedCost > 0
+                      ? `Preview: ${formatRupiah(parsedCost)}`
+                      : "Kosongkan kalau belum dihitung"
+                  }
+                />
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={applyRecipeCost}
+                disabled={!suggestion}
+                className="mb-[2px] shrink-0"
+              >
+                <Calculator className="size-4" aria-hidden /> Hitung dari resep
+              </Button>
+            </div>
+            <MarginLine
+              marginPct={marginPct}
+              price={parsedFixed}
+              emptyHint={
+                mode?.kind === "create"
+                  ? "Tombol “Hitung dari resep” aktif setelah menu disimpan (butuh resep)."
+                  : !suggestion
+                    ? "Belum ada resep — isi HPP manual."
+                    : "Isi HPP untuk lihat margin."
+              }
+            />
+          </div>
+        )}
 
         <label className="flex items-center gap-2">
           <input
@@ -444,5 +533,33 @@ export function MenuItemFormModal({
         ) : null}
       </div>
     </Modal>
+  );
+}
+
+// Sesi AE-175 — baris preview margin reusable (fixed + per varian).
+function MarginLine({
+  marginPct,
+  price,
+  emptyHint,
+}: {
+  marginPct: number | null;
+  price: number | null;
+  emptyHint: string;
+}) {
+  if (marginPct === null) {
+    return <p className="text-xs text-neutral-500">{emptyHint}</p>;
+  }
+  return (
+    <p className="text-xs text-neutral-600">
+      Margin:{" "}
+      <strong
+        className={cn(
+          marginPct >= 0 ? "text-mahakan-green-700" : "text-danger-500",
+        )}
+      >
+        {marginPct.toFixed(1)}%
+      </strong>{" "}
+      (dari harga {formatRupiah(price ?? 0)})
+    </p>
   );
 }

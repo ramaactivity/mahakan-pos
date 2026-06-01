@@ -107,11 +107,21 @@ export async function computeStockFlowForOrder(
         ),
       ),
     tx
-      .select({ id: menuItems.id, cost: menuItems.cost })
+      .select({
+        id: menuItems.id,
+        cost: menuItems.cost,
+        costHot: menuItems.costHot,
+        costIced: menuItems.costIced,
+      })
       .from(menuItems)
       .where(inArray(menuItems.id, menuItemIds)),
   ]);
-  const menuCostById = new Map(menuCostRows.map((r) => [r.id, r.cost]));
+  const menuCostById = new Map(
+    menuCostRows.map((r) => [
+      r.id,
+      { cost: r.cost, costHot: r.costHot, costIced: r.costIced },
+    ]),
+  );
 
   // Expand each unique recipe to atomic leaves once + load atomic costs.
   // Sesi AE-34 — parallelize recipe expansion. Sebelumnya sequential await
@@ -153,7 +163,17 @@ export async function computeStockFlowForOrder(
   // resolveLineCogs memutuskan manual-cost-menang. Deduksi stok SELALU dari
   // resep (manual cost cuma override angka COGS, bukan qty fisik).
   for (const item of items) {
-    const manualCost = menuCostById.get(item.menuItemId) ?? null;
+    // Sesi AE-175 — HPP manual per varian. Hot/Iced ambil cost_hot/cost_iced
+    // dulu; kalau NULL fallback ke `cost` legacy (data lama belum dipecah).
+    const costRow = menuCostById.get(item.menuItemId);
+    const manualCost =
+      (item.variant === "hot"
+        ? costRow?.costHot
+        : item.variant === "iced"
+          ? costRow?.costIced
+          : costRow?.cost) ??
+      costRow?.cost ??
+      null;
     const key = `${item.menuItemId}|${item.variant ?? ""}`;
     const recipeId = recipeKeyToRecipeId.get(key);
     const leaves = recipeId ? recipeIdToLeaves.get(recipeId) : undefined;

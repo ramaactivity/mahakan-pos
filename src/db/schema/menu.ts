@@ -86,8 +86,15 @@ export const menuItems = pgTable(
 
     /** Sesi AE-173 — HPP manual per menu (Rp). NULL = belum diisi → fallback ke
      * COGS dari resep (perilaku lama). Kalau diisi, angka ini yang dipakai jadi
-     * COGS saat jual (snapshot), tanpa waste factor. Margin% = (harga−cost)/harga. */
+     * COGS saat jual (snapshot), tanpa waste factor. Margin% = (harga−cost)/harga.
+     * Dipakai untuk menu fixed/open. Untuk menu variant: legacy fallback (data
+     * lama yang HPP-nya belum dipecah per Hot/Iced). */
     cost: bigint("cost", { mode: "number" }),
+    /** Sesi AE-175 — HPP manual per varian (Rp). Khusus menu price_type=variant
+     * supaya Hot & Iced punya HPP berbeda (mis. Iced pakai ekstra es/susu). NULL
+     * = belum diisi → fallback ke `cost` (legacy) lalu COGS resep varian. */
+    costHot: bigint("cost_hot", { mode: "number" }),
+    costIced: bigint("cost_iced", { mode: "number" }),
 
     isSignature: boolean("is_signature").notNull().default(false),
     isSoldOut: boolean("is_sold_out").notNull().default(false),
@@ -122,5 +129,10 @@ export const menuItems = pgTable(
         AND (${t.priceIced} IS NULL OR ${t.priceIced} >= 0)`,
     ),
     check("ck_menu_items_cost_nonneg", sql`${t.cost} IS NULL OR ${t.cost} >= 0`),
+    check(
+      "ck_menu_items_cost_variant_nonneg",
+      sql`(${t.costHot} IS NULL OR ${t.costHot} >= 0)
+        AND (${t.costIced} IS NULL OR ${t.costIced} >= 0)`,
+    ),
   ],
 );

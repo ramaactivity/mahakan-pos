@@ -25,6 +25,8 @@ function fixedItem(
     priceHot: null,
     priceIced: null,
     cost: null,
+    costHot: null,
+    costIced: null,
     isSignature: false,
     isSoldOut,
     isActive: true,

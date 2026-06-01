@@ -15,8 +15,12 @@ const baseFields = {
   categoryId: z.uuid(),
   isSignature: z.boolean().optional().default(false),
   displayOrder: z.number().int().nonnegative().optional().default(999),
-  /** Sesi AE-173 — HPP manual (Rp). NULL/undefined = belum diisi (fallback resep). */
+  /** Sesi AE-173 — HPP manual (Rp). NULL/undefined = belum diisi (fallback resep).
+   * Dipakai untuk menu fixed/open. */
   cost: z.number().int().nonnegative().max(999_999_999).nullable().optional(),
+  /** Sesi AE-175 — HPP manual per varian (Rp). Khusus price_type=variant. */
+  costHot: z.number().int().nonnegative().max(999_999_999).nullable().optional(),
+  costIced: z.number().int().nonnegative().max(999_999_999).nullable().optional(),
 };
 
 export const createMenuItemSchema = z.discriminatedUnion("priceType", [
