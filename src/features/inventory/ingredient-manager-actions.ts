@@ -332,7 +332,7 @@ export async function saveIngredientManager(
       if (activeSession) {
         await tx
           .update(stockOpnameLines)
-          .set({ unitSnapshot: v.unit })
+          .set({ unitSnapshot: v.unit, ingredientNameSnapshot: v.name })
           .where(
             and(
               eq(stockOpnameLines.sessionId, activeSession.id),

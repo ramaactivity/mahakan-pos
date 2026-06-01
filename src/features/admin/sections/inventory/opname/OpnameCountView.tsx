@@ -240,7 +240,12 @@ export function OpnameCountView({
       ) {
         return false;
       }
-      if (q && !l.ingredientNameSnapshot.toLowerCase().includes(q)) {
+      if (
+        q &&
+        !(l.ingredient.name ?? l.ingredientNameSnapshot)
+          .toLowerCase()
+          .includes(q)
+      ) {
         return false;
       }
       if (showOnlyUncounted) {
@@ -788,7 +793,9 @@ export function OpnameCountView({
                   <CountRow
                     key={line.id}
                     ingredientId={line.ingredientId}
-                    name={line.ingredientNameSnapshot}
+                    /* Sesi AE-176 — nama LIVE (ikut rename via Kelola Bahan),
+                     * fallback ke snapshot kalau bahan sudah dihapus. */
+                    name={line.ingredient.name ?? line.ingredientNameSnapshot}
                     ctx={ctx}
                     expectedQty={
                       /* Sesi AE-62e — prefer decimal (real value, mungkin
@@ -822,7 +829,7 @@ export function OpnameCountView({
                         ? () =>
                             setEditUnitFor({
                               id: line.ingredientId,
-                              name: line.ingredientNameSnapshot,
+                              name: line.ingredient.name ?? line.ingredientNameSnapshot,
                               unit: effectiveUnit,
                               packConversions:
                                 line.ingredient.packConversions ?? null,
