@@ -36,6 +36,7 @@ import {
   type OpnameStatus,
 } from "@/features/stock-opname";
 import { useSession } from "@/features/auth/SessionProvider";
+import { useLiveRefresh } from "@/lib/use-live-refresh";
 import { hasPermission } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
 import { OpnameCountView } from "./OpnameCountView";
@@ -126,6 +127,11 @@ export function OpnameTab() {
   function refresh() {
     setRefreshKey((k) => k + 1);
   }
+
+  /* Sesi AE-176 — sinkron antar owner: refresh saat balik ke tab (silent,
+   * tak hapus input karena hasLoadedOnce guard). Tanpa polling latar supaya
+   * tidak refetch saat staff sedang mengetik hitungan. */
+  useLiveRefresh(refresh);
 
   async function onStart() {
     if (startSubmitting) return;

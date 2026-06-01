@@ -17,6 +17,20 @@ import { QueryClient } from "@tanstack/react-query";
  * Per-query overrides allowed: short-lived data (current shift, open bills)
  * should pass `staleTime: 0` to always refetch.
  */
+/**
+ * Sesi AE-176 — opsi "near-real-time" untuk halaman master yang sering
+ * diedit BARENGAN beberapa owner (Inventory, Supplier, Menu). Refetch saat
+ * tab difokus (instan begitu balik ke tab) + polling latar 20 detik. Polling
+ * default hanya jalan saat tab fokus (refetchIntervalInBackground=false) →
+ * hemat Fluid CPU. JANGAN dipakai di layar dengan input aktif (mis. Opname
+ * count) — refetch bisa menimpa ketikan.
+ */
+export const LIVE_QUERY_OPTS = {
+  staleTime: 10 * 1000,
+  refetchOnWindowFocus: true,
+  refetchInterval: 20 * 1000,
+} as const;
+
 export function createQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {

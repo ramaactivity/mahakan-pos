@@ -46,6 +46,7 @@ import { useSession } from "@/features/auth/SessionProvider";
 import { formatRupiah } from "@/lib/format";
 import { computeGrossMarginPct } from "@/lib/money";
 import { cn } from "@/lib/utils";
+import { useLiveRefresh } from "@/lib/use-live-refresh";
 
 /** Sesi AE-173 — harga representatif untuk margin (fixed→fixed, variant→max). */
 function representativePrice(i: MenuItem): number {
@@ -92,6 +93,10 @@ export function ItemsList() {
       cancelled = true;
     };
   }, [refreshKey]);
+
+  /* Sesi AE-176 — sinkron antar owner: refresh saat balik ke tab + polling
+   * latar 20 detik (silent; edit menu lewat modal jadi list aman di-refresh). */
+  useLiveRefresh(() => setRefreshKey((k) => k + 1), 20 * 1000);
 
   // Phase 7.3 — pick up COGS Calculator prefill handoff. When owner clicks
   // "Save as Menu Item" in calculator, payload is written to sessionStorage

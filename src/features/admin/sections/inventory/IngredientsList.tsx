@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { LIVE_QUERY_OPTS } from "@/lib/query-client";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import {
   AlertTriangle,
@@ -174,6 +175,8 @@ export function IngredientsList() {
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data.items;
     },
+    // Sesi AE-176 — sinkron near-real-time antar owner (lihat LIVE_QUERY_OPTS).
+    ...LIVE_QUERY_OPTS,
   });
 
   const { data: lowStockData } = useQuery({
@@ -183,6 +186,7 @@ export function IngredientsList() {
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data;
     },
+    ...LIVE_QUERY_OPTS,
   });
 
   /* Sesi AE-58 — fetch monthly flow hanya kalau viewMode aktif, hemat

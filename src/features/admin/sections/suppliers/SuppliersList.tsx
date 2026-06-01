@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Search, Trash2, Truck } from "lucide-react";
+import { LIVE_QUERY_OPTS } from "@/lib/query-client";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import {
   Badge,
@@ -62,6 +63,7 @@ export function SuppliersList() {
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data;
     },
+    ...LIVE_QUERY_OPTS,
   });
   const items = useMemo(
     () => suppliersQuery.data ?? [],
