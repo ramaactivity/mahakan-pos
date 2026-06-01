@@ -312,35 +312,6 @@ export async function saveIngredientManager(
         ladderUnits,
       );
 
-      // ── 2b. Sinkron label satuan ke opname yang masih berjalan ─────────
-      /* Sesi AE-176 — saat satuan dasar bahan diubah lewat Kelola Bahan (mis.
-       * Chocolatos Pcs→gr), baris opname sesi in_progress masih memegang
-       * unit_snapshot lama → label di halaman Opname jadi beku ("Pcs") padahal
-       * master sudah "gr". Selaraskan snapshot ke satuan master (idempoten;
-       * self-heal walau unit tak berubah). Sejalan dengan updateIngredient
-       * (sesi AA). Unique idx menjamin maks 1 sesi in_progress per outlet. */
-      const [activeSession] = await tx
-        .select({ id: stockOpnameSessions.id })
-        .from(stockOpnameSessions)
-        .where(
-          and(
-            eq(stockOpnameSessions.outletId, outletId),
-            eq(stockOpnameSessions.status, "in_progress"),
-          ),
-        )
-        .limit(1);
-      if (activeSession) {
-        await tx
-          .update(stockOpnameLines)
-          .set({ unitSnapshot: v.unit, ingredientNameSnapshot: v.name })
-          .where(
-            and(
-              eq(stockOpnameLines.sessionId, activeSession.id),
-              eq(stockOpnameLines.ingredientId, ingredientId),
-            ),
-          );
-      }
-
       /* Map label → ingredient_unit_id (untuk set FK harga supplier). */
       const unitIdRows = await tx
         .select({ id: ingredientUnits.id, label: ingredientUnits.label })
@@ -450,6 +421,47 @@ export async function saveIngredientManager(
             .where(eq(ingredients.id, ingredientId));
           await cascadeCostUpdate(tx, outletId, ingredientId, userId);
         }
+      }
+
+      // ── Sinkron snapshot ke opname yang masih berjalan ─────────────────
+      /* Sesi AE-176 — baris opname sesi in_progress membekukan nama, satuan,
+       * DAN biaya (unit_cost_at_snapshot) saat sesi dimulai. Saat owner koreksi
+       * master lewat Kelola Bahan, snapshot lama bikin halaman Opname tampil
+       * data basi — paling parah biaya: cost lama yg salah (mis. 4.900/gr) bikin
+       * "Terpakai (Rp)" meleset jutaan padahal master sudah 80/gr. Selaraskan
+       * ketiganya ke master (idempoten/self-heal). Unique idx menjamin maks 1
+       * sesi in_progress per outlet. */
+      const [activeSession] = await tx
+        .select({ id: stockOpnameSessions.id })
+        .from(stockOpnameSessions)
+        .where(
+          and(
+            eq(stockOpnameSessions.outletId, outletId),
+            eq(stockOpnameSessions.status, "in_progress"),
+          ),
+        )
+        .limit(1);
+      if (activeSession) {
+        const [costRow] = await tx
+          .select({ cost: ingredients.costPerUnit })
+          .from(ingredients)
+          .where(eq(ingredients.id, ingredientId))
+          .limit(1);
+        await tx
+          .update(stockOpnameLines)
+          .set({
+            unitSnapshot: v.unit,
+            ingredientNameSnapshot: v.name,
+            ...(costRow?.cost != null
+              ? { unitCostAtSnapshot: costRow.cost }
+              : {}),
+          })
+          .where(
+            and(
+              eq(stockOpnameLines.sessionId, activeSession.id),
+              eq(stockOpnameLines.ingredientId, ingredientId),
+            ),
+          );
       }
 
       return { id: ingredientId };
