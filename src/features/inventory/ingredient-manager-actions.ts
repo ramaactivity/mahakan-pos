@@ -18,7 +18,6 @@ import {
 } from "@/features/inventory/ingredient-units";
 import { resolveQtyToMaster } from "@/lib/unit-conversion";
 import { fail, ok, type ApiResult } from "./types";
-import { packConversionsSchema } from "./schemas";
 
 /**
  * Sesi AE-175 — Save terpadu untuk modal "Kelola Bahan" (1 transaksi):
@@ -31,15 +30,26 @@ import { packConversionsSchema } from "./schemas";
  *      + cascadeCostUpdate.
  */
 
+/* Sesi AE-175b — model DISATUKAN: konversi satuan didefinisikan INLINE di baris
+ * harga supplier (tidak lagi terpisah dari "Satuan Belanja Utama"). */
 const supplierPriceSchema = z.object({
   id: z.uuid().nullable(),
   supplierId: z.uuid(),
+  /** Satuan beli (mis. "renceng" atau satuan dasar "gr"). */
   buyUnit: z.string().trim().min(1).max(20),
-  buyQty: z.number().positive().max(1_000_000),
+  /** Berapa satuan dasar per 1 buyUnit. NULL kalau buyUnit = satuan dasar (1:1). */
+  buyUnitPerBase: z.number().positive().nullable(),
+  /** Harga per 1 buyUnit (katalog harga, bukan total nota). */
   unitCost: z.number().int().positive(),
   isPrimary: z.boolean(),
   notes: z.string().max(500).nullable().optional(),
   deleted: z.boolean().optional(),
+});
+
+/** Satuan lain untuk opname/resep (tanpa harga supplier), mis. sachet. */
+const extraUnitSchema = z.object({
+  label: z.string().trim().min(1).max(20),
+  qtyPerBase: z.number().positive().max(1_000_000),
 });
 
 const saveIngredientManagerSchema = z.object({
@@ -50,12 +60,8 @@ const saveIngredientManagerSchema = z.object({
     .enum(["kitchen", "bar", "supporting", "cleaning"])
     .nullable(),
   reorderThreshold: z.number().nonnegative().nullable().optional(),
-  /** Section B — satuan. */
-  unitBelanja: z.string().trim().min(1).max(20).nullable(),
-  unitBelanjaPerCogs: z.number().positive().nullable(),
-  packConversions: packConversionsSchema.nullable(),
-  /** Section C — harga supplier. */
   supplierPrices: z.array(supplierPriceSchema).max(50),
+  extraUnits: z.array(extraUnitSchema).max(20),
 });
 
 export type SaveIngredientManagerInput = z.infer<
@@ -75,19 +81,20 @@ export interface IngredientManagerData {
   section: string | null;
   reorderThreshold: number | null;
   costPerUnit: number;
-  unitBelanja: string | null;
-  unitBelanjaPerCogs: number | null;
-  packConversions: { unitLabel: string; qtyPerBase: number }[];
   supplierPrices: Array<{
     id: string;
     supplierId: string;
     supplierName: string;
     buyUnit: string;
-    buyQty: number;
+    /** Konversi buyUnit ke satuan dasar. null = buyUnit adalah satuan dasar. */
+    buyUnitPerBase: number | null;
+    /** Harga per 1 buyUnit. */
     unitCost: number;
     isPrimary: boolean;
     notes: string | null;
   }>;
+  /** Satuan untuk opname/resep yang TIDAK dipakai harga supplier (mis. sachet). */
+  extraUnits: Array<{ label: string; qtyPerBase: number }>;
 }
 
 /** Load semua data 1 bahan untuk modal "Kelola Bahan". */
@@ -139,6 +146,12 @@ export async function getIngredientManager(
     .from(suppliers)
     .where(eq(suppliers.outletId, outletId));
   const supName = new Map(supRows.map((s) => [s.id, s.name]));
+  const baseLc = ing.unit.trim().toLowerCase();
+  const convByLabel = new Map(
+    units.packConversions.map((u) => [u.unitLabel.trim().toLowerCase(), u.qtyPerBase]),
+  );
+  const usedUnitLcs = new Set<string>();
+  for (const p of prices) usedUnitLcs.add(p.buyUnit.trim().toLowerCase());
 
   return ok({
     id: ing.id,
@@ -147,22 +160,28 @@ export async function getIngredientManager(
     section: ing.section,
     reorderThreshold: ing.reorderThreshold,
     costPerUnit: ing.costPerUnit,
-    unitBelanja: units.unitBelanja,
-    unitBelanjaPerCogs: units.unitBelanjaPerCogs,
-    packConversions: units.packConversions.map((p) => ({
-      unitLabel: p.unitLabel,
-      qtyPerBase: p.qtyPerBase,
-    })),
-    supplierPrices: prices.map((p) => ({
-      id: p.id,
-      supplierId: p.supplierId,
-      supplierName: supName.get(p.supplierId) ?? "—",
-      buyUnit: p.buyUnit,
-      buyQty: Number(p.buyQty),
-      unitCost: p.unitCost,
-      isPrimary: p.isPrimary,
-      notes: p.notes,
-    })),
+    supplierPrices: prices.map((p) => {
+      const lc = p.buyUnit.trim().toLowerCase();
+      const pSize = Number(p.buyQty) || 1;
+      return {
+        id: p.id,
+        supplierId: p.supplierId,
+        supplierName: supName.get(p.supplierId) ?? "—",
+        buyUnit: p.buyUnit,
+        buyUnitPerBase:
+          lc === baseLc ? null : (convByLabel.get(lc) ?? null),
+        /* Harga per 1 buyUnit (data lama packSize bisa >1 → bagi). */
+        unitCost: Math.round(p.unitCost / pSize),
+        isPrimary: p.isPrimary,
+        notes: p.notes,
+      };
+    }),
+    extraUnits: units.packConversions
+      .filter((u) => {
+        const lc = u.unitLabel.trim().toLowerCase();
+        return lc !== baseLc && !usedUnitLcs.has(lc);
+      })
+      .map((u) => ({ label: u.unitLabel, qtyPerBase: u.qtyPerBase })),
   });
 }
 
@@ -196,9 +215,37 @@ export async function saveIngredientManager(
   try {
     const result = await db.transaction(async (tx) => {
       const now = new Date();
+
+      /* Turunkan SATUAN dari baris harga supplier (konversi inline) + satuan
+       * lain untuk opname. Dedup by lower(label); satuan primary = default. */
+      const unitMap = new Map<
+        string,
+        { label: string; qty: number; isDefault: boolean }
+      >();
+      for (const p of v.supplierPrices) {
+        if (p.deleted) continue;
+        const lc = p.buyUnit.trim().toLowerCase();
+        if (lc === baseUnitLc) continue; // satuan dasar bukan unit row
+        if (p.buyUnitPerBase == null || p.buyUnitPerBase <= 0) continue;
+        const ex = unitMap.get(lc);
+        unitMap.set(lc, {
+          label: p.buyUnit,
+          qty: p.buyUnitPerBase,
+          isDefault: (ex?.isDefault ?? false) || p.isPrimary,
+        });
+      }
+      for (const e of v.extraUnits) {
+        const lc = e.label.trim().toLowerCase();
+        if (lc === baseUnitLc || unitMap.has(lc)) continue;
+        unitMap.set(lc, { label: e.label, qty: e.qtyPerBase, isDefault: false });
+      }
+      const unitList = [...unitMap.values()];
+      const defUnit = unitList.find((u) => u.isDefault) ?? null;
+      const desiredBelanja = defUnit?.label ?? null;
+      const desiredBelanjaPer = defUnit?.qty ?? null;
       const legacyPacks =
-        v.packConversions && v.packConversions.length > 0
-          ? v.packConversions
+        unitList.length > 0
+          ? unitList.map((u) => ({ unitLabel: u.label, qtyPerBase: u.qty }))
           : null;
 
       // ── 1. Upsert ingredient (identitas + dual-write kolom lama satuan) ──
@@ -220,11 +267,9 @@ export async function saveIngredientManager(
             unit: v.unit,
             section: v.section,
             reorderThreshold: v.reorderThreshold ?? null,
-            unitBelanja: v.unitBelanja,
+            unitBelanja: desiredBelanja,
             unitBelanjaPerCogs:
-              v.unitBelanjaPerCogs == null
-                ? null
-                : v.unitBelanjaPerCogs.toFixed(4),
+              desiredBelanjaPer == null ? null : desiredBelanjaPer.toFixed(4),
             packConversions: legacyPacks,
             updatedAt: now,
             updatedBy: userId,
@@ -243,11 +288,9 @@ export async function saveIngredientManager(
             reorderThreshold: v.reorderThreshold ?? null,
             section: v.section,
             isPreparation: false,
-            unitBelanja: v.unitBelanja,
+            unitBelanja: desiredBelanja,
             unitBelanjaPerCogs:
-              v.unitBelanjaPerCogs == null
-                ? null
-                : v.unitBelanjaPerCogs.toFixed(4),
+              desiredBelanjaPer == null ? null : desiredBelanjaPer.toFixed(4),
             packConversions: legacyPacks,
             createdBy: userId,
             updatedBy: userId,
@@ -258,8 +301,8 @@ export async function saveIngredientManager(
 
       // ── 2. Satuan beli/pack → ingredient_units (sumber tunggal) ─────────
       await syncIngredientUnits(tx, outletId, ingredientId, {
-        unitBelanja: v.unitBelanja,
-        unitBelanjaPerCogs: v.unitBelanjaPerCogs,
+        unitBelanja: desiredBelanja,
+        unitBelanjaPerCogs: desiredBelanjaPer,
         packConversions: legacyPacks,
       });
 
@@ -310,8 +353,9 @@ export async function saveIngredientManager(
           continue;
         }
 
+        /* Harga per 1 buyUnit → effective per satuan dasar. */
         const r = resolveQtyToMaster({
-          qty: p.buyQty,
+          qty: 1,
           fromUnit: p.buyUnit,
           masterUnit: v.unit,
           ingredientPacks: loaded.packConversions,
@@ -330,7 +374,7 @@ export async function saveIngredientManager(
             .set({
               supplierId: p.supplierId,
               unitCost: p.unitCost,
-              packSize: String(p.buyQty),
+              packSize: "1",
               packUnit: p.buyUnit,
               ingredientUnitId: unitId,
               isPrimary: false, // di-set true di akhir kalau primary
@@ -345,7 +389,7 @@ export async function saveIngredientManager(
             supplierId: p.supplierId,
             ingredientId,
             unitCost: p.unitCost,
-            packSize: String(p.buyQty),
+            packSize: "1",
             packUnit: p.buyUnit,
             ingredientUnitId: unitId,
             isPrimary: false,
