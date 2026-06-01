@@ -391,8 +391,10 @@ export function OpnameCountView({
       next.set(ingredientId, { ...cur, primaryUnit: nextUnit });
       return next;
     });
-    /* Re-trigger save kalau sudah ada qty input — interpretasi berubah. */
-    const cur = stateMap.get(ingredientId);
+    /* Re-trigger save kalau sudah ada qty input — interpretasi berubah.
+     * Sesi AE-176b — baca dari ref (nilai terkini), bukan closure render
+     * yg bisa basi kalau ganti satuan tepat setelah mengetik. */
+    const cur = stateMapRef.current.get(ingredientId);
     if (
       cur &&
       (cur.primaryInput.trim().length > 0 || cur.looseInput.trim().length > 0)
@@ -1018,11 +1020,14 @@ function CountRow({
    * defaultUnit supaya dropdown tampil unit valid + konsisten dgn konversi
    * (yg juga fallback ke defaultUnit). */
   const rawPrimaryUnit = state.primaryUnit || ctx.defaultUnit;
-  const currentPrimaryUnit = ctx.options.some(
-    (o) => o.value.toLowerCase() === rawPrimaryUnit.toLowerCase(),
-  )
-    ? rawPrimaryUnit
-    : ctx.defaultUnit;
+  /* Resolve ke VALUE OPSI yang cocok (kanonik, case-tolerant) — jadi dropdown
+   * value persis match salah satu opsi + selalu satuan valid (key multiplier).
+   * Sesi AE-176b — sebelumnya kembalikan rawPrimaryUnit yg case-nya bisa beda
+   * dari opsi → Select tampil kosong; sekarang ambil o.value-nya. */
+  const currentPrimaryUnit =
+    ctx.options.find(
+      (o) => o.value.toLowerCase() === rawPrimaryUnit.toLowerCase(),
+    )?.value ?? ctx.defaultUnit;
   const canPickUnit = ctx.options.length > 1;
   /* "Sisa lepas" hanya muncul kalau primary unit beda dari recipe AND
    * conversion > 1. Continuous unit (kg → g) tetap support tapi staff
@@ -1245,12 +1250,14 @@ function CountRow({
               <Select
                 size="md"
                 ariaLabel={`Satuan ${name}`}
+                /* value = o.value MENTAH (key multiplier asli) supaya konversi
+                 * tepat; label dikanonik-kan utk tampilan saja. Sesi AE-176b. */
                 options={ctx.options.map((o) => ({
-                  value: displayUnit(o.value),
+                  value: o.value,
                   label: displayUnit(o.label),
                   hint: o.hint ?? undefined,
                 }))}
-                value={displayUnit(currentPrimaryUnit)}
+                value={currentPrimaryUnit}
                 onValueChange={onUnitChange}
                 className="h-12"
               />

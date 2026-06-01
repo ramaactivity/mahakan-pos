@@ -146,6 +146,11 @@ export async function fetchHppReport(
             eq(ingredients.outletId, outletId),
             isNull(ingredients.deletedAt),
             eq(ingredients.isActive, true),
+            /* Sesi AE-176 — preparation tidak masuk opname (dibuat in-house dari
+             * resep; bahan baku-nya sudah dihitung terpisah). Keluarkan juga
+             * dari laporan HPP/COGS supaya tidak permanen "partial" + double
+             * count. Konsisten dgn fetchActiveIngredientsForSnapshot. */
+            eq(ingredients.isPreparation, false),
           ),
         )
         .orderBy(ingredients.name),
