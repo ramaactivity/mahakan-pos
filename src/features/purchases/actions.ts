@@ -35,6 +35,7 @@ import {
 import {
   classifyPurchaseAgainstOpname,
   convertPurchaseQty,
+  mergePackConversions,
   shouldSkipStockUpdate,
   type BackdateStatus,
   type PackInfo,
@@ -106,30 +107,6 @@ function todayJakartaIso(): string {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
-}
-
-/** Sesi AE-130 — Merge two pack-conversion arrays, dedup by lowercase
- *  label. Existing entries (from ingredient.packConversions JSONB) take
- *  precedence over tier-derived ones supaya manual override-able. */
-function mergePackConversions(
-  primary: Array<{ unitLabel: string; qtyPerBase: number }>,
-  fallback: Array<{ unitLabel: string; qtyPerBase: number }>,
-): Array<{ unitLabel: string; qtyPerBase: number }> {
-  const seen = new Set<string>();
-  const out: Array<{ unitLabel: string; qtyPerBase: number }> = [];
-  for (const p of primary) {
-    const lc = p.unitLabel.trim().toLowerCase();
-    if (lc.length === 0 || seen.has(lc)) continue;
-    seen.add(lc);
-    out.push(p);
-  }
-  for (const p of fallback) {
-    const lc = p.unitLabel.trim().toLowerCase();
-    if (lc.length === 0 || seen.has(lc)) continue;
-    seen.add(lc);
-    out.push(p);
-  }
-  return out;
 }
 
 function addDaysIso(iso: string, days: number): string {

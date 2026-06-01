@@ -10,7 +10,10 @@ import {
 } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
 import { cascadeCostUpdate } from "@/features/inventory/preparation-flow";
-import { resolveUnit } from "@/lib/unit-conversion";
+import {
+  resolveQtyToMaster,
+  type IngredientPackConversion,
+} from "@/lib/unit-conversion";
 import {
   bulkImportSchema,
   createMarketItemSchema,
@@ -33,30 +36,51 @@ async function requireSession() {
   return session;
 }
 
-/** Convert pack-level cost ke ingredient-master-unit cost.
- *  Mis. unitCost=36000 (Rp/pack), packSize=1000, packUnit="gr",
- *  ingredient.unit="gr" → effective=36 (Rp/gr).
- *  Kalau dimensi compatible (Kg→gr), convert via resolveUnit factor. */
+/** Sesi AE-174 — konteks satuan ingredient untuk resolusi cost. */
+interface IngredientUnitContext {
+  unit: string;
+  packConversions: IngredientPackConversion[] | null;
+  unitBelanja: string | null;
+  unitBelanjaPerCogs: number | string | null;
+}
+
+/** Bangun konteks dari baris SELECT (packConversions jsonb di-cast). */
+function ingContext(row: {
+  ingredientUnit: string;
+  ingredientPackConversions?: unknown;
+  ingredientPurchaseUnit?: string | null;
+  ingredientPurchasePerRecipe?: number | string | null;
+}): IngredientUnitContext {
+  return {
+    unit: row.ingredientUnit,
+    packConversions:
+      (row.ingredientPackConversions as IngredientPackConversion[] | null) ??
+      null,
+    unitBelanja: row.ingredientPurchaseUnit ?? null,
+    unitBelanjaPerCogs: row.ingredientPurchasePerRecipe ?? null,
+  };
+}
+
+/** Convert pack-level cost ke ingredient-master-unit cost — SUMBER TUNGGAL.
+ *  Mis. unitCost=21000 (Rp/renceng), packSize=1, packUnit="renceng",
+ *  ingredient.unit="gr" + packConversions[renceng=280] → effective=75 (Rp/gr).
+ *  Konsisten dgn Opname & Pembelian via resolveQtyToMaster. */
 function computeEffectiveCost(
   unitCost: number,
   packSize: number,
   packUnit: string,
-  ingredientUnit: string,
+  ing: IngredientUnitContext,
 ): number | null {
-  if (packUnit === ingredientUnit) {
-    if (packSize === 0) return null;
-    return Math.round(unitCost / packSize);
-  }
-  const packMeta = resolveUnit(packUnit);
-  const ingMeta = resolveUnit(ingredientUnit);
-  if (!packMeta || !ingMeta) return null;
-  if (packMeta.dimension !== ingMeta.dimension) return null;
-  if (packMeta.dimension === "discrete") return null;
-  // packSize × packMeta.toBase = qty in base unit; / ingMeta.toBase = qty in ingredient unit
-  const qtyInIngredientUnit =
-    (packSize * packMeta.toBase) / ingMeta.toBase;
-  if (qtyInIngredientUnit === 0) return null;
-  return Math.round(unitCost / qtyInIngredientUnit);
+  const r = resolveQtyToMaster({
+    qty: packSize,
+    fromUnit: packUnit,
+    masterUnit: ing.unit,
+    ingredientPacks: ing.packConversions,
+    unitBelanja: ing.unitBelanja,
+    unitBelanjaPerCogs: ing.unitBelanjaPerCogs,
+  });
+  if (!r.ok || r.qtyMaster === null || r.qtyMaster === 0) return null;
+  return Math.round(unitCost / r.qtyMaster);
 }
 
 /** List market items joined dengan supplier + ingredient meta. */
@@ -100,6 +124,7 @@ export async function listMarketItems(
       /* Sesi AE-136 — surface purchase unit + ratio untuk display. */
       ingredientPurchaseUnit: ingredients.unitBelanja,
       ingredientPurchasePerRecipe: ingredients.unitBelanjaPerCogs,
+      ingredientPackConversions: ingredients.packConversions,
       ingredientSection: ingredients.section,
       unitCost: supplierIngredients.unitCost,
       packSize: supplierIngredients.packSize,
@@ -145,7 +170,7 @@ export async function listMarketItems(
           r.unitCost,
           packSizeNum,
           r.packUnit,
-          r.ingredientUnit,
+          ingContext(r),
         ) ?? 0,
       isPrimary: r.isPrimary,
       notes: r.notes,
@@ -180,6 +205,9 @@ export async function lookupMarketPriceForPurchase(input: {
       packSize: supplierIngredients.packSize,
       packUnit: supplierIngredients.packUnit,
       ingredientUnit: ingredients.unit,
+      ingredientPurchaseUnit: ingredients.unitBelanja,
+      ingredientPurchasePerRecipe: ingredients.unitBelanjaPerCogs,
+      ingredientPackConversions: ingredients.packConversions,
     })
     .from(supplierIngredients)
     .innerJoin(
@@ -207,7 +235,7 @@ export async function lookupMarketPriceForPurchase(input: {
         row.unitCost,
         packSizeNum,
         row.packUnit,
-        row.ingredientUnit,
+        ingContext(row),
       ) ?? 0,
     ingredientUnit: row.ingredientUnit,
   });
@@ -252,9 +280,12 @@ export async function createMarketItem(
   const [ingRow] = await db
     .select({
       id: ingredients.id,
-      unit: ingredients.unit,
+      ingredientUnit: ingredients.unit,
       isPreparation: ingredients.isPreparation,
       deletedAt: ingredients.deletedAt,
+      ingredientPurchaseUnit: ingredients.unitBelanja,
+      ingredientPurchasePerRecipe: ingredients.unitBelanjaPerCogs,
+      ingredientPackConversions: ingredients.packConversions,
     })
     .from(ingredients)
     .where(
@@ -280,12 +311,12 @@ export async function createMarketItem(
     v.unitCost,
     v.packSize,
     v.packUnit,
-    ingRow.unit,
+    ingContext(ingRow),
   );
   if (effective === null) {
     return fail(
       "VALIDATION_ERROR",
-      `Tidak bisa convert ${v.packUnit} ke ${ingRow.unit} (dimensi beda atau unknown unit)`,
+      `Tidak bisa convert ${v.packUnit} ke ${ingRow.ingredientUnit}. Set "Konversi Pack" di Edit Satuan Bahan, atau pilih satuan se-dimensi.`,
       "packUnit",
     );
   }
@@ -466,9 +497,12 @@ export async function updateMarketItem(input: {
     const [ingRow] = await tx
       .select({
         id: ingredients.id,
-        unit: ingredients.unit,
+        ingredientUnit: ingredients.unit,
         isPreparation: ingredients.isPreparation,
         deletedAt: ingredients.deletedAt,
+        ingredientPurchaseUnit: ingredients.unitBelanja,
+        ingredientPurchasePerRecipe: ingredients.unitBelanjaPerCogs,
+        ingredientPackConversions: ingredients.packConversions,
       })
       .from(ingredients)
       .where(eq(ingredients.id, newIngredientId))
@@ -521,11 +555,11 @@ export async function updateMarketItem(input: {
       newUnitCost,
       newPackSize,
       newPackUnit,
-      ingRow.unit,
+      ingContext(ingRow),
     );
     if (effective === null) {
       return {
-        __validation: `Tidak bisa convert ${newPackUnit} ke ${ingRow.unit}`,
+        __validation: `Tidak bisa convert ${newPackUnit} ke ${ingRow.ingredientUnit}. Set "Konversi Pack" di Edit Satuan Bahan, atau pilih satuan se-dimensi.`,
       } as const;
     }
 
@@ -776,6 +810,9 @@ export async function bulkImportMarketList(input: {
       name: ingredients.name,
       unit: ingredients.unit,
       isPreparation: ingredients.isPreparation,
+      unitBelanja: ingredients.unitBelanja,
+      unitBelanjaPerCogs: ingredients.unitBelanjaPerCogs,
+      packConversions: ingredients.packConversions,
     })
     .from(ingredients)
     .where(
@@ -856,6 +893,9 @@ export async function bulkImportMarketList(input: {
             name: ingredients.name,
             unit: ingredients.unit,
             isPreparation: ingredients.isPreparation,
+            unitBelanja: ingredients.unitBelanja,
+            unitBelanjaPerCogs: ingredients.unitBelanjaPerCogs,
+            packConversions: ingredients.packConversions,
           });
         if (created) {
           ingredient = {
@@ -863,6 +903,9 @@ export async function bulkImportMarketList(input: {
             name: created.name,
             unit: created.unit,
             isPreparation: created.isPreparation,
+            unitBelanja: created.unitBelanja,
+            unitBelanjaPerCogs: created.unitBelanjaPerCogs,
+            packConversions: created.packConversions,
           };
           ingredientByName.set(created.name.toLowerCase(), ingredient);
           result.ingredientsCreated++;
@@ -892,16 +935,18 @@ export async function bulkImportMarketList(input: {
         result.skipped++;
         continue;
       }
-      const effective = computeEffectiveCost(
-        row.unitCost,
-        row.packSize,
-        row.packUnit,
-        ingredient.unit,
-      );
+      const effective = computeEffectiveCost(row.unitCost, row.packSize, row.packUnit, {
+        unit: ingredient.unit,
+        packConversions:
+          (ingredient.packConversions as IngredientPackConversion[] | null) ??
+          null,
+        unitBelanja: ingredient.unitBelanja ?? null,
+        unitBelanjaPerCogs: ingredient.unitBelanjaPerCogs ?? null,
+      });
       if (effective === null) {
         result.errors.push({
           row: idx + 1,
-          message: `Tidak bisa convert ${row.packUnit} ke ${ingredient.unit}`,
+          message: `Tidak bisa convert ${row.packUnit} ke ${ingredient.unit}. Set "Konversi Pack" di Edit Satuan Bahan.`,
         });
         result.skipped++;
         continue;

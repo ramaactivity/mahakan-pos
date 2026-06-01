@@ -31,7 +31,9 @@ import {
   CANONICAL_UNIT_PRESETS,
   compatibleUnitsFor,
   displayUnit,
+  resolveQtyToMaster,
   resolveUnit,
+  type IngredientPackConversion,
 } from "@/lib/unit-conversion";
 import {
   formatRupiahPrecise,
@@ -142,9 +144,18 @@ export function MarketItemFormModal({
       !meta || meta.dimension === "discrete"
         ? CANONICAL_UNIT_PRESETS
         : compatibleUnitsFor(selectedIngredient.unit).map((o) => o.value);
+    /* Sesi AE-174 — tawarkan label pack bahan (renceng, sachet) + unitBelanja
+     * di samping satuan kanonik, sejajar picker Opname/Pembelian. */
+    const packLabels = [
+      selectedIngredient.unit,
+      ...(selectedIngredient.unitBelanja ? [selectedIngredient.unitBelanja] : []),
+      ...(((selectedIngredient.packConversions as
+        | IngredientPackConversion[]
+        | null) ?? []).map((p) => p.unitLabel)),
+    ];
     return buildUnitSelectOptions({
       presets,
-      packLabels: [selectedIngredient.unit],
+      packLabels,
       current: packUnit,
     }).options;
   }, [selectedIngredient, packUnit]);
@@ -159,30 +170,29 @@ export function MarketItemFormModal({
     }
   }, [open, selectedIngredient, packUnit]);
 
-  // Effective cost preview (Rp per ingredient.unit).
+  // Effective cost preview (Rp per ingredient.unit) — Sesi AE-174 pakai
+  // resolveQtyToMaster (sumber tunggal, honor packConversions + unitBelanja),
+  // konsisten dgn backend + Opname + Pembelian.
   const effectiveCost = useMemo(() => {
     if (!selectedIngredient) return null;
-    // Sesi AE-30 — pakai parser Indonesian-aware. Sebelumnya
-    // Number("1.000") = 1 (decimal), now → 1000 (thousand sep).
+    // Sesi AE-30 — parser Indonesian-aware (1.000 = seribu, bukan 1 desimal).
     const cost = parseIndonesianInt(unitCost);
     const size = parseIndonesianNumber(packSize);
     if (!Number.isFinite(cost) || cost <= 0) return null;
     if (!Number.isFinite(size) || size <= 0) return null;
-    // Sesi AE-164 — JANGAN Math.round ke integer: untuk bahan per-gram, rate
-    // bisa < Rp 1 (mis. Rp 0,36/g) → ke-round jadi 0 dan terlihat error.
-    // Simpan 3 desimal; display pakai formatRupiahPrecise.
-    const round3 = (n: number) => Math.round(n * 1000) / 1000;
-    if (packUnit === selectedIngredient.unit) {
-      return round3(cost / size);
-    }
-    const packMeta = resolveUnit(packUnit);
-    const ingMeta = resolveUnit(selectedIngredient.unit);
-    if (!packMeta || !ingMeta) return null;
-    if (packMeta.dimension !== ingMeta.dimension) return null;
-    if (packMeta.dimension === "discrete") return null;
-    const qtyInIngUnit = (size * packMeta.toBase) / ingMeta.toBase;
-    if (qtyInIngUnit === 0) return null;
-    return round3(cost / qtyInIngUnit);
+    const r = resolveQtyToMaster({
+      qty: size,
+      fromUnit: packUnit,
+      masterUnit: selectedIngredient.unit,
+      ingredientPacks: selectedIngredient.packConversions as
+        | IngredientPackConversion[]
+        | null,
+      unitBelanja: selectedIngredient.unitBelanja,
+      unitBelanjaPerCogs: selectedIngredient.unitBelanjaPerCogs,
+    });
+    if (!r.ok || !r.qtyMaster) return null;
+    // Sesi AE-164 — 3 desimal (bahan per-gram bisa < Rp 1/g); display precise.
+    return Math.round((cost / r.qtyMaster) * 1000) / 1000;
   }, [selectedIngredient, unitCost, packSize, packUnit]);
 
   async function onSubmit() {
@@ -378,8 +388,9 @@ export function MarketItemFormModal({
               </div>
             ) : selectedIngredient && unitCost && packSize && packUnit ? (
               <div className="rounded-lg border border-warning-300 bg-warning-100/40 p-3 text-xs text-warning-500">
-                ⚠️ Tidak bisa convert {packUnit} ke {selectedIngredient.unit}{" "}
-                — pilih unit pack yang sesuai dimensi.
+                ⚠️ Tidak bisa convert {packUnit} ke {selectedIngredient.unit}.
+                Set Konversi Pack di Edit Satuan Bahan (mis. 1 renceng = 280
+                gr), atau pilih satuan se-dimensi.
               </div>
             ) : null}
 

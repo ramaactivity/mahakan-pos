@@ -322,6 +322,108 @@ export function convertQtyWithIngredientPacks(
 }
 
 /**
+ * Sesi AE-130/AE-174 — Merge dua array pack-conversion, dedup by lowercase
+ * label. Entry `primary` (dari ingredient.packConversions) menang atas
+ * `fallback` (tier-derived dari unitBelanja) supaya manual override-able.
+ * Dipindah ke sini dari purchases/actions.ts agar di-reuse lintas modul.
+ */
+export function mergePackConversions(
+  primary: IngredientPackConversion[],
+  fallback: IngredientPackConversion[],
+): IngredientPackConversion[] {
+  const seen = new Set<string>();
+  const out: IngredientPackConversion[] = [];
+  for (const p of [...primary, ...fallback]) {
+    const lc = p.unitLabel.trim().toLowerCase();
+    if (lc.length === 0 || seen.has(lc)) continue;
+    seen.add(lc);
+    out.push(p);
+  }
+  return out;
+}
+
+export interface ResolveQtyResult {
+  ok: boolean;
+  /** Qty dalam satuan DASAR (master) ingredient. */
+  qtyMaster: number | null;
+  /** qtyMaster / qty — untuk scale cost: costPerMaster = unitCost / qtyMaster. */
+  costFactor: number | null;
+  mode: IngredientConvertMode | null;
+  error?: "INVALID_QTY" | "UNRESOLVABLE";
+}
+
+/**
+ * Sesi AE-174 — SUMBER KEBENARAN TUNGGAL konversi satuan → satuan dasar.
+ *
+ * Menjawab "berapa unit DASAR (master) dari N fromUnit?" dengan menyatukan
+ * ingredient `packConversions` + tier `unitBelanja` jadi satu daftar pack,
+ * lalu resolve via `convertQtyWithIngredientPacks` (noop → same-dimension →
+ * ingredient-pack). Dipakai Market List untuk effective cost
+ * (`unitCost / qtyMaster`); KONSISTEN dengan Opname (`buildOpnameUnitContext`)
+ * & Pembelian (`convertPurchaseQty`) karena memakai data pack yang sama.
+ *
+ * Contoh Chocolatos: master "gr", packConversions [{renceng,280},{sachet,28}].
+ *   resolveQtyToMaster({qty:1, fromUnit:"renceng", masterUnit:"gr", ...})
+ *   → qtyMaster 280, costFactor 280. Beli Rp21.000/renceng → Rp75/gr.
+ */
+export function resolveQtyToMaster(input: {
+  qty: number;
+  fromUnit: string | null | undefined;
+  masterUnit: string;
+  ingredientPacks?: IngredientPackConversion[] | null;
+  unitBelanja?: string | null;
+  unitBelanjaPerCogs?: number | string | null;
+}): ResolveQtyResult {
+  const { qty, fromUnit, masterUnit } = input;
+  if (!Number.isFinite(qty) || qty <= 0) {
+    return {
+      ok: false,
+      qtyMaster: null,
+      costFactor: null,
+      mode: null,
+      error: "INVALID_QTY",
+    };
+  }
+
+  /* unitBelanja sebagai synthetic pack (1 belanjaUnit = per × master). */
+  const belanjaLabel = input.unitBelanja?.trim();
+  const belanjaPer = coercePerCogs(input.unitBelanjaPerCogs);
+  const tierPacks: IngredientPackConversion[] =
+    belanjaLabel &&
+    belanjaPer !== null &&
+    belanjaPer > 0 &&
+    belanjaLabel.toLowerCase() !== masterUnit.trim().toLowerCase()
+      ? [{ unitLabel: belanjaLabel, qtyPerBase: belanjaPer }]
+      : [];
+  const mergedPacks = mergePackConversions(
+    input.ingredientPacks ?? [],
+    tierPacks,
+  );
+
+  const from = (fromUnit ?? "").trim();
+  if (from.length === 0) {
+    return { ok: true, qtyMaster: qty, costFactor: 1, mode: "noop" };
+  }
+
+  const r = convertQtyWithIngredientPacks(qty, from, masterUnit, mergedPacks);
+  if (!r.ok || r.qtyMaster === null || r.qtyMaster <= 0) {
+    return {
+      ok: false,
+      qtyMaster: null,
+      costFactor: null,
+      mode: null,
+      error: "UNRESOLVABLE",
+    };
+  }
+  return {
+    ok: true,
+    qtyMaster: r.qtyMaster,
+    costFactor: r.qtyMaster / qty,
+    mode: r.mode,
+  };
+}
+
+/**
  * Sesi AE-43 — Pack info dari Market List untuk handle conversion
  * discrete → continuous (mis. "1 Pack = 1000 gr").
  *
