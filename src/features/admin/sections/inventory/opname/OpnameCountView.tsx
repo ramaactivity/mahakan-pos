@@ -1042,6 +1042,15 @@ function CountRow({
       : null;
   const packAlts = ctx.options.filter((o) => o.source === "pack-alt");
 
+  /* Sesi AE-176 — label satuan SELALU kanonik (displayUnit): "g"→"gr" dst,
+   * konsisten dengan master Kelola Bahan + halaman Inventory. Hanya untuk
+   * TAMPILAN; perbandingan logika tetap pakai ctx.recipeUnit mentah supaya
+   * matching resolver tidak berubah. */
+  const recipeUnitLabel = displayUnit(ctx.recipeUnit);
+  const purchaseUnitLabel = ctx.purchaseUnit
+    ? displayUnit(ctx.purchaseUnit)
+    : null;
+
   return (
     <li className="flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-neutral-50/40 sm:flex-row sm:items-start sm:gap-6">
       {/* LEFT: status + name + chips + flow — di-cap supaya input tidak
@@ -1080,14 +1089,14 @@ function CountRow({
           {/* Row 2: unit info chips */}
           <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
             <span className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600">
-              Resep:&nbsp;<span className="font-semibold">{ctx.recipeUnit}</span>
+              Resep:&nbsp;<span className="font-semibold">{recipeUnitLabel}</span>
             </span>
             {ctx.purchaseUnit && purchaseMultiplier !== null ? (
               <span className="inline-flex items-center rounded bg-mahakan-green-100/70 px-1.5 py-0.5 font-medium text-mahakan-green-900">
                 Belanja:&nbsp;
                 <span className="font-semibold">
-                  1 {ctx.purchaseUnit} = {formatRatioForChip(purchaseMultiplier)}{" "}
-                  {ctx.recipeUnit}
+                  1 {purchaseUnitLabel} ={" "}
+                  {formatRatioForChip(purchaseMultiplier)} {recipeUnitLabel}
                 </span>
               </span>
             ) : null}
@@ -1098,8 +1107,8 @@ function CountRow({
               >
                 Pack:&nbsp;
                 <span className="font-semibold">
-                  1 {alt.value} = {formatRatioForChip(alt.multiplierToRecipe)}{" "}
-                  {ctx.recipeUnit}
+                  1 {displayUnit(alt.value)} ={" "}
+                  {formatRatioForChip(alt.multiplierToRecipe)} {recipeUnitLabel}
                 </span>
               </span>
             ))}
@@ -1107,7 +1116,7 @@ function CountRow({
               <>
                 <span className="inline-flex items-center rounded bg-amber-50 px-1.5 py-0.5 font-mono font-medium text-amber-900">
                   Expected: {expectedQty.toLocaleString("id-ID")}{" "}
-                  {ctx.recipeUnit}
+                  {recipeUnitLabel}
                 </span>
                 {diff !== null ? (
                   <span
@@ -1138,7 +1147,7 @@ function CountRow({
                 <FlowMetric
                   label="Stok Awal"
                   value={openingQty}
-                  unit={ctx.recipeUnit}
+                  unit={recipeUnitLabel}
                   hint={
                     hasPriorOpname
                       ? "Dari opname sebelumnya"
@@ -1149,13 +1158,13 @@ function CountRow({
                 <FlowMetric
                   label="Pembelian"
                   value={purchasesQty}
-                  unit={ctx.recipeUnit}
+                  unit={recipeUnitLabel}
                   hint="Total pembelian sejak opname terakhir"
                 />
                 <FlowMetric
                   label="Opname"
                   value={closingQty}
-                  unit={ctx.recipeUnit}
+                  unit={recipeUnitLabel}
                   placeholder="—"
                   hint="Stok akhir hasil hitung kamu"
                   emphasized
@@ -1181,7 +1190,7 @@ function CountRow({
                   <span className="text-neutral-500">Terpakai:</span>{" "}
                   {usedQty === null
                     ? "—"
-                    : `${usedQty.toLocaleString("id-ID")} ${ctx.recipeUnit}`}
+                    : `${usedQty.toLocaleString("id-ID")} ${recipeUnitLabel}`}
                   {usedCost !== null && unitCost > 0 ? (
                     <span className="ml-1 text-neutral-500">
                       ({formatRupiah(usedCost)})
@@ -1292,7 +1301,7 @@ function CountRow({
               )}
             />
             <span className="flex h-9 w-[60px] flex-none items-center justify-center rounded-md border border-neutral-200 bg-neutral-50 text-xs font-medium text-neutral-700">
-              {ctx.recipeUnit}
+              {recipeUnitLabel}
             </span>
             <span className="w-5 flex-none" aria-hidden />
           </div>
@@ -1306,7 +1315,7 @@ function CountRow({
               {totalPreview.toLocaleString("id-ID", {
                 maximumFractionDigits: 4,
               })}{" "}
-              {ctx.recipeUnit}
+              {recipeUnitLabel}
             </span>
           </div>
         ) : null}

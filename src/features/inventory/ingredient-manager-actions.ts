@@ -6,6 +6,8 @@ import { db } from "@/db";
 import {
   ingredients,
   ingredientUnits,
+  stockOpnameLines,
+  stockOpnameSessions,
   supplierIngredients,
   suppliers,
 } from "@/db/schema";
@@ -309,6 +311,35 @@ export async function saveIngredientManager(
         v.unit,
         ladderUnits,
       );
+
+      // ── 2b. Sinkron label satuan ke opname yang masih berjalan ─────────
+      /* Sesi AE-176 — saat satuan dasar bahan diubah lewat Kelola Bahan (mis.
+       * Chocolatos Pcs→gr), baris opname sesi in_progress masih memegang
+       * unit_snapshot lama → label di halaman Opname jadi beku ("Pcs") padahal
+       * master sudah "gr". Selaraskan snapshot ke satuan master (idempoten;
+       * self-heal walau unit tak berubah). Sejalan dengan updateIngredient
+       * (sesi AA). Unique idx menjamin maks 1 sesi in_progress per outlet. */
+      const [activeSession] = await tx
+        .select({ id: stockOpnameSessions.id })
+        .from(stockOpnameSessions)
+        .where(
+          and(
+            eq(stockOpnameSessions.outletId, outletId),
+            eq(stockOpnameSessions.status, "in_progress"),
+          ),
+        )
+        .limit(1);
+      if (activeSession) {
+        await tx
+          .update(stockOpnameLines)
+          .set({ unitSnapshot: v.unit })
+          .where(
+            and(
+              eq(stockOpnameLines.sessionId, activeSession.id),
+              eq(stockOpnameLines.ingredientId, ingredientId),
+            ),
+          );
+      }
 
       /* Map label → ingredient_unit_id (untuk set FK harga supplier). */
       const unitIdRows = await tx
