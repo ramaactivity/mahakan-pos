@@ -19,7 +19,7 @@ import {
   syncIngredientUnitsLadder,
   type LadderUnit,
 } from "@/features/inventory/ingredient-units";
-import { resolveLadderToBase } from "@/lib/unit-conversion";
+import { displayUnit, resolveLadderToBase } from "@/lib/unit-conversion";
 import { fail, ok, type ApiResult } from "./types";
 
 /**
@@ -199,6 +199,20 @@ export async function saveIngredientManager(
     );
   }
   const v = parsed.data;
+  /* Sesi AE-176 — semua label satuan disimpan KANONIK (displayUnit) apa pun
+   * sumbernya (modal dropdown ATAU import template Excel yang bisa diketik
+   * "kg"/"pcs"). Deterministik & seragam → data konsisten besar-kecil huruf,
+   * referensi silang (ladder/supplier/opname) tetap cocok. */
+  v.unit = displayUnit(v.unit);
+  v.units = v.units.map((u) => ({
+    ...u,
+    label: displayUnit(u.label),
+    refUnitLabel: u.refUnitLabel ? displayUnit(u.refUnitLabel) : u.refUnitLabel,
+  }));
+  v.supplierPrices = v.supplierPrices.map((p) => ({
+    ...p,
+    buyUnit: displayUnit(p.buyUnit),
+  }));
   const outletId = session.user.outletId;
   const userId = session.user.id;
   const baseUnitLc = v.unit.trim().toLowerCase();
