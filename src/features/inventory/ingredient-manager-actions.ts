@@ -355,6 +355,28 @@ export async function saveIngredientManager(
           ),
         );
 
+      /* Sesi AE-176 — cocokkan harga supplier ke row AKTIF by supplierId
+       * (bukan hanya by p.id). Cegah "insert baru" saat sudah ada row aktif
+       * untuk supplier yg sama → dulu tabrak unique ux_supplier_ingredients_active
+       * (1 row per outlet+supplier+ingredient). p.id dari client bisa null/basi
+       * (mis. setelah ganti satuan), jadi row aktif = sumber kebenaran. */
+      const existActive = await tx
+        .select({
+          id: supplierIngredients.id,
+          supplierId: supplierIngredients.supplierId,
+        })
+        .from(supplierIngredients)
+        .where(
+          and(
+            eq(supplierIngredients.outletId, outletId),
+            eq(supplierIngredients.ingredientId, ingredientId),
+            isNull(supplierIngredients.deletedAt),
+          ),
+        );
+      const activeIdBySupplier = new Map(
+        existActive.map((r) => [r.supplierId, r.id]),
+      );
+
       let primaryEffective: number | null = null;
       for (const p of v.supplierPrices) {
         const buyLc = p.buyUnit.trim().toLowerCase();
@@ -362,11 +384,13 @@ export async function saveIngredientManager(
           buyLc === baseUnitLc ? null : (unitIdByLabel.get(buyLc) ?? null);
 
         if (p.deleted) {
-          if (p.id) {
+          const delId = p.id ?? activeIdBySupplier.get(p.supplierId) ?? null;
+          if (delId) {
             await tx
               .update(supplierIngredients)
               .set({ deletedAt: now, isPrimary: false, updatedAt: now, updatedBy: userId })
-              .where(eq(supplierIngredients.id, p.id));
+              .where(eq(supplierIngredients.id, delId));
+            activeIdBySupplier.delete(p.supplierId);
           }
           continue;
         }
@@ -377,7 +401,9 @@ export async function saveIngredientManager(
           conv && conv > 0 ? Math.round(p.unitCost / conv) : null;
         if (p.isPrimary) primaryEffective = effective;
 
-        if (p.id) {
+        /* Prefer row aktif utk supplier ini (anti-tabrak), fallback p.id. */
+        const matchedId = activeIdBySupplier.get(p.supplierId) ?? p.id ?? null;
+        if (matchedId) {
           await tx
             .update(supplierIngredients)
             .set({
@@ -388,10 +414,12 @@ export async function saveIngredientManager(
               ingredientUnitId: unitId,
               isPrimary: false, // di-set true di akhir kalau primary
               notes: p.notes ?? null,
+              deletedAt: null, // un-delete kalau sebelumnya soft-deleted
               updatedAt: now,
               updatedBy: userId,
             })
-            .where(eq(supplierIngredients.id, p.id));
+            .where(eq(supplierIngredients.id, matchedId));
+          activeIdBySupplier.set(p.supplierId, matchedId);
         } else {
           await tx.insert(supplierIngredients).values({
             outletId,

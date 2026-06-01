@@ -223,12 +223,16 @@ export async function syncIngredientUnitsLadder(
       ),
     );
 
+  const baseLc = baseUnit.trim().toLowerCase();
   const finalLcs = new Set<string>();
   let order = 0;
   let defaultId: string | null = null;
   for (const u of units) {
     const lc = u.label.trim().toLowerCase();
     if (finalLcs.has(lc)) continue;
+    /* Sesi AE-176 — satuan DASAR implisit (qtyPerBase=1), JANGAN disimpan
+     * sebagai row. Row "= satuan dasar" bikin opsi dropdown dobel (PcsPcs). */
+    if (lc === baseLc) continue;
     finalLcs.add(lc);
     const qpb = resolvedMap.get(lc) ?? Number(u.qtyPerRef);
     const vals = {

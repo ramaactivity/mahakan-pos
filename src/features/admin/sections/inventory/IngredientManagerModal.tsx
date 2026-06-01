@@ -210,8 +210,18 @@ export function IngredientManagerModal({
   }, [unit, ladderLabels]);
 
   const reorderUnitOptions = useMemo(() => {
-    const opts = [{ value: unit.trim(), label: displayUnit(unit) }];
-    for (const l of ladderLabels) opts.push({ value: l, label: l });
+    /* Sesi AE-176 — dedup case-insensitive supaya satuan dasar tidak dobel
+     * dengan label ladder yg sama (cegah "PcsPcs"/"PackPcs" di dropdown). */
+    const seen = new Set<string>();
+    const opts: Array<{ value: string; label: string }> = [];
+    const push = (val: string, lab: string) => {
+      const lc = val.trim().toLowerCase();
+      if (!lc || seen.has(lc)) return;
+      seen.add(lc);
+      opts.push({ value: val, label: lab });
+    };
+    push(unit.trim(), displayUnit(unit));
+    for (const l of ladderLabels) push(l, l);
     return opts;
   }, [unit, ladderLabels]);
 
