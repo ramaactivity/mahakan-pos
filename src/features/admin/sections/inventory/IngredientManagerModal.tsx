@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus, Star, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowRight, Plus, Star, Trash2 } from "lucide-react";
 import {
   Button,
   Combobox,
@@ -18,7 +18,11 @@ import {
   type SaveIngredientManagerInput,
 } from "@/features/inventory/ingredient-manager-actions";
 import { isOk } from "@/features/inventory";
-import { displayUnit } from "@/lib/unit-conversion";
+import {
+  CANONICAL_UNIT_PRESETS,
+  displayUnit,
+  resolveLadderToBase,
+} from "@/lib/unit-conversion";
 import {
   formatRupiahPrecise,
   parseIndonesianInt,
@@ -32,20 +36,19 @@ interface Props {
   onSaved: () => void;
 }
 
+interface LadderRow {
+  key: string;
+  label: string; // satuan, mis. "renceng"
+  qtyStr: string; // 1 label = qty refUnit
+  refUnit: string; // "__base" atau label satuan lain
+}
 interface PriceRow {
   key: string;
   id: string | null;
   supplierId: string;
   buyUnit: string;
-  buyUnitPerBaseStr: string;
   unitCostStr: string;
   isPrimary: boolean;
-  notes: string | null;
-}
-interface ExtraRow {
-  key: string;
-  label: string;
-  qtyStr: string;
 }
 
 const SECTION_OPTIONS = [
@@ -55,16 +58,20 @@ const SECTION_OPTIONS = [
   { value: "supporting", label: "Supporting" },
   { value: "cleaning", label: "Cleaning" },
 ];
-const BASE_UNIT_PRESETS = ["gr", "ml", "Pcs", "Kg", "L"];
+const BASE_UNIT_OPTIONS = ["gr", "ml", "Pcs", "Kg", "L", "Btl"].map((u) => ({
+  value: u,
+  label: u,
+}));
+const UNIT_NAME_OPTIONS = CANONICAL_UNIT_PRESETS.map((u) => ({ value: u, label: u }));
 
 let keyCounter = 0;
 const newKey = () => `row-${keyCounter++}`;
 
 /**
- * Sesi AE-175b — Modal TERPADU "Kelola Bahan". Disederhanakan: konversi satuan
- * didefinisikan INLINE di baris harga supplier (tidak lagi terpisah). 3 bagian:
- * Identitas + Harga Supplier (supplier + "1 [satuan] = [konv] [dasar]" + harga +
- * effective live) + Satuan lain untuk opname (opsional). No nesting.
+ * Sesi AE-175c — Modal "Kelola Bahan" dengan TANGGA KONVERSI bertingkat.
+ * Semua satuan dipilih dari dropdown (anti typo). Konversi turun bertingkat
+ * sampai satuan dasar: 1 renceng = 10 sachet ; 1 sachet = 28 gr → 280 gr.
+ * Harga supplier MEMILIH satuan beli dari tangga. No nesting.
  */
 export function IngredientManagerModal({
   open,
@@ -81,8 +88,8 @@ export function IngredientManagerModal({
   const [section, setSection] = useState("__none");
   const [reorderStr, setReorderStr] = useState("");
   const [costPerUnit, setCostPerUnit] = useState(0);
+  const [ladder, setLadder] = useState<LadderRow[]>([]);
   const [prices, setPrices] = useState<PriceRow[]>([]);
-  const [extras, setExtras] = useState<ExtraRow[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
   useEffect(() => {
@@ -104,23 +111,22 @@ export function IngredientManagerModal({
           setSection(d.section ?? "__none");
           setReorderStr(d.reorderThreshold != null ? String(d.reorderThreshold) : "");
           setCostPerUnit(d.costPerUnit);
+          setLadder(
+            d.units.map((u) => ({
+              key: newKey(),
+              label: u.label,
+              qtyStr: String(u.qtyPerRef),
+              refUnit: u.refUnitLabel ?? "__base",
+            })),
+          );
           setPrices(
             d.supplierPrices.map((p) => ({
               key: newKey(),
               id: p.id,
               supplierId: p.supplierId,
               buyUnit: p.buyUnit,
-              buyUnitPerBaseStr: p.buyUnitPerBase != null ? String(p.buyUnitPerBase) : "",
               unitCostStr: String(p.unitCost),
               isPrimary: p.isPrimary,
-              notes: p.notes,
-            })),
-          );
-          setExtras(
-            d.extraUnits.map((u) => ({
-              key: newKey(),
-              label: u.label,
-              qtyStr: String(u.qtyPerBase),
             })),
           );
         }
@@ -130,8 +136,8 @@ export function IngredientManagerModal({
         setSection("__none");
         setReorderStr("");
         setCostPerUnit(0);
+        setLadder([]);
         setPrices([]);
-        setExtras([]);
       }
       if (!cancelled) setLoading(false);
     })();
@@ -142,45 +148,69 @@ export function IngredientManagerModal({
   }, [open, ingredientId]);
 
   const baseLc = unit.trim().toLowerCase();
-  const isBaseUnit = (u: string) => u.trim().toLowerCase() === baseLc;
+
+  /* Resolve tangga → qtyPerBase per satuan (untuk effective + display). */
+  const resolved = useMemo(() => {
+    try {
+      return resolveLadderToBase(
+        ladder
+          .filter((r) => r.label.trim())
+          .map((r) => ({
+            label: r.label.trim(),
+            qtyPerRef: parseIndonesianNumber(r.qtyStr),
+            refUnitLabel: r.refUnit === "__base" ? null : r.refUnit,
+          })),
+        unit.trim(),
+      );
+    } catch {
+      return null;
+    }
+  }, [ladder, unit]);
+
+  const ladderLabels = ladder.map((r) => r.label.trim()).filter(Boolean);
+  const buyUnitOptions = [
+    { value: unit.trim(), label: `${displayUnit(unit)} (satuan dasar)` },
+    ...ladderLabels.map((l) => ({ value: l, label: l })),
+  ];
 
   const effectiveFor = (row: PriceRow): number | null => {
     const cost = parseIndonesianInt(row.unitCostStr);
     if (!(cost > 0)) return null;
-    const conv = isBaseUnit(row.buyUnit)
-      ? 1
-      : parseIndonesianNumber(row.buyUnitPerBaseStr);
-    if (!(conv > 0)) return null;
+    const lc = row.buyUnit.trim().toLowerCase();
+    const conv = lc === baseLc ? 1 : (resolved?.get(lc) ?? null);
+    if (!conv || conv <= 0) return null;
     return Math.round((cost / conv) * 1000) / 1000;
   };
 
+  // ── ladder ops ──
+  const addLadder = () =>
+    setLadder((p) => [
+      ...p,
+      { key: newKey(), label: "", qtyStr: "", refUnit: "__base" },
+    ]);
+  const updLadder = (key: string, patch: Partial<LadderRow>) =>
+    setLadder((p) => p.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const rmLadder = (key: string) =>
+    setLadder((p) => p.filter((r) => r.key !== key));
+
+  // ── price ops ──
   const addPrice = () =>
-    setPrices((prev) => [
-      ...prev,
+    setPrices((p) => [
+      ...p,
       {
         key: newKey(),
         id: null,
         supplierId: "",
-        buyUnit: unit.trim(),
-        buyUnitPerBaseStr: "",
+        buyUnit: ladderLabels[0] ?? unit.trim(),
         unitCostStr: "",
-        isPrimary: prev.length === 0,
-        notes: null,
+        isPrimary: p.length === 0,
       },
     ]);
-  const updatePrice = (key: string, patch: Partial<PriceRow>) =>
-    setPrices((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
-  const removePrice = (key: string) =>
-    setPrices((prev) => prev.filter((r) => r.key !== key));
+  const updPrice = (key: string, patch: Partial<PriceRow>) =>
+    setPrices((p) => p.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const rmPrice = (key: string) => setPrices((p) => p.filter((r) => r.key !== key));
   const setPrimary = (key: string) =>
-    setPrices((prev) => prev.map((r) => ({ ...r, isPrimary: r.key === key })));
-
-  const addExtra = () =>
-    setExtras((prev) => [...prev, { key: newKey(), label: "", qtyStr: "" }]);
-  const updateExtra = (key: string, patch: Partial<ExtraRow>) =>
-    setExtras((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
-  const removeExtra = (key: string) =>
-    setExtras((prev) => prev.filter((r) => r.key !== key));
+    setPrices((p) => p.map((r) => ({ ...r, isPrimary: r.key === key })));
 
   async function onSave() {
     if (saving) return;
@@ -188,39 +218,43 @@ export function IngredientManagerModal({
     if (name.trim().length === 0) return setError("Nama bahan wajib diisi.");
     if (unit.trim().length === 0) return setError("Satuan dasar wajib diisi.");
 
+    const units: SaveIngredientManagerInput["units"] = [];
+    for (const r of ladder) {
+      if (r.label.trim().length === 0) continue;
+      const qty = parseIndonesianNumber(r.qtyStr);
+      const refLabel = r.refUnit === "__base" ? unit.trim() : r.refUnit;
+      if (!(qty > 0))
+        return setError(`Isi konversi: 1 ${r.label} = berapa ${refLabel}?`);
+      units.push({
+        label: r.label.trim(),
+        qtyPerRef: qty,
+        refUnitLabel: r.refUnit === "__base" ? null : r.refUnit,
+      });
+    }
+    /* Validasi rantai bisa di-resolve (ref ada, tak melingkar). */
+    try {
+      resolveLadderToBase(units, unit.trim());
+    } catch (e) {
+      return setError(e instanceof Error ? e.message : "Rantai konversi invalid.");
+    }
+
     const supplierPrices: SaveIngredientManagerInput["supplierPrices"] = [];
     let primaryCount = 0;
     for (const r of prices) {
       if (!r.supplierId) return setError("Pilih supplier di tiap baris harga.");
       const cost = parseIndonesianInt(r.unitCostStr);
       if (!(cost > 0)) return setError("Harga harus angka > 0.");
-      const base = isBaseUnit(r.buyUnit);
-      const perBase = base ? null : parseIndonesianNumber(r.buyUnitPerBaseStr);
-      if (!base && !(perBase! > 0)) {
-        return setError(
-          `Isi konversi: 1 ${r.buyUnit.trim()} = berapa ${unit.trim()}?`,
-        );
-      }
       if (r.isPrimary) primaryCount++;
       supplierPrices.push({
         id: r.id,
         supplierId: r.supplierId,
         buyUnit: r.buyUnit.trim() || unit.trim(),
-        buyUnitPerBase: base ? null : perBase!,
         unitCost: cost,
         isPrimary: r.isPrimary,
-        notes: r.notes,
+        notes: null,
       });
     }
     if (primaryCount > 1) return setError("Hanya boleh 1 supplier utama.");
-
-    const extraUnits: SaveIngredientManagerInput["extraUnits"] = [];
-    for (const e of extras) {
-      if (e.label.trim().length === 0 && e.qtyStr.trim().length === 0) continue;
-      const qty = parseIndonesianNumber(e.qtyStr);
-      if (!(qty > 0)) return setError(`Isi jumlah untuk satuan "${e.label}".`);
-      extraUnits.push({ label: e.label.trim(), qtyPerBase: qty });
-    }
 
     setSaving(true);
     const res = await saveIngredientManager({
@@ -232,8 +266,8 @@ export function IngredientManagerModal({
           ? null
           : (section as SaveIngredientManagerInput["section"]),
       reorderThreshold: reorderStr.trim() ? parseIndonesianInt(reorderStr) : null,
+      units,
       supplierPrices,
-      extraUnits,
     });
     setSaving(false);
     if (!isOk(res)) return setError(res.error.message);
@@ -287,30 +321,12 @@ export function IngredientManagerModal({
               />
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <Input
-                  label="Satuan Dasar (dipakai barista di resep)"
-                  value={unit}
-                  onChange={(e) => setUnit(e.target.value)}
-                  placeholder="gr / ml / Pcs"
-                />
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {BASE_UNIT_PRESETS.map((u) => (
-                    <button
-                      key={u}
-                      type="button"
-                      onClick={() => setUnit(u)}
-                      className={`rounded-md border px-2.5 py-1.5 text-xs transition-colors ${
-                        displayUnit(unit).toLowerCase() === u.toLowerCase()
-                          ? "border-mahakan-green-700 bg-mahakan-green-700 text-white"
-                          : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"
-                      }`}
-                    >
-                      {u}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <Select
+                label="Satuan Dasar (yang dipakai barista di resep)"
+                value={displayUnit(unit)}
+                onValueChange={setUnit}
+                options={BASE_UNIT_OPTIONS}
+              />
               <Input
                 label={`Stok Minimum (${unit || "satuan"}, opsional)`}
                 value={reorderStr}
@@ -328,15 +344,120 @@ export function IngredientManagerModal({
             </p>
           </section>
 
-          {/* ── (B) Harga Supplier (konversi inline) ───────────────────── */}
+          {/* ── (B) Tangga Satuan & Konversi ───────────────────────────── */}
+          <section className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-mahakan-green-900">
+              Satuan & Konversi
+            </h3>
+            <p className="text-[11px] text-neutral-600">
+              Konversi bertingkat sampai satuan dasar. Mis. 1 renceng = 10 sachet,
+              lalu 1 sachet = 28 {unit || "gr"} → sistem hitung 1 renceng = 280{" "}
+              {unit || "gr"}.
+            </p>
+            {ladder.length > 0 && (
+              <div className="space-y-2">
+                {ladder.map((row) => {
+                  const lc = row.label.trim().toLowerCase();
+                  const qpb = lc ? resolved?.get(lc) : null;
+                  const refOptions = [
+                    { value: "__base", label: `${displayUnit(unit)} (satuan dasar)` },
+                    ...ladderLabels
+                      .filter((l) => l.toLowerCase() !== lc)
+                      .map((l) => ({ value: l, label: l })),
+                  ];
+                  return (
+                    <div
+                      key={row.key}
+                      className="rounded-lg border border-neutral-200 bg-white p-2.5"
+                    >
+                      <div className="flex flex-wrap items-end gap-2">
+                        <span className="pb-2.5 font-mono text-sm font-semibold text-neutral-500">
+                          1
+                        </span>
+                        <div className="w-32">
+                          <label className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                            Satuan
+                          </label>
+                          <Select
+                            value={row.label ? displayUnit(row.label) : ""}
+                            onValueChange={(val) => updLadder(row.key, { label: val })}
+                            options={UNIT_NAME_OPTIONS}
+                            placeholder="pilih…"
+                          />
+                        </div>
+                        <span className="pb-2.5 text-sm font-semibold text-neutral-400">=</span>
+                        <div className="w-20">
+                          <label className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                            Jumlah
+                          </label>
+                          <Input
+                            value={row.qtyStr}
+                            onChange={(e) =>
+                              updLadder(row.key, {
+                                qtyStr: e.target.value.replace(/[^\d.,]/g, ""),
+                              })
+                            }
+                            inputMode="decimal"
+                            placeholder="10"
+                            className="text-right font-mono text-sm"
+                          />
+                        </div>
+                        <div className="w-32">
+                          <label className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                            Satuan tujuan
+                          </label>
+                          <Select
+                            value={
+                              row.refUnit === "__base"
+                                ? `${displayUnit(unit)} (satuan dasar)`
+                                : row.refUnit
+                            }
+                            onValueChange={(val) => updLadder(row.key, { refUnit: val })}
+                            options={refOptions}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => rmLadder(row.key)}
+                          aria-label="Hapus satuan"
+                          className="mb-0.5 flex size-11 flex-none items-center justify-center rounded-md border border-neutral-200 text-neutral-500 transition-colors hover:border-danger-500/40 hover:bg-danger-100/40 hover:text-danger-500"
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      </div>
+                      {qpb && qpb > 0 ? (
+                        <p className="mt-1.5 text-[11px] font-medium text-mahakan-green-700">
+                          ✓ 1 {row.label.trim()} = {qpb.toLocaleString("id-ID")} {unit}
+                        </p>
+                      ) : (
+                        <p className="mt-1.5 text-[11px] text-neutral-400">
+                          Pilih satuan, jumlah & satuan tujuan.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={addLadder}
+              className="w-full justify-center"
+            >
+              <Plus className="size-4" /> Tambah Satuan
+            </Button>
+          </section>
+
+          {/* ── (C) Harga Supplier ─────────────────────────────────────── */}
           <section className="space-y-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-mahakan-green-900">
               Harga Supplier
             </h3>
             <p className="text-[11px] text-neutral-600">
-              Cara beli + harga per satuan. Tulis satuan belinya (mis. renceng) +
-              berapa {unit || "satuan dasar"} isinya. Tandai ⭐ supplier utama
-              (harga-nya jadi cost master + COGS).
+              Beli dari supplier mana, dalam satuan apa (pilih dari tangga di atas),
+              harga per satuan itu. Tandai ⭐ supplier utama (jadi cost master + COGS).
             </p>
             {prices.length === 0 ? (
               <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50/60 p-3 text-center text-[11px] text-neutral-500">
@@ -346,7 +467,6 @@ export function IngredientManagerModal({
               <div className="space-y-2">
                 {prices.map((row) => {
                   const eff = effectiveFor(row);
-                  const base = isBaseUnit(row.buyUnit);
                   return (
                     <div
                       key={row.key}
@@ -370,18 +490,26 @@ export function IngredientManagerModal({
                         >
                           <Star className={`size-4 ${row.isPrimary ? "fill-current" : ""}`} />
                         </button>
-                        <div className="min-w-[150px] flex-1">
+                        <div className="min-w-[140px] flex-1">
                           <label className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
                             Supplier
                           </label>
                           <Combobox
                             value={row.supplierId || null}
-                            onChange={(val) =>
-                              updatePrice(row.key, { supplierId: val ?? "" })
-                            }
+                            onChange={(val) => updPrice(row.key, { supplierId: val ?? "" })}
                             placeholder="Pilih supplier…"
                             searchPlaceholder="Cari supplier…"
                             groups={supplierGroups}
+                          />
+                        </div>
+                        <div className="w-32">
+                          <label className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                            Beli per
+                          </label>
+                          <Select
+                            value={displayUnit(row.buyUnit)}
+                            onValueChange={(val) => updPrice(row.key, { buyUnit: val })}
+                            options={buyUnitOptions}
                           />
                         </div>
                         <div className="w-28">
@@ -391,7 +519,7 @@ export function IngredientManagerModal({
                           <Input
                             value={row.unitCostStr}
                             onChange={(e) =>
-                              updatePrice(row.key, {
+                              updPrice(row.key, {
                                 unitCostStr: e.target.value.replace(/\D/g, ""),
                               })
                             }
@@ -402,57 +530,22 @@ export function IngredientManagerModal({
                         </div>
                         <button
                           type="button"
-                          onClick={() => removePrice(row.key)}
+                          onClick={() => rmPrice(row.key)}
                           aria-label="Hapus harga"
                           className="mb-0.5 flex size-11 flex-none items-center justify-center rounded-md border border-neutral-200 text-neutral-500 transition-colors hover:border-danger-500/40 hover:bg-danger-100/40 hover:text-danger-500"
                         >
                           <Trash2 className="size-4" />
                         </button>
                       </div>
-                      {/* baris konversi: 1 [satuan beli] = [konv] [dasar] */}
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-                        <span className="font-mono font-semibold text-neutral-500">1</span>
-                        <Input
-                          value={row.buyUnit}
-                          onChange={(e) =>
-                            updatePrice(row.key, { buyUnit: e.target.value })
-                          }
-                          maxLength={20}
-                          placeholder="renceng / Kg / botol"
-                          className="w-40 text-sm"
-                        />
-                        {base ? (
-                          <span className="text-[11px] text-neutral-500">
-                            (= satuan dasar, 1:1)
-                          </span>
-                        ) : (
-                          <>
-                            <span className="font-semibold text-neutral-400">=</span>
-                            <Input
-                              value={row.buyUnitPerBaseStr}
-                              onChange={(e) =>
-                                updatePrice(row.key, {
-                                  buyUnitPerBaseStr: e.target.value.replace(/[^\d.,]/g, ""),
-                                })
-                              }
-                              inputMode="decimal"
-                              placeholder="280"
-                              className="w-24 text-right font-mono text-sm"
-                            />
-                            <span className="text-sm font-medium text-neutral-700">
-                              {unit || "satuan dasar"}
-                            </span>
-                          </>
-                        )}
-                      </div>
                       {eff != null ? (
-                        <p className="mt-1.5 text-[11px] font-medium text-mahakan-green-700">
-                          → {formatRupiahPrecise(eff)} / {unit || "—"}
+                        <p className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-mahakan-green-700">
+                          <ArrowRight className="size-3" /> {formatRupiahPrecise(eff)} /{" "}
+                          {unit || "—"}
                           {row.isPrimary ? " (jadi cost master)" : ""}
                         </p>
                       ) : (
                         <p className="mt-1.5 text-[11px] text-warning-500">
-                          Lengkapi satuan, konversi & harga.
+                          Lengkapi satuan beli & harga (pastikan satuannya ada di tangga).
                         </p>
                       )}
                     </div>
@@ -468,79 +561,6 @@ export function IngredientManagerModal({
               className="w-full justify-center"
             >
               <Plus className="size-4" /> Tambah Harga Supplier
-            </Button>
-          </section>
-
-          {/* ── (C) Satuan lain untuk opname/resep ─────────────────────── */}
-          <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-mahakan-green-900">
-              Satuan Lain untuk Opname{" "}
-              <span className="font-normal normal-case text-neutral-400">
-                (opsional)
-              </span>
-            </h3>
-            <p className="text-[11px] text-neutral-600">
-              Satuan yang dipakai saat hitung stok tapi tak ada harga supplier
-              (mis. 1 sachet = 28 {unit || "gr"}).
-            </p>
-            {extras.length > 0 && (
-              <div className="space-y-2">
-                {extras.map((row) => {
-                  const qty = parseIndonesianNumber(row.qtyStr);
-                  return (
-                    <div
-                      key={row.key}
-                      className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 bg-white p-2.5 text-sm"
-                    >
-                      <span className="font-mono font-semibold text-neutral-500">1</span>
-                      <Input
-                        value={row.label}
-                        onChange={(e) => updateExtra(row.key, { label: e.target.value })}
-                        maxLength={20}
-                        placeholder="sachet"
-                        className="w-40 text-sm"
-                      />
-                      <span className="font-semibold text-neutral-400">=</span>
-                      <Input
-                        value={row.qtyStr}
-                        onChange={(e) =>
-                          updateExtra(row.key, {
-                            qtyStr: e.target.value.replace(/[^\d.,]/g, ""),
-                          })
-                        }
-                        inputMode="decimal"
-                        placeholder="28"
-                        className="w-24 text-right font-mono text-sm"
-                      />
-                      <span className="text-sm font-medium text-neutral-700">
-                        {unit || "satuan dasar"}
-                      </span>
-                      {qty > 0 ? (
-                        <span className="text-[11px] text-mahakan-green-700">
-                          ✓ 1 {row.label.trim()} = {qty.toLocaleString("id-ID")} {unit}
-                        </span>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => removeExtra(row.key)}
-                        aria-label="Hapus satuan"
-                        className="ml-auto flex size-9 flex-none items-center justify-center rounded-md border border-neutral-200 text-neutral-500 transition-colors hover:border-danger-500/40 hover:bg-danger-100/40 hover:text-danger-500"
-                      >
-                        <Trash2 className="size-4" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={addExtra}
-              className="w-full justify-center"
-            >
-              <Plus className="size-4" /> Tambah Satuan Opname
             </Button>
           </section>
 

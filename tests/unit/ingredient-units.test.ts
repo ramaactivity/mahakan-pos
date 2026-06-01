@@ -7,6 +7,7 @@ import {
   packUnitsFromIngredient,
   parsePackUnitsForm,
   resolveQtyToMaster,
+  resolveLadderToBase,
   type PackUnitsForm,
 } from "@/lib/unit-conversion";
 
@@ -106,5 +107,50 @@ describe("resolver pakai output loader (Chocolatos)", () => {
     });
     expect(r.qtyMaster).toBe(280);
     expect(Math.round(21000 / r.qtyMaster!)).toBe(75);
+  });
+});
+
+describe("resolveLadderToBase (rantai bertingkat)", () => {
+  it("renceng→sachet→gr: 1 renceng = 10 sachet, 1 sachet = 28 gr → 280", () => {
+    const m = resolveLadderToBase(
+      [
+        { label: "renceng", qtyPerRef: 10, refUnitLabel: "sachet" },
+        { label: "sachet", qtyPerRef: 28, refUnitLabel: null },
+      ],
+      "gr",
+    );
+    expect(m.get("sachet")).toBe(28);
+    expect(m.get("renceng")).toBe(280);
+  });
+  it("langsung ke base", () => {
+    const m = resolveLadderToBase([{ label: "Kg", qtyPerRef: 1000, refUnitLabel: null }], "gr");
+    expect(m.get("kg")).toBe(1000);
+  });
+  it("3 tingkat", () => {
+    const m = resolveLadderToBase(
+      [
+        { label: "dus", qtyPerRef: 4, refUnitLabel: "renceng" },
+        { label: "renceng", qtyPerRef: 10, refUnitLabel: "sachet" },
+        { label: "sachet", qtyPerRef: 28, refUnitLabel: null },
+      ],
+      "gr",
+    );
+    expect(m.get("dus")).toBe(1120);
+  });
+  it("ref tak ada → throw", () => {
+    expect(() =>
+      resolveLadderToBase([{ label: "renceng", qtyPerRef: 10, refUnitLabel: "sachet" }], "gr"),
+    ).toThrow();
+  });
+  it("cycle → throw", () => {
+    expect(() =>
+      resolveLadderToBase(
+        [
+          { label: "a", qtyPerRef: 2, refUnitLabel: "b" },
+          { label: "b", qtyPerRef: 2, refUnitLabel: "a" },
+        ],
+        "gr",
+      ),
+    ).toThrow();
   });
 });

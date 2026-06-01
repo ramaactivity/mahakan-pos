@@ -435,8 +435,15 @@ export const ingredientUnits = pgTable(
 
     /** Label satuan beli/pack (mis. "renceng", "sachet", "Kg"). */
     label: text("label").notNull(),
-    /** Berapa satuan DASAR (ingredients.unit) per 1 label ini. > 0. */
+    /** Berapa satuan DASAR (ingredients.unit) per 1 label ini — RESOLVED dari
+     *  rantai (denormalized untuk resolver). > 0. */
     qtyPerBase: numeric("qty_per_base", { precision: 15, scale: 4 }).notNull(),
+    /** Sesi AE-175c — rantai konversi bertingkat: 1 label = qtyPerRef refUnit.
+     *  Mis. 1 renceng = 10 sachet → qtyPerRef=10, refUnitLabel="sachet".
+     *  refUnitLabel NULL = konversi langsung ke satuan dasar. qtyPerRef NULL =
+     *  legacy (treat = qtyPerBase, ref=dasar). */
+    qtyPerRef: numeric("qty_per_ref", { precision: 15, scale: 4 }),
+    refUnitLabel: text("ref_unit_label"),
     /** Satuan default saat Catat Pembelian (max 1 aktif per bahan). */
     isDefaultBuy: boolean("is_default_buy").notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),

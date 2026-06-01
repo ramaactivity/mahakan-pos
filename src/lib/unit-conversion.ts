@@ -424,6 +424,52 @@ export function resolveQtyToMaster(input: {
 }
 
 /* ============================================================================
+ * Sesi AE-175c — Rantai konversi bertingkat (ladder). Pure & client-safe.
+ * Mis. 1 renceng = 10 sachet ; 1 sachet = 28 gr → renceng qtyPerBase = 280.
+ * ========================================================================== */
+
+export interface LadderInput {
+  label: string;
+  /** 1 label = qtyPerRef refUnit. */
+  qtyPerRef: number;
+  /** Satuan tujuan konversi; null = langsung ke satuan dasar. */
+  refUnitLabel: string | null;
+}
+
+/** Resolve ladder → Map<lowercaseLabel, qtyPerBase>. Throws kalau ref tidak
+ *  ditemukan / cycle / qty invalid. */
+export function resolveLadderToBase(
+  units: LadderInput[],
+  baseUnit: string,
+): Map<string, number> {
+  const baseLc = baseUnit.trim().toLowerCase();
+  const byLc = new Map(units.map((u) => [u.label.trim().toLowerCase(), u]));
+  const resolved = new Map<string, number>();
+  const resolving = new Set<string>();
+
+  const resolve = (lc: string): number => {
+    if (lc === baseLc) return 1;
+    if (resolved.has(lc)) return resolved.get(lc)!;
+    if (resolving.has(lc))
+      throw new Error(`Rantai konversi melingkar di "${lc}".`);
+    const u = byLc.get(lc);
+    if (!u) throw new Error(`Satuan acuan "${lc}" belum didefinisikan.`);
+    if (!Number.isFinite(u.qtyPerRef) || u.qtyPerRef <= 0) {
+      throw new Error(`Konversi "${u.label}" harus angka > 0.`);
+    }
+    resolving.add(lc);
+    const refLc = (u.refUnitLabel ?? baseUnit).trim().toLowerCase();
+    const qpb = u.qtyPerRef * resolve(refLc);
+    resolving.delete(lc);
+    resolved.set(lc, qpb);
+    return qpb;
+  };
+
+  for (const u of units) resolve(u.label.trim().toLowerCase());
+  return resolved;
+}
+
+/* ============================================================================
  * Sesi AE-174 — Editor satuan terpadu (PackUnitsEditor) helper pure.
  *
  * UI menampilkan 2 bagian: "Satuan Belanja Utama" (1, opsional) + "Satuan Pack

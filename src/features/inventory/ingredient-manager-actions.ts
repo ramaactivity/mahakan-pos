@@ -13,10 +13,11 @@ import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { cascadeCostUpdate } from "@/features/inventory/preparation-flow";
 import {
-  loadIngredientUnitsOne,
-  syncIngredientUnits,
+  loadIngredientUnitsLadder,
+  syncIngredientUnitsLadder,
+  type LadderUnit,
 } from "@/features/inventory/ingredient-units";
-import { resolveQtyToMaster } from "@/lib/unit-conversion";
+import { resolveLadderToBase } from "@/lib/unit-conversion";
 import { fail, ok, type ApiResult } from "./types";
 
 /**
@@ -30,26 +31,27 @@ import { fail, ok, type ApiResult } from "./types";
  *      + cascadeCostUpdate.
  */
 
-/* Sesi AE-175b — model DISATUKAN: konversi satuan didefinisikan INLINE di baris
- * harga supplier (tidak lagi terpisah dari "Satuan Belanja Utama"). */
+/* Sesi AE-175c — Rantai konversi bertingkat (ladder) + harga supplier yang
+ * MEMILIH satuan beli dari ladder (dropdown). 1 renceng = 10 sachet ;
+ * 1 sachet = 28 gr → sistem hitung 1 renceng = 280 gr. */
+const ladderUnitSchema = z.object({
+  label: z.string().trim().min(1).max(20),
+  /** 1 label = qtyPerRef refUnit. */
+  qtyPerRef: z.number().positive().max(1_000_000),
+  /** Satuan tujuan konversi; null = langsung ke satuan dasar. */
+  refUnitLabel: z.string().trim().min(1).max(20).nullable(),
+});
+
 const supplierPriceSchema = z.object({
   id: z.uuid().nullable(),
   supplierId: z.uuid(),
-  /** Satuan beli (mis. "renceng" atau satuan dasar "gr"). */
+  /** Satuan beli — dipilih dari ladder atau satuan dasar. */
   buyUnit: z.string().trim().min(1).max(20),
-  /** Berapa satuan dasar per 1 buyUnit. NULL kalau buyUnit = satuan dasar (1:1). */
-  buyUnitPerBase: z.number().positive().nullable(),
-  /** Harga per 1 buyUnit (katalog harga, bukan total nota). */
+  /** Harga per 1 buyUnit. */
   unitCost: z.number().int().positive(),
   isPrimary: z.boolean(),
   notes: z.string().max(500).nullable().optional(),
   deleted: z.boolean().optional(),
-});
-
-/** Satuan lain untuk opname/resep (tanpa harga supplier), mis. sachet. */
-const extraUnitSchema = z.object({
-  label: z.string().trim().min(1).max(20),
-  qtyPerBase: z.number().positive().max(1_000_000),
 });
 
 const saveIngredientManagerSchema = z.object({
@@ -60,8 +62,9 @@ const saveIngredientManagerSchema = z.object({
     .enum(["kitchen", "bar", "supporting", "cleaning"])
     .nullable(),
   reorderThreshold: z.number().nonnegative().nullable().optional(),
+  /** Tangga satuan & konversi (renceng→sachet→gr). */
+  units: z.array(ladderUnitSchema).max(20),
   supplierPrices: z.array(supplierPriceSchema).max(50),
-  extraUnits: z.array(extraUnitSchema).max(20),
 });
 
 export type SaveIngredientManagerInput = z.infer<
@@ -81,20 +84,23 @@ export interface IngredientManagerData {
   section: string | null;
   reorderThreshold: number | null;
   costPerUnit: number;
+  /** Tangga satuan & konversi (renceng→sachet→gr). */
+  units: Array<{
+    label: string;
+    qtyPerRef: number;
+    refUnitLabel: string | null;
+    qtyPerBase: number;
+  }>;
   supplierPrices: Array<{
     id: string;
     supplierId: string;
     supplierName: string;
     buyUnit: string;
-    /** Konversi buyUnit ke satuan dasar. null = buyUnit adalah satuan dasar. */
-    buyUnitPerBase: number | null;
     /** Harga per 1 buyUnit. */
     unitCost: number;
     isPrimary: boolean;
     notes: string | null;
   }>;
-  /** Satuan untuk opname/resep yang TIDAK dipakai harga supplier (mis. sachet). */
-  extraUnits: Array<{ label: string; qtyPerBase: number }>;
 }
 
 /** Load semua data 1 bahan untuk modal "Kelola Bahan". */
@@ -121,7 +127,7 @@ export async function getIngredientManager(
     .limit(1);
   if (!ing || ing.outletId !== outletId) return ok(null);
 
-  const units = await loadIngredientUnitsOne(db, outletId, id);
+  const ladder = await loadIngredientUnitsLadder(db, outletId, id);
   const prices = await db
     .select({
       id: supplierIngredients.id,
@@ -146,12 +152,6 @@ export async function getIngredientManager(
     .from(suppliers)
     .where(eq(suppliers.outletId, outletId));
   const supName = new Map(supRows.map((s) => [s.id, s.name]));
-  const baseLc = ing.unit.trim().toLowerCase();
-  const convByLabel = new Map(
-    units.packConversions.map((u) => [u.unitLabel.trim().toLowerCase(), u.qtyPerBase]),
-  );
-  const usedUnitLcs = new Set<string>();
-  for (const p of prices) usedUnitLcs.add(p.buyUnit.trim().toLowerCase());
 
   return ok({
     id: ing.id,
@@ -160,28 +160,25 @@ export async function getIngredientManager(
     section: ing.section,
     reorderThreshold: ing.reorderThreshold,
     costPerUnit: ing.costPerUnit,
+    units: ladder.map((u) => ({
+      label: u.label,
+      qtyPerRef: u.qtyPerRef,
+      refUnitLabel: u.refUnitLabel,
+      qtyPerBase: u.qtyPerBase,
+    })),
     supplierPrices: prices.map((p) => {
-      const lc = p.buyUnit.trim().toLowerCase();
       const pSize = Number(p.buyQty) || 1;
       return {
         id: p.id,
         supplierId: p.supplierId,
         supplierName: supName.get(p.supplierId) ?? "—",
         buyUnit: p.buyUnit,
-        buyUnitPerBase:
-          lc === baseLc ? null : (convByLabel.get(lc) ?? null),
         /* Harga per 1 buyUnit (data lama packSize bisa >1 → bagi). */
         unitCost: Math.round(p.unitCost / pSize),
         isPrimary: p.isPrimary,
         notes: p.notes,
       };
     }),
-    extraUnits: units.packConversions
-      .filter((u) => {
-        const lc = u.unitLabel.trim().toLowerCase();
-        return lc !== baseLc && !usedUnitLcs.has(lc);
-      })
-      .map((u) => ({ label: u.unitLabel, qtyPerBase: u.qtyPerBase })),
   });
 }
 
@@ -216,36 +213,41 @@ export async function saveIngredientManager(
     const result = await db.transaction(async (tx) => {
       const now = new Date();
 
-      /* Turunkan SATUAN dari baris harga supplier (konversi inline) + satuan
-       * lain untuk opname. Dedup by lower(label); satuan primary = default. */
-      const unitMap = new Map<
-        string,
-        { label: string; qty: number; isDefault: boolean }
-      >();
-      for (const p of v.supplierPrices) {
-        if (p.deleted) continue;
-        const lc = p.buyUnit.trim().toLowerCase();
-        if (lc === baseUnitLc) continue; // satuan dasar bukan unit row
-        if (p.buyUnitPerBase == null || p.buyUnitPerBase <= 0) continue;
-        const ex = unitMap.get(lc);
-        unitMap.set(lc, {
-          label: p.buyUnit,
-          qty: p.buyUnitPerBase,
-          isDefault: (ex?.isDefault ?? false) || p.isPrimary,
-        });
+      /* Resolve tangga konversi → qtyPerBase per satuan (validasi rantai). */
+      let resolvedMap: Map<string, number>;
+      try {
+        resolvedMap = resolveLadderToBase(v.units, v.unit);
+      } catch (e) {
+        throw new Error(
+          "LADDER:" + (e instanceof Error ? e.message : "rantai konversi invalid"),
+        );
       }
-      for (const e of v.extraUnits) {
-        const lc = e.label.trim().toLowerCase();
-        if (lc === baseUnitLc || unitMap.has(lc)) continue;
-        unitMap.set(lc, { label: e.label, qty: e.qtyPerBase, isDefault: false });
-      }
-      const unitList = [...unitMap.values()];
-      const defUnit = unitList.find((u) => u.isDefault) ?? null;
-      const desiredBelanja = defUnit?.label ?? null;
-      const desiredBelanjaPer = defUnit?.qty ?? null;
+      /* Default belanja = satuan supplier utama (kalau bukan satuan dasar). */
+      const primaryPrice = v.supplierPrices.find((p) => p.isPrimary && !p.deleted);
+      const defaultBuyLc =
+        primaryPrice && primaryPrice.buyUnit.trim().toLowerCase() !== baseUnitLc
+          ? primaryPrice.buyUnit.trim().toLowerCase()
+          : null;
+      const ladderUnits: LadderUnit[] = v.units.map((u) => ({
+        label: u.label,
+        qtyPerRef: u.qtyPerRef,
+        refUnitLabel: u.refUnitLabel,
+        isDefaultBuy: u.label.trim().toLowerCase() === defaultBuyLc,
+      }));
+      const defUnitRow = v.units.find(
+        (u) => u.label.trim().toLowerCase() === defaultBuyLc,
+      );
+      const desiredBelanja = defUnitRow?.label ?? null;
+      const desiredBelanjaPer = defaultBuyLc
+        ? (resolvedMap.get(defaultBuyLc) ?? null)
+        : null;
       const legacyPacks =
-        unitList.length > 0
-          ? unitList.map((u) => ({ unitLabel: u.label, qtyPerBase: u.qty }))
+        v.units.length > 0
+          ? v.units.map((u) => ({
+              unitLabel: u.label,
+              qtyPerBase:
+                resolvedMap.get(u.label.trim().toLowerCase()) ?? u.qtyPerRef,
+            }))
           : null;
 
       // ── 1. Upsert ingredient (identitas + dual-write kolom lama satuan) ──
@@ -299,12 +301,14 @@ export async function saveIngredientManager(
         ingredientId = created!.id;
       }
 
-      // ── 2. Satuan beli/pack → ingredient_units (sumber tunggal) ─────────
-      await syncIngredientUnits(tx, outletId, ingredientId, {
-        unitBelanja: desiredBelanja,
-        unitBelanjaPerCogs: desiredBelanjaPer,
-        packConversions: legacyPacks,
-      });
+      // ── 2. Tangga satuan → ingredient_units (rantai bertingkat) ────────
+      await syncIngredientUnitsLadder(
+        tx,
+        outletId,
+        ingredientId,
+        v.unit,
+        ladderUnits,
+      );
 
       /* Map label → ingredient_unit_id (untuk set FK harga supplier). */
       const unitIdRows = await tx
@@ -322,8 +326,6 @@ export async function saveIngredientManager(
       }
 
       // ── 3. Harga supplier (diff) ───────────────────────────────────────
-      const loaded = await loadIngredientUnitsOne(tx, outletId, ingredientId);
-
       /* Clear semua primary aktif dulu (hindari transient 2-true). */
       await tx
         .update(supplierIngredients)
@@ -353,19 +355,10 @@ export async function saveIngredientManager(
           continue;
         }
 
-        /* Harga per 1 buyUnit → effective per satuan dasar. */
-        const r = resolveQtyToMaster({
-          qty: 1,
-          fromUnit: p.buyUnit,
-          masterUnit: v.unit,
-          ingredientPacks: loaded.packConversions,
-          unitBelanja: loaded.unitBelanja,
-          unitBelanjaPerCogs: loaded.unitBelanjaPerCogs,
-        });
+        /* Harga per 1 buyUnit → effective per satuan dasar (dari ladder). */
+        const conv = buyLc === baseUnitLc ? 1 : (resolvedMap.get(buyLc) ?? null);
         const effective =
-          r.ok && r.qtyMaster && r.qtyMaster > 0
-            ? Math.round(p.unitCost / r.qtyMaster)
-            : null;
+          conv && conv > 0 ? Math.round(p.unitCost / conv) : null;
         if (p.isPrimary) primaryEffective = effective;
 
         if (p.id) {
@@ -444,6 +437,9 @@ export async function saveIngredientManager(
   } catch (e) {
     if (e instanceof Error && e.message === "NOT_FOUND") {
       return fail("NOT_FOUND", "Bahan tidak ditemukan");
+    }
+    if (e instanceof Error && e.message.startsWith("LADDER:")) {
+      return fail("VALIDATION_ERROR", e.message.slice(7));
     }
     return fail("DB_ERROR", e instanceof Error ? e.message : "Database error");
   }
