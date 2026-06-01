@@ -40,7 +40,7 @@ interface LadderRow {
   key: string;
   label: string;
   qtyStr: string;
-  refUnit: string; // "__base" atau label satuan lain
+  refUnit: string; // label satuan tujuan (default = satuan dasar)
 }
 interface PriceRow {
   key: string;
@@ -116,7 +116,7 @@ export function IngredientManagerModal({
               key: newKey(),
               label: u.label,
               qtyStr: String(u.qtyPerRef),
-              refUnit: u.refUnitLabel ?? "__base",
+              refUnit: u.refUnitLabel ?? baseU,
             })),
           );
           setPrices(
@@ -172,7 +172,10 @@ export function IngredientManagerModal({
           .map((r) => ({
             label: r.label.trim(),
             qtyPerRef: parseIndonesianNumber(r.qtyStr),
-            refUnitLabel: r.refUnit === "__base" ? null : r.refUnit,
+            refUnitLabel:
+              r.refUnit.trim().toLowerCase() === unit.trim().toLowerCase()
+                ? null
+                : r.refUnit,
           })),
         unit.trim(),
       );
@@ -200,14 +203,14 @@ export function IngredientManagerModal({
       seen.add(lc);
       opts.push({ value: val, label: lab });
     };
-    push(unit.trim(), `${displayUnit(unit)} (satuan dasar)`);
+    push(unit.trim(), displayUnit(unit));
     for (const l of ladderLabels) push(l, l);
     for (const p of CANONICAL_UNIT_PRESETS) push(p, p);
     return opts;
   }, [unit, ladderLabels]);
 
   const reorderUnitOptions = useMemo(() => {
-    const opts = [{ value: unit.trim(), label: `${displayUnit(unit)} (satuan dasar)` }];
+    const opts = [{ value: unit.trim(), label: displayUnit(unit) }];
     for (const l of ladderLabels) opts.push({ value: l, label: l });
     return opts;
   }, [unit, ladderLabels]);
@@ -219,7 +222,7 @@ export function IngredientManagerModal({
     setLadder((prev) => {
       if (prev.some((r) => r.label.trim().toLowerCase() === lc)) return prev;
       return [
-        { key: newKey(), label: label.trim(), qtyStr: "", refUnit: "__base" },
+        { key: newKey(), label: label.trim(), qtyStr: "", refUnit: unit.trim() },
         ...prev,
       ];
     });
@@ -235,7 +238,7 @@ export function IngredientManagerModal({
 
   // ── ladder ops ──
   const addLadder = () =>
-    setLadder((p) => [...p, { key: newKey(), label: "", qtyStr: "", refUnit: "__base" }]);
+    setLadder((p) => [...p, { key: newKey(), label: "", qtyStr: "", refUnit: unit.trim() }]);
   const updLadder = (key: string, patch: Partial<LadderRow>) =>
     setLadder((p) => p.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   const rmLadder = (key: string) => setLadder((p) => p.filter((r) => r.key !== key));
@@ -279,12 +282,15 @@ export function IngredientManagerModal({
     for (const r of ladder) {
       if (r.label.trim().length === 0) continue;
       const qty = parseIndonesianNumber(r.qtyStr);
-      const refLabel = r.refUnit === "__base" ? unit.trim() : r.refUnit;
+      const refLabel = r.refUnit.trim() || unit.trim();
       if (!(qty > 0)) return setError(`Isi konversi: 1 ${r.label} = berapa ${refLabel}?`);
       units.push({
         label: r.label.trim(),
         qtyPerRef: qty,
-        refUnitLabel: r.refUnit === "__base" ? null : r.refUnit,
+        refUnitLabel:
+          r.refUnit.trim().toLowerCase() === unit.trim().toLowerCase()
+            ? null
+            : r.refUnit,
       });
     }
     try {
@@ -553,7 +559,7 @@ export function IngredientManagerModal({
                   const lc = row.label.trim().toLowerCase();
                   const qpb = lc ? resolved?.get(lc) : null;
                   const refOptions = [
-                    { value: "__base", label: `${displayUnit(unit)} (satuan dasar)` },
+                    { value: unit.trim(), label: displayUnit(unit) },
                     ...ladderLabels
                       .filter((l) => l.toLowerCase() !== lc)
                       .map((l) => ({ value: l, label: l })),
@@ -593,11 +599,7 @@ export function IngredientManagerModal({
                             Satuan tujuan
                           </label>
                           <Select
-                            value={
-                              row.refUnit === "__base"
-                                ? `${displayUnit(unit)} (satuan dasar)`
-                                : row.refUnit
-                            }
+                            value={displayUnit(row.refUnit || unit)}
                             onValueChange={(val) => updLadder(row.key, { refUnit: val })}
                             options={refOptions}
                           />
@@ -617,7 +619,7 @@ export function IngredientManagerModal({
                         </p>
                       ) : (
                         <p className="mt-1.5 text-[11px] text-neutral-400">
-                          Pilih jumlah & satuan tujuan (tujuan terakhir = satuan dasar).
+                          Pilih jumlah & satuan tujuan — tingkat terakhir mengarah ke {unit}.
                         </p>
                       )}
                     </div>
