@@ -59,7 +59,9 @@ import {
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "../reports/menu-engineering-csv";
 import { exportIngredientsCsv } from "@/features/inventory/csv-actions";
+import { exportKelolaBahanTemplate } from "@/features/inventory/template-import";
 import { BulkCsvImportModal } from "./BulkCsvImportModal";
+import { KelolaBahanImportModal } from "./KelolaBahanImportModal";
 import { IngredientManagerModal } from "./IngredientManagerModal";
 import { IngredientMovementsModal } from "./IngredientMovementsModal";
 import { StockReceiveModal } from "./StockReceiveModal";
@@ -98,6 +100,20 @@ type ActionTarget =
   | { kind: "delete"; ingredient: Ingredient }
   | null;
 
+/** Download file xlsx dari base64 (server action) → trigger save di browser. */
+function downloadBase64Xlsx(filename: string, base64: string) {
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const blob = new Blob([bytes], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function IngredientsList() {
   const { session } = useSession();
   const role = session?.user.role;
@@ -126,6 +142,8 @@ export function IngredientsList() {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [csvImportOpen, setCsvImportOpen] = useState(false);
   const [exportingCsv, setExportingCsv] = useState(false);
+  const [tplImportOpen, setTplImportOpen] = useState(false);
+  const [exportingTpl, setExportingTpl] = useState(false);
   const [lowOnly, setLowOnly] = useState(false);
 
   /* Sesi AE-58 — view mode toggle: snapshot (default) vs pergerakan bulanan
@@ -411,6 +429,34 @@ export function IngredientsList() {
                 title="Upload CSV hasil edit (bulk update)"
               >
                 <PackagePlus className="size-4" aria-hidden /> Upload CSV
+              </Button>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  setExportingTpl(true);
+                  try {
+                    const res = await exportKelolaBahanTemplate();
+                    if (!isOk(res)) {
+                      toast.error(res.error.message);
+                      return;
+                    }
+                    downloadBase64Xlsx(res.data.filename, res.data.base64);
+                    toast.success("Template Kelola Bahan ter-download");
+                  } finally {
+                    setExportingTpl(false);
+                  }
+                }}
+                disabled={exportingTpl}
+                title="Download template Excel Kelola Bahan (terisi data sekarang) untuk diedit massal"
+              >
+                <Download className="size-4" aria-hidden /> Template Bahan
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setTplImportOpen(true)}
+                title="Upload template Kelola Bahan yang sudah diedit → update massal"
+              >
+                <PackagePlus className="size-4" aria-hidden /> Import Template
               </Button>
               <Button onClick={() => setCreateOpen(true)}>
                 <Plus className="size-4" aria-hidden /> Tambah Bahan
@@ -982,6 +1028,14 @@ export function IngredientsList() {
       <BulkCsvImportModal
         open={csvImportOpen}
         onClose={() => setCsvImportOpen(false)}
+        onApplied={() => {
+          refresh();
+        }}
+      />
+
+      <KelolaBahanImportModal
+        open={tplImportOpen}
+        onClose={() => setTplImportOpen(false)}
         onApplied={() => {
           refresh();
         }}
