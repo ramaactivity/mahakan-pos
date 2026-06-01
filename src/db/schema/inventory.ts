@@ -410,6 +410,61 @@ export const ingredientCostHistory = pgTable(
 );
 
 /**
+ * Sesi AE-175 — Satuan beli/pack ternormalisasi (SUMBER TUNGGAL).
+ *
+ * Menggantikan kolom lama `ingredients.unit_belanja/unit_belanja_per_cogs`
+ * (1 satuan beli default) + `pack_conversions` jsonb (banyak pack) yang dulu
+ * tersebar. Tiap row = "1 {label} = {qty_per_base} {ingredients.unit}".
+ * Contoh Chocolatos (unit=gr): renceng=280, sachet=28.
+ *
+ * Satuan DASAR (ingredients.unit, qty_per_base=1) TIDAK disimpan sebagai row —
+ * disisipkan oleh loader/resolver. `is_default_buy=true` = satuan default saat
+ * Catat Pembelian (max 1 per bahan). supplier_ingredients.ingredient_unit_id
+ * menunjuk ke sini supaya harga supplier ↔ konversi = satu kebenaran.
+ */
+export const ingredientUnits = pgTable(
+  "ingredient_units",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    outletId: uuid("outlet_id")
+      .notNull()
+      .references(() => outlets.id),
+    ingredientId: uuid("ingredient_id")
+      .notNull()
+      .references(() => ingredients.id, { onDelete: "cascade" }),
+
+    /** Label satuan beli/pack (mis. "renceng", "sachet", "Kg"). */
+    label: text("label").notNull(),
+    /** Berapa satuan DASAR (ingredients.unit) per 1 label ini. > 0. */
+    qtyPerBase: numeric("qty_per_base", { precision: 15, scale: 4 }).notNull(),
+    /** Satuan default saat Catat Pembelian (max 1 aktif per bahan). */
+    isDefaultBuy: boolean("is_default_buy").notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    /* 1 label unik per bahan (case-insensitive) di antara yang aktif. */
+    uniqueIndex("ux_ingredient_units_label_active")
+      .on(t.ingredientId, sql`lower(${t.label})`)
+      .where(sql`${t.deletedAt} IS NULL`),
+    /* Max 1 default-buy aktif per bahan. */
+    uniqueIndex("ux_ingredient_units_default_buy")
+      .on(t.ingredientId)
+      .where(sql`${t.isDefaultBuy} = true AND ${t.deletedAt} IS NULL`),
+    index("idx_ingredient_units_ingredient").on(t.ingredientId),
+    index("idx_ingredient_units_outlet").on(t.outletId),
+    check("ck_ingredient_units_qty_pos", sql`${t.qtyPerBase} > 0`),
+  ],
+);
+
+/**
  * Sesi AE-116 — Period close untuk COGS reconciliation.
  *
  * Per pos_sale auto-journal sudah post Dr HPP + Cr Persediaan per

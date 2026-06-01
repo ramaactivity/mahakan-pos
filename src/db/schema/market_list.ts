@@ -14,7 +14,7 @@ import {
 import { outlets } from "./outlets";
 import { users } from "./users";
 import { suppliers } from "./suppliers";
-import { ingredients } from "./inventory";
+import { ingredients, ingredientUnits } from "./inventory";
 
 /**
  * Sesi AE-21 — Market List (supplier price catalog).
@@ -67,6 +67,16 @@ export const supplierIngredients = pgTable(
      *  unit-conversion (kalau dimensi sama, mis. Kg → gr ×1000). */
     packUnit: text("pack_unit").notNull(),
 
+    /** Sesi AE-175 — link ke satuan terdefinisi (ingredient_units). Saat di-set,
+     *  konversi (qty_per_base) diambil dari sana → harga supplier ↔ konversi =
+     *  satu kebenaran (anti "280 vs 200"). NULL = legacy / packUnit = satuan
+     *  dasar → resolver fallback by-label. ON DELETE SET NULL: hapus satuan
+     *  tidak menghapus harga supplier. */
+    ingredientUnitId: uuid("ingredient_unit_id").references(
+      () => ingredientUnits.id,
+      { onDelete: "set null" },
+    ),
+
     /** Hanya satu boleh true per (outlet, ingredient) — enforced via
      *  partial unique index. Primary supplier drives ingredients.cost_per_unit. */
     isPrimary: boolean("is_primary").notNull().default(false),
@@ -100,6 +110,7 @@ export const supplierIngredients = pgTable(
       t.outletId,
       t.ingredientId,
     ),
+    index("idx_supplier_ingredients_unit").on(t.ingredientUnitId),
     check("ck_si_unit_cost_pos", sql`${t.unitCost} > 0`),
     check("ck_si_pack_size_pos", sql`${t.packSize} > 0`),
   ],
