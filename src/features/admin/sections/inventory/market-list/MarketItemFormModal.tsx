@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Button,
   Combobox,
@@ -35,6 +35,8 @@ import {
   resolveUnit,
   type IngredientPackConversion,
 } from "@/lib/unit-conversion";
+import { Settings2 } from "lucide-react";
+import { EditUnitModal } from "../opname/EditUnitModal";
 import {
   formatRupiahPrecise,
   parseIndonesianInt,
@@ -76,6 +78,15 @@ export function MarketItemFormModal({
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [loadingMaster, setLoadingMaster] = useState(true);
+  /* Sesi AE-174 — buka editor satuan bahan langsung dari sini. */
+  const [editUnitOpen, setEditUnitOpen] = useState(false);
+
+  /* Re-fetch master bahan (dipakai setelah EditUnitModal simpan supaya
+   * packConversions/unitBelanja terbaru langsung kebaca dropdown + cost). */
+  const reloadMaster = useCallback(async () => {
+    const ingRes = await listAtomicIngredients({ activeOnly: true });
+    if (invIsOk(ingRes)) setIngredients(ingRes.data.items);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -262,6 +273,7 @@ export function MarketItemFormModal({
   }
 
   return (
+    <>
     <Modal
       open={open}
       onClose={onClose}
@@ -369,6 +381,17 @@ export function MarketItemFormModal({
               />
             </div>
 
+            {selectedIngredient ? (
+              <button
+                type="button"
+                onClick={() => setEditUnitOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-mahakan-green-700 transition-colors hover:bg-mahakan-green-50"
+              >
+                <Settings2 className="size-3.5" aria-hidden /> Atur satuan &
+                konversi {selectedIngredient.name}
+              </button>
+            ) : null}
+
             {selectedIngredient && effectiveCost !== null ? (
               <div className="rounded-lg border border-info-300 bg-info-100/40 p-3 text-xs">
                 <div className="font-semibold text-info-500">
@@ -431,5 +454,26 @@ export function MarketItemFormModal({
         )}
       </div>
     </Modal>
+    {selectedIngredient ? (
+      <EditUnitModal
+        open={editUnitOpen}
+        onClose={() => setEditUnitOpen(false)}
+        ingredientId={selectedIngredient.id}
+        ingredientName={selectedIngredient.name}
+        currentUnit={selectedIngredient.unit}
+        currentUnitBelanja={selectedIngredient.unitBelanja}
+        currentUnitBelanjaPerCogs={selectedIngredient.unitBelanjaPerCogs}
+        currentPackConversions={
+          selectedIngredient.packConversions as
+            | IngredientPackConversion[]
+            | null
+        }
+        onSaved={() => {
+          setEditUnitOpen(false);
+          void reloadMaster();
+        }}
+      />
+    ) : null}
+    </>
   );
 }

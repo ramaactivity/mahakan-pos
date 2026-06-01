@@ -14,7 +14,14 @@ import {
   parseIndonesianNumber,
   parseRupiah,
 } from "@/lib/format";
-import { displayUnit } from "@/lib/unit-conversion";
+import {
+  displayUnit,
+  packUnitsFromIngredient,
+  parsePackUnitsForm,
+  type IngredientPackConversion,
+  type PackUnitsForm,
+} from "@/lib/unit-conversion";
+import { PackUnitsEditor } from "./PackUnitsEditor";
 
 interface IngredientFormModalProps {
   open: boolean;
@@ -51,64 +58,12 @@ const RECIPE_UNIT_GROUPS = [
   },
 ] as const;
 
-const PURCHASE_UNIT_GROUPS = [
-  {
-    label: "Berat",
-    options: [
-      { value: "Kg", label: "Kg", hint: "kilogram" },
-      { value: "gr", label: "gr", hint: "gram" },
-    ],
-  },
-  {
-    label: "Volume",
-    options: [
-      { value: "L", label: "L", hint: "liter" },
-      { value: "ml", label: "ml", hint: "mililiter" },
-      { value: "galon", label: "galon", hint: "19 L galon air" },
-    ],
-  },
-  {
-    label: "Wadah / Kemasan",
-    options: [
-      { value: "Btl", label: "Btl", hint: "botol" },
-      { value: "kaleng", label: "kaleng" },
-      { value: "Pack", label: "Pack" },
-      { value: "dus", label: "dus" },
-      { value: "Karton", label: "Karton" },
-      { value: "kotak", label: "kotak" },
-      { value: "sachet", label: "sachet" },
-      { value: "renceng", label: "renceng" },
-      { value: "Bks", label: "Bks", hint: "bungkus" },
-      { value: "bal", label: "bal" },
-      { value: "pail", label: "pail" },
-      { value: "ikat", label: "ikat" },
-    ],
-  },
-  {
-    label: "Hitungan",
-    options: [
-      { value: "Pcs", label: "Pcs", hint: "pieces" },
-      { value: "Lusin", label: "Lusin" },
-      { value: "set", label: "set" },
-      { value: "pax", label: "pax" },
-    ],
-  },
-  {
-    label: "Khusus",
-    options: [
-      { value: "tabung", label: "tabung", hint: "gas LPG" },
-      { value: "roll", label: "roll", hint: "sealer / plastik roll" },
-    ],
-  },
-] as const;
-
 /* Flat lookup (as string[]) untuk "is this a preset?" check. */
 const COMMON_RECIPE_UNITS: string[] = RECIPE_UNIT_GROUPS.flatMap((g) =>
   g.options.map((o) => o.value),
 );
-const COMMON_PURCHASE_UNITS: string[] = PURCHASE_UNIT_GROUPS.flatMap((g) =>
-  g.options.map((o) => o.value),
-);
+/* Sesi AE-174 — satuan belanja/pack kini dikelola via PackUnitsEditor
+ * (PURCHASE_UNIT_GROUPS/COMMON_PURCHASE_UNITS dihapus). */
 
 /* Sesi AE-173 — cocokkan unit tersimpan (mis. "kg"/"g" legacy) ke value preset
  * KANONIK secara case/alias-tolerant. Return value preset ("Kg"/"gr") kalau
@@ -152,8 +107,12 @@ export function IngredientFormModal({
    * per 1 satuan ini. */
   const [unitTracking, setUnitTracking] = useState("");
   const [unitTrackingPerCogs, setUnitTrackingPerCogs] = useState("");
-  const [unitBelanja, setUnitBelanja] = useState("");
-  const [unitBelanjaPerCogs, setUnitBelanjaPerCogs] = useState("");
+  /* Sesi AE-174 — Satuan Belanja Utama + Pack Lain via editor terpadu. */
+  const [packForm, setPackForm] = useState<PackUnitsForm>({
+    mainLabel: "",
+    mainQtyStr: "",
+    packRows: [],
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -175,9 +134,13 @@ export function IngredientFormModal({
       setUnitTrackingPerCogs(
         edit.unitTrackingPerCogs ? String(parseFloat(edit.unitTrackingPerCogs)) : "",
       );
-      setUnitBelanja(edit.unitBelanja ?? "");
-      setUnitBelanjaPerCogs(
-        edit.unitBelanjaPerCogs ? String(parseFloat(edit.unitBelanjaPerCogs)) : "",
+      setPackForm(
+        packUnitsFromIngredient({
+          unitBelanja: edit.unitBelanja,
+          unitBelanjaPerCogs: edit.unitBelanjaPerCogs,
+          packConversions:
+            edit.packConversions as IngredientPackConversion[] | null,
+        }),
       );
     } else {
       setName("");
@@ -190,8 +153,7 @@ export function IngredientFormModal({
       setSection("__none");
       setUnitTracking("");
       setUnitTrackingPerCogs("");
-      setUnitBelanja("");
-      setUnitBelanjaPerCogs("");
+      setPackForm({ mainLabel: "", mainQtyStr: "", packRows: [] });
     }
     setError(null);
     setSubmitting(false);
@@ -248,12 +210,10 @@ export function IngredientFormModal({
       );
       return;
     }
-    const belanjaLabel = unitBelanja.trim();
-    const belanjaPer = parseDecimalOrNull(unitBelanjaPerCogs);
-    if (belanjaLabel.length > 0 && (belanjaPer === null || belanjaPer <= 0)) {
-      setError(
-        `Konversi satuan belanja harus diisi (mis. 1 ${belanjaLabel} = ? ${unit || "satuan utama"})`,
-      );
+    /* Sesi AE-174 — parse Satuan Belanja Utama + Pack Lain. */
+    const packResult = parsePackUnitsForm(packForm, unit.trim());
+    if (packResult.error) {
+      setError(packResult.error);
       return;
     }
 
@@ -270,8 +230,9 @@ export function IngredientFormModal({
       unitTrackingPerCogs: trackingLabel.length > 0 ? trackingPer : null,
     };
     const belanjaPayload = {
-      unitBelanja: belanjaLabel.length > 0 ? belanjaLabel : null,
-      unitBelanjaPerCogs: belanjaLabel.length > 0 ? belanjaPer : null,
+      unitBelanja: packResult.unitBelanja,
+      unitBelanjaPerCogs: packResult.unitBelanjaPerCogs,
+      packConversions: packResult.packConversions,
     };
     const res = edit
       ? await updateIngredient(edit.id, {
@@ -409,87 +370,15 @@ export function IngredientFormModal({
           </p>
         </div>
 
-        {/* Purchase Unit — utama untuk display Inventory + opname + belanja.
-         * Dipajang di luar collapsible supaya jelas konsep 2-unit. */}
-        <div className="space-y-1.5 rounded-md border border-mahakan-green-700/20 bg-mahakan-green-50/40 p-3">
-          <label className="block text-sm font-medium text-mahakan-green-900">
-            Purchase Unit
-          </label>
-          <div className="flex items-center gap-2">
-            <div className="w-32">
-              <Select
-                ariaLabel="Purchase unit preset"
-                /* Sesi AE-136 HOTFIX — Radix Select.Item tolak value="".
-                 * Pakai sentinel "__none" + map ke string kosong di state. */
-                groups={[
-                  {
-                    label: "—",
-                    options: [{ value: "__none", label: "Tidak ada" }],
-                  },
-                  ...PURCHASE_UNIT_GROUPS.map((g) => ({
-                    label: g.label,
-                    options: g.options.map((o) => ({
-                      value: o.value,
-                      label: o.label,
-                      hint: "hint" in o ? o.hint : undefined,
-                    })),
-                  })),
-                  {
-                    label: "Lainnya",
-                    options: [{ value: "__custom", label: "Custom…" }],
-                  },
-                ]}
-                value={
-                  unitBelanja === ""
-                    ? "__none"
-                    : (matchPresetUnit(COMMON_PURCHASE_UNITS, unitBelanja) ??
-                      "__custom")
-                }
-                onValueChange={(v) => {
-                  if (v === "__none") {
-                    setUnitBelanja("");
-                    setUnitBelanjaPerCogs("");
-                  } else if (v === "__custom") {
-                    if (matchPresetUnit(COMMON_PURCHASE_UNITS, unitBelanja))
-                      setUnitBelanja("");
-                  } else {
-                    setUnitBelanja(v);
-                  }
-                }}
-                size="sm"
-              />
-            </div>
-            {unitBelanja !== "" &&
-            !matchPresetUnit(COMMON_PURCHASE_UNITS, unitBelanja) ? (
-              <input
-                type="text"
-                placeholder="custom"
-                value={unitBelanja}
-                onChange={(e) => setUnitBelanja(e.target.value)}
-                className="h-10 flex-1 rounded-md border border-neutral-300 bg-white px-3 text-sm text-neutral-900"
-              />
-            ) : null}
-            <span className="shrink-0 text-xs text-neutral-600">= berisi</span>
-            <Input
-              aria-label="Jumlah recipe unit per 1 satuan purchase"
-              placeholder="1000"
-              value={unitBelanjaPerCogs}
-              onChange={(e) => setUnitBelanjaPerCogs(e.target.value)}
-              type="text"
-              inputMode="decimal"
-              className="w-24"
-              disabled={unitBelanja.trim().length === 0}
-            />
-            <span className="shrink-0 text-xs text-neutral-600">
-              {unit || "recipe unit"}
-            </span>
-          </div>
-          <p className="text-[11px] text-mahakan-green-900/80 leading-relaxed">
-            Satuan untuk display di Inventory + opname + belanja. Mis.{" "}
-            <strong>1 kg = 1000 g</strong>, atau <strong>1 L = 1000 ml</strong>.
-            Pakai koma untuk desimal (mis. 0,5). Kosongkan kalau bahan
-            cuma dipakai dalam recipe unit (mis. plastik).
-          </p>
+        {/* Sesi AE-174 — Editor satuan terpadu (Satuan Belanja Utama + Pack
+         * Lain). Menggerakkan Market List, Opname, Pembelian secara konsisten. */}
+        <div className="rounded-md border border-mahakan-green-700/20 bg-mahakan-green-50/40 p-3">
+          <PackUnitsEditor
+            baseUnit={unit}
+            value={packForm}
+            onChange={setPackForm}
+            disabled={submitting}
+          />
         </div>
 
         <Input

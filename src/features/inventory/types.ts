@@ -79,6 +79,8 @@ export interface CreateIngredientInput {
   unitTrackingPerCogs?: number | null;
   unitBelanja?: string | null;
   unitBelanjaPerCogs?: number | null;
+  /** Sesi AE-174 — pack conversions ingredient-level. */
+  packConversions?: Array<{ unitLabel: string; qtyPerBase: number }> | null;
 }
 
 export interface UpdateIngredientInput {
@@ -95,6 +97,8 @@ export interface UpdateIngredientInput {
   unitTrackingPerCogs?: number | null;
   unitBelanja?: string | null;
   unitBelanjaPerCogs?: number | null;
+  /** Sesi AE-62y/AE-174 — pack conversions ingredient-level. NULL = wipe. */
+  packConversions?: Array<{ unitLabel: string; qtyPerBase: number }> | null;
 }
 
 export interface BulkAssignSectionInput {

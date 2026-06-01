@@ -119,6 +119,9 @@ export function OpnameCountView({
     unit: string;
     /** Sesi AE-62y — current pack conversions (jsonb dari ingredients). */
     packConversions: Array<{ unitLabel: string; qtyPerBase: number }> | null;
+    /** Sesi AE-174 — Satuan Belanja Utama untuk editor terpadu. */
+    unitBelanja: string | null;
+    unitBelanjaPerCogs: number | string | null;
   } | null>(null);
   const [addItemOpen, setAddItemOpen] = useState(false);
 
@@ -823,6 +826,9 @@ export function OpnameCountView({
                               unit: effectiveUnit,
                               packConversions:
                                 line.ingredient.packConversions ?? null,
+                              unitBelanja: line.ingredient.unitBelanja ?? null,
+                              unitBelanjaPerCogs:
+                                line.ingredient.unitBelanjaPerCogs ?? null,
                             })
                         : undefined
                     }
@@ -915,6 +921,8 @@ export function OpnameCountView({
           ingredientId={editUnitFor.id}
           ingredientName={editUnitFor.name}
           currentUnit={editUnitFor.unit}
+          currentUnitBelanja={editUnitFor.unitBelanja}
+          currentUnitBelanjaPerCogs={editUnitFor.unitBelanjaPerCogs}
           currentPackConversions={editUnitFor.packConversions ?? null}
           onSaved={(newUnit) => {
             // Optimistic UI: push override so the row updates instantly,

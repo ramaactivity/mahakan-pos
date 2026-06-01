@@ -423,6 +423,154 @@ export function resolveQtyToMaster(input: {
   };
 }
 
+/* ============================================================================
+ * Sesi AE-174 — Editor satuan terpadu (PackUnitsEditor) helper pure.
+ *
+ * UI menampilkan 2 bagian: "Satuan Belanja Utama" (1, opsional) + "Satuan Pack
+ * Lain" (daftar). Mapping ke data ingredient TANPA ubah schema:
+ *   - main  → unitBelanja + unitBelanjaPerCogs
+ *   - rows  → packConversions
+ * Helper di sini supaya bisa di-test tanpa DOM & jadi 1 sumber kebenaran.
+ * ========================================================================== */
+
+export interface PackUnitRow {
+  /** Key stabil untuk React list (index-based, deterministik untuk test). */
+  id: string;
+  unitLabel: string;
+  /** Raw input string (parse saat submit; terima koma/titik desimal). */
+  qtyPerBaseStr: string;
+}
+
+export interface PackUnitsForm {
+  /** Satuan Belanja Utama (default form beli). "" = tidak diset. */
+  mainLabel: string;
+  mainQtyStr: string;
+  /** Satuan Pack Lain. */
+  packRows: PackUnitRow[];
+}
+
+export interface ParsedPackUnits {
+  unitBelanja: string | null;
+  unitBelanjaPerCogs: number | null;
+  packConversions: IngredientPackConversion[] | null;
+  error: string | null;
+}
+
+/** Format angka qty → string input (buang trailing zero, mis. "280.0000"→"280"). */
+function fmtQty(v: number | string | null | undefined): string {
+  if (v == null || v === "") return "";
+  const n = typeof v === "string" ? parseFloat(v) : v;
+  if (!Number.isFinite(n)) return "";
+  return String(n);
+}
+
+/** Bangun state form dari data ingredient (untuk init editor). */
+export function packUnitsFromIngredient(args: {
+  unitBelanja: string | null;
+  unitBelanjaPerCogs: number | string | null;
+  packConversions: IngredientPackConversion[] | null;
+}): PackUnitsForm {
+  const mainLabel = args.unitBelanja?.trim() ?? "";
+  const mainPer = coercePerCogs(args.unitBelanjaPerCogs);
+  const main = mainLabel && mainPer != null && mainPer > 0;
+  const packRows: PackUnitRow[] = [];
+  let i = 0;
+  for (const p of args.packConversions ?? []) {
+    /* Skip label yang sama dengan Belanja Utama (sudah jadi main row). */
+    if (main && p.unitLabel.trim().toLowerCase() === mainLabel.toLowerCase()) {
+      continue;
+    }
+    packRows.push({
+      id: `pack-${i++}`,
+      unitLabel: p.unitLabel,
+      qtyPerBaseStr: fmtQty(p.qtyPerBase),
+    });
+  }
+  return {
+    mainLabel: main ? mainLabel : "",
+    mainQtyStr: main ? fmtQty(mainPer) : "",
+    packRows,
+  };
+}
+
+/** Parse + validasi form → data ingredient. Pakai saat submit editor.
+ *  baseUnit = satuan dasar (ingredient.unit) untuk cek label ≠ dasar. */
+export function parsePackUnitsForm(
+  form: PackUnitsForm,
+  baseUnit: string,
+): ParsedPackUnits {
+  const fail = (error: string): ParsedPackUnits => ({
+    unitBelanja: null,
+    unitBelanjaPerCogs: null,
+    packConversions: null,
+    error,
+  });
+  const base = baseUnit.trim().toLowerCase();
+  const seen = new Set<string>();
+
+  const validateLabelQty = (
+    labelRaw: string,
+    qtyRaw: string,
+    what: string,
+  ): { label: string; qty: number } | { error: string } => {
+    const label = labelRaw.trim();
+    if (/^[\d.,\s]+$/.test(label)) {
+      return {
+        error: `${what} "${label}" cuma angka. Isi NAMA satuannya (mis. renceng, sachet, Kg).`,
+      };
+    }
+    if (label.toLowerCase() === base) {
+      return { error: `${what} "${label}" sama dengan satuan dasar — hapus atau ganti.` };
+    }
+    if (seen.has(label.toLowerCase())) {
+      return { error: `Satuan "${label}" duplikat.` };
+    }
+    const qty = parseFloat(qtyRaw.trim().replace(",", "."));
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return { error: `Jumlah untuk "${label}" harus angka > 0.` };
+    }
+    if (qty > 1_000_000) {
+      return { error: `Jumlah untuk "${label}" terlalu besar (maks 1 juta).` };
+    }
+    seen.add(label.toLowerCase());
+    return { label, qty };
+  };
+
+  // ── Satuan Belanja Utama (opsional) ─────────────────────────────────
+  let unitBelanja: string | null = null;
+  let unitBelanjaPerCogs: number | null = null;
+  const mainLabel = form.mainLabel.trim();
+  const mainQty = form.mainQtyStr.trim();
+  if (mainLabel.length > 0 || mainQty.length > 0) {
+    if (mainLabel.length === 0) {
+      return fail("Satuan Belanja Utama: isi nama satuannya, atau kosongkan jumlahnya.");
+    }
+    const r = validateLabelQty(mainLabel, mainQty, "Satuan Belanja Utama");
+    if ("error" in r) return fail(r.error);
+    unitBelanja = r.label;
+    unitBelanjaPerCogs = r.qty;
+  }
+
+  // ── Satuan Pack Lain (daftar) ───────────────────────────────────────
+  const packs: IngredientPackConversion[] = [];
+  for (const row of form.packRows) {
+    const label = row.unitLabel.trim();
+    const qty = row.qtyPerBaseStr.trim();
+    if (label.length === 0 && qty.length === 0) continue; // baris kosong → skip
+    const r = validateLabelQty(label, qty, "Satuan Pack");
+    if ("error" in r) return fail(r.error);
+    packs.push({ unitLabel: r.label, qtyPerBase: r.qty });
+  }
+  if (packs.length > 10) return fail("Maksimal 10 Satuan Pack Lain.");
+
+  return {
+    unitBelanja,
+    unitBelanjaPerCogs,
+    packConversions: packs.length > 0 ? packs : null,
+    error: null,
+  };
+}
+
 /**
  * Sesi AE-43 — Pack info dari Market List untuk handle conversion
  * discrete → continuous (mis. "1 Pack = 1000 gr").

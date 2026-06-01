@@ -62,33 +62,6 @@ const unitTierPerCogs = z
   .nullable()
   .optional();
 
-export const createIngredientSchema = z
-  .object({
-    name: z.string().trim().min(NAME_MIN).max(NAME_MAX),
-    unit: z.string().trim().min(1).max(UNIT_MAX),
-    costPerUnit: costNonNeg,
-    initialStock: qtyNonNeg,
-    reorderThreshold: qtyNonNeg.nullable().optional(),
-    notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
-    isPreparation: z.boolean().optional().default(false),
-    preparationYield: qtyPositive.nullable().optional(),
-    section: sectionEnum,
-    /** Sesi AE-130 — multi-unit tier opsional. */
-    unitTracking: unitTierLabel,
-    unitTrackingPerCogs: unitTierPerCogs,
-    unitBelanja: unitTierLabel,
-    unitBelanjaPerCogs: unitTierPerCogs,
-  })
-  .refine(
-    (v) => !v.isPreparation || (v.preparationYield != null),
-    {
-      message: "preparation_yield wajib jika isPreparation=true",
-      path: ["preparationYield"],
-    },
-  );
-
-export type CreateIngredientInput = z.infer<typeof createIngredientSchema>;
-
 /** Sesi AE-62y — pack conversion entry. Validasi:
  *   - unitLabel non-empty trim, max 20 chars
  *   - qtyPerBase > 0, integer atau decimal
@@ -110,6 +83,35 @@ export const packConversionsSchema = z
     },
     { message: "Label satuan tidak boleh duplikat (case-insensitive)" },
   );
+
+export const createIngredientSchema = z
+  .object({
+    name: z.string().trim().min(NAME_MIN).max(NAME_MAX),
+    unit: z.string().trim().min(1).max(UNIT_MAX),
+    costPerUnit: costNonNeg,
+    initialStock: qtyNonNeg,
+    reorderThreshold: qtyNonNeg.nullable().optional(),
+    notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
+    isPreparation: z.boolean().optional().default(false),
+    preparationYield: qtyPositive.nullable().optional(),
+    section: sectionEnum,
+    /** Sesi AE-130 — multi-unit tier opsional. */
+    unitTracking: unitTierLabel,
+    unitTrackingPerCogs: unitTierPerCogs,
+    unitBelanja: unitTierLabel,
+    unitBelanjaPerCogs: unitTierPerCogs,
+    /** Sesi AE-174 — pack conversions juga bisa di-set saat create. */
+    packConversions: packConversionsSchema.nullable().optional(),
+  })
+  .refine(
+    (v) => !v.isPreparation || (v.preparationYield != null),
+    {
+      message: "preparation_yield wajib jika isPreparation=true",
+      path: ["preparationYield"],
+    },
+  );
+
+export type CreateIngredientInput = z.infer<typeof createIngredientSchema>;
 
 export const updateIngredientSchema = z
   .object({

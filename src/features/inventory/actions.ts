@@ -266,6 +266,11 @@ export async function createIngredient(
             v.unitBelanjaPerCogs != null
               ? v.unitBelanjaPerCogs.toFixed(4)
               : null,
+          /* Sesi AE-174 — pack conversions juga di-write saat create. */
+          packConversions:
+            v.packConversions && v.packConversions.length > 0
+              ? v.packConversions
+              : null,
           createdBy: session.user.id,
           updatedBy: session.user.id,
         })
