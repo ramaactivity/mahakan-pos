@@ -275,6 +275,10 @@ export async function fetchActiveIngredientsForSnapshot(
         eq(ingredients.outletId, outletId),
         eq(ingredients.isActive, true),
         isNull(ingredients.deletedAt),
+        /* Sesi AE-176 — preparation (Prep - X) dibuat in-house dari resep,
+         * bukan bahan yang dihitung fisik. Owner: keluarkan dari stock opname
+         * supaya tidak double-count (bahan baku-nya sudah dihitung terpisah). */
+        eq(ingredients.isPreparation, false),
       ),
     )
     .orderBy(ingredients.name);
