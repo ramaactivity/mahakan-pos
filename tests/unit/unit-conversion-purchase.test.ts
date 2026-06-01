@@ -546,14 +546,30 @@ describe("computeOpnameQtyFromSplit", () => {
     expect(r).toBe(1500);
   });
 
-  it("unknown unit → null", () => {
+  it("unknown unit → fallback ke defaultUnit (bukan null lagi, sesi AE-176)", () => {
+    /* Dulu null (hard-error). Sekarang fallback ke defaultUnit 'pack' (×5)
+     * supaya stale-unit dari sesi opname lama tidak bikin "Gagal konversi". */
     const r = computeOpnameQtyFromSplit({
       primaryQty: 3,
       primaryUnit: "wat",
       looseQtyRecipe: null,
       context: ctxYakult,
     });
-    expect(r).toBeNull();
+    expect(r).toBe(15);
+  });
+
+  it("fallback ke defaultUnit kalau primaryUnit basi tak ada di opsi", () => {
+    /* Sesi AE-176 — primaryUnit beku dari sesi opname lama bisa tak ada di
+     * multipliers baru (satuan diubah via Kelola Bahan). Harus fallback ke
+     * defaultUnit (di sini 'pack' = 5), bukan hard-error null. */
+    expect(
+      computeOpnameQtyFromSplit({
+        primaryQty: 2,
+        primaryUnit: "satuan-lama-yg-hilang",
+        looseQtyRecipe: null,
+        context: ctxYakult,
+      }),
+    ).toBe(10); // 2 × 5 (defaultUnit 'pack')
   });
 
   it("case-insensitive: primaryUnit 'btl' cocok dgn multiplier 'Btl' (Mango Syrup)", () => {

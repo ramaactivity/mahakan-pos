@@ -1249,7 +1249,14 @@ export function computeOpnameQtyFromSplit(args: {
   let total = 0;
   let hasValue = false;
   if (primaryQty !== null && Number.isFinite(primaryQty) && primaryQty >= 0) {
-    const mult = lookupMultiplier(context.multipliers, primaryUnit);
+    /* Sesi AE-176 — fallback ke defaultUnit kalau primaryUnit tak ketemu.
+     * primaryUnit di stateMap opname dibekukan saat sesi mulai; kalau owner
+     * ubah satuan bahan via Kelola Bahan, nilai lama bisa tak ada di
+     * multipliers baru → dulu hard-error "Gagal konversi". defaultUnit selalu
+     * valid (purchaseUnit/recipeUnit), jadi pakai itu sbg pemulihan. */
+    const mult =
+      lookupMultiplier(context.multipliers, primaryUnit) ??
+      lookupMultiplier(context.multipliers, context.defaultUnit);
     if (mult === undefined) return null;
     total += primaryQty * mult;
     hasValue = true;

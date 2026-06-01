@@ -1013,7 +1013,16 @@ function CountRow({
           ? "warning"
           : "ok";
 
-  const currentPrimaryUnit = state.primaryUnit || ctx.defaultUnit;
+  /* Sesi AE-176 — primaryUnit dibekukan saat sesi mulai; kalau satuan bahan
+   * diubah via Kelola Bahan, nilai lama bisa tak ada lagi di opsi. Resolve ke
+   * defaultUnit supaya dropdown tampil unit valid + konsisten dgn konversi
+   * (yg juga fallback ke defaultUnit). */
+  const rawPrimaryUnit = state.primaryUnit || ctx.defaultUnit;
+  const currentPrimaryUnit = ctx.options.some(
+    (o) => o.value.toLowerCase() === rawPrimaryUnit.toLowerCase(),
+  )
+    ? rawPrimaryUnit
+    : ctx.defaultUnit;
   const canPickUnit = ctx.options.length > 1;
   /* "Sisa lepas" hanya muncul kalau primary unit beda dari recipe AND
    * conversion > 1. Continuous unit (kg → g) tetap support tapi staff
