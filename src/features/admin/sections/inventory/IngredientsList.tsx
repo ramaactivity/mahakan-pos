@@ -521,12 +521,36 @@ export function IngredientsList() {
                 </thead>
                 <tbody className="divide-y divide-warning-500/10">
                   {visibleLowStock.map((i) => {
-                    const sisa = formatStockQty(
-                      i.currentStock,
-                      i.currentStockDecimal ?? null,
+                    /* Sesi AE-176 — banner tampil dalam satuan beli, konsisten
+                     * dengan daftar utama + Kelola Bahan. reorderThreshold &
+                     * stok disimpan dalam satuan dasar; konversi ke satuan beli
+                     * (linear, cogsToBelanja = qty / per). */
+                    const qtyCogs =
+                      i.currentStockDecimal !== null
+                        ? parseFloat(i.currentStockDecimal)
+                        : i.currentStock;
+                    const belanjaLabel = i.unitBelanja?.trim();
+                    const hasBelanjaTier =
+                      Boolean(belanjaLabel) &&
+                      Boolean(i.unitBelanjaPerCogs) &&
+                      Number(i.unitBelanjaPerCogs) > 0;
+                    const tiers: IngredientUnitTiers = {
+                      cogsUnit: i.unit,
+                      belanjaUnit: i.unitBelanja,
+                      belanjaPerCogs: i.unitBelanjaPerCogs,
+                    };
+                    const toView = (baseVal: number) =>
+                      hasBelanjaTier ? cogsToBelanja(baseVal, tiers) : baseVal;
+                    const unitLabel = hasBelanjaTier ? belanjaLabel : i.unit;
+                    const fmtNum = (n: number) =>
+                      new Intl.NumberFormat("id-ID", {
+                        maximumFractionDigits: 4,
+                      }).format(n);
+                    const sisa = fmtNum(toView(qtyCogs));
+                    const minView = fmtNum(toView(i.reorderThreshold ?? 0));
+                    const deficit = fmtNum(
+                      toView((i.reorderThreshold ?? 0) - qtyCogs),
                     );
-                    const deficit =
-                      (i.reorderThreshold ?? 0) - (i.currentStock ?? 0);
                     const isNegative = i.currentStock < 0;
                     return (
                       <tr key={i.id} className="hover:bg-warning-100/30">
@@ -553,12 +577,12 @@ export function IngredientsList() {
                           </span>
                           <span className="font-mono tabular-nums text-neutral-400">
                             {" / "}
-                            {i.reorderThreshold}
+                            {minView}
                           </span>{" "}
-                          <span className="text-neutral-500">{i.unit}</span>
+                          <span className="text-neutral-500">{unitLabel}</span>
                         </td>
                         <td className="px-3 py-2 text-right font-mono tabular-nums font-medium text-warning-500">
-                          +{deficit} {i.unit}
+                          +{deficit} {unitLabel}
                         </td>
                         {canReceive ? (
                           <td className="px-3 py-2 text-right">
@@ -820,11 +844,7 @@ export function IngredientsList() {
                         {/* Sesi AE-130 — Cost/Unit per-row dihilangkan (lihat
                          * header comment). Tab Bahan = fokus stok, bukan harga. */}
                         <td className="px-4 py-3 text-right font-mono text-xs">
-                          {i.reorderThreshold !== null ? (
-                            i.reorderThreshold.toLocaleString("id-ID")
-                          ) : (
-                            <span className="text-neutral-400">—</span>
-                          )}
+                          <ReorderDisplay ingredient={i} />
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
@@ -1480,6 +1500,59 @@ function StockDisplay({
         ingredient.currentStockDecimal ?? null,
       )}
     </>
+  );
+}
+
+/* Sesi AE-176 — Stok Minimum ikut konvensi satuan beli (sama persis dengan
+ * kolom Stok, kolom Unit, dan modal Kelola Bahan). reorderThreshold disimpan
+ * dalam satuan dasar (gr); tampilkan dalam satuan beli (Kg/renceng/Pack) + base
+ * sebagai subtitle supaya tidak ambigu ("500" → "0,5 Kg / 500 gr"). */
+function ReorderDisplay({
+  ingredient,
+}: {
+  ingredient: {
+    reorderThreshold: number | null;
+    unit: string;
+    unitBelanja: string | null;
+    unitBelanjaPerCogs: string | null;
+  };
+}) {
+  if (ingredient.reorderThreshold === null) {
+    return <span className="text-neutral-400">—</span>;
+  }
+  const base = ingredient.reorderThreshold;
+  const fmt = (n: number) =>
+    new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(n);
+
+  const belanjaLabel = ingredient.unitBelanja?.trim();
+  const hasBelanjaTier =
+    Boolean(belanjaLabel) &&
+    Boolean(ingredient.unitBelanjaPerCogs) &&
+    Number(ingredient.unitBelanjaPerCogs) > 0;
+
+  if (hasBelanjaTier) {
+    const tiers: IngredientUnitTiers = {
+      cogsUnit: ingredient.unit,
+      belanjaUnit: ingredient.unitBelanja,
+      belanjaPerCogs: ingredient.unitBelanjaPerCogs,
+    };
+    const purchase = cogsToBelanja(base, tiers);
+    return (
+      <div className="flex flex-col items-end leading-tight">
+        <span>
+          {fmt(purchase)} {belanjaLabel}
+        </span>
+        <span className="text-[10px] text-neutral-500">
+          {fmt(base)} {ingredient.unit}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <span>
+      {fmt(base)} {ingredient.unit}
+    </span>
   );
 }
 
