@@ -348,7 +348,7 @@ export function MarketListView() {
                       <div className="grid grid-cols-3 gap-2 text-xs sm:gap-3">
                         <div>
                           <div className="text-[10px] uppercase tracking-wider text-neutral-500">
-                            Harga / Pack
+                            Harga Beli
                           </div>
                           <div className="font-mono text-sm font-semibold tabular-nums text-neutral-900">
                             {formatRupiah(row.unitCost)}
@@ -356,7 +356,7 @@ export function MarketListView() {
                         </div>
                         <div>
                           <div className="text-[10px] uppercase tracking-wider text-neutral-500">
-                            Pack
+                            Isi
                           </div>
                           <div className="font-mono text-sm tabular-nums text-neutral-900">
                             {row.packSize}{" "}

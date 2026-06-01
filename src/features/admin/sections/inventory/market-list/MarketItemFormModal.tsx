@@ -365,7 +365,7 @@ export function MarketItemFormModal({
                 placeholder="36000"
               />
               <Input
-                label="Pack Size"
+                label="Jumlah Beli"
                 type="text"
                 inputMode="decimal"
                 value={packSize}
@@ -373,7 +373,7 @@ export function MarketItemFormModal({
                 placeholder="1000"
               />
               <Select
-                label="Pack Unit"
+                label="Satuan Beli"
                 value={displayUnit(packUnit)}
                 onValueChange={setPackUnit}
                 options={packUnitOptions}
