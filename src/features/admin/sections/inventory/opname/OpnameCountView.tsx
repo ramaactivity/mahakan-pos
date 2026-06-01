@@ -130,6 +130,17 @@ export function OpnameCountView({
     mergeDraftIntoState(detail, readDraft(detail.id)),
   );
 
+  /* Sesi AE-174 — mirror stateMap terbaru ke ref. persistLine dijadwalkan
+   * lewat setTimeout (debounce 700ms) dengan closure dari render saat timer
+   * DIPASANG — yaitu state SEBELUM keystroke terakhir masuk. Akibatnya save
+   * pertama setelah mengetik membaca nilai basi (sering null) → input terisi
+   * tapi "Belum dihitung", dan "Tandai kosong (0)" tampak tersimpan lalu balik
+   * lagi. Baca dari ref ini di fire-time supaya selalu nilai input terkini. */
+  const stateMapRef = useRef(stateMap);
+  useEffect(() => {
+    stateMapRef.current = stateMap;
+  }, [stateMap]);
+
   // Optimistic unit overrides — populated when EditUnitModal saves so the
   // CountRow updates instantly without waiting for the parent's silent
   // refresh round-trip (sesi AA hotfix #2: even though server-side updates
@@ -320,6 +331,14 @@ export function OpnameCountView({
     return m;
   }, [detail.lines, unitOverrides]);
 
+  /* Sesi AE-174 — mirror ctxMap terbaru ke ref (alasan sama dgn stateMapRef):
+   * persistLine yang fire dari timer harus pakai konteks unit terkini, mis.
+   * setelah EditUnitModal mengubah unit/konversi pack. */
+  const ctxMapRef = useRef(ctxMap);
+  useEffect(() => {
+    ctxMapRef.current = ctxMap;
+  }, [ctxMap]);
+
   /** Schedule debounced save dari current state (split-aware). */
   function scheduleSaveFromState(ingredientId: string) {
     setStateMap((prev) => {
@@ -384,9 +403,11 @@ export function OpnameCountView({
   }
 
   async function persistLine(ingredientId: string) {
-    const cur = stateMap.get(ingredientId);
+    /* Sesi AE-174 — baca state & context dari ref (nilai terkini saat timer
+     * fire), BUKAN dari closure render saat timer dipasang. */
+    const cur = stateMapRef.current.get(ingredientId);
     if (!cur) return;
-    const ctx = ctxMap.get(ingredientId);
+    const ctx = ctxMapRef.current.get(ingredientId);
     if (!ctx) return;
 
     const primaryParsed = parseQtyInput(cur.primaryInput);
@@ -409,7 +430,9 @@ export function OpnameCountView({
 
     const actualQty = computeOpnameQtyFromSplit({
       primaryQty: primaryParsed,
-      primaryUnit: cur.primaryUnit,
+      /* Fallback ke default unit kalau state belum punya unit (mis. bahan
+       * yang baru ditambah saat sesi belum sempat ter-seed unit-nya). */
+      primaryUnit: cur.primaryUnit || ctx.defaultUnit,
       looseQtyRecipe: looseParsed,
       context: ctx,
     });
