@@ -8,6 +8,11 @@ import {
   type IngredientSection,
   type OpnameLineWithIngredient,
 } from "@/features/stock-opname";
+import {
+  buildUnitSelectOptions,
+  CANONICAL_UNIT_PRESETS,
+  displayUnit,
+} from "@/lib/unit-conversion";
 
 interface Props {
   open: boolean;
@@ -24,20 +29,7 @@ const SECTION_OPTIONS: Array<{ value: IngredientSection | ""; label: string }> =
   { value: "cleaning", label: "Cleaning" },
 ];
 
-const COMMON_UNITS = [
-  "gr",
-  "Kg",
-  "ml",
-  "L",
-  "Pcs",
-  "Btl",
-  "Pack",
-  "Bks",
-  "Krat",
-  "Lusin",
-  "set",
-  "Karton",
-];
+/* Sesi AE-173 — preset satuan kanonik (1 sumber, lihat unit-conversion.ts). */
 
 /**
  * Sesi AE-22 — modal shared untuk mobile + backoffice opname. Staff
@@ -142,13 +134,16 @@ export function AddOpnameItemModal({
               Unit
             </label>
             <select
-              value={unit}
+              value={displayUnit(unit)}
               onChange={(e) => setUnit(e.target.value)}
               className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-mahakan-green-700 focus:outline-none"
             >
-              {COMMON_UNITS.map((u) => (
-                <option key={u} value={u}>
-                  {u}
+              {buildUnitSelectOptions({
+                presets: CANONICAL_UNIT_PRESETS,
+                current: unit,
+              }).options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
                 </option>
               ))}
             </select>

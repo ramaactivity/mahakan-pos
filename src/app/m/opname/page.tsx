@@ -29,6 +29,7 @@ import {
   buildOpnameUnitContext,
   cogsToTracking,
   computeOpnameQtyFromSplit,
+  displayUnit,
   type IngredientPackConversion,
   type OpnameUnitContext,
   type IngredientUnitTiers,
@@ -735,11 +736,11 @@ function LineRow({
               size="md"
               ariaLabel={`Satuan ${line.ingredient.name}`}
               options={opnameCtx.options.map((o) => ({
-                value: o.value,
-                label: o.label,
+                value: displayUnit(o.value),
+                label: displayUnit(o.label),
                 hint: o.hint ?? undefined,
               }))}
-              value={inputUnit}
+              value={displayUnit(inputUnit)}
               onValueChange={(v) => {
                 onUnitChange(v);
                 /* Save dengan unit baru — match prev onBlur behavior. */
@@ -749,7 +750,7 @@ function LineRow({
           </div>
         ) : (
           <span className="flex w-[72px] shrink-0 items-center justify-center rounded-md border border-neutral-200 bg-neutral-50 px-2 text-sm font-medium text-neutral-700">
-            {masterUnit}
+            {displayUnit(masterUnit)}
           </span>
         )}
       </div>

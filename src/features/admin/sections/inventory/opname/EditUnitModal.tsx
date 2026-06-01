@@ -5,6 +5,7 @@ import { AlertCircle, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button, Input, Modal, toast } from "@/components/ui";
 import { updateIngredient } from "@/features/inventory/actions";
 import type { PackConversionEntry } from "@/features/inventory/schemas";
+import { CANONICAL_UNIT_PRESETS, displayUnit } from "@/lib/unit-conversion";
 
 interface Props {
   open: boolean;
@@ -25,22 +26,8 @@ interface Props {
   currentPackConversions?: PackConversionEntry[] | null;
 }
 
-const COMMON_UNITS = [
-  "gram",
-  "kg",
-  "ml",
-  "liter",
-  "pcs",
-  "bks",
-  "btl",
-  "kaleng",
-  "sachet",
-  "buah",
-  "ikat",
-  "lembar",
-  "porsi",
-  "set",
-];
+/* Sesi AE-173 — quick-pick satuan kanonik (1 sumber, lihat unit-conversion.ts). */
+const COMMON_UNITS = CANONICAL_UNIT_PRESETS;
 
 interface PackDraft {
   unitLabel: string;
@@ -251,7 +238,7 @@ export function EditUnitModal({
                   onClick={() => setUnit(u)}
                   disabled={submitting}
                   className={`rounded-md border border-neutral-200 px-2 py-1 text-xs transition-colors ${
-                    unit === u
+                    displayUnit(unit).toLowerCase() === u.toLowerCase()
                       ? "bg-mahakan-green-700 text-white border-mahakan-green-700"
                       : "bg-white text-neutral-700 hover:bg-neutral-50"
                   }`}

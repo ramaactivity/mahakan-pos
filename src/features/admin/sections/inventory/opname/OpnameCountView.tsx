@@ -47,6 +47,7 @@ import { AddOpnameItemModal } from "./AddOpnameItemModal";
 import {
   buildOpnameUnitContext,
   computeOpnameQtyFromSplit,
+  displayUnit,
   type IngredientPackConversion,
   type OpnameUnitContext,
 } from "@/lib/unit-conversion";
@@ -1208,18 +1209,18 @@ function CountRow({
                 size="md"
                 ariaLabel={`Satuan ${name}`}
                 options={ctx.options.map((o) => ({
-                  value: o.value,
-                  label: o.label,
+                  value: displayUnit(o.value),
+                  label: displayUnit(o.label),
                   hint: o.hint ?? undefined,
                 }))}
-                value={currentPrimaryUnit}
+                value={displayUnit(currentPrimaryUnit)}
                 onValueChange={onUnitChange}
                 className="h-12"
               />
             </div>
           ) : (
             <span className="flex h-12 w-[72px] flex-none items-center justify-center rounded-md border border-neutral-200 bg-neutral-50 text-sm font-medium text-neutral-700">
-              {ctx.recipeUnit}
+              {displayUnit(ctx.recipeUnit)}
             </span>
           )}
         </div>
