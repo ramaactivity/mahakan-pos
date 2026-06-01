@@ -1222,6 +1222,23 @@ export function normalizeUnitLabel(label: string): string {
  * "penuh + sisa lepas". `primaryQty` di-`primaryUnit`, `loose` di recipe.
  * Returns null kalau both invalid/empty.
  */
+/* Sesi AE-176 — lookup multiplier TOLERAN-CASE. multipliers di-key dengan
+ * label asli (mis. "Btl"), tapi primaryUnit dari dropdown bisa beda case
+ * ("btl") akibat displayUnit / draft localStorage lama → ".get" persis miss →
+ * "Gagal konversi" padahal mapping ada. Coba exact dulu, lalu case-insensitive. */
+function lookupMultiplier(
+  multipliers: Map<string, number>,
+  unit: string,
+): number | undefined {
+  const direct = multipliers.get(unit);
+  if (direct !== undefined) return direct;
+  const lc = unit.trim().toLowerCase();
+  for (const [k, v] of multipliers) {
+    if (k.trim().toLowerCase() === lc) return v;
+  }
+  return undefined;
+}
+
 export function computeOpnameQtyFromSplit(args: {
   primaryQty: number | null;
   primaryUnit: string;
@@ -1232,7 +1249,7 @@ export function computeOpnameQtyFromSplit(args: {
   let total = 0;
   let hasValue = false;
   if (primaryQty !== null && Number.isFinite(primaryQty) && primaryQty >= 0) {
-    const mult = context.multipliers.get(primaryUnit);
+    const mult = lookupMultiplier(context.multipliers, primaryUnit);
     if (mult === undefined) return null;
     total += primaryQty * mult;
     hasValue = true;

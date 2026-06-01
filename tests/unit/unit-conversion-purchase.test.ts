@@ -555,4 +555,31 @@ describe("computeOpnameQtyFromSplit", () => {
     });
     expect(r).toBeNull();
   });
+
+  it("case-insensitive: primaryUnit 'btl' cocok dgn multiplier 'Btl' (Mango Syrup)", () => {
+    /* Sesi AE-176 — multipliers di-key 'Btl' (label asli), tapi primaryUnit
+     * dari dropdown/draft bisa 'btl'. Lookup harus tetap nemu → 800 ml. */
+    const ctxMango = buildOpnameUnitContext({
+      recipeUnit: "ml",
+      unitBelanja: "Btl",
+      unitBelanjaPerCogs: 800,
+    });
+    expect(
+      computeOpnameQtyFromSplit({
+        primaryQty: 1,
+        primaryUnit: "btl",
+        looseQtyRecipe: null,
+        context: ctxMango,
+      }),
+    ).toBe(800);
+    // exact case tetap jalan.
+    expect(
+      computeOpnameQtyFromSplit({
+        primaryQty: 1,
+        primaryUnit: "Btl",
+        looseQtyRecipe: null,
+        context: ctxMango,
+      }),
+    ).toBe(800);
+  });
 });
