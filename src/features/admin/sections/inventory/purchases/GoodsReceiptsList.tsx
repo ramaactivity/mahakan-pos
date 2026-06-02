@@ -75,7 +75,8 @@ export function GoodsReceiptsList({ refreshKey }: { refreshKey?: number }) {
           Belum ada penerimaan barang (GR)
         </p>
         <p className="text-xs text-neutral-500">
-          Tekan “Buat GR” di atas untuk terima barang dari PO.
+          Semua barang masuk muncul di sini — dari PO (tombol “Terima”) maupun
+          “Catat Pembelian → Langsung Terima”.
         </p>
       </div>
     );

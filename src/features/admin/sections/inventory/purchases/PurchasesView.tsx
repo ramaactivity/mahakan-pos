@@ -443,6 +443,12 @@ export function PurchasesView({
                           ) : (
                             <Badge variant="warning">Direct</Badge>
                           )}
+                          {/* Sesi AE-177 — cross-surface: PO ini dari PR mana. */}
+                          {p.fromPurchaseRequestId ? (
+                            <Badge variant="info" className="font-mono text-[10px]">
+                              dari PR #{p.fromPurchaseRequestId.slice(0, 8)}
+                            </Badge>
+                          ) : null}
                         </div>
                         {p.invoiceNo ? (
                           <p className="mt-0.5 text-[11px] text-neutral-500">
