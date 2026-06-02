@@ -30,7 +30,6 @@ import { logAndSanitize } from "@/lib/server-error";
 import {
   computeNewStock,
   formatMovementDelta,
-  resolveStockDecimal,
 } from "@/lib/stock-decimal";
 import {
   classifyPurchaseAgainstOpname,
@@ -1034,50 +1033,45 @@ export async function cancelPurchase(
        * (no conversion was applied), jadi backward-compat. Untuk purchase
        * baru dengan conversion: reverse harus pakai master-unit delta supaya
        * stock balance benar. */
-      const items = await tx
+      /* Sesi AE-177 — reverse SEMUA movement 'purchase' milik purchase ini
+       * (by referenceId), BUKAN via purchase_items.movementId. Sebab: PO yang
+       * diterima lewat BEBERAPA GR sebagian menulis >1 movement per item, tapi
+       * purchase_items.movementId ke-overwrite ke movement TERAKHIR → join lama
+       * cuma reverse GR terakhir → stok bocor. Iterasi per-movement aman utk
+       * instant (1 movement/item) maupun multi-GR. */
+      const purchaseMovements = await tx
         .select({
-          purchaseItem: purchaseItems,
-          movementQtyDeltaDecimal: inventoryMovements.qtyDeltaDecimal,
-          movementUnitCost: inventoryMovements.unitCostAtMovement,
-          movementSkippedStock: inventoryMovements.skippedStockUpdate,
+          id: inventoryMovements.id,
+          ingredientId: inventoryMovements.ingredientId,
+          qtyDeltaDecimal: inventoryMovements.qtyDeltaDecimal,
+          unitCostAtMovement: inventoryMovements.unitCostAtMovement,
+          skippedStockUpdate: inventoryMovements.skippedStockUpdate,
         })
-        .from(purchaseItems)
-        .leftJoin(
-          inventoryMovements,
-          eq(purchaseItems.movementId, inventoryMovements.id),
-        )
-        .where(eq(purchaseItems.purchaseId, v.id));
+        .from(inventoryMovements)
+        .where(
+          and(
+            eq(inventoryMovements.referenceId, v.id),
+            eq(inventoryMovements.kind, "purchase"),
+          ),
+        );
 
-      for (const {
-        purchaseItem: item,
-        movementQtyDeltaDecimal,
-        movementUnitCost,
-        movementSkippedStock,
-      } of items) {
-        /* Sesi AE-173 — kalau movement original TIDAK menambah stok
-         * (skippedStockUpdate: backdate ATAU mode periodic), JANGAN kurangi
-         * stok saat cancel — tidak ada yang perlu dibalik. Memperbaiki bug
-         * laten cancel-backdate sekaligus mendukung mode periodic. */
-        if (movementSkippedStock) continue;
+      for (const mv of purchaseMovements) {
+        /* Movement yang TIDAK menambah stok (backdate / periodic) → tidak ada
+         * yang perlu dibalik. */
+        if (mv.skippedStockUpdate) continue;
 
         const [ing] = await tx
           .select()
           .from(ingredients)
-          .where(eq(ingredients.id, item.ingredientId))
+          .where(eq(ingredients.id, mv.ingredientId))
           .for("update")
           .limit(1);
         if (!ing) continue; // ingredient deleted — skip
 
-        // Resolve master-unit qty dari movement. Kalau movement row hilang
-        // (data corrupt rare), fallback ke purchase_items.qtyDecimal (legacy
-        // raw — sama dengan behavior pre-AE-43).
-        let reverseQty: number;
-        if (movementQtyDeltaDecimal) {
-          const parsed = parseFloat(movementQtyDeltaDecimal);
-          reverseQty = Number.isFinite(parsed) ? parsed : 0;
-        } else {
-          reverseQty = resolveStockDecimal(item.qty, item.qtyDecimal);
-        }
+        const parsed = parseFloat(mv.qtyDeltaDecimal ?? "");
+        const reverseQty = Number.isFinite(parsed) ? parsed : 0;
+        if (reverseQty === 0) continue;
+
         const newStock = computeNewStock({
           currentBigint: ing.currentStock,
           currentDecimal: ing.currentStockDecimal,
@@ -1092,18 +1086,17 @@ export async function cancelPurchase(
             updatedAt: new Date(),
             updatedBy: session.user.id,
           })
-          .where(eq(ingredients.id, item.ingredientId));
+          .where(eq(ingredients.id, mv.ingredientId));
 
-        // Counter-movement for traceability — pakai unit cost dari original
-        // movement (sudah di-scale ke master unit kalau ada conversion).
+        // Counter-movement for traceability.
         const movementDelta = formatMovementDelta(-reverseQty);
         await tx.insert(inventoryMovements).values({
           outletId: session.user.outletId,
-          ingredientId: item.ingredientId,
+          ingredientId: mv.ingredientId,
           kind: "adjust",
           qtyDelta: movementDelta.bigint,
           qtyDeltaDecimal: movementDelta.decimal,
-          unitCostAtMovement: movementUnitCost ?? item.unitCost,
+          unitCostAtMovement: mv.unitCostAtMovement ?? 0,
           referenceType: "manual",
           referenceId: v.id,
           reason: `Cancel purchase ${p.id.slice(0, 8)} — ${v.reason}`,
