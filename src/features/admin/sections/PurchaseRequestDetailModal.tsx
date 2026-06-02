@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  CheckCheck,
   FileText,
   MessageCircle,
   Package,
@@ -41,11 +40,6 @@ const STATUS_VARIANT: Record<
 interface Props {
   request: PurchaseRequestWithItems | null;
   onClose: () => void;
-  onReceive: (
-    item: PurchaseRequestItem,
-    requestStatus: PurchaseRequestStatus,
-  ) => void;
-  onBulkReceive: (r: PurchaseRequestWithItems) => void;
   onRejectItem: (item: PurchaseRequestItem) => void;
   onCancel: (r: PurchaseRequestWithItems) => void;
   onPullToPurchase: (r: PurchaseRequestWithItems) => void;
@@ -54,8 +48,6 @@ interface Props {
 export function PurchaseRequestDetailModal({
   request,
   onClose,
-  onReceive,
-  onBulkReceive,
   onRejectItem,
   onCancel,
   onPullToPurchase,
@@ -165,14 +157,8 @@ export function PurchaseRequestDetailModal({
                   const itemDone = remaining === 0;
                   return (
                     <div className="flex flex-wrap items-center justify-end gap-2">
-                      <Button
-                        size="sm"
-                        variant={itemDone ? "outline" : "primary"}
-                        onClick={() => onReceive(it, request.status)}
-                      >
-                        <CheckCheck className="size-4" />
-                        {itemDone ? "Edit" : "Terima"}
-                      </Button>
+                      {/* Sesi AE-177 — PR = request-only. Terima barang lewat
+                          Pembelian/GR. Sisa aksi per-item: Tolak. */}
                       {!itemDone ? (
                         <Button
                           size="sm"
@@ -208,13 +194,6 @@ export function PurchaseRequestDetailModal({
           <div className="flex flex-wrap justify-end gap-2 border-t border-neutral-200 pt-3">
             <Button variant="ghost" size="sm" onClick={() => onCancel(request)}>
               <X className="size-4" /> Batalkan PR
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onBulkReceive(request)}
-            >
-              <CheckCheck className="size-4" /> Terima Beberapa
             </Button>
             {outstandingItemCount > 0 ? (
               <Button size="sm" onClick={() => onPullToPurchase(request)}>
