@@ -20,6 +20,9 @@ export function PurchasingSection() {
   const [tab, setTab] = useState<PurchasingTab>("pr");
   const [grOpen, setGrOpen] = useState(false);
   const [grRefresh, setGrRefresh] = useState(0);
+  /* Sesi AE-177 — PO yang dipre-fill saat buka modal GR dari tombol "Terima"
+   * di tab PO → alur PO→GR tersambung (satu modal terima konsisten). */
+  const [grPrefillPoId, setGrPrefillPoId] = useState<string | null>(null);
 
   return (
     <Tabs
@@ -51,7 +54,13 @@ export function PurchasingSection() {
       </TabPanel>
       <TabPanel value="po">
         <div className="p-6">
-          <PurchasesView variant="purchases" />
+          <PurchasesView
+            variant="purchases"
+            onReceivePo={(poId) => {
+              setGrPrefillPoId(poId);
+              setGrOpen(true);
+            }}
+          />
         </div>
       </TabPanel>
       <TabPanel value="gr">
@@ -80,9 +89,14 @@ export function PurchasingSection() {
 
       <GoodsReceiptModal
         open={grOpen}
-        onClose={() => setGrOpen(false)}
+        prefillPoId={grPrefillPoId}
+        onClose={() => {
+          setGrOpen(false);
+          setGrPrefillPoId(null);
+        }}
         onSaved={() => {
           setGrOpen(false);
+          setGrPrefillPoId(null);
           setGrRefresh((k) => k + 1);
         }}
       />

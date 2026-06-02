@@ -115,8 +115,13 @@ function monthStartIso(): string {
  */
 export function PurchasesView({
   variant = "purchases",
+  onReceivePo,
 }: {
   variant?: "purchases" | "receipts";
+  /* Sesi AE-177 — kalau di-set, tombol "Terima" PO membuka modal GR
+   * (prefill PO ini) — satu alur terima konsisten + bisa sebagian. Tanpa
+   * prop ini fallback ke terima-penuh inline. */
+  onReceivePo?: (poId: string) => void;
 } = {}) {
   const isReceipts = variant === "receipts";
   const { session } = useSession();
@@ -473,12 +478,17 @@ export function PurchasesView({
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
                           {canReceive &&
-                          p.receiptStatus === "ordered" &&
+                          (p.receiptStatus === "ordered" ||
+                            p.receiptStatus === "partial") &&
                           p.status !== "cancelled" ? (
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleGoodsReceive(p)}
+                              onClick={() =>
+                                onReceivePo
+                                  ? onReceivePo(p.id)
+                                  : handleGoodsReceive(p)
+                              }
                               loading={grSubmitting === p.id}
                               title="Terima Barang (GR)"
                             >
