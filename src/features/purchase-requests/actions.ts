@@ -48,8 +48,9 @@ export interface PurchaseRequestStats {
   agingOpenCount: number;
   /** PR completed bulan kalender ini. */
   completedThisMonth: number;
-  /** Total request items pending (sum requestedQty - receivedQty di open + partial). */
-  pendingItemsTotal: number;
+  /** Jumlah ITEM belum diterima (received < requested, belum ditolak) di PR
+   *  open/partial. Sesi AE-177 — hitung item, bukan jumlah qty lintas satuan. */
+  pendingItemCount: number;
 }
 
 export async function getPurchaseRequestStats(): Promise<
@@ -116,10 +117,12 @@ export async function getPurchaseRequestStats(): Promise<
       ),
     );
 
-  // Pending items qty total (requested - received) in open + partial.
+  /* Sesi AE-177 — HITUNG ITEM (bukan jumlah qty lintas satuan, yg dulu bikin
+   * angka tak bermakna gr+Btl+L dijumlah). Item belum diterima = received <
+   * requested DAN belum ditolak, di PR open/partial. */
   const [pendingRow] = await db
     .select({
-      total: sql<string>`COALESCE(SUM(${purchaseRequestItems.requestedQty} - ${purchaseRequestItems.receivedQty}), 0)::bigint`,
+      count: sql<string>`COUNT(*) FILTER (WHERE ${purchaseRequestItems.receivedQty} < ${purchaseRequestItems.requestedQty} AND ${purchaseRequestItems.rejectedAt} IS NULL)::int`,
     })
     .from(purchaseRequestItems)
     .innerJoin(
@@ -141,7 +144,7 @@ export async function getPurchaseRequestStats(): Promise<
     cancelledCount: counts.cancelled,
     agingOpenCount: Number(agingRow?.count ?? 0),
     completedThisMonth: Number(monthRow?.count ?? 0),
-    pendingItemsTotal: Number(pendingRow?.total ?? 0),
+    pendingItemCount: Number(pendingRow?.count ?? 0),
   });
 }
 

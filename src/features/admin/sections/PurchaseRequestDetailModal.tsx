@@ -56,20 +56,17 @@ export function PurchaseRequestDetailModal({
 
   const canEdit =
     request.status !== "cancelled" && request.status !== "completed";
-  const totalRequested = request.items.reduce(
-    (sum, i) => sum + Number(i.requestedQty),
-    0,
-  );
-  const totalReceived = request.items.reduce(
-    (sum, i) => sum + Number(i.receivedQty),
-    0,
-  );
+  /* Sesi AE-177 — basis ITEM (bukan jumlah qty lintas satuan). */
+  const activeItems = request.items.filter((i) => !i.rejectedAt);
+  const receivedItemCount = activeItems.filter(
+    (i) => Number(i.receivedQty) >= Number(i.requestedQty),
+  ).length;
   const fulfillPercent =
-    totalRequested > 0
-      ? Math.round((totalReceived / totalRequested) * 100)
+    activeItems.length > 0
+      ? Math.round((receivedItemCount / activeItems.length) * 100)
       : 0;
-  const outstandingItemCount = request.items.filter(
-    (i) => !i.rejectedAt && Number(i.receivedQty) < Number(i.requestedQty),
+  const outstandingItemCount = activeItems.filter(
+    (i) => Number(i.receivedQty) < Number(i.requestedQty),
   ).length;
 
   return (
@@ -89,8 +86,13 @@ export function PurchaseRequestDetailModal({
             </Badge>
             <p className="text-xs text-neutral-600">
               <Package className="mr-1 inline size-3.5" />
-              {request.items.length} bahan ·{" "}
-              {totalRequested.toLocaleString("id-ID")} qty
+              {request.items.length} bahan
+              {outstandingItemCount > 0 ? (
+                <span className="text-warning-600">
+                  {" "}
+                  · {outstandingItemCount} outstanding
+                </span>
+              ) : null}
             </p>
             {request.whatsappSentAt ? (
               <p className="flex items-center gap-1 text-[11px] text-neutral-500">
@@ -99,13 +101,12 @@ export function PurchaseRequestDetailModal({
             ) : null}
           </div>
           <p className="font-mono text-xs text-neutral-700">
-            {totalReceived.toLocaleString("id-ID")} /{" "}
-            {totalRequested.toLocaleString("id-ID")} diterima
+            {receivedItemCount} / {activeItems.length} item diterima
           </p>
         </div>
 
         {/* Fulfillment progress bar */}
-        {totalRequested > 0 ? (
+        {activeItems.length > 0 ? (
           <div className="space-y-1">
             <div className="flex items-center justify-between text-xs text-neutral-600">
               <span>Pemenuhan</span>

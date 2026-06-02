@@ -230,8 +230,8 @@ export function PurchaseRequestsSection() {
             label="Open + Partial"
             value={String(stats.openCount + stats.partialCount)}
             sub={
-              stats.pendingItemsTotal > 0
-                ? `${stats.pendingItemsTotal} item belum diterima`
+              stats.pendingItemCount > 0
+                ? `${stats.pendingItemCount} item belum diterima`
                 : "Tidak ada pending"
             }
             accent={
@@ -531,20 +531,17 @@ interface RequestCardProps {
  * "Lihat Detail" / klik card. Owner request: list compact biar gampang
  * scan saat ada banyak PR. */
 function RequestCard({ request, onShowDetail }: RequestCardProps) {
-  const totalRequested = request.items.reduce(
-    (sum, i) => sum + Number(i.requestedQty),
-    0,
-  );
-  const totalReceived = request.items.reduce(
-    (sum, i) => sum + Number(i.receivedQty),
-    0,
-  );
+  /* Sesi AE-177 — basis ITEM (bukan jumlah qty lintas satuan). */
+  const activeItems = request.items.filter((i) => !i.rejectedAt);
+  const receivedItemCount = activeItems.filter(
+    (i) => Number(i.receivedQty) >= Number(i.requestedQty),
+  ).length;
   const fulfillPercent =
-    totalRequested > 0
-      ? Math.round((totalReceived / totalRequested) * 100)
+    activeItems.length > 0
+      ? Math.round((receivedItemCount / activeItems.length) * 100)
       : 0;
-  const outstandingItemCount = request.items.filter(
-    (i) => !i.rejectedAt && Number(i.receivedQty) < Number(i.requestedQty),
+  const outstandingItemCount = activeItems.filter(
+    (i) => Number(i.receivedQty) < Number(i.requestedQty),
   ).length;
   return (
     <Card
@@ -589,11 +586,10 @@ function RequestCard({ request, onShowDetail }: RequestCardProps) {
               ) : null}
             </span>
             <span className="font-mono">
-              {totalReceived.toLocaleString("id-ID")} /{" "}
-              {totalRequested.toLocaleString("id-ID")}
+              {receivedItemCount} / {activeItems.length} item
             </span>
           </div>
-          {totalRequested > 0 ? (
+          {activeItems.length > 0 ? (
             <div className="flex items-center gap-2">
               <span className="font-mono text-[11px] font-semibold">
                 {fulfillPercent}%

@@ -682,9 +682,6 @@ function Step1Picker({
               <p className="text-xs font-semibold text-warning-500">
                 {pr.outstandingItemCount} item
               </p>
-              <p className="font-mono text-[11px] text-neutral-600">
-                {pr.totalOutstandingQty.toLocaleString("id-ID")} qty
-              </p>
               <span
                 className={cn(
                   "mt-0.5 inline-block rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider",
@@ -751,8 +748,7 @@ function Step2Wizard({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span>
             <Package className="mr-1 inline size-3.5" />
-            {pr.outstandingItemCount} item outstanding ·{" "}
-            {pr.totalOutstandingQty.toLocaleString("id-ID")} qty total
+            {pr.outstandingItemCount} item outstanding
           </span>
           <span className="text-neutral-500">
             {pr.createdByName ?? "—"} ·{" "}
