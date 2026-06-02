@@ -13,6 +13,7 @@ import {
 } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { displayUnit } from "@/lib/unit-conversion";
 import {
   fail,
   ok,
@@ -281,9 +282,11 @@ export async function createPurchaseRequest(
       const nameSnapshot = ing
         ? ing.name
         : (item.ingredientNameSnapshot ?? "").trim();
-      const unitSnapshot = ing
-        ? ing.unit
-        : (item.unitSnapshot ?? "").trim();
+      /* Sesi AE-176 — satuan PR disimpan KANONIK (displayUnit) + LIVE master
+       * untuk item linked. Konsisten dgn Kelola Bahan/Opname/Market List. */
+      const unitSnapshot = displayUnit(
+        ing ? ing.unit : (item.unitSnapshot ?? "").trim(),
+      );
       // Sesi AE-16 — qty decimal mirror.
       const qtyBigint = Math.max(1, Math.floor(item.requestedQty));
       const qtyDecimal = item.requestedQty.toFixed(4);
@@ -1157,17 +1160,12 @@ export async function listOpenPurchaseRequestsForPurchase(): Promise<
           isNull(supplierIngredients.deletedAt),
         ),
       );
-    // Prefer isPrimary=true; fallback ke first row jika ingredient tidak punya primary
+    // Prefer isPrimary=true; fallback ke first row jika ingredient tidak punya
+    // primary. Sesi AE-176 — sederhanakan: set kalau belum ada ATAU baris ini
+    // primary (primary selalu menang). (dulu ada cabang mati `r.isPrimary && !existing`).
     for (const r of sup) {
       const existing = suggestedSupplierByIng.get(r.ingredientId);
-      if (!existing || (r.isPrimary && !existing)) {
-        suggestedSupplierByIng.set(r.ingredientId, {
-          supplierId: r.supplierId,
-          supplierName: r.supplierName,
-          unitCost: Number(r.unitCost),
-        });
-      } else if (r.isPrimary) {
-        // Override fallback with primary
+      if (!existing || r.isPrimary) {
         suggestedSupplierByIng.set(r.ingredientId, {
           supplierId: r.supplierId,
           supplierName: r.supplierName,
