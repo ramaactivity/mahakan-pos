@@ -2,12 +2,17 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, PackageCheck } from "lucide-react";
-import { Badge } from "@/components/ui";
+import {
+  Badge,
+  DateRangePicker,
+  type DateRangeValue,
+} from "@/components/ui";
 import {
   fetchGoodsReceiptItems,
   isOk,
   listGoodsReceipts,
 } from "@/features/purchases";
+import { currentJakartaMonth, toJakartaDateOnly } from "@/lib/date";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -39,12 +44,21 @@ export function GoodsReceiptsList({ refreshKey }: { refreshKey?: number }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [items, setItems] = useState<GrItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
+  /* Sesi AE-177 — filter tanggal (tab GR kini log lengkap semua barang masuk).
+   * Default bulan berjalan, konsisten dgn tab PO. */
+  const [dateRange, setDateRange] = useState<DateRangeValue>({
+    from: `${currentJakartaMonth()}-01`,
+    to: toJakartaDateOnly(new Date()),
+  });
 
   const refresh = useCallback(async () => {
-    const res = await listGoodsReceipts();
+    const res = await listGoodsReceipts({
+      dateFrom: dateRange.from || undefined,
+      dateTo: dateRange.to || undefined,
+    });
     if (isOk(res)) setRows(res.data);
     setLoading(false);
-  }, []);
+  }, [dateRange.from, dateRange.to]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -63,27 +77,32 @@ export function GoodsReceiptsList({ refreshKey }: { refreshKey?: number }) {
     setItems(isOk(res) ? res.data : []);
   }
 
-  if (loading)
-    return (
-      <p className="py-8 text-center text-sm text-neutral-500">Memuat GR…</p>
-    );
-  if (rows.length === 0)
-    return (
-      <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-neutral-300 bg-white py-12 text-center">
-        <PackageCheck className="size-10 text-neutral-300" aria-hidden />
-        <p className="text-sm font-medium text-neutral-700">
-          Belum ada penerimaan barang (GR)
-        </p>
-        <p className="text-xs text-neutral-500">
-          Semua barang masuk muncul di sini — dari PO (tombol “Terima”) maupun
-          “Catat Pembelian → Langsung Terima”.
-        </p>
-      </div>
-    );
-
   return (
-    <ul className="space-y-2">
-      {rows.map((gr) => (
+    <div className="space-y-3">
+      <div className="max-w-xs">
+        <DateRangePicker
+          label="Periode"
+          value={dateRange}
+          onChange={(v) => setDateRange(v ?? { from: null, to: null })}
+        />
+      </div>
+
+      {loading ? (
+        <p className="py-8 text-center text-sm text-neutral-500">Memuat GR…</p>
+      ) : rows.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-neutral-300 bg-white py-12 text-center">
+          <PackageCheck className="size-10 text-neutral-300" aria-hidden />
+          <p className="text-sm font-medium text-neutral-700">
+            Belum ada penerimaan barang (GR) di periode ini
+          </p>
+          <p className="text-xs text-neutral-500">
+            Semua barang masuk muncul di sini — dari PO (tombol “Terima”) maupun
+            “Catat Pembelian → Langsung Terima”.
+          </p>
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {rows.map((gr) => (
         <li
           key={gr.id}
           className="overflow-hidden rounded-xl border border-neutral-200 bg-white"
@@ -146,8 +165,10 @@ export function GoodsReceiptsList({ refreshKey }: { refreshKey?: number }) {
               )}
             </div>
           ) : null}
-        </li>
-      ))}
-    </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

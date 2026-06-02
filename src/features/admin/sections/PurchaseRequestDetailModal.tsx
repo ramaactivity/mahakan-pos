@@ -1,9 +1,11 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import {
   FileText,
   MessageCircle,
   Package,
+  ShoppingBag,
   X,
 } from "lucide-react";
 import {
@@ -18,6 +20,8 @@ import type {
   PurchaseRequestStatus,
   PurchaseRequestWithItems,
 } from "@/features/purchase-requests/types";
+import { isOk, listPurchasesForPurchaseRequest } from "@/features/purchases";
+import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const STATUS_LABEL: Record<PurchaseRequestStatus, string> = {
@@ -52,6 +56,19 @@ export function PurchaseRequestDetailModal({
   onCancel,
   onPullToPurchase,
 }: Props) {
+  /* Sesi AE-177 — cross-surface arah-balik: PO/pembelian yang dibuat dari PR
+   * ini. enabled hanya saat modal terbuka. */
+  const { data: linkedPos = [] } = useQuery({
+    queryKey: ["admin", "pr-linked-pos", request?.id],
+    queryFn: async () => {
+      if (!request) return [];
+      const res = await listPurchasesForPurchaseRequest(request.id);
+      return isOk(res) ? res.data : [];
+    },
+    enabled: !!request,
+    staleTime: 30 * 1000,
+  });
+
   if (!request) return null;
 
   const canEdit =
@@ -125,6 +142,52 @@ export function PurchaseRequestDetailModal({
                 style={{ width: `${Math.min(100, fulfillPercent)}%` }}
               />
             </div>
+          </div>
+        ) : null}
+
+        {/* Sesi AE-177 — Pembelian terkait (link arah-balik PR→PO). */}
+        {linkedPos.length > 0 ? (
+          <div className="rounded-md border border-mahakan-green-200 bg-mahakan-green-50/50 p-3">
+            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-mahakan-green-900">
+              <ShoppingBag className="size-3.5" /> Sudah diproses jadi Pembelian
+              / PO ({linkedPos.length})
+            </p>
+            <ul className="space-y-1">
+              {linkedPos.map((po) => (
+                <li
+                  key={po.id}
+                  className="flex items-center justify-between gap-2 text-xs text-neutral-700"
+                >
+                  <span className="font-mono">
+                    PO #{po.id.slice(0, 8)}
+                    {po.invoiceNo ? ` · ${po.invoiceNo}` : ""} ·{" "}
+                    {po.supplierName ?? "Direct"} · {po.purchaseDate}
+                  </span>
+                  <span className="flex items-center gap-2 shrink-0">
+                    <Badge
+                      variant={
+                        po.receiptStatus === "received"
+                          ? "success"
+                          : po.receiptStatus === "cancelled"
+                            ? "neutral"
+                            : "warning"
+                      }
+                    >
+                      {po.receiptStatus === "received"
+                        ? "Diterima"
+                        : po.receiptStatus === "partial"
+                          ? "Sebagian"
+                          : po.receiptStatus === "cancelled"
+                            ? "Batal"
+                            : "Belum diterima"}
+                    </Badge>
+                    <span className="font-mono text-neutral-600">
+                      {formatRupiah(po.totalAmount)}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
         ) : null}
 

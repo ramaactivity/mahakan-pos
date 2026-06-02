@@ -34,6 +34,7 @@ export {
   fetchReceivablePurchase,
   listGoodsReceipts,
   fetchGoodsReceiptItems,
+  listPurchasesForPurchaseRequest,
   cancelPurchase,
   markPurchasePaid,
 } from "./actions";

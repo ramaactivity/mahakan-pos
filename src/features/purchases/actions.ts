@@ -2193,6 +2193,48 @@ export async function listGoodsReceipts(opts?: {
 }
 
 /** Sesi AE-173 — item-item dari sebuah GR record. */
+/* Sesi AE-177 — cross-surface link arah-balik: PO/pembelian yang dibuat dari
+ * sebuah PR (via from_purchase_request_id). Dipakai PR detail modal untuk
+ * menampilkan "sudah jadi PO #…". */
+export async function listPurchasesForPurchaseRequest(prId: string): Promise<
+  ApiResult<
+    Array<{
+      id: string;
+      invoiceNo: string | null;
+      purchaseDate: string;
+      receiptStatus: string;
+      status: string;
+      totalAmount: number;
+      supplierName: string | null;
+    }>
+  >
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat pembelian");
+  }
+  const rows = await db
+    .select({
+      id: purchases.id,
+      invoiceNo: purchases.invoiceNo,
+      purchaseDate: purchases.purchaseDate,
+      receiptStatus: purchases.receiptStatus,
+      status: purchases.status,
+      totalAmount: purchases.totalAmount,
+      supplierName: suppliers.name,
+    })
+    .from(purchases)
+    .leftJoin(suppliers, eq(suppliers.id, purchases.supplierId))
+    .where(
+      and(
+        eq(purchases.outletId, session.user.outletId),
+        eq(purchases.fromPurchaseRequestId, prId),
+      ),
+    )
+    .orderBy(desc(purchases.createdAt));
+  return ok(rows);
+}
+
 export async function fetchGoodsReceiptItems(grId: string): Promise<
   ApiResult<
     Array<{
