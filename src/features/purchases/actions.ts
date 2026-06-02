@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   expenseCategories,
@@ -431,6 +431,8 @@ export async function createPurchase(
         .values({
           outletId: session.user.outletId,
           supplierId: v.supplierId,
+          /* Sesi AE-177 — persist link PR sumber (cross-surface PR↔PO). */
+          fromPurchaseRequestId: v.fromPurchaseRequestId ?? null,
           purchaseDate: v.purchaseDate,
           paymentMethod: v.paymentMethod,
           paymentTermDays: v.paymentTermDays,
@@ -440,6 +442,10 @@ export async function createPurchase(
           receiptImageUrl,
           receiptImageUrls,
           status: isTop ? "pending_payment" : "paid",
+          /* Instant purchase = barang sudah di tangan → stempel diterima
+           * (sesi AE-177, konsisten dgn jalur GR). receiptStatus default
+           * 'received'. */
+          receivedAt: new Date(),
           totalAmount: total,
           paidAt: isTop ? null : new Date(),
           paidBy: isTop ? null : session.user.id,
@@ -460,6 +466,21 @@ export async function createPurchase(
       // master juga di-scale per master unit. purchase_items SIMPAN RAW
       // input staff (qty + unitCost + totalCost) — total rupiah identik
       // dengan apa yang di-display ke owner.
+      /* Sesi AE-177 — kumpulkan baris untuk catatan GR kanonik. Instant
+       * purchase = barang langsung diterima → harus muncul di tab GR (log
+       * lengkap, konsisten dgn jalur PO→GR). */
+      const grItemRows: Array<{
+        purchaseItemId: string;
+        ingredientId: string;
+        receivedQty: number;
+        receivedQtyDecimal: string;
+        unitCost: number;
+        totalCost: number;
+        movementId: string;
+        ingredientNameSnapshot: string;
+        unitSnapshot: string;
+        sectionSnapshot: string | null;
+      }> = [];
       for (const { item, ing, res } of resolved) {
         const totalCost = Math.round(item.qty * item.unitCost);
         const qtyDecimalStr = item.qty.toFixed(4); // raw input
@@ -606,12 +627,30 @@ export async function createPurchase(
         // adalah source of truth untuk stock — purchase_items adalah
         // jurnal nota / kas.
         const rawQtyBigint = Math.max(1, Math.round(item.qty));
-        await tx.insert(purchaseItems).values({
-          purchaseId: created.id,
+        const [pi] = await tx
+          .insert(purchaseItems)
+          .values({
+            purchaseId: created.id,
+            ingredientId: item.ingredientId,
+            qty: rawQtyBigint,
+            qtyDecimal: qtyDecimalStr,
+            // Sesi AE-173 — instant purchase = langsung diterima penuh.
+            receivedQty: rawQtyBigint,
+            receivedQtyDecimal: qtyDecimalStr,
+            unitCost: item.unitCost,
+            totalCost,
+            movementId: movement.id,
+            ingredientNameSnapshot: ing.name,
+            unitSnapshot: ing.unit,
+            unitOverride,
+            sectionSnapshot: ing.section,
+            purchaseRequestItemId: item.purchaseRequestItemId ?? null,
+          })
+          .returning({ id: purchaseItems.id });
+
+        grItemRows.push({
+          purchaseItemId: pi!.id,
           ingredientId: item.ingredientId,
-          qty: rawQtyBigint,
-          qtyDecimal: qtyDecimalStr,
-          // Sesi AE-173 — instant purchase = langsung diterima penuh.
           receivedQty: rawQtyBigint,
           receivedQtyDecimal: qtyDecimalStr,
           unitCost: item.unitCost,
@@ -619,9 +658,7 @@ export async function createPurchase(
           movementId: movement.id,
           ingredientNameSnapshot: ing.name,
           unitSnapshot: ing.unit,
-          unitOverride,
           sectionSnapshot: ing.section,
-          purchaseRequestItemId: item.purchaseRequestItemId ?? null,
         });
 
         movementsCreated++;
@@ -752,6 +789,39 @@ export async function createPurchase(
             .where(eq(purchases.id, created.id));
         }
         // Kalau tidak ada category sama sekali, skip silently — Owner setup kas dulu.
+      }
+
+      /* Sesi AE-177 — catatan GR kanonik untuk instant purchase. Mirror data
+       * yang baru ditulis (movement/cost sudah dihitung); tidak menyentuh logika
+       * stok/WAC/jurnal di atas. expenseId = expense yang sama (NULL utk TOP).
+       * Tab GR kini menampilkan SEMUA barang masuk (instant + PO→GR). */
+      if (grItemRows.length > 0) {
+        const [gr] = await tx
+          .insert(goodsReceipts)
+          .values({
+            outletId: session.user.outletId,
+            purchaseId: created.id,
+            receivedDate: v.purchaseDate,
+            totalAmount: total,
+            expenseId,
+            createdBy: session.user.id,
+          })
+          .returning({ id: goodsReceipts.id });
+        for (const r of grItemRows) {
+          await tx.insert(goodsReceiptItems).values({
+            goodsReceiptId: gr!.id,
+            purchaseItemId: r.purchaseItemId,
+            ingredientId: r.ingredientId,
+            receivedQty: r.receivedQty,
+            receivedQtyDecimal: r.receivedQtyDecimal,
+            unitCost: r.unitCost,
+            totalCost: r.totalCost,
+            movementId: r.movementId,
+            ingredientNameSnapshot: r.ingredientNameSnapshot,
+            unitSnapshot: r.unitSnapshot,
+            sectionSnapshot: r.sectionSnapshot,
+          });
+        }
       }
 
       return { created, total };
@@ -1398,6 +1468,8 @@ export async function createPurchaseOrder(
         .values({
           outletId: session.user.outletId,
           supplierId: v.supplierId,
+          /* Sesi AE-177 — persist link PR sumber. */
+          fromPurchaseRequestId: v.fromPurchaseRequestId ?? null,
           purchaseDate: v.purchaseDate,
           paymentMethod: v.paymentMethod,
           paymentTermDays: v.paymentTermDays,
@@ -1551,6 +1623,21 @@ export async function confirmGoodsReceipt(input: {
         shouldSkipStockUpdate(backdateStatus) || !addOnPurchase;
 
       // Per item: resolve konversi → movement (+ stok/WAC kalau perpetual).
+      /* Sesi AE-177 — catatan GR kanonik + bump received_qty (DULU confirmGR
+       * tak isi keduanya → tab GR kosong + received_qty stale). Full-receive:
+       * received = ordered. */
+      const grItemRows: Array<{
+        purchaseItemId: string;
+        ingredientId: string;
+        receivedQty: number;
+        receivedQtyDecimal: string;
+        unitCost: number;
+        totalCost: number;
+        movementId: string;
+        ingredientNameSnapshot: string;
+        unitSnapshot: string;
+        sectionSnapshot: string | null;
+      }> = [];
       for (const it of poItems) {
         const ing = ingById.get(it.ingredientId);
         if (!ing) continue;
@@ -1670,10 +1757,30 @@ export async function confirmGoodsReceipt(input: {
           })
           .returning({ id: inventoryMovements.id });
 
+        /* Full-receive: received_qty = ordered (rawQty). Sebelumnya cuma set
+         * movementId → received_qty stale (bug). */
+        const recvBigint = Math.max(1, Math.round(rawQty));
         await tx
           .update(purchaseItems)
-          .set({ movementId: movement.id })
+          .set({
+            movementId: movement.id,
+            receivedQty: recvBigint,
+            receivedQtyDecimal: rawQty.toFixed(4),
+          })
           .where(eq(purchaseItems.id, it.id));
+
+        grItemRows.push({
+          purchaseItemId: it.id,
+          ingredientId: it.ingredientId,
+          receivedQty: recvBigint,
+          receivedQtyDecimal: rawQty.toFixed(4),
+          unitCost: it.unitCost,
+          totalCost: it.totalCost,
+          movementId: movement.id,
+          ingredientNameSnapshot: it.ingredientNameSnapshot,
+          unitSnapshot: it.unitSnapshot,
+          sectionSnapshot: it.sectionSnapshot,
+        });
       }
 
       // PR receivedQty bump + status auto-promote.
@@ -1789,6 +1896,37 @@ export async function confirmGoodsReceipt(input: {
             })
             .returning({ id: expenses.id });
           expenseId = exp.id;
+        }
+      }
+
+      /* Sesi AE-177 — catatan GR kanonik (full receive PO). Tab GR kini lengkap
+       * + received_qty per line sudah di-bump di loop atas. */
+      if (grItemRows.length > 0) {
+        const [gr] = await tx
+          .insert(goodsReceipts)
+          .values({
+            outletId: session.user.outletId,
+            purchaseId: po.id,
+            receivedDate: grDate,
+            totalAmount: po.totalAmount,
+            expenseId: expenseId ?? po.expenseId,
+            createdBy: session.user.id,
+          })
+          .returning({ id: goodsReceipts.id });
+        for (const r of grItemRows) {
+          await tx.insert(goodsReceiptItems).values({
+            goodsReceiptId: gr!.id,
+            purchaseItemId: r.purchaseItemId,
+            ingredientId: r.ingredientId,
+            receivedQty: r.receivedQty,
+            receivedQtyDecimal: r.receivedQtyDecimal,
+            unitCost: r.unitCost,
+            totalCost: r.totalCost,
+            movementId: r.movementId,
+            ingredientNameSnapshot: r.ingredientNameSnapshot,
+            unitSnapshot: r.unitSnapshot,
+            sectionSnapshot: r.sectionSnapshot,
+          });
         }
       }
 
@@ -2028,6 +2166,10 @@ export async function listGoodsReceipts(opts?: {
   const conds = [eq(goodsReceipts.outletId, session.user.outletId)];
   if (opts?.dateFrom) conds.push(gte(goodsReceipts.receivedDate, opts.dateFrom));
   if (opts?.dateTo) conds.push(lte(goodsReceipts.receivedDate, opts.dateTo));
+  /* Sesi AE-177 — sembunyikan GR dari purchase yang DIBATALKAN (instant kini
+   * bikin GR; saat cancel, stok sudah reversed + expense soft-deleted, jadi GR-
+   * nya juga tak boleh tampil sebagai penerimaan valid). */
+  conds.push(ne(purchases.receiptStatus, "cancelled"));
   const rows = await db
     .select({
       id: goodsReceipts.id,
