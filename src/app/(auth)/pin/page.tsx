@@ -43,6 +43,26 @@ function avatarInitials(name: string): string {
 }
 
 /**
+ * Terjemahkan `code` dari signIn("pin") (lihat LoginError di
+ * lib/auth/config.ts) jadi pesan jujur. Sebelumnya semua kegagalan terbaca
+ * "PIN salah" — termasuk saat akun sebenarnya terkunci sementara (sama dengan
+ * insiden lockout login owner). Default tetap generik "PIN salah".
+ */
+function pinErrorMessage(code?: string): string {
+  if (code?.startsWith("locked:")) {
+    const mins = Number(code.slice("locked:".length)) || 1;
+    return `Akun terkunci sementara karena terlalu banyak percobaan. Coba lagi dalam ${mins} menit, atau minta owner reset PIN.`;
+  }
+  if (code?.startsWith("invalid:")) {
+    const left = Number(code.slice("invalid:".length));
+    if (left >= 1) {
+      return `PIN salah. Tinggal ${left} percobaan lagi sebelum akun terkunci sementara.`;
+    }
+  }
+  return "PIN salah";
+}
+
+/**
  * PIN login flow — sesi AD-6b redesign for Galaxy A7 Lite.
  *
  * Trigger split layout via `landscape:md:` (≥768px landscape) which
@@ -164,7 +184,8 @@ function PinLoginInner() {
     });
 
     if (!res || res.error) {
-      setError("PIN salah");
+      const code = (res as { code?: string } | undefined)?.code;
+      setError(pinErrorMessage(code));
       setShake(true);
       setPin("");
       setTimeout(() => setShake(false), 400);

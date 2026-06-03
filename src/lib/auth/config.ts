@@ -248,7 +248,11 @@ export const authConfig: NextAuthConfig = {
             },
             metadata: { outletId: row.outletId, actorRole: row.role },
           });
-          return null;
+          const mins = Math.max(
+            1,
+            Math.ceil((row.lockedUntil.getTime() - Date.now()) / 60_000),
+          );
+          throw new LoginError(`locked:${mins}`);
         }
 
         const ok = await verifyPin(pin, row.pinHash);
@@ -268,7 +272,12 @@ export const authConfig: NextAuthConfig = {
             },
             metadata: { outletId: row.outletId, actorRole: row.role },
           });
-          return null;
+          if (r.locked) {
+            throw new LoginError(`locked:${Math.ceil(LOCK_DURATION_MS / 60_000)}`);
+          }
+          throw new LoginError(
+            `invalid:${Math.max(0, MAX_FAILED_ATTEMPTS - r.attempts)}`,
+          );
         }
 
         if (row.failedAttempts > 0 || row.lockedUntil) {
