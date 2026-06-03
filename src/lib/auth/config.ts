@@ -1,5 +1,6 @@
 import { eq, and, isNull } from "drizzle-orm";
 import type { NextAuthConfig } from "next-auth";
+import { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { z } from "zod";
 
@@ -31,7 +32,35 @@ const pinSchema = z.object({
 const COOKIE_MAX_AGE_SECONDS = 12 * 60 * 60;
 
 // Lockout helpers extracted to ./lockout for reuse oleh approver endpoint.
-import { recordFailedAttempt, clearFailedAttempts } from "./lockout";
+import {
+  recordFailedAttempt,
+  clearFailedAttempts,
+  MAX_FAILED_ATTEMPTS,
+  LOCK_DURATION_MS,
+} from "./lockout";
+
+/**
+ * Error login dengan `code` yang sampai ke client lewat `signIn(...).code`
+ * (lihat @auth/core: `params.set("code", error.code)`). Dipakai supaya UI
+ * bisa membedakan "akun terkunci" vs "password salah" — sebelumnya semua
+ * kasus return null → pesan generik "Email atau password salah" yang
+ * menyesatkan (insiden HR Bayu: akun terkunci tapi terbaca seolah salah pwd).
+ *
+ * ⚠ `code` masuk ke URL — JANGAN taruh info sensitif. Hanya pakai untuk akun
+ * yang email+password-nya memang valid & aktif (enumeration sudah terjadi di
+ * level "email ada"), konsisten dengan recordFailedAttempt yang juga hanya
+ * jalan untuk akun tsb.
+ *   - `locked:<menit>`  → akun terkunci sementara, sisa X menit
+ *   - `invalid:<sisa>`  → password salah, sisa X percobaan sebelum terkunci
+ * Kasus no-user / no-credential / staff TETAP return null → code "credentials"
+ * → UI tampilkan pesan generik (tidak membocorkan keberadaan akun).
+ */
+class LoginError extends CredentialsSignin {
+  constructor(code: string) {
+    super();
+    this.code = code;
+  }
+}
 
 export const authConfig: NextAuthConfig = {
   session: {
@@ -103,7 +132,11 @@ export const authConfig: NextAuthConfig = {
             },
             metadata: { outletId: row.outletId, actorRole: row.role },
           });
-          return null;
+          const mins = Math.max(
+            1,
+            Math.ceil((row.lockedUntil.getTime() - Date.now()) / 60_000),
+          );
+          throw new LoginError(`locked:${mins}`);
         }
 
         const ok = await verifyPassword(password, row.passwordHash);
@@ -123,7 +156,12 @@ export const authConfig: NextAuthConfig = {
             },
             metadata: { outletId: row.outletId, actorRole: row.role },
           });
-          return null;
+          if (r.locked) {
+            throw new LoginError(`locked:${Math.ceil(LOCK_DURATION_MS / 60_000)}`);
+          }
+          throw new LoginError(
+            `invalid:${Math.max(0, MAX_FAILED_ATTEMPTS - r.attempts)}`,
+          );
         }
 
         if (row.failedAttempts > 0 || row.lockedUntil) {

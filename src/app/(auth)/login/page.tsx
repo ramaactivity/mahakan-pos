@@ -1,9 +1,15 @@
 "use client";
 
-import { Suspense, useEffect, useState, type FormEvent } from "react";
+import {
+  Suspense,
+  useEffect,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
-import { Lock, Mail } from "lucide-react";
+import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import {
   Button,
   Card,
@@ -25,6 +31,25 @@ export default function LoginPage() {
   );
 }
 
+/**
+ * Terjemahkan `code` dari signIn (lihat LoginError di lib/auth/config.ts) jadi
+ * pesan yang jujur. Default tetap generik "Email atau password salah" supaya
+ * kasus no-user/no-credential tidak membocorkan keberadaan akun.
+ */
+function loginErrorMessage(code?: string): string {
+  if (code?.startsWith("locked:")) {
+    const mins = Number(code.slice("locked:".length)) || 1;
+    return `Akun terkunci sementara karena terlalu banyak percobaan. Coba lagi dalam ${mins} menit, atau minta owner reset.`;
+  }
+  if (code?.startsWith("invalid:")) {
+    const left = Number(code.slice("invalid:".length));
+    if (left >= 1) {
+      return `Email atau password salah. Tinggal ${left} percobaan lagi sebelum akun terkunci sementara.`;
+    }
+  }
+  return "Email atau password salah";
+}
+
 function LoginContent() {
   const router = useRouter();
   const params = useSearchParams();
@@ -37,6 +62,8 @@ function LoginContent() {
   );
   const [submitting, setSubmitting] = useState(false);
   const [shake, setShake] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [capsLock, setCapsLock] = useState(false);
 
   /* Sesi AE-127 — Destination setelah login sukses, prefer:
    *   1. `?next=` (dari RequireAuth client-side)
@@ -69,7 +96,8 @@ function LoginContent() {
     });
 
     if (!res || res.error) {
-      setError("Email atau password salah");
+      const code = (res as { code?: string } | undefined)?.code;
+      setError(loginErrorMessage(code));
       setShake(true);
       setTimeout(() => setShake(false), 400);
       setSubmitting(false);
@@ -111,22 +139,56 @@ function LoginContent() {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="owner@mahakan.id"
             autoComplete="email"
+            autoFocus
             leadingIcon={<Mail className="size-4" aria-hidden />}
             required
             disabled={submitting}
           />
-          <Input
-            label="Password"
-            type="password"
-            size="lg"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password Anda"
-            autoComplete="current-password"
-            leadingIcon={<Lock className="size-4" aria-hidden />}
-            required
-            disabled={submitting}
-          />
+          <div className="space-y-1.5">
+            <Input
+              label="Password"
+              type={showPassword ? "text" : "password"}
+              size="lg"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyUp={(e: KeyboardEvent<HTMLInputElement>) =>
+                setCapsLock(e.getModifierState?.("CapsLock") ?? false)
+              }
+              onKeyDown={(e: KeyboardEvent<HTMLInputElement>) =>
+                setCapsLock(e.getModifierState?.("CapsLock") ?? false)
+              }
+              onBlur={() => setCapsLock(false)}
+              placeholder="Password Anda"
+              autoComplete="current-password"
+              leadingIcon={<Lock className="size-4" aria-hidden />}
+              trailingSlot={
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  disabled={submitting}
+                  className="-mr-1 flex size-8 items-center justify-center rounded text-neutral-500 hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700 disabled:opacity-50"
+                  aria-label={
+                    showPassword ? "Sembunyikan password" : "Lihat password"
+                  }
+                  aria-pressed={showPassword}
+                  tabIndex={-1}
+                >
+                  {showPassword ? (
+                    <EyeOff className="size-4" aria-hidden />
+                  ) : (
+                    <Eye className="size-4" aria-hidden />
+                  )}
+                </button>
+              }
+              required
+              disabled={submitting}
+            />
+            {capsLock ? (
+              <p className="text-xs font-medium text-warning-500">
+                ⚠️ Caps Lock aktif — password peka huruf besar/kecil.
+              </p>
+            ) : null}
+          </div>
           {error ? (
             <p role="alert" className="text-sm font-medium text-danger-500">
               {error}
