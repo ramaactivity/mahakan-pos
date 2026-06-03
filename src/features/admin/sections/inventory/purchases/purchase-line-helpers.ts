@@ -104,12 +104,27 @@ export function computePrLineDefault(input: PrLineDefaultInput): {
     ? input.belanjaUnit!
     : input.prUnit || input.masterUnit;
   const qty = useBelanja ? input.outstandingQty / perCogs : input.outstandingQty;
+  /* Estimasi harga per satuan beli dari master cost (WAC) × konversi. Kena
+   * pembulatan kalau cost_per_unit di-round (mis. 10.000/Pack ÷ 780ml = 12,82
+   * → cpu 13 → ×780 = 10.140 ≠ 10.000). */
   const scaledMasterCost =
     input.costPerUnit > 0
       ? Math.round(input.costPerUnit * (useBelanja ? perCogs : 1))
       : 0;
+  const supplierCost = input.suggestedUnitCost ?? 0;
+  /* Sesi AE-177 — utamakan harga supplier ASLI (eksak, tanpa drift pembulatan)
+   * kalau ADA dan DEKAT dengan estimasi master (≤5% → satuan sama, cuma beda
+   * pembulatan). Kalau supplier jauh (kemungkinan satuan beda / data legacy)
+   * atau tak ada estimasi, jatuh ke estimasi master. */
+  const closeToMaster =
+    scaledMasterCost === 0 ||
+    Math.abs(supplierCost - scaledMasterCost) <= scaledMasterCost * 0.05;
   const unitCost =
-    scaledMasterCost > 0 ? scaledMasterCost : input.suggestedUnitCost ?? 0;
+    supplierCost > 0 && closeToMaster
+      ? supplierCost
+      : scaledMasterCost > 0
+        ? scaledMasterCost
+        : supplierCost;
   return { unit, qty, unitCost };
 }
 

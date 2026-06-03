@@ -6,6 +6,7 @@ import {
   validatePurchaseGroupItems,
   type PrPurchaseItemRow,
 } from "@/features/purchase-requests/group-items-pure";
+import { computePrLineDefault } from "@/features/admin/sections/inventory/purchases/purchase-line-helpers";
 
 function row(overrides: Partial<PrPurchaseItemRow>): PrPurchaseItemRow {
   return {
@@ -160,5 +161,50 @@ describe("computePrStatus", () => {
 
   it("returns open for empty array", () => {
     expect(computePrStatus([])).toBe("open");
+  });
+});
+
+describe("computePrLineDefault (harga saran)", () => {
+  /* Sesi AE-177 — utamakan harga supplier ASLI saat dekat estimasi master
+   * (hindari drift pembulatan). */
+  it("Sabun: pakai harga supplier 10.000, BUKAN cpu(13)×780=10.140", () => {
+    const d = computePrLineDefault({
+      outstandingQty: 1170, // ml
+      masterUnit: "ml",
+      prUnit: "ml",
+      costPerUnit: 13, // per ml, rounded dari 10000/780=12,82
+      suggestedUnitCost: 10000, // harga supplier asli per Pack
+      belanjaUnit: "Pack",
+      belanjaPerCogs: 780, // 1 Pack = 780 ml
+    });
+    expect(d.unit).toBe("Pack");
+    expect(d.qty).toBeCloseTo(1.5, 4); // 1170/780
+    expect(d.unitCost).toBe(10000); // bukan 10140
+  });
+
+  it("harga supplier jauh dari estimasi (satuan beda) → pakai estimasi master", () => {
+    const d = computePrLineDefault({
+      outstandingQty: 1000,
+      masterUnit: "gr",
+      prUnit: "gr",
+      costPerUnit: 80, // per gr
+      suggestedUnitCost: 999999, // jauh → jangan dipakai
+      belanjaUnit: "Kg",
+      belanjaPerCogs: 1000,
+    });
+    expect(d.unitCost).toBe(80000); // 80×1000
+  });
+
+  it("tanpa suggestedUnitCost → estimasi master", () => {
+    const d = computePrLineDefault({
+      outstandingQty: 1500,
+      masterUnit: "gr",
+      prUnit: "gr",
+      costPerUnit: 10,
+      suggestedUnitCost: 0,
+      belanjaUnit: "Kg",
+      belanjaPerCogs: 1000,
+    });
+    expect(d.unitCost).toBe(10000);
   });
 });
