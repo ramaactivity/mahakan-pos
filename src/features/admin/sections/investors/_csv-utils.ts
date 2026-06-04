@@ -5,15 +5,40 @@
  * Pure functions — no React, no DB. Re-usable di 3 wizard tanpa duplication.
  */
 
+/* Auto-detect delimiter: Excel ID locale exports CSV dengan `;` karena `,`
+ * sudah dipakai sebagai pemisah desimal. Tanpa deteksi ini, file Excel ID
+ * di-parse jadi 1 kolom per baris → semua index 0 → field validation rusak. */
+function detectDelimiter(headerLine: string): "," | ";" | "\t" {
+  let inQuote = false;
+  let comma = 0;
+  let semi = 0;
+  let tab = 0;
+  for (const ch of headerLine) {
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (inQuote) continue;
+    if (ch === ",") comma++;
+    else if (ch === ";") semi++;
+    else if (ch === "\t") tab++;
+  }
+  if (semi > comma && semi >= tab) return ";";
+  if (tab > comma && tab > semi) return "\t";
+  return ",";
+}
+
 export function parseCsv(text: string): {
   headers: string[];
   rows: string[][];
+  delimiter: "," | ";" | "\t";
 } {
   const lines = text
     .replace(/\r\n/g, "\n")
     .split("\n")
     .filter((l) => l.trim().length > 0);
-  if (lines.length === 0) return { headers: [], rows: [] };
+  if (lines.length === 0) return { headers: [], rows: [], delimiter: "," };
+  const delimiter = detectDelimiter(lines[0]);
   const splitLine = (line: string): string[] => {
     const out: string[] = [];
     let cur = "";
@@ -23,7 +48,7 @@ export function parseCsv(text: string): {
         inQuote = !inQuote;
         continue;
       }
-      if (ch === "," && !inQuote) {
+      if (ch === delimiter && !inQuote) {
         out.push(cur);
         cur = "";
         continue;
@@ -35,7 +60,7 @@ export function parseCsv(text: string): {
   };
   const headers = splitLine(lines[0]);
   const rows = lines.slice(1).map(splitLine);
-  return { headers, rows };
+  return { headers, rows, delimiter };
 }
 
 export function parseRupiahCell(s: string): number {
@@ -88,6 +113,33 @@ export function parseDecimalCell(s: string): number | null {
   if (!cleaned) return null;
   const n = parseFloat(cleaned);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Deteksi nilai persen yg masuk format Excel "Percent" — underlying value
+ * 0..1 (mis. 0,0862 ditampilkan "8,62%"). Kalau semua nilai ≤ 1 DAN sum-nya
+ * di sekitar 1.0 (±0.5), kita anggap fraction → caller harus ×100.
+ *
+ * `expectedSumOne=false` untuk kasus stand-alone (mis. Bunga % per row tidak
+ * jumlah ke 100). Cukup cek semua ≤ 1 + ada minimal 1 yg > 0 tapi < 1 (yg
+ * curiga banget format Percent).
+ */
+export function detectFractionScale(
+  values: number[],
+  opts: { expectedSumOne?: boolean } = {},
+): boolean {
+  const expectedSumOne = opts.expectedSumOne ?? false;
+  const nonNullVals = values.filter((v) => Number.isFinite(v));
+  if (nonNullVals.length === 0) return false;
+  const allFraction = nonNullVals.every((v) => v >= 0 && v <= 1);
+  if (!allFraction) return false;
+  if (expectedSumOne) {
+    const sum = nonNullVals.reduce((s, v) => s + v, 0);
+    return sum > 0.5 && sum < 1.5;
+  }
+  /* Stand-alone: minimal 1 nilai > 0 tapi < 1 (kalau semua 0 atau semua 1,
+   * ambiguous — jangan auto-scale). */
+  return nonNullVals.some((v) => v > 0 && v < 1);
 }
 
 export function findHeaderIdx(

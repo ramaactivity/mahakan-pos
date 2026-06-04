@@ -18,6 +18,7 @@ import {
 } from "@/features/creditors";
 import { formatRupiah } from "@/lib/format";
 import {
+  detectFractionScale,
   downloadCsv,
   findHeaderIdx,
   parseCsv,
@@ -127,14 +128,13 @@ function mapRow(
   if (dueDate && dueDate < startDate) {
     return { ok: false, reason: "Jatuh tempo < tanggal mulai" };
   }
+  /* Sesi AE-178 — range check Bunga % digeser ke pass-2 (setelah deteksi
+   * Excel "Percent format"; 18% di Excel underlying = 0.18). */
   const rateRaw =
     idx.interestRatePct >= 0
       ? parseDecimalCell(get(idx.interestRatePct))
       : null;
   const rate = rateRaw != null ? rateRaw : undefined;
-  if (rate != null && (rate < 0 || rate > 100)) {
-    return { ok: false, reason: "Bunga % di luar range 0..100" };
-  }
   const period = idx.interestPeriod >= 0 ? parsePeriod(get(idx.interestPeriod)) : undefined;
   if (idx.interestPeriod >= 0 && get(idx.interestPeriod).trim() && !period) {
     return { ok: false, reason: `Period bunga tidak dikenal "${get(idx.interestPeriod)}"` };
@@ -180,8 +180,10 @@ export function CreditorImportWizard({ open, onClose, onImported }: Props) {
       return {
         parsedRows: [] as ParsedRow[],
         parseErrors: [] as { row: number; reason: string }[],
+        delimiter: "," as "," | ";" | "\t",
+        bungaAutoScaled: false,
       };
-    const { headers, rows } = parseCsv(csvText);
+    const { headers, rows, delimiter } = parseCsv(csvText);
     const idx = {
       name: findHeaderIdx(headers, ["nama lengkap", "nama"]),
       nik: findHeaderIdx(headers, ["nik"]),
@@ -218,16 +220,48 @@ export function CreditorImportWizard({ open, onClose, onImported }: Props) {
               'CSV harus punya kolom "Nama Lengkap" + "Pokok Awal" + "Tanggal Mulai"',
           },
         ],
+        delimiter,
+        bungaAutoScaled: false,
       };
     }
-    const parsedRows: ParsedRow[] = [];
+    const candidateRows: ParsedRow[] = [];
     const parseErrors: { row: number; reason: string }[] = [];
     rows.forEach((row, i) => {
       const r = mapRow(row, idx, i + 2);
-      if (r.ok) parsedRows.push(r.row);
+      if (r.ok) candidateRows.push(r.row);
       else parseErrors.push({ row: i + 2, reason: r.reason });
     });
-    return { parsedRows, parseErrors };
+
+    /* Pass-2: deteksi Bunga % format Excel "Percent" (18% underlying = 0.18).
+     * Berbeda dari Share %: Bunga TIDAK jumlah ke 100, jadi pakai detector
+     * stand-alone (semua ≤ 1 & minimal 1 nilai 0<v<1). */
+    const bungaVals = candidateRows
+      .map((r) => r.interestRatePct)
+      .filter((v): v is number => v != null);
+    const bungaAutoScaled =
+      idx.interestRatePct >= 0 && detectFractionScale(bungaVals);
+    if (bungaAutoScaled) {
+      for (const r of candidateRows) {
+        if (r.interestRatePct != null) r.interestRatePct *= 100;
+      }
+    }
+
+    /* Pass-3: range validation post-scaling. */
+    const parsedRows: ParsedRow[] = [];
+    for (const r of candidateRows) {
+      if (
+        r.interestRatePct != null &&
+        (r.interestRatePct < 0 || r.interestRatePct > 100)
+      ) {
+        parseErrors.push({
+          row: r.rawRowNum,
+          reason: `Bunga % di luar range 0..100 (nilai: ${r.interestRatePct.toFixed(2)})`,
+        });
+        continue;
+      }
+      parsedRows.push(r);
+    }
+    return { parsedRows, parseErrors, delimiter, bungaAutoScaled };
   }, [csvText]);
 
   async function handleFile(file: File) {
@@ -464,7 +498,29 @@ export function CreditorImportWizard({ open, onClose, onImported }: Props) {
             <span className="rounded-full bg-warning-100 px-3 py-1 text-warning-900">
               Total outstanding: {formatRupiah(totalOutstanding)}
             </span>
+            <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-900">
+              Pemisah:{" "}
+              {parsed.delimiter === ";"
+                ? "titik koma (;)"
+                : parsed.delimiter === "\t"
+                  ? "tab"
+                  : "koma (,)"}
+            </span>
           </div>
+
+          {parsed.bungaAutoScaled ? (
+            <div className="rounded-md border border-blue-300 bg-blue-50 p-3 text-xs text-blue-900">
+              <p className="font-semibold">
+                ℹ️ Bunga % auto-konversi dari format desimal Excel
+              </p>
+              <p className="mt-0.5">
+                Kolom Bunga % terdeteksi pakai format Excel "Percent" (underlying
+                value 0–1, mis. <code>0,18</code> ditampilkan <code>18%</code>).
+                Sistem otomatis mengalikan 100. Cek nilai bunga di tabel — kalau
+                sudah benar, lanjut import.
+              </p>
+            </div>
+          ) : null}
 
           <fieldset className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
             <legend className="px-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-600">

@@ -328,21 +328,25 @@ export async function bulkImportPengelola(
     const matched = existingByName.get(r.fullName.trim().toLowerCase());
     if (matched) {
       if (mode === "upsert") {
+        /* Sesi AE-178 — PARTIAL UPSERT: skip field null supaya re-upload
+         * tidak nimpa data existing (mis. phone yang sudah ada di DB). */
         const vals: Partial<typeof pengelola.$inferInsert> = {
           fullName: r.fullName,
-          nickname: r.nickname ?? null,
-          nik: r.nik ?? null,
-          email: r.email ?? null,
-          phone: r.phone ?? null,
-          address: r.address ?? null,
-          dateOfBirth: r.dateOfBirth ?? null,
-          bankName: r.bankName ?? null,
-          bankAccountNumber: r.bankAccountNumber ?? null,
-          bankAccountHolderName: r.bankAccountHolderName ?? null,
           modalDisetor: r.modalDisetor,
           updatedBy: session.user.id,
           updatedAt: new Date(),
         };
+        if (r.nickname != null) vals.nickname = r.nickname;
+        if (r.nik != null) vals.nik = r.nik;
+        if (r.email != null) vals.email = r.email;
+        if (r.phone != null) vals.phone = r.phone;
+        if (r.address != null) vals.address = r.address;
+        if (r.dateOfBirth != null) vals.dateOfBirth = r.dateOfBirth;
+        if (r.bankName != null) vals.bankName = r.bankName;
+        if (r.bankAccountNumber != null)
+          vals.bankAccountNumber = r.bankAccountNumber;
+        if (r.bankAccountHolderName != null)
+          vals.bankAccountHolderName = r.bankAccountHolderName;
         if (r.dividendBalance != null) {
           vals.dividendBalance = r.dividendBalance;
         }

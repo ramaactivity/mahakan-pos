@@ -11,6 +11,7 @@ import {
 } from "@/features/investors";
 import { formatRupiah } from "@/lib/format";
 import {
+  detectFractionScale,
   downloadCsv,
   findHeaderIdx,
   parseCsv,
@@ -96,10 +97,9 @@ function mapRow(
   if (modal < 0) {
     return { ok: false, reason: "Modal invalid" };
   }
+  /* Sesi AE-178 — range check digeser ke pass-2 (setelah deteksi fraction
+   * Excel "Percent format" — underlying 0.0862 ditampilkan 8,62%). */
   const sharePctRaw = idx.sharePct >= 0 ? parseDecimalCell(get(idx.sharePct)) : null;
-  if (sharePctRaw != null && (sharePctRaw < 0 || sharePctRaw > 100)) {
-    return { ok: false, reason: "Share % di luar range 0..100" };
-  }
   const balanceRaw =
     idx.dividendBalance >= 0 ? parseRupiahCell(get(idx.dividendBalance)) : 0;
   const balance = idx.dividendBalance >= 0 ? balanceRaw : null;
@@ -147,8 +147,14 @@ export function InvestorImportWizard({
   const [mode, setMode] = useState<ImportMode>("insert_only");
 
   const parsed = useMemo(() => {
-    if (!csvText) return { parsedRows: [] as ParsedRow[], parseErrors: [] as { row: number; reason: string }[] };
-    const { headers, rows } = parseCsv(csvText);
+    if (!csvText)
+      return {
+        parsedRows: [] as ParsedRow[],
+        parseErrors: [] as { row: number; reason: string }[],
+        delimiter: "," as "," | ";" | "\t",
+        fractionAutoScaled: false,
+      };
+    const { headers, rows, delimiter } = parseCsv(csvText);
     const idx = {
       name: findHeaderIdx(headers, ["nama lengkap", "nama"]),
       dob: findHeaderIdx(headers, ["tanggal lahir", "dob"]),
@@ -183,16 +189,47 @@ export function InvestorImportWizard({
             reason: 'CSV harus punya kolom "Nama Lengkap" + "Besaran Investasi"',
           },
         ],
+        delimiter,
+        fractionAutoScaled: false,
       };
     }
-    const parsedRows: ParsedRow[] = [];
+    const candidateRows: ParsedRow[] = [];
     const parseErrors: { row: number; reason: string }[] = [];
     rows.forEach((row, i) => {
       const r = mapRow(row, idx, i + 2); // +2: skip header + 1-indexed
-      if (r.ok) parsedRows.push(r.row);
+      if (r.ok) candidateRows.push(r.row);
       else parseErrors.push({ row: i + 2, reason: r.reason });
     });
-    return { parsedRows, parseErrors };
+
+    /* Pass-2: deteksi Excel "Percent format" — kalau owner export underlying
+     * value, value 8,62% jadi 0,0862 di CSV. Pakai shared helper
+     * `detectFractionScale` dengan expectedSumOne=true (share investor
+     * jumlah ke 100%). */
+    const shareVals = candidateRows
+      .map((r) => r.sharePct)
+      .filter((v): v is number => v != null);
+    const fractionAutoScaled =
+      idx.sharePct >= 0 &&
+      detectFractionScale(shareVals, { expectedSumOne: true });
+    if (fractionAutoScaled) {
+      for (const r of candidateRows) {
+        if (r.sharePct != null) r.sharePct = r.sharePct * 100;
+      }
+    }
+
+    /* Pass-3: range validation (setelah scaling). */
+    const parsedRows: ParsedRow[] = [];
+    for (const r of candidateRows) {
+      if (r.sharePct != null && (r.sharePct < 0 || r.sharePct > 100)) {
+        parseErrors.push({
+          row: r.rawRowNum,
+          reason: `Share % di luar range 0..100 (nilai: ${r.sharePct.toFixed(4)})`,
+        });
+        continue;
+      }
+      parsedRows.push(r);
+    }
+    return { parsedRows, parseErrors, delimiter, fractionAutoScaled };
   }, [csvText]);
 
   async function handleFile(file: File) {
@@ -311,6 +348,13 @@ export function InvestorImportWizard({
     (s, r) => s + r.modalDisetor,
     0,
   );
+  /* Sesi AE-178 audit P2 — sanity warning untuk nilai modal di luar nalar
+   * (kemungkinan owner salah tambah nol). Mahakan total modal ~Rp 100jt,
+   * single row > 1 milyar hampir pasti typo. */
+  const HUGE_MODAL_THRESHOLD = 1_000_000_000;
+  const hugeModalRows = parsed.parsedRows.filter(
+    (r) => r.modalDisetor > HUGE_MODAL_THRESHOLD,
+  );
 
   return (
     <Modal
@@ -416,7 +460,54 @@ export function InvestorImportWizard({
             <span className="rounded-full bg-neutral-100 px-3 py-1 text-neutral-700">
               Total modal: {formatRupiah(totalModal)}
             </span>
+            <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-900">
+              Pemisah:{" "}
+              {parsed.delimiter === ";"
+                ? "titik koma (;)"
+                : parsed.delimiter === "\t"
+                  ? "tab"
+                  : "koma (,)"}
+            </span>
           </div>
+
+          {parsed.fractionAutoScaled ? (
+            <div className="rounded-md border border-blue-300 bg-blue-50 p-3 text-xs text-blue-900">
+              <p className="font-semibold">
+                ℹ️ Share % auto-konversi dari format desimal Excel
+              </p>
+              <p className="mt-0.5">
+                Kolom Share % terdeteksi pakai format Excel "Percent" (underlying
+                value 0–1, mis. <code>0,0862</code>). Sistem otomatis mengalikan
+                100 supaya jadi persentase (0,0862 → 8,62%). Cek tabel di bawah
+                — kalau nilai-nya sudah benar, lanjut import.
+              </p>
+            </div>
+          ) : null}
+
+          {hugeModalRows.length > 0 ? (
+            <div className="rounded-md border border-warning-400 bg-warning-50 p-3 text-xs text-warning-900">
+              <p className="font-semibold">
+                ⚠️ Ada {hugeModalRows.length} baris dengan modal {">"} Rp 1
+                milyar
+              </p>
+              <p className="mt-0.5">
+                Cek apakah tidak salah tambah nol. Mahakan total modal sekitar
+                Rp 100 juta — single investor di atas Rp 1 milyar kemungkinan
+                typo:
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {hugeModalRows.slice(0, 5).map((r) => (
+                  <li key={r.rawRowNum}>
+                    • Baris {r.rawRowNum}: <strong>{r.fullName}</strong> —{" "}
+                    {formatRupiah(r.modalDisetor)}
+                  </li>
+                ))}
+                {hugeModalRows.length > 5 ? (
+                  <li>... dan {hugeModalRows.length - 5} lainnya</li>
+                ) : null}
+              </ul>
+            </div>
+          ) : null}
 
           {/* Sesi AE-68 — Mode selector (insert_only vs upsert).
            * Default 'insert_only' = first-time migration (skip kalau nama

@@ -373,22 +373,29 @@ export async function bulkImportInvestors(
 
     if (matchedId) {
       if (mode === "upsert") {
+        /* Sesi AE-178 — PARTIAL UPSERT: hanya update field yang ada nilai di
+         * CSV. Field null/kosong DI-SKIP supaya re-upload CSV (mis. owner
+         * upload ulang untuk koreksi nama doang) tidak nimpa phone/email/bank
+         * existing dengan null. Field wajib (fullName, modalDisetor) selalu
+         * di-update karena schema enforce non-null. */
         const updateVals: Partial<typeof investors.$inferInsert> = {
           fullName: r.fullName,
-          nik: r.nik ?? null,
-          email: r.email ?? null,
-          phone: r.phone ?? null,
-          address: r.address ?? null,
-          dateOfBirth: r.dateOfBirth ?? null,
-          occupation: r.occupation ?? null,
-          igHandle: r.igHandle ?? null,
-          bankName: r.bankName ?? null,
-          bankAccountNumber: r.bankAccountNumber ?? null,
-          bankAccountHolderName: r.bankAccountHolderName ?? null,
           modalDisetor: r.modalDisetor,
           updatedBy: session.user.id,
           updatedAt: new Date(),
         };
+        if (r.nik != null) updateVals.nik = r.nik;
+        if (r.email != null) updateVals.email = r.email;
+        if (r.phone != null) updateVals.phone = r.phone;
+        if (r.address != null) updateVals.address = r.address;
+        if (r.dateOfBirth != null) updateVals.dateOfBirth = r.dateOfBirth;
+        if (r.occupation != null) updateVals.occupation = r.occupation;
+        if (r.igHandle != null) updateVals.igHandle = r.igHandle;
+        if (r.bankName != null) updateVals.bankName = r.bankName;
+        if (r.bankAccountNumber != null)
+          updateVals.bankAccountNumber = r.bankAccountNumber;
+        if (r.bankAccountHolderName != null)
+          updateVals.bankAccountHolderName = r.bankAccountHolderName;
         /* Sesi AE-80 follow-up — apply optional v2 fields kalau di-CSV. */
         if (r.sharePct != null) {
           updateVals.sharePct = r.sharePct.toFixed(4);

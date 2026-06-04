@@ -22,6 +22,7 @@ import type { BulkImportPengelolaRow } from "@/features/pengelola";
 import type { BulkImportCreditorRow } from "@/features/creditors";
 import type { HistoricalWithdrawalRow } from "@/features/withdrawals";
 import {
+  detectFractionScale,
   parseDateCell,
   parseDecimalCell,
   parseRupiahCell,
@@ -375,16 +376,37 @@ export function parseMasterTemplate(buffer: ArrayBuffer): ParseMasterResult {
   const wb = XLSX.read(buffer, { type: "array", cellDates: true });
   const warnings: string[] = [];
 
-  /* INVESTOR */
+  /* INVESTOR — pass-1 parse, pass-2 fraction-detect Share %, pass-3 filter
+   * + warning. Sesi AE-178 audit P0: kalau owner format kolom Share %
+   * sebagai "Percentage" di Excel, underlying value 0..1 (mis. 0,0862
+   * tampil 8,62%) — tanpa scaling akan tersimpan 0,0862% bukan 8,62%. */
   const investorParse = sheetToRows(wb, "INVESTOR", INVESTOR_HEADERS);
   warnings.push(...investorParse.warnings);
-  const investors: BulkImportInvestorRow[] = investorParse.rows
-    .map((r) => {
-      const fullName = r["Nama Lengkap"]?.trim() ?? "";
-      if (fullName.length < 2) return null;
-      const modal = parseRupiahCell(r["Besaran Investasi"] ?? "");
-      if (modal <= 0) return null;
-      return {
+  const investorCandidates: Array<{
+    row: BulkImportInvestorRow;
+    rowNum: number;
+  }> = [];
+  investorParse.rows.forEach((r, i) => {
+    const rowNum = i + 2; // +1 for header, +1 for 1-indexed
+    const fullName = r["Nama Lengkap"]?.trim() ?? "";
+    if (fullName.length < 2) {
+      if (Object.values(r).some((v) => v && v.trim())) {
+        warnings.push(
+          `INVESTOR baris ${rowNum}: dilewati — Nama Lengkap kosong/terlalu pendek.`,
+        );
+      }
+      return;
+    }
+    const modal = parseRupiahCell(r["Besaran Investasi"] ?? "");
+    if (modal <= 0) {
+      warnings.push(
+        `INVESTOR baris ${rowNum} (${fullName}): dilewati — Besaran Investasi ≤ 0.`,
+      );
+      return;
+    }
+    investorCandidates.push({
+      rowNum,
+      row: {
         fullName,
         nik: r["NIK"]?.trim() || null,
         email: r["Email"]?.trim() || null,
@@ -400,51 +422,96 @@ export function parseMasterTemplate(buffer: ArrayBuffer): ParseMasterResult {
         sharePct: parseDecimalCell(r["Share %"] ?? ""),
         dividendBalance: parseRupiahCell(r["Saldo Dividen"] ?? "") || null,
         status: parseStatusInvestor(r["Status"] ?? "active"),
-      } as BulkImportInvestorRow;
-    })
-    .filter((r): r is BulkImportInvestorRow => r !== null);
+      } as BulkImportInvestorRow,
+    });
+  });
+  /* Fraction scale Share %: cek SUM ≈ 1 (investor share jumlah ke 100%). */
+  const investorShares = investorCandidates
+    .map((c) => c.row.sharePct)
+    .filter((v): v is number => v != null);
+  if (detectFractionScale(investorShares, { expectedSumOne: true })) {
+    for (const c of investorCandidates) {
+      if (c.row.sharePct != null) c.row.sharePct *= 100;
+    }
+    warnings.push(
+      `INVESTOR: kolom Share % terdeteksi format Excel "Percent" (0..1) — sistem otomatis ×100 ke persentase 0..100.`,
+    );
+  }
+  const investors: BulkImportInvestorRow[] = investorCandidates.map(
+    (c) => c.row,
+  );
 
   /* PENGELOLA */
   const pengelolaParse = sheetToRows(wb, "PENGELOLA", PENGELOLA_HEADERS);
   warnings.push(...pengelolaParse.warnings);
-  const pengelolaRows: BulkImportPengelolaRow[] = pengelolaParse.rows
-    .map((r) => {
-      const fullName = r["Nama Lengkap"]?.trim() ?? "";
-      if (fullName.length < 2) return null;
-      const modal = parseRupiahCell(r["Modal Disetor"] ?? "");
-      if (modal <= 0) return null;
-      return {
-        fullName,
-        nickname: r["Nickname"]?.trim() || null,
-        nik: r["NIK"]?.trim() || null,
-        email: r["Email"]?.trim() || null,
-        phone: r["Telefon"]?.trim() || null,
-        address: r["Alamat"]?.trim() || null,
-        dateOfBirth: parseDateCell(r["Tanggal Lahir"] ?? ""),
-        bankName: r["Bank"]?.trim() || null,
-        bankAccountNumber: r["No Rekening"]?.trim() || null,
-        bankAccountHolderName: r["Atas Nama"]?.trim() || null,
-        modalDisetor: modal,
-        dividendBalance: parseRupiahCell(r["Saldo Dividen"] ?? "") || null,
-        status: parseStatusInvestor(r["Status"] ?? "active"),
-      } as BulkImportPengelolaRow;
-    })
-    .filter((r): r is BulkImportPengelolaRow => r !== null);
+  const pengelolaRows: BulkImportPengelolaRow[] = [];
+  pengelolaParse.rows.forEach((r, i) => {
+    const rowNum = i + 2;
+    const fullName = r["Nama Lengkap"]?.trim() ?? "";
+    if (fullName.length < 2) {
+      if (Object.values(r).some((v) => v && v.trim())) {
+        warnings.push(
+          `PENGELOLA baris ${rowNum}: dilewati — Nama Lengkap kosong.`,
+        );
+      }
+      return;
+    }
+    const modal = parseRupiahCell(r["Modal Disetor"] ?? "");
+    if (modal <= 0) {
+      warnings.push(
+        `PENGELOLA baris ${rowNum} (${fullName}): dilewati — Modal Disetor ≤ 0.`,
+      );
+      return;
+    }
+    pengelolaRows.push({
+      fullName,
+      nickname: r["Nickname"]?.trim() || null,
+      nik: r["NIK"]?.trim() || null,
+      email: r["Email"]?.trim() || null,
+      phone: r["Telefon"]?.trim() || null,
+      address: r["Alamat"]?.trim() || null,
+      dateOfBirth: parseDateCell(r["Tanggal Lahir"] ?? ""),
+      bankName: r["Bank"]?.trim() || null,
+      bankAccountNumber: r["No Rekening"]?.trim() || null,
+      bankAccountHolderName: r["Atas Nama"]?.trim() || null,
+      modalDisetor: modal,
+      dividendBalance: parseRupiahCell(r["Saldo Dividen"] ?? "") || null,
+      status: parseStatusInvestor(r["Status"] ?? "active"),
+    } as BulkImportPengelolaRow);
+  });
 
-  /* KREDITUR */
+  /* KREDITUR — sama, pass-2 fraction-detect Bunga %. */
   const krediturParse = sheetToRows(wb, "KREDITUR", KREDITUR_HEADERS);
   warnings.push(...krediturParse.warnings);
-  const creditors: BulkImportCreditorRow[] = krediturParse.rows
-    .map((r) => {
-      const fullName = r["Nama"]?.trim() ?? "";
-      if (fullName.length < 2) return null;
-      const pokokOriginal = parseRupiahCell(r["Pokok Awal"] ?? "");
-      if (pokokOriginal <= 0) return null;
-      const startDate =
-        parseDateCell(r["Tanggal Mulai"] ?? "") ??
-        new Date().toISOString().slice(0, 10);
-      const sisa = parseRupiahCell(r["Sisa Hutang"] ?? "");
-      return {
+  const creditorCandidates: Array<{
+    row: BulkImportCreditorRow;
+    rowNum: number;
+  }> = [];
+  krediturParse.rows.forEach((r, i) => {
+    const rowNum = i + 2;
+    const fullName = r["Nama"]?.trim() ?? "";
+    if (fullName.length < 2) {
+      if (Object.values(r).some((v) => v && v.trim())) {
+        warnings.push(
+          `KREDITUR baris ${rowNum}: dilewati — Nama kosong.`,
+        );
+      }
+      return;
+    }
+    const pokokOriginal = parseRupiahCell(r["Pokok Awal"] ?? "");
+    if (pokokOriginal <= 0) {
+      warnings.push(
+        `KREDITUR baris ${rowNum} (${fullName}): dilewati — Pokok Awal ≤ 0.`,
+      );
+      return;
+    }
+    const startDate =
+      parseDateCell(r["Tanggal Mulai"] ?? "") ??
+      new Date().toISOString().slice(0, 10);
+    const sisa = parseRupiahCell(r["Sisa Hutang"] ?? "");
+    creditorCandidates.push({
+      rowNum,
+      row: {
         fullName,
         nickname: r["Nickname"]?.trim() || null,
         nik: r["NIK"]?.trim() || null,
@@ -462,9 +529,25 @@ export function parseMasterTemplate(buffer: ArrayBuffer): ParseMasterResult {
         dueDate: parseDateCell(r["Jatuh Tempo"] ?? ""),
         status: parseStatusKreditur(r["Status"] ?? "active"),
         notes: r["Catatan"]?.trim() || null,
-      } as BulkImportCreditorRow;
-    })
-    .filter((r): r is BulkImportCreditorRow => r !== null);
+      } as BulkImportCreditorRow,
+    });
+  });
+  const creditorRates = creditorCandidates
+    .map((c) => c.row.interestRatePct)
+    .filter((v): v is number => typeof v === "number");
+  if (detectFractionScale(creditorRates)) {
+    for (const c of creditorCandidates) {
+      if (typeof c.row.interestRatePct === "number") {
+        c.row.interestRatePct *= 100;
+      }
+    }
+    warnings.push(
+      `KREDITUR: kolom Bunga % terdeteksi format Excel "Percent" (0..1) — sistem otomatis ×100 ke persentase 0..100.`,
+    );
+  }
+  const creditors: BulkImportCreditorRow[] = creditorCandidates.map(
+    (c) => c.row,
+  );
 
   /* PENCAIRAN (opsional sheet). Skip kalau tidak ada atau row 0. */
   const pencairanParse = sheetToRows(wb, "PENCAIRAN", PENCAIRAN_HEADERS);
@@ -473,28 +556,45 @@ export function parseMasterTemplate(buffer: ArrayBuffer): ParseMasterResult {
   if (wb.Sheets["PENCAIRAN"]) {
     warnings.push(...pencairanParse.warnings);
   }
-  const withdrawals: HistoricalWithdrawalRow[] = pencairanParse.rows
-    .map((r) => {
-      const investorName = r["Nama Investor"]?.trim() ?? "";
-      if (investorName.length < 2) return null;
-      const amount = parseRupiahCell(r["Nominal"] ?? "");
-      if (amount <= 0) return null;
-      const occurredAt =
-        parseDateCell(r["Tanggal"] ?? "") ??
-        new Date().toISOString().slice(0, 10);
-      const bankName = r["Bank Sumber"]?.trim() ?? "";
-      if (bankName.length === 0) return null;
-      return {
-        occurredAt,
-        investorName,
-        investorNik: r["NIK"]?.trim() || null,
-        amount,
-        bankName,
-        bankAccountNumber: r["No Rekening Sumber"]?.trim() || null,
-        description: r["Catatan"]?.trim() || null,
-      } as HistoricalWithdrawalRow;
-    })
-    .filter((r): r is HistoricalWithdrawalRow => r !== null);
+  const withdrawals: HistoricalWithdrawalRow[] = [];
+  pencairanParse.rows.forEach((r, i) => {
+    const rowNum = i + 2;
+    const investorName = r["Nama Investor"]?.trim() ?? "";
+    if (investorName.length < 2) {
+      if (Object.values(r).some((v) => v && v.trim())) {
+        warnings.push(
+          `PENCAIRAN baris ${rowNum}: dilewati — Nama Investor kosong.`,
+        );
+      }
+      return;
+    }
+    const amount = parseRupiahCell(r["Nominal"] ?? "");
+    if (amount <= 0) {
+      warnings.push(
+        `PENCAIRAN baris ${rowNum} (${investorName}): dilewati — Nominal ≤ 0.`,
+      );
+      return;
+    }
+    const occurredAt =
+      parseDateCell(r["Tanggal"] ?? "") ??
+      new Date().toISOString().slice(0, 10);
+    const bankName = r["Bank Sumber"]?.trim() ?? "";
+    if (bankName.length === 0) {
+      warnings.push(
+        `PENCAIRAN baris ${rowNum} (${investorName}): dilewati — Bank Sumber kosong.`,
+      );
+      return;
+    }
+    withdrawals.push({
+      occurredAt,
+      investorName,
+      investorNik: r["NIK"]?.trim() || null,
+      amount,
+      bankName,
+      bankAccountNumber: r["No Rekening Sumber"]?.trim() || null,
+      description: r["Catatan"]?.trim() || null,
+    } as HistoricalWithdrawalRow);
+  });
 
   return {
     investors,

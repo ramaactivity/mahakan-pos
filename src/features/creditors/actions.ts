@@ -1113,26 +1113,31 @@ export async function bulkImportCreditors(
 
     if (matchedId) {
       if (mode === "upsert") {
+        /* Sesi AE-178 — PARTIAL UPSERT: skip field null/optional supaya
+         * re-upload tidak nimpa data existing dengan null. Field wajib
+         * (fullName, principal, period, startDate) selalu di-update. */
         const vals: Partial<typeof creditors.$inferInsert> = {
           fullName: r.fullName,
-          nickname: r.nickname ?? null,
-          nik: r.nik ?? null,
-          email: r.email ?? null,
-          phone: r.phone ?? null,
-          address: r.address ?? null,
-          bankName: r.bankName ?? null,
-          bankAccountNumber: r.bankAccountNumber ?? null,
-          bankAccountHolderName: r.bankAccountHolderName ?? null,
           principalOriginal: r.principalOriginal,
           principalOutstanding: outstanding,
           interestRatePct: String(r.interestRatePct ?? 0),
           interestPeriod: r.interestPeriod ?? "monthly",
           startDate: r.startDate,
-          dueDate: r.dueDate ?? null,
-          notes: r.notes ?? null,
           updatedBy: session.user.id,
           updatedAt: new Date(),
         };
+        if (r.nickname != null) vals.nickname = r.nickname;
+        if (r.nik != null) vals.nik = r.nik;
+        if (r.email != null) vals.email = r.email;
+        if (r.phone != null) vals.phone = r.phone;
+        if (r.address != null) vals.address = r.address;
+        if (r.bankName != null) vals.bankName = r.bankName;
+        if (r.bankAccountNumber != null)
+          vals.bankAccountNumber = r.bankAccountNumber;
+        if (r.bankAccountHolderName != null)
+          vals.bankAccountHolderName = r.bankAccountHolderName;
+        if (r.dueDate != null) vals.dueDate = r.dueDate;
+        if (r.notes != null) vals.notes = r.notes;
         if (r.status) vals.status = r.status;
         upsertTargets.push({
           rowIdx: i + 1,

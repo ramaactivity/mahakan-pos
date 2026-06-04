@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  detectFractionScale,
   parseCsv,
   parseRupiahCell,
   parseDateCell,
@@ -15,12 +16,13 @@ import {
 
 describe("parseCsv", () => {
   it("parses basic header + 2 rows", () => {
-    const { headers, rows } = parseCsv("a,b,c\n1,2,3\n4,5,6");
+    const { headers, rows, delimiter } = parseCsv("a,b,c\n1,2,3\n4,5,6");
     expect(headers).toEqual(["a", "b", "c"]);
     expect(rows).toEqual([
       ["1", "2", "3"],
       ["4", "5", "6"],
     ]);
+    expect(delimiter).toBe(",");
   });
 
   it("handles quoted field with comma inside", () => {
@@ -48,6 +50,31 @@ describe("parseCsv", () => {
   it("trims whitespace around cells", () => {
     const { rows } = parseCsv("a,b\n  1  ,  2  ");
     expect(rows[0]).toEqual(["1", "2"]);
+  });
+
+  it("auto-detects semicolon delimiter (Excel id-ID locale)", () => {
+    const csv = "Nama;Modal;Share %\nMahakan;10250000;8,62%\nAina;500000;0,42%";
+    const { headers, rows, delimiter } = parseCsv(csv);
+    expect(delimiter).toBe(";");
+    expect(headers).toEqual(["Nama", "Modal", "Share %"]);
+    expect(rows[0]).toEqual(["Mahakan", "10250000", "8,62%"]);
+    expect(rows[1]).toEqual(["Aina", "500000", "0,42%"]);
+  });
+
+  it("auto-detects tab delimiter", () => {
+    const csv = "Nama\tModal\nMahakan\t10250000";
+    const { delimiter, headers, rows } = parseCsv(csv);
+    expect(delimiter).toBe("\t");
+    expect(headers).toEqual(["Nama", "Modal"]);
+    expect(rows[0]).toEqual(["Mahakan", "10250000"]);
+  });
+
+  it("ignores delimiters inside quoted header cells", () => {
+    /* Header punya koma di dalam quote — jangan dikira pakai comma delim. */
+    const csv = 'Nama;"Alamat, lengkap";Modal\nA;Jl. X, No 1;100';
+    const { delimiter, headers } = parseCsv(csv);
+    expect(delimiter).toBe(";");
+    expect(headers).toEqual(["Nama", "Alamat, lengkap", "Modal"]);
   });
 });
 
@@ -149,6 +176,51 @@ describe("findHeaderIdx", () => {
   it("handles trim whitespace", () => {
     const padded = ["  Nama Lengkap  ", "Email"];
     expect(findHeaderIdx(padded, ["nama"])).toBe(0);
+  });
+});
+
+describe("detectFractionScale", () => {
+  it("detects fraction when expectedSumOne and SUM ≈ 1", () => {
+    /* Mahakan-style fractional share %: 110 investor ×~0.009 = ~1. */
+    const fractions = [0.0862, 0.0042, 0.00084, 0.00084, 0.0042];
+    expect(
+      detectFractionScale(
+        [...fractions, ...Array(20).fill(0.045)],
+        { expectedSumOne: true },
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects when expectedSumOne and SUM ≈ 100 (already percentages)", () => {
+    const percentages = [8.62, 0.42, 0.084, 0.084];
+    expect(
+      detectFractionScale(percentages, { expectedSumOne: true }),
+    ).toBe(false);
+  });
+
+  it("rejects when some values > 1 (already percentages)", () => {
+    expect(detectFractionScale([0.5, 10.5, 0.3])).toBe(false);
+  });
+
+  it("detects stand-alone fraction (Bunga %)", () => {
+    /* Excel '18%' underlying = 0.18 — owner ekspor underlying. */
+    expect(detectFractionScale([0.18, 0.12, 0.05])).toBe(true);
+  });
+
+  it("rejects stand-alone when all values 0 (ambiguous)", () => {
+    expect(detectFractionScale([0, 0, 0])).toBe(false);
+  });
+
+  it("rejects stand-alone when all values exactly 1 (ambiguous)", () => {
+    expect(detectFractionScale([1, 1, 1])).toBe(false);
+  });
+
+  it("handles empty array", () => {
+    expect(detectFractionScale([])).toBe(false);
+  });
+
+  it("ignores NaN/Infinity values", () => {
+    expect(detectFractionScale([NaN, Infinity, 0.5, 0.3])).toBe(true);
   });
 });
 
