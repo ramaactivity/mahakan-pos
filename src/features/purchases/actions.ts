@@ -1157,13 +1157,23 @@ export async function cancelPurchase(
       .where(eq(purchases.id, v.id))
       .limit(1);
     if (purchaseRow) {
+      /* Sesi AE-177h — section lines + total dari goods_receipt_items (RECEIVED),
+       * BUKAN purchase_items (ORDERED). Untuk PO partial-cancel: ordered=300
+       * tapi received=200 → cancel harus reverse 200 (= cumulative create
+       * jurnal), kalau pakai ordered 300 → phantom -100 di GL. Cancel ordered-only
+       * PO (early return TX di atas) → tidak ada GR → sectionLines kosong →
+       * SKIP journal hook (tak ada apa-apa yg perlu di-reverse). */
       const items = await db
         .select({
-          section: purchaseItems.sectionSnapshot,
-          totalCost: purchaseItems.totalCost,
+          section: goodsReceiptItems.sectionSnapshot,
+          totalCost: goodsReceiptItems.totalCost,
         })
-        .from(purchaseItems)
-        .where(eq(purchaseItems.purchaseId, v.id));
+        .from(goodsReceiptItems)
+        .innerJoin(
+          goodsReceipts,
+          eq(goodsReceipts.id, goodsReceiptItems.goodsReceiptId),
+        )
+        .where(eq(goodsReceipts.purchaseId, v.id));
       const bySection = new Map<string, number>();
       for (const it of items) {
         const key = it.section ?? "null";
@@ -1178,6 +1188,8 @@ export async function cancelPurchase(
           | null,
         amount,
       }));
+      const cancelTotal = sectionLines.reduce((s, l) => s + l.amount, 0);
+    if (cancelTotal > 0) {
       const todayWib = new Date().toISOString().slice(0, 10);
       const { fireJournalHook, postJournalForPurchaseCancel } = await import(
         "@/features/accounting/hooks"
@@ -1196,13 +1208,16 @@ export async function cancelPurchase(
               | "transfer_bri"
               | "transfer_other"
               | "top",
-            total: Number(purchaseRow.totalAmount),
+            /* Total = jumlah RECEIVED (sectionLines sudah dari gr_items).
+             * Untuk PO fully-received: ordered == received, sama saja. */
+            total: cancelTotal,
             lines: sectionLines,
             entryDate: todayWib,
             actorId: session.user.id,
           }),
         "purchase_cancel",
       );
+    }
     }
   }
 
@@ -2750,6 +2765,10 @@ export async function receiveGoods(input: {
               lines: sectionLines,
               entryDate: grDate,
               actorId: session.user.id,
+              /* Sesi AE-177h — sourceId = goodsReceiptId supaya partial GR
+               * ke-2/3 tidak hit idempotency (sebelumnya sourceId=purchaseId
+               * → kedua GR partial silent skip → GL kurang catat). */
+              sourceId: resultGrId,
             }),
           "purchase_create",
         );

@@ -1185,6 +1185,11 @@ export async function postJournalForPurchaseCreate(args: {
   lines: { section: IngredientSection; amount: number }[];
   entryDate: string;
   actorId: string;
+  /* Sesi AE-177h — override sourceId default (= purchaseId). Untuk partial
+   * GR via receiveGoods, caller pass goodsReceiptId supaya TIAP GR jurnalnya
+   * unik. Tanpa override, partial ke-2/3 hit idempotency (outlet, sourceType,
+   * sourceId)+(purchase_create, purchaseId) → silent skip → GL kurang catat. */
+  sourceId?: string;
 }): Promise<void> {
   if (!(await isAutoJournalEnabled(args.outletId))) return;
 
@@ -1203,7 +1208,7 @@ export async function postJournalForPurchaseCreate(args: {
     entryDate: args.entryDate,
     description: `Pembelian ${args.purchaseLabel}`,
     sourceType: "purchase_create",
-    sourceId: args.purchaseId,
+    sourceId: args.sourceId ?? args.purchaseId,
     lines,
     actorId: args.actorId,
   });
