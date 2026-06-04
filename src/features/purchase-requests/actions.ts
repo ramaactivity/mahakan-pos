@@ -179,6 +179,9 @@ export async function listLowStockIngredients(): Promise<
       section: ingredients.section,
       currentStock: ingredients.currentStock,
       reorderThreshold: ingredients.reorderThreshold,
+      packConversions: ingredients.packConversions,
+      unitBelanja: ingredients.unitBelanja,
+      unitBelanjaPerCogs: ingredients.unitBelanjaPerCogs,
     })
     .from(ingredients)
     .where(
@@ -203,6 +206,11 @@ export async function listLowStockIngredients(): Promise<
       Number(r.currentStock),
       Number(r.reorderThreshold ?? 0),
     ),
+    packConversions: Array.isArray(r.packConversions)
+      ? (r.packConversions as Array<{ unitLabel: string; qtyPerBase: number }>)
+      : [],
+    unitBelanja: r.unitBelanja,
+    unitBelanjaPerCogs: r.unitBelanjaPerCogs,
   }));
 
   return ok(result);

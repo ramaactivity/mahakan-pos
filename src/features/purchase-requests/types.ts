@@ -83,12 +83,19 @@ export interface PrForPurchase {
 export interface LowStockIngredient {
   id: string;
   name: string;
+  /** Master/COGS unit (basis konversi). */
   unit: string;
   section: "kitchen" | "bar" | "supporting" | "cleaning" | null;
   currentStock: number;
   reorderThreshold: number;
   /** Suggested qty: max(reorderThreshold * 1.5 - currentStock, reorderThreshold). */
   suggestedQty: number;
+  /* Sesi AE-177d — opsi satuan PR di sisi staff harus konsisten dgn Opname /
+   * Market List → kirim packConversions + belanja tier supaya client bisa
+   * bangun dropdown sama, lalu konversi qty staff ke master sebelum submit. */
+  packConversions: Array<{ unitLabel: string; qtyPerBase: number }>;
+  unitBelanja: string | null;
+  unitBelanjaPerCogs: string | null;
 }
 
 export type ApiResult<T> =

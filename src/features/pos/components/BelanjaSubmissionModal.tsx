@@ -11,6 +11,15 @@ import {
   isOk,
   type LowStockIngredient,
 } from "@/features/purchase-requests/types";
+import {
+  buildUnitSelectOptions,
+  CANONICAL_UNIT_PRESETS,
+  convertQtyWithIngredientPacks,
+  displayUnit,
+  mergePackConversions,
+  type IngredientPackConversion,
+} from "@/lib/unit-conversion";
+import { parseIndonesianNumber } from "@/lib/format";
 
 interface BelanjaSubmissionModalProps {
   open: boolean;
@@ -24,13 +33,20 @@ interface BelanjaSubmissionModalProps {
 interface DraftItem {
   ingredientId: string;
   name: string;
+  /** Satuan yg dipilih staff (boleh ≠ master). */
   unit: string;
+  /** Master unit basis konversi. */
+  masterUnit: string;
   section: string | null;
   currentStock: number;
   reorderThreshold: number;
   qty: string; // string for NumericInput
   selected: boolean;
   notes: string;
+  /* Sesi AE-177d — dropdown satuan + konversi qty ke master saat submit. */
+  packConversions: IngredientPackConversion[];
+  unitBelanja: string | null;
+  unitBelanjaPerCogs: string | null;
 }
 
 const SECTION_LABEL: Record<string, string> = {
@@ -51,13 +67,17 @@ export function BelanjaSubmissionModal({
     lowStock.map((ing) => ({
       ingredientId: ing.id,
       name: ing.name,
-      unit: ing.unit,
+      unit: displayUnit(ing.unit),
+      masterUnit: displayUnit(ing.unit),
       section: ing.section,
       currentStock: ing.currentStock,
       reorderThreshold: ing.reorderThreshold,
       qty: String(ing.suggestedQty),
       selected: true,
       notes: "",
+      packConversions: ing.packConversions ?? [],
+      unitBelanja: ing.unitBelanja ?? null,
+      unitBelanjaPerCogs: ing.unitBelanjaPerCogs ?? null,
     })),
   );
   const [notes, setNotes] = useState("");
@@ -88,22 +108,54 @@ export function BelanjaSubmissionModal({
       toast.error("Pilih minimal 1 item");
       return;
     }
+    /* Sesi AE-177d — konversi qty staff ke master (kalau pilih satuan ≠ master)
+     * sebelum submit, mirror Opname/Pembelian. Sumber konversi = packConversions
+     * + tier belanja dari master, sama dgn yg dipakai Tarik PR di sisi admin. */
+    type Submit = { ingredientId: string; requestedQty: number; notes: string | null };
+    const toSubmit: Submit[] = [];
     for (const it of selected) {
-      const qty = parseInt(it.qty, 10);
+      const qty = parseIndonesianNumber(it.qty);
       if (!Number.isFinite(qty) || qty <= 0) {
-        toast.error(`Qty ${it.name} tidak valid`);
+        toast.error(
+          `Qty ${it.name} invalid. Pakai koma untuk desimal (mis. 0,5).`,
+        );
         return;
       }
+      const master = displayUnit(it.masterUnit);
+      const chosen = displayUnit(it.unit);
+      let finalQty = qty;
+      if (chosen && master && chosen !== master) {
+        const merged = mergePackConversions(
+          it.packConversions,
+          it.unitBelanja && it.unitBelanjaPerCogs
+            ? [
+                {
+                  unitLabel: it.unitBelanja,
+                  qtyPerBase: parseFloat(it.unitBelanjaPerCogs),
+                },
+              ]
+            : [],
+        );
+        const conv = convertQtyWithIngredientPacks(qty, chosen, master, merged);
+        if (!conv.ok || conv.qtyMaster === null || conv.qtyMaster <= 0) {
+          toast.error(
+            `${it.name}: tidak bisa konversi ${chosen} ke ${master}. Pilih satuan lain atau minta owner set Konversi Pack di Kelola Bahan.`,
+          );
+          return;
+        }
+        finalQty = conv.qtyMaster;
+      }
+      toSubmit.push({
+        ingredientId: it.ingredientId,
+        requestedQty: finalQty,
+        notes: it.notes.trim() || null,
+      });
     }
     setSubmitting(true);
     const res = await createPurchaseRequest({
       shiftId,
       notes: notes.trim() || null,
-      items: selected.map((it) => ({
-        ingredientId: it.ingredientId,
-        requestedQty: parseInt(it.qty, 10),
-        notes: it.notes.trim() || null,
-      })),
+      items: toSubmit,
     });
     if (!isOk(res)) {
       setSubmitting(false);
@@ -209,25 +261,56 @@ export function BelanjaSubmissionModal({
                       />
                     </td>
                     <td className="p-2 text-right align-top text-neutral-900">
-                      {it.currentStock.toLocaleString("id-ID")} {it.unit}
+                      {it.currentStock.toLocaleString("id-ID")} {it.masterUnit}
                     </td>
                     <td className="p-2 text-right align-top text-neutral-700">
-                      {it.reorderThreshold.toLocaleString("id-ID")} {it.unit}
+                      {it.reorderThreshold.toLocaleString("id-ID")}{" "}
+                      {it.masterUnit}
                     </td>
                     <td className="p-2 text-right align-top">
-                      <div className="w-32 ml-auto">
-                        <NumericInput
-                          value={it.qty}
-                          onChange={(v) => update(idx, { qty: v })}
-                          allowDecimal={false}
-                          disabled={!it.selected}
-                          trailingSlot={
-                            <span className="text-xs text-neutral-500">
-                              {it.unit}
-                            </span>
+                      <div className="ml-auto flex w-44 items-center gap-1">
+                        <div className="flex-1">
+                          <NumericInput
+                            value={it.qty}
+                            onChange={(v) => update(idx, { qty: v })}
+                            allowDecimal
+                            disabled={!it.selected}
+                          />
+                        </div>
+                        {/* Sesi AE-177d — dropdown satuan KANONIK (sama Opname).
+                         * Staff boleh pilih satuan beli (Pcs/renceng/Kg) —
+                         * client konversi ke master sebelum submit. */}
+                        <select
+                          value={displayUnit(it.unit)}
+                          onChange={(e) =>
+                            update(idx, { unit: e.target.value })
                           }
-                        />
+                          disabled={!it.selected}
+                          aria-label="Satuan"
+                          className="w-20 shrink-0 rounded-md border border-neutral-300 bg-white px-1.5 py-1.5 text-xs text-neutral-900 disabled:bg-neutral-50 disabled:text-neutral-400"
+                        >
+                          {buildUnitSelectOptions({
+                            presets: CANONICAL_UNIT_PRESETS,
+                            packLabels: [
+                              it.masterUnit,
+                              it.unitBelanja ?? "",
+                              ...it.packConversions.map((p) => p.unitLabel),
+                            ],
+                            current: it.unit,
+                          }).options.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
                       </div>
+                      {it.selected &&
+                      displayUnit(it.unit) !== it.masterUnit ? (
+                        <p className="mt-1 text-[10px] text-neutral-500">
+                          → disimpan dlm{" "}
+                          <span className="font-mono">{it.masterUnit}</span>
+                        </p>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

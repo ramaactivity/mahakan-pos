@@ -27,33 +27,34 @@ import {
 import { formatIndonesianDate } from "@/lib/date";
 import { parseIndonesianNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import {
+  buildUnitSelectOptions,
+  CANONICAL_UNIT_PRESETS,
+  convertQtyWithIngredientPacks,
+  displayUnit,
+  mergePackConversions,
+  type IngredientPackConversion,
+} from "@/lib/unit-conversion";
 
 interface ItemDraft {
   id: string;
   ingredientName: string;
+  /** Satuan yang DIPILIH staff (boleh ≠ master, mis. Pcs untuk Bumbu Kentang
+   *  yang master-nya gr). Untuk linked item, dikonversi ke master saat submit. */
   unit: string;
+  /** Master/COGS unit untuk linked item (basis konversi). null = manual. */
+  masterUnit: string | null;
   qty: string; // user-typed string for flexible decimal entry
   notes: string;
   fromLowStock: boolean;
   ingredientId?: string; // null for custom items (added manually)
+  /* Sesi AE-177d — pack conversions per-bahan + tier belanja → dipakai
+   * client buat bangun dropdown satuan KANONIK (sama dgn Opname) +
+   * konversi qty ke master sebelum submit. Null = manual item. */
+  packConversions?: IngredientPackConversion[] | null;
+  unitBelanja?: string | null;
+  unitBelanjaPerCogs?: string | null;
 }
-
-/** Sesi AE-20 — common units untuk manual PO item. Aligned dengan
- *  Catat Pembelian COMMON_UNITS biar konsisten antar modul. */
-const PO_UNIT_OPTIONS = [
-  "Pcs",
-  "Kg",
-  "gr",
-  "L",
-  "ml",
-  "Btl",
-  "Pack",
-  "Bks",
-  "Krat",
-  "Lusin",
-  "Karton",
-  "Box",
-] as const;
 
 /**
  * Sesi AD-10 — Purchase Order mobile module.
@@ -167,10 +168,14 @@ function PoView() {
           id: `low-${ing.id}`,
           ingredientId: ing.id,
           ingredientName: ing.name,
-          unit: ing.unit,
+          unit: displayUnit(ing.unit),
+          masterUnit: displayUnit(ing.unit),
           qty: String(ing.suggestedQty),
           notes: "",
           fromLowStock: true,
+          packConversions: ing.packConversions,
+          unitBelanja: ing.unitBelanja,
+          unitBelanjaPerCogs: ing.unitBelanjaPerCogs,
         },
       ];
     });
@@ -183,6 +188,7 @@ function PoView() {
         id: `custom-${Date.now()}`,
         ingredientName: "",
         unit: "Pcs",
+        masterUnit: null,
         qty: "",
         notes: "",
         fromLowStock: false,
@@ -223,11 +229,44 @@ function PoView() {
         );
         return;
       }
+      /* Sesi AE-177d — kalau staff pilih satuan ≠ master (linked item),
+       * konversi qty ke master pakai packConversions yg sama dgn Opname.
+       * Hasil disimpan dalam satuan MASTER supaya alur PR→PO→GR konsisten
+       * (Tarik PR akan baca outstanding dalam master + tampilkan di satuan
+       * belanja owner). Manual item: kirim apa adanya. */
+      let finalQty = qty;
+      let finalUnit = it.unit.trim() || "pcs";
+      const master = it.masterUnit ? displayUnit(it.masterUnit) : null;
+      if (it.ingredientId && master) {
+        const chosen = displayUnit(it.unit);
+        if (chosen && chosen !== master) {
+          const merged = mergePackConversions(
+            (it.packConversions ?? []) as IngredientPackConversion[],
+            it.unitBelanja && it.unitBelanjaPerCogs
+              ? [
+                  {
+                    unitLabel: it.unitBelanja,
+                    qtyPerBase: parseFloat(it.unitBelanjaPerCogs),
+                  },
+                ]
+              : [],
+          );
+          const conv = convertQtyWithIngredientPacks(qty, chosen, master, merged);
+          if (!conv.ok || conv.qtyMaster === null || conv.qtyMaster <= 0) {
+            toast.error(
+              `${name}: tidak bisa konversi ${chosen} ke ${master}. Pilih satuan lain atau minta owner set Konversi Pack di Kelola Bahan.`,
+            );
+            return;
+          }
+          finalQty = conv.qtyMaster;
+        }
+        finalUnit = master;
+      }
       validatedItems.push({
         ingredientId: it.ingredientId ?? null,
         ingredientName: name,
-        unit: it.unit.trim() || "pcs",
-        requestedQty: qty,
+        unit: finalUnit,
+        requestedQty: finalQty,
         notes: it.notes.trim() || null,
       });
     }
@@ -514,28 +553,45 @@ function PoView() {
                     placeholder="Qty"
                     className="flex-1 rounded-md border border-neutral-300 bg-white px-3 py-2 text-base font-mono tabular-nums text-neutral-900 placeholder:text-neutral-400 focus:border-mahakan-green-700 focus:outline-none"
                   />
-                  {it.fromLowStock ? (
-                    <span className="shrink-0 text-sm font-medium text-neutral-700">
-                      {it.unit}
-                    </span>
-                  ) : (
-                    /* Sesi AE-20 — manual item unit dropdown (konsisten
-                     * dengan Catat Pembelian + Stock Opname). Sebelumnya
-                     * free-text → typo-prone (kg vs Kg vs KG). */
-                    <select
-                      value={it.unit}
-                      onChange={(e) => updateItem(it.id, { unit: e.target.value })}
-                      className="w-24 shrink-0 rounded-md border border-neutral-300 bg-white px-2 py-2 text-sm text-neutral-900 focus:border-mahakan-green-700 focus:outline-none"
-                      aria-label="Satuan"
-                    >
-                      {PO_UNIT_OPTIONS.map((u) => (
-                        <option key={u} value={u}>
-                          {u}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+                  {/* Sesi AE-177d — dropdown satuan KANONIK (= Opname /
+                   * Market List). Linked item: opsi = master + belanja +
+                   * packConversions + presets (staff boleh pilih Pcs/renceng
+                   * dll kalau master sudah set Konversi Pack). Manual item:
+                   * cuma presets canonical. */}
+                  <select
+                    value={displayUnit(it.unit)}
+                    onChange={(e) => updateItem(it.id, { unit: e.target.value })}
+                    className="w-24 shrink-0 rounded-md border border-neutral-300 bg-white px-2 py-2 text-sm text-neutral-900 focus:border-mahakan-green-700 focus:outline-none"
+                    aria-label="Satuan"
+                  >
+                    {buildUnitSelectOptions({
+                      presets: CANONICAL_UNIT_PRESETS,
+                      packLabels: it.fromLowStock
+                        ? [
+                            it.masterUnit ?? "",
+                            it.unitBelanja ?? "",
+                            ...((it.packConversions ?? []).map(
+                              (p) => p.unitLabel,
+                            )),
+                          ]
+                        : [],
+                      current: it.unit,
+                    }).options.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
+                {it.fromLowStock &&
+                it.masterUnit &&
+                displayUnit(it.unit) !== it.masterUnit ? (
+                  <p className="mt-1 text-[11px] text-neutral-500">
+                    Disimpan dlm satuan dasar:{" "}
+                    <span className="font-mono">{it.masterUnit}</span> (otomatis
+                    dikonversi)
+                  </p>
+                ) : null}
                 <input
                   type="text"
                   value={it.notes}
