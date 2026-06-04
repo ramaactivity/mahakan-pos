@@ -2244,15 +2244,32 @@ export async function fetchGoodsReceiptItems(grId: string): Promise<
     )
     .limit(1);
   if (!gr) return fail("NOT_FOUND", "GR tidak ditemukan");
+  /* Sesi AE-177f — JOIN ke purchase_items untuk ambil unitOverride. GR row
+   * sendiri cuma punya unitSnapshot (master); padahal receivedQty disimpan
+   * dalam SATUAN YG DIPILIH owner saat purchase (mis. 2 "Pack" Nugget).
+   * Pakai `unitOverride ?? unitSnapshot` supaya konsisten dgn tampilan PO
+   * (formatPurchaseItemQty). Tanpa join: tampil "2 Pcs" padahal 2 Pack. */
   const rows = await db
-    .select()
+    .select({
+      ingredientNameSnapshot: goodsReceiptItems.ingredientNameSnapshot,
+      unitSnapshot: goodsReceiptItems.unitSnapshot,
+      receivedQty: goodsReceiptItems.receivedQty,
+      receivedQtyDecimal: goodsReceiptItems.receivedQtyDecimal,
+      unitCost: goodsReceiptItems.unitCost,
+      totalCost: goodsReceiptItems.totalCost,
+      poUnitOverride: purchaseItems.unitOverride,
+    })
     .from(goodsReceiptItems)
+    .leftJoin(
+      purchaseItems,
+      eq(goodsReceiptItems.purchaseItemId, purchaseItems.id),
+    )
     .where(eq(goodsReceiptItems.goodsReceiptId, grId))
     .orderBy(goodsReceiptItems.ingredientNameSnapshot);
   return ok(
     rows.map((r) => ({
       ingredientName: r.ingredientNameSnapshot,
-      unit: r.unitSnapshot,
+      unit: r.poUnitOverride ?? r.unitSnapshot,
       receivedQty: Number(r.receivedQtyDecimal ?? r.receivedQty),
       unitCost: r.unitCost,
       totalCost: r.totalCost,
