@@ -49,7 +49,9 @@ import {
   CANONICAL_UNIT_PRESETS,
   convertPurchaseQty,
   convertQty,
+  convertQtyWithIngredientPacks,
   displayUnit,
+  mergePackConversions,
   type IngredientPackConversion,
 } from "@/lib/unit-conversion";
 import {
@@ -330,15 +332,32 @@ export function CreatePurchaseFromPrModal({
         const ing = it.ingredientId ? ingredientById.get(it.ingredientId) : null;
         const masterUnit = ing?.unit ?? it.prUnit;
         const chosenUnit = it.unit || it.prUnit;
-        /* Sesi AE-173 — outstanding di-rekam dalam satuan COGS. Kalau baris
-         * pakai satuan belanja, convert dulu biar warning "lebih dari
-         * request" apple-to-apple (mis. 5.726 Kg vs 5.726 Kg, bukan vs 5726 g). */
+        /* Sesi AE-173 → AE-177e — outstanding di-rekam dalam satuan COGS
+         * (master). Convert ke satuan yang dipilih owner supaya warning
+         * "lebih X dari request" apple-to-apple. Sumber konversi sama dgn
+         * Tarik PR saat save (packConversions + tier belanja) → konsisten. */
         const belanja = readBelanjaTier(ing);
+        const merged = mergePackConversions(
+          (ing?.packConversions ?? []) as IngredientPackConversion[],
+          belanja.unit && belanja.perCogs
+            ? [{ unitLabel: belanja.unit, qtyPerBase: belanja.perCogs }]
+            : [],
+        );
+        /* 1 chosenUnit = ? master → outstanding(chosen) = outstanding(master)/X.
+         * Pakai convertQtyWithIngredientPacks (sumber tunggal yg juga dipakai
+         * Opname/MarketList) supaya semua label custom + cross-dimensi yg
+         * sudah di-set di master ke-handle. Fallback ke master kalau unknown. */
+        const oneChosenInMaster = convertQtyWithIngredientPacks(
+          1,
+          chosenUnit,
+          masterUnit,
+          merged,
+        );
         const outstandingInUnit =
-          belanja.perCogs != null &&
-          belanja.unit != null &&
-          displayUnit(chosenUnit) === displayUnit(belanja.unit)
-            ? it.outstandingQty / belanja.perCogs
+          oneChosenInMaster.ok &&
+          oneChosenInMaster.qtyMaster !== null &&
+          oneChosenInMaster.qtyMaster > 0
+            ? it.outstandingQty / oneChosenInMaster.qtyMaster
             : it.outstandingQty;
         return {
           purchaseRequestItemId: it.purchaseRequestItemId,
