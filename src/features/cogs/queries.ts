@@ -210,6 +210,11 @@ export async function getCogsReport(args: {
   const pembelianByIng = new Map<string, { qty: number; total: number }>();
 
   // (a) GR receipts dalam periode (by received_date).
+  /* Sesi AE-177g — JOIN purchases + EXCLUDE status='cancelled'. cancelPurchase
+   * utk PO yang sudah received/partial cuma set `purchases.status='cancelled'`,
+   * tidak menyentuh `receiptStatus`. Tanpa filter ini, GR dari pembelian yang
+   * dibatalkan ikut nyumbang ke kolom Pembelian → COGS overstated 2x
+   * (counter-movement sudah benerin stockAkhir, tapi pembelian tetap +75 → bias). */
   const grRows = await db
     .select({
       ingredientId: goodsReceiptItems.ingredientId,
@@ -222,6 +227,7 @@ export async function getCogsReport(args: {
       goodsReceipts,
       eq(goodsReceipts.id, goodsReceiptItems.goodsReceiptId),
     )
+    .innerJoin(purchases, eq(purchases.id, goodsReceipts.purchaseId))
     .leftJoin(
       inventoryMovements,
       eq(goodsReceiptItems.movementId, inventoryMovements.id),
@@ -231,6 +237,7 @@ export async function getCogsReport(args: {
         eq(goodsReceipts.outletId, args.outletId),
         gte(goodsReceipts.receivedDate, period.fromDate),
         lte(goodsReceipts.receivedDate, period.toDate),
+        sql`${purchases.status} != 'cancelled'`,
       ),
     );
   for (const r of grRows) {
@@ -320,8 +327,12 @@ export async function getCogsReport(args: {
       stockAkhirByIng.set(l.ingredientId, qty);
     }
   } else {
+    /* Sesi AE-177g — Banner jujur: kode pakai `currentStockDecimal` sebagai
+     * fallback (lihat baris pembentukan IngredientCogsInput), BUKAN 0.
+     * COGS hasilnya = pemakaian aktual via invariant `awal + delta = akhir`.
+     * Tetap kurang akurat karena tidak ada hitung fisik akhir periode. */
     banners.push(
-      `Belum ada opname dalam periode ${period.label}. Stock Akhir di-asumsikan 0 — COGS over-stated.`,
+      `Belum ada opname dalam periode ${period.label}. Stock Akhir pakai stok saat ini (current) — COGS approximate, hitung opname akhir bulan utk akurasi.`,
     );
   }
 

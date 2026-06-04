@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   expenseCategories,
@@ -2148,10 +2148,12 @@ export async function listGoodsReceipts(opts?: {
   const conds = [eq(goodsReceipts.outletId, session.user.outletId)];
   if (opts?.dateFrom) conds.push(gte(goodsReceipts.receivedDate, opts.dateFrom));
   if (opts?.dateTo) conds.push(lte(goodsReceipts.receivedDate, opts.dateTo));
-  /* Sesi AE-177 — sembunyikan GR dari purchase yang DIBATALKAN (instant kini
-   * bikin GR; saat cancel, stok sudah reversed + expense soft-deleted, jadi GR-
-   * nya juga tak boleh tampil sebagai penerimaan valid). */
-  conds.push(ne(purchases.receiptStatus, "cancelled"));
+  /* Sesi AE-177 → AE-177g — sembunyikan GR dari purchase yang DIBATALKAN.
+   * Cancel utk PO yang 'ordered' set receiptStatus='cancelled' (cek aman),
+   * TAPI cancel utk PO 'received/partial' cuma set status='cancelled' tanpa
+   * sentuh receiptStatus → filter receiptStatus saja meleset. Pakai
+   * `purchases.status != 'cancelled'` supaya semua jalur cancel ter-cover. */
+  conds.push(sql`${purchases.status} != 'cancelled'`);
   const rows = await db
     .select({
       id: goodsReceipts.id,
