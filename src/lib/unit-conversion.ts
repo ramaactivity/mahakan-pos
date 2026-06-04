@@ -705,13 +705,37 @@ export function convertPurchaseQty(input: {
     };
   }
 
+  /* Sesi AE-177 — UNIVERSAL pack lookup dulu, SEBELUM klasifikasi dimensi.
+   * `ingredientPacks` (dari `ingredients.packConversions`) = sumber kebenaran
+   * konversi yang dipakai Opname/MarketList lewat `resolveQtyToMaster`. Match
+   * case-insensitive supaya konsisten lintas modul. Tanpa lift ini, label
+   * custom (renceng) ditolak UNKNOWN_UNIT + cross-dimensi (Pcs↔gr, Kg↔Pcs)
+   * jatuh ke DIMENSION_MISMATCH walau pack-nya jelas-jelas ada di master. */
+  if (ingredientPacks && ingredientPacks.length > 0) {
+    const fromLc = fromUnit.trim().toLowerCase();
+    const matched = ingredientPacks.find(
+      (p) => p.unitLabel.trim().toLowerCase() === fromLc,
+    );
+    if (matched && Number.isFinite(matched.qtyPerBase) && matched.qtyPerBase > 0) {
+      const qtyMaster = qty * matched.qtyPerBase;
+      const masterDisp = resolveUnit(masterUnit)?.label ?? masterUnit;
+      return {
+        ok: true,
+        qtyMaster,
+        costFactor: qtyMaster / qty,
+        mode: "via-pack",
+        explain: `via Konversi Pack bahan: 1 ${matched.unitLabel} = ${matched.qtyPerBase} ${masterDisp}`,
+      };
+    }
+  }
+
   const fromMeta = resolveUnit(fromUnit);
   const masterMeta = resolveUnit(masterUnit);
   if (!fromMeta) {
     return {
       ok: false,
       error: "UNKNOWN_UNIT",
-      message: `Unit "${fromUnit}" tidak dikenali sistem`,
+      message: `Satuan "${fromUnit}" belum di-set konversinya. Buka Kelola Bahan → tambah Konversi Pack "1 ${fromUnit} = … ${masterUnit}".`,
     };
   }
   if (!masterMeta) {
@@ -745,35 +769,14 @@ export function convertPurchaseQty(input: {
     };
   }
 
-  // 4-5. Discrete dari fromUnit → butuh pack info untuk derive master qty.
-  //   Asumsi: pack.packSize × pack.packUnit ekuivalen 1 unit fromUnit.
-  //   Mis. fromUnit="Pack", pack={packSize:1000, packUnit:"gr"}
-  //     → 1 Pack = 1000 gr → qty Pack × 1000 gr = qtyMaster (kalau master gr)
+  // 4-5. Discrete dari fromUnit → fallback ke supplier `pack` info
+  // (Market List). ingredientPacks sudah di-cek di atas.
   if (fromMeta.dimension === "discrete") {
-    /* Sesi AE-62af — coba ingredient-scoped packs dulu (lebih spesifik),
-     * fallback ke supplier pack info kalau ada. Match case-insensitive
-     * pada unitLabel — kalau owner set "packs" + staff pilih "Packs" → match. */
-    if (ingredientPacks && ingredientPacks.length > 0) {
-      const fromLc = (fromUnit ?? "").trim().toLowerCase();
-      const matched = ingredientPacks.find(
-        (p) => p.unitLabel.trim().toLowerCase() === fromLc,
-      );
-      if (matched && Number.isFinite(matched.qtyPerBase) && matched.qtyPerBase > 0) {
-        const qtyMaster = qty * matched.qtyPerBase;
-        return {
-          ok: true,
-          qtyMaster,
-          costFactor: qtyMaster / qty,
-          mode: "via-pack",
-          explain: `via Konversi Pack bahan: 1 ${matched.unitLabel} = ${matched.qtyPerBase} ${masterMeta.label}`,
-        };
-      }
-    }
     if (!pack) {
       return {
         ok: false,
         error: "PACK_UNKNOWN",
-        message: `Sistem belum tahu 1 ${fromUnit} = berapa ${masterUnit}. Set di Edit Satuan Bahan → Konversi Pack, atau pilih supplier dengan Market List entry.`,
+        message: `Sistem belum tahu 1 ${fromUnit} = berapa ${masterUnit}. Buka Kelola Bahan → tambah Konversi Pack, atau pilih supplier dgn Market List entry.`,
       };
     }
     // Convert pack.packUnit → masterUnit. Kalau pack.packUnit === fromUnit
@@ -802,12 +805,13 @@ export function convertPurchaseQty(input: {
     };
   }
 
-  // 7. Continuous dari, master discrete — kasus aneh (mis. master "Pack",
-  // staff input "gr"). Tidak didukung untuk skenario Mahakan.
+  // 7. Continuous dari, master discrete — mis. master "Pcs" staff input "Kg".
+  // ingredientPacks sudah di-cek di atas; kalau sampai sini berarti belum
+  // di-set di Kelola Bahan.
   return {
     ok: false,
     error: "DIMENSION_MISMATCH",
-    message: `Tidak bisa konversi ${fromUnit} ke ${masterUnit}. Edit master bahan atau pilih unit sejenis (Kg/gr untuk berat, L/ml untuk volume).`,
+    message: `Belum ada konversi ${fromUnit} → ${masterUnit}. Buka Kelola Bahan → tambah Konversi Pack "1 ${fromUnit} = … ${masterUnit}".`,
   };
 }
 

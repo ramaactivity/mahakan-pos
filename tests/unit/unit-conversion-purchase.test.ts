@@ -262,6 +262,61 @@ describe("convertPurchaseQty", () => {
       expect(res.ok).toBe(false);
       if (!res.ok) expect(res.error).toBe("PACK_UNKNOWN");
     });
+
+    /* Sesi AE-177 — universal pack lookup. Sebelumnya ingredientPacks
+     * cuma di-cek di branch `dimension === "discrete"`, jadi label custom
+     * (renceng → UNKNOWN_UNIT) + cross-dimensi (Pcs↔gr, Kg↔Pcs) ditolak
+     * walau master sudah set packConversions. */
+    it("Chocolatos: 1 renceng → 280 gr (label custom, BUKAN UNKNOWN_UNIT)", () => {
+      const res = convertPurchaseQty({
+        qty: 1,
+        fromUnit: "renceng",
+        masterUnit: "gr",
+        pack: null,
+        ingredientPacks: [
+          { unitLabel: "renceng", qtyPerBase: 280 },
+          { unitLabel: "sachet", qtyPerBase: 28 },
+        ],
+      });
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.qtyMaster).toBe(280);
+        expect(res.mode).toBe("via-pack");
+      }
+    });
+
+    it("Bumbu Kentang: 3 Pcs → 75 gr (count→mass via pack, BUKAN DIMENSION_MISMATCH)", () => {
+      const res = convertPurchaseQty({
+        qty: 3,
+        fromUnit: "Pcs",
+        masterUnit: "gr",
+        pack: null,
+        ingredientPacks: [{ unitLabel: "Pcs", qtyPerBase: 25 }],
+      });
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.qtyMaster).toBe(75);
+        expect(res.mode).toBe("via-pack");
+      }
+    });
+
+    it("Nugget 500gr: 1 Kg → 40 Pcs (mass→count via pack, BUKAN DIMENSION_MISMATCH)", () => {
+      const res = convertPurchaseQty({
+        qty: 1,
+        fromUnit: "Kg",
+        masterUnit: "Pcs",
+        pack: null,
+        ingredientPacks: [
+          { unitLabel: "Pack", qtyPerBase: 20 },
+          { unitLabel: "Kg", qtyPerBase: 40 },
+        ],
+      });
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.qtyMaster).toBe(40);
+        expect(res.mode).toBe("via-pack");
+      }
+    });
   });
 });
 

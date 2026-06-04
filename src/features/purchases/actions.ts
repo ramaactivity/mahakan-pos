@@ -311,7 +311,9 @@ export async function createPurchase(
        * items[].purchaseRequestItemId. Per-item:
        *  1. PR item exists + owner outlet match
        *  2. PR.status != cancelled
-       *  3. receivedQty + qtyMaster <= requestedQty (anti-over-receive)
+       *  3. PR item belum di-reject
+       * Sesi AE-177: anti-over-receive guard DIHAPUS — owner boleh beli
+       *   lebih/kurang dari request staff; disparity tercatat di PR.
        * Output: map prItemId → currentRow untuk post-loop receivedQty bump. */
       const prItemIds = v.items
         .map((i) => i.purchaseRequestItemId)
@@ -337,7 +339,13 @@ export async function createPurchase(
         }
 
         // Validate each linked item
-        for (const { item, ing, res } of resolved) {
+        /* Sesi AE-177 — keputusan owner: qty pembelian boleh LEBIH/KURANG
+         * dari yang di-request staff (pertimbangan pasar/promo ada di
+         * tangan Purchasing). Disparity tercatat di PR (requestedQty)
+         * vs actual receivedQty (boleh > requested). computePrStatus tetap
+         * mark "completed" begitu received >= requested.
+         * (Sebelumnya: throw PR_OVER_RECEIVE → blok save.) */
+        for (const { item, ing } of resolved) {
           if (!item.purchaseRequestItemId) continue;
           const prItem = prItemMap.get(item.purchaseRequestItemId);
           if (!prItem) throw new Error("PR_ITEM_NOT_FOUND");
@@ -351,14 +359,6 @@ export async function createPurchase(
           }
           if (prItem.rejectedAt) {
             throw new Error(`PR_ITEM_REJECTED:${ing.name}`);
-          }
-          const requested = Number(prItem.requestedQty);
-          const received = Number(prItem.receivedQty);
-          const incoming = Math.max(1, Math.round(res.qtyMaster));
-          if (received + incoming > requested) {
-            throw new Error(
-              `PR_OVER_RECEIVE:${ing.name}:${requested - received}`,
-            );
           }
         }
       }
@@ -861,17 +861,6 @@ export async function createPurchase(
       return fail(
         "CONFLICT",
         `Bahan "${ingName}": item PR sudah ditolak, tidak bisa di-belikan`,
-      );
-    }
-    if (msg.startsWith("PR_OVER_RECEIVE:")) {
-      // Format: PR_OVER_RECEIVE:<ingredientName>:<remainingQty>
-      const rest = msg.slice("PR_OVER_RECEIVE:".length);
-      const sep = rest.indexOf(":");
-      const ingName = sep > 0 ? rest.slice(0, sep) : "?";
-      const remaining = sep > 0 ? rest.slice(sep + 1) : "?";
-      return fail(
-        "VALIDATION_ERROR",
-        `Bahan "${ingName}": maks ${remaining} (sisa outstanding PR)`,
       );
     }
     return fail(
@@ -2325,14 +2314,12 @@ export async function receiveGoods(input: {
         .from(purchaseItems)
         .where(eq(purchaseItems.purchaseId, po.id));
       const itemById = new Map(poItems.map((i) => [i.id, i] as const));
-      // Validasi: line ada di PO + tidak over-receive.
-      for (const [piId, qty] of recvByItem) {
+      /* Sesi AE-177 — owner: terima boleh LEBIH/KURANG dari pesanan PO
+       * (supplier kasih bonus, harga turun, dst). Disparity tercatat di
+       * purchase_items.qty (ordered) vs received_qty. */
+      for (const [piId] of recvByItem) {
         const pi = itemById.get(piId);
         if (!pi) throw new Error("ITEM_NOT_IN_PO");
-        const already = Number(pi.receivedQtyDecimal ?? pi.receivedQty);
-        const ordered = parseFloat(pi.qtyDecimal ?? "") || pi.qty;
-        if (already + qty > ordered + 1e-6)
-          throw new Error(`OVER_RECEIVE:${pi.ingredientNameSnapshot}`);
       }
 
       const ingIds = Array.from(new Set(poItems.map((i) => i.ingredientId)));
@@ -2675,11 +2662,6 @@ export async function receiveGoods(input: {
       return fail("BAD_STATE", "PO sudah diterima penuh / dibatalkan");
     if (msg === "ITEM_NOT_IN_PO")
       return fail("VALIDATION_ERROR", "Ada item yang bukan bagian PO ini");
-    if (msg.startsWith("OVER_RECEIVE:"))
-      return fail(
-        "VALIDATION_ERROR",
-        `Qty diterima "${msg.slice("OVER_RECEIVE:".length)}" melebihi yang dipesan`,
-      );
     if (msg.startsWith("UNIT_ERROR:")) {
       const rest = msg.slice("UNIT_ERROR:".length);
       const sep = rest.indexOf(":");
