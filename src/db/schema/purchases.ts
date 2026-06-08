@@ -17,7 +17,7 @@ import { users } from "./users";
 import { suppliers } from "./suppliers";
 import { ingredients, inventoryMovements } from "./inventory";
 import { expenses } from "./expenses";
-import { purchaseRequestItems } from "./purchase_requests";
+import { purchaseRequests, purchaseRequestItems } from "./purchase_requests";
 
 /**
  * Purchase header (Sesi O). Replaces Owner's `Form Pembelanjaan Cash` +
@@ -43,6 +43,15 @@ export const purchases = pgTable(
 
     /** Nullable: pasar / walk-in tanpa supplier formal. */
     supplierId: uuid("supplier_id").references(() => suppliers.id),
+
+    /** Sesi AE-177 — link header ke PR sumber (kalau dibuat lewat "Tarik dari
+     * PR"). NULL = pembelian langsung/standalone. Item-level link tetap di
+     * purchase_items.purchaseRequestItemId (akurat untuk many-to-many); kolom
+     * ini untuk cross-surface cepat PR↔PO di UI. No-cascade (jangan hapus PO
+     * kalau PR dihapus). */
+    fromPurchaseRequestId: uuid("from_purchase_request_id").references(
+      () => purchaseRequests.id,
+    ),
     purchaseDate: date("purchase_date").notNull(),
 
     paymentMethod: text("payment_method", {
@@ -126,6 +135,7 @@ export const purchases = pgTable(
   (t) => [
     index("idx_purchases_outlet_date").on(t.outletId, t.purchaseDate),
     index("idx_purchases_supplier").on(t.supplierId),
+    index("idx_purchases_from_pr").on(t.fromPurchaseRequestId),
     index("idx_purchases_status_due").on(t.status, t.dueDate),
     check("ck_purchases_total_nonneg", sql`${t.totalAmount} >= 0`),
     check("ck_purchases_term_nonneg", sql`${t.paymentTermDays} >= 0`),
