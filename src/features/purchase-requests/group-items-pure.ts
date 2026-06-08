@@ -156,10 +156,17 @@ export function getPurchaseGroupBlockers(
  * PR status auto-promote — pure helper di-extract supaya bisa di-share
  * antara createPurchase (PR-linked path) dan receiveItem existing.
  *
+ * Keputusan owner (feedback Anisa 2026-06-08): owner BEBAS beli lebih atau
+ * KURANG dari request staff ("Owner bebas override request staff" — copy modal
+ * Tarik ke Pembelian). Karena itu qty kurang dari request = keputusan FINAL
+ * owner, BUKAN sisa yang masih ditunggu. Sebuah item dianggap "outstanding"
+ * HANYA kalau belum dibeli sama sekali (receivedQty == 0). Item yang sengaja
+ * di-skip total ditutup owner via tombol "Tandai Selesai" (markPurchaseRequestComplete).
+ *
  * Status workflow:
- *   - open: ada item dengan receivedQty < requestedQty AND !rejected
- *   - partial: minimal 1 item received > 0 tapi belum semua selesai
- *   - completed: semua items either fully received OR rejected
+ *   - open: belum ada item yang diterima sama sekali
+ *   - partial: sebagian item sudah diterima, masih ada item yg belum dibeli (qty 0)
+ *   - completed: SEMUA item non-rejected sudah diterima (≥1 unit; qty kurang OK)
  */
 export type PrStatus = "open" | "partial" | "completed" | "cancelled";
 
@@ -171,15 +178,18 @@ export interface PrItemForStatus {
 
 export function computePrStatus(items: PrItemForStatus[]): PrStatus {
   if (items.length === 0) return "open";
-  let hasOutstanding = false;
+  let hasOutstanding = false; // ada item yg belum dibeli sama sekali (qty 0)
   let hasReceived = false;
+  let activeCount = 0;
   for (const item of items) {
     const isRejected = item.rejectedAt != null;
     if (isRejected) continue;
+    activeCount++;
     if (item.receivedQty > 0) hasReceived = true;
-    if (item.receivedQty < item.requestedQty) hasOutstanding = true;
+    else hasOutstanding = true; // receivedQty == 0 → belum dibeli
   }
-  if (!hasOutstanding) return "completed";
+  if (activeCount === 0) return "open"; // semua item rejected → caller bisa override ke cancelled
+  if (!hasOutstanding) return "completed"; // semua item sudah dapat ≥1 unit (qty kurang = final owner)
   if (hasReceived) return "partial";
   return "open";
 }

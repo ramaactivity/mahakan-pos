@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import {
+  CheckCircle2,
   FileText,
   MessageCircle,
   Package,
@@ -47,6 +48,7 @@ interface Props {
   onRejectItem: (item: PurchaseRequestItem) => void;
   onCancel: (r: PurchaseRequestWithItems) => void;
   onPullToPurchase: (r: PurchaseRequestWithItems) => void;
+  onMarkComplete: (r: PurchaseRequestWithItems) => void;
 }
 
 export function PurchaseRequestDetailModal({
@@ -55,6 +57,7 @@ export function PurchaseRequestDetailModal({
   onRejectItem,
   onCancel,
   onPullToPurchase,
+  onMarkComplete,
 }: Props) {
   /* Sesi AE-177 — cross-surface arah-balik: PO/pembelian yang dibuat dari PR
    * ini. enabled hanya saat modal terbuka. */
@@ -73,18 +76,22 @@ export function PurchaseRequestDetailModal({
 
   const canEdit =
     request.status !== "cancelled" && request.status !== "completed";
-  /* Sesi AE-177 — basis ITEM (bukan jumlah qty lintas satuan). */
+  /* Sesi AE-177 — basis ITEM (bukan jumlah qty lintas satuan).
+   * Feedback Anisa 2026-06-08: item dianggap "sudah dibeli" begitu dapat ≥1
+   * unit (qty kurang dari request = keputusan final owner). Yang menahan PR
+   * dari Selesai hanya item yang BELUM dibeli sama sekali (received 0). */
   const activeItems = request.items.filter((i) => !i.rejectedAt);
-  const receivedItemCount = activeItems.filter(
-    (i) => Number(i.receivedQty) >= Number(i.requestedQty),
+  const boughtItemCount = activeItems.filter(
+    (i) => Number(i.receivedQty) > 0,
   ).length;
   const fulfillPercent =
     activeItems.length > 0
-      ? Math.round((receivedItemCount / activeItems.length) * 100)
+      ? Math.round((boughtItemCount / activeItems.length) * 100)
       : 0;
-  const outstandingItemCount = activeItems.filter(
+  const unboughtItemCount = activeItems.length - boughtItemCount;
+  const anyRemaining = activeItems.some(
     (i) => Number(i.receivedQty) < Number(i.requestedQty),
-  ).length;
+  );
 
   return (
     <Modal
@@ -104,10 +111,10 @@ export function PurchaseRequestDetailModal({
             <p className="text-xs text-neutral-600">
               <Package className="mr-1 inline size-3.5" />
               {request.items.length} bahan
-              {outstandingItemCount > 0 ? (
+              {unboughtItemCount > 0 ? (
                 <span className="text-warning-600">
                   {" "}
-                  · {outstandingItemCount} outstanding
+                  · {unboughtItemCount} belum dibeli
                 </span>
               ) : null}
             </p>
@@ -118,7 +125,7 @@ export function PurchaseRequestDetailModal({
             ) : null}
           </div>
           <p className="font-mono text-xs text-neutral-700">
-            {receivedItemCount} / {activeItems.length} item diterima
+            {boughtItemCount} / {activeItems.length} item dibeli
           </p>
         </div>
 
@@ -255,16 +262,30 @@ export function PurchaseRequestDetailModal({
 
         {/* Footer aksi */}
         {canEdit ? (
-          <div className="flex flex-wrap justify-end gap-2 border-t border-neutral-200 pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200 pt-3">
             <Button variant="ghost" size="sm" onClick={() => onCancel(request)}>
               <X className="size-4" /> Batalkan PR
             </Button>
-            {outstandingItemCount > 0 ? (
-              <Button size="sm" onClick={() => onPullToPurchase(request)}>
-                <FileText className="size-4" />
-                Tarik ke Pembelian
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Feedback Anisa — owner boleh menutup PR walau ada item yg
+                  sengaja tidak dibeli (PR/PO/GR boleh beda tanggal, penutupan
+                  ini keputusan owner bukan berbasis tanggal). */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onMarkComplete(request)}
+                className="border-mahakan-green-300 text-mahakan-green-800 hover:bg-mahakan-green-50"
+                title="Tutup PR ini sebagai Selesai"
+              >
+                <CheckCircle2 className="size-4" /> Tandai Selesai
               </Button>
-            ) : null}
+              {anyRemaining ? (
+                <Button size="sm" onClick={() => onPullToPurchase(request)}>
+                  <FileText className="size-4" />
+                  Tarik ke Pembelian
+                </Button>
+              ) : null}
+            </div>
           </div>
         ) : null}
       </div>

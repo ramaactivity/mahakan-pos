@@ -134,6 +134,7 @@ export const AUDIT_EVENT_TYPES = [
   "purchase_request.create",
   "purchase_request.receive",
   "purchase_request.cancel",
+  "purchase_request.complete",
   "purchase_request.whatsapp_sent",
   // Settlement Logs (Phase 6.1, sesi AC-5)
   "settlement_log.create",

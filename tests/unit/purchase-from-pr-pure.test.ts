@@ -150,6 +150,29 @@ describe("computePrStatus", () => {
     ).toBe("completed");
   });
 
+  it("completed when every item bought even if UNDER requested (owner override)", () => {
+    // Feedback Anisa: owner sengaja beli lebih sedikit dari request staff →
+    // qty kurang = keputusan final, PR tetap Selesai selama tiap item dapat ≥1.
+    expect(
+      computePrStatus([
+        { requestedQty: 5726, receivedQty: 2000, rejectedAt: null },
+        { requestedQty: 535, receivedQty: 500, rejectedAt: null },
+        { requestedQty: 30, receivedQty: 20, rejectedAt: null },
+      ]),
+    ).toBe("completed");
+  });
+
+  it("stays partial when an item is skipped entirely (qty 0)", () => {
+    // Item yang belum dibeli sama sekali tetap menahan PR di partial —
+    // owner tutup manual via Tandai Selesai.
+    expect(
+      computePrStatus([
+        { requestedQty: 10, receivedQty: 3, rejectedAt: null },
+        { requestedQty: 5, receivedQty: 0, rejectedAt: null },
+      ]),
+    ).toBe("partial");
+  });
+
   it("rejected items don't block completion", () => {
     expect(
       computePrStatus([

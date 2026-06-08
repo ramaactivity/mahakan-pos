@@ -28,6 +28,7 @@ import {
   cancelPurchaseRequest,
   getPurchaseRequestStats,
   listPurchaseRequests,
+  markPurchaseRequestComplete,
   rejectItem,
 } from "@/features/purchase-requests/actions";
 import {
@@ -84,6 +85,12 @@ export function PurchaseRequestsSection() {
   );
   const [cancelReason, setCancelReason] = useState("");
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
+
+  // Feedback Anisa 2026-06-08 — tandai PR Selesai manual (untuk item yg sengaja
+  // tidak dibeli; PR/PO/GR boleh beda tanggal, ini keputusan owner).
+  const [completeTarget, setCompleteTarget] =
+    useState<PurchaseRequestWithItems | null>(null);
+  const [completeSubmitting, setCompleteSubmitting] = useState(false);
 
   // Sesi AE-19 — per-item reject state.
   const [rejectTarget, setRejectTarget] = useState<{
@@ -200,6 +207,20 @@ export function PurchaseRequestsSection() {
     toast.success("Permintaan belanja dibatalkan");
     setCancelTarget(null);
     setCancelReason("");
+    void refresh();
+  }
+
+  async function submitComplete() {
+    if (!completeTarget) return;
+    setCompleteSubmitting(true);
+    const res = await markPurchaseRequestComplete(completeTarget.id);
+    setCompleteSubmitting(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success("PR ditandai Selesai");
+    setCompleteTarget(null);
     void refresh();
   }
 
@@ -488,6 +509,73 @@ export function PurchaseRequestsSection() {
         </div>
       </Modal>
 
+      {/* Feedback Anisa 2026-06-08 — konfirmasi Tandai Selesai manual */}
+      <Modal
+        open={!!completeTarget}
+        onClose={() => setCompleteTarget(null)}
+        title="Tandai PR Selesai?"
+        size="md"
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setCompleteTarget(null)}
+              disabled={completeSubmitting}
+            >
+              Batal
+            </Button>
+            <Button onClick={submitComplete} disabled={completeSubmitting}>
+              {completeSubmitting ? "Menyimpan..." : "Ya, Tandai Selesai"}
+            </Button>
+          </>
+        }
+      >
+        {completeTarget
+          ? (() => {
+              const active = completeTarget.items.filter((i) => !i.rejectedAt);
+              const unbought = active.filter(
+                (i) => Number(i.receivedQty) === 0,
+              );
+              const under = active.filter(
+                (i) =>
+                  Number(i.receivedQty) > 0 &&
+                  Number(i.receivedQty) < Number(i.requestedQty),
+              );
+              return (
+                <div className="space-y-3 text-sm text-neutral-700">
+                  <p>
+                    PR akan ditutup sebagai <strong>Selesai</strong>. Cocok kalau
+                    kamu sudah selesai memproses PR ini—walau ada item yang
+                    sengaja dibeli lebih sedikit atau tidak jadi dibeli.
+                  </p>
+                  {unbought.length > 0 ? (
+                    <div className="rounded-md border border-warning-300 bg-warning-100/40 p-3">
+                      <p className="mb-1 text-xs font-semibold text-warning-600">
+                        {unbought.length} item belum dibeli sama sekali:
+                      </p>
+                      <p className="text-xs text-neutral-700">
+                        {unbought
+                          .map((i) => i.ingredientNameSnapshot)
+                          .join(", ")}
+                      </p>
+                    </div>
+                  ) : null}
+                  {under.length > 0 ? (
+                    <p className="text-xs text-neutral-500">
+                      {under.length} item dibeli kurang dari request (dianggap
+                      keputusan final).
+                    </p>
+                  ) : null}
+                  <p className="text-xs text-neutral-500">
+                    Catatan: tanggal PR/pembelian/penerimaan boleh berbeda—tidak
+                    memengaruhi status.
+                  </p>
+                </div>
+              );
+            })()
+          : null}
+      </Modal>
+
       {/* Sesi AE-57 — PR detail modal (replaces inline card items) */}
       <PurchaseRequestDetailModal
         request={detailRequest}
@@ -504,6 +592,10 @@ export function PurchaseRequestsSection() {
         onPullToPurchase={(r) => {
           setDetailRequest(null);
           setPullPrId(r.id);
+        }}
+        onMarkComplete={(r) => {
+          setDetailRequest(null);
+          setCompleteTarget(r);
         }}
       />
 
@@ -531,18 +623,18 @@ interface RequestCardProps {
  * "Lihat Detail" / klik card. Owner request: list compact biar gampang
  * scan saat ada banyak PR. */
 function RequestCard({ request, onShowDetail }: RequestCardProps) {
-  /* Sesi AE-177 — basis ITEM (bukan jumlah qty lintas satuan). */
+  /* Sesi AE-177 — basis ITEM (bukan jumlah qty lintas satuan).
+   * Feedback Anisa 2026-06-08: "dibeli" = dapat ≥1 unit (qty kurang OK);
+   * yang outstanding hanya item yg belum dibeli sama sekali (received 0). */
   const activeItems = request.items.filter((i) => !i.rejectedAt);
-  const receivedItemCount = activeItems.filter(
-    (i) => Number(i.receivedQty) >= Number(i.requestedQty),
+  const boughtItemCount = activeItems.filter(
+    (i) => Number(i.receivedQty) > 0,
   ).length;
   const fulfillPercent =
     activeItems.length > 0
-      ? Math.round((receivedItemCount / activeItems.length) * 100)
+      ? Math.round((boughtItemCount / activeItems.length) * 100)
       : 0;
-  const outstandingItemCount = activeItems.filter(
-    (i) => Number(i.receivedQty) < Number(i.requestedQty),
-  ).length;
+  const outstandingItemCount = activeItems.length - boughtItemCount;
   return (
     <Card
       className="cursor-pointer transition-colors hover:border-mahakan-green-700 hover:shadow-sm"
@@ -581,12 +673,12 @@ function RequestCard({ request, onShowDetail }: RequestCardProps) {
               {request.items.length} bahan
               {outstandingItemCount > 0 ? (
                 <span className="ml-1 text-warning-500">
-                  ({outstandingItemCount} outstanding)
+                  ({outstandingItemCount} belum dibeli)
                 </span>
               ) : null}
             </span>
             <span className="font-mono">
-              {receivedItemCount} / {activeItems.length} item
+              {boughtItemCount} / {activeItems.length} item
             </span>
           </div>
           {activeItems.length > 0 ? (

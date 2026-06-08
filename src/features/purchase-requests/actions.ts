@@ -670,6 +670,67 @@ export async function cancelPurchaseRequest(
   return ok(updated);
 }
 
+/**
+ * Tandai PR Selesai manual (feedback Anisa 2026-06-08). Owner/inventory boleh
+ * menutup PR yang masih "open"/"partial" walau ada item yang sengaja TIDAK
+ * dibeli (qty kurang sudah dianggap final oleh computePrStatus, tapi item yg
+ * di-skip total / belum dibeli sama sekali butuh keputusan eksplisit ini).
+ * PR/PO/GR boleh beda tanggal — penutupan ini murni keputusan owner, bukan
+ * berbasis tanggal. Idempotent-ish: completed lagi ditolak halus.
+ */
+export async function markPurchaseRequestComplete(
+  requestId: string,
+): Promise<ApiResult<PurchaseRequest>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase_request.receive")) {
+    return fail("FORBIDDEN", "Tidak punya hak menutup PR");
+  }
+  const [existing] = await db
+    .select()
+    .from(purchaseRequests)
+    .where(eq(purchaseRequests.id, requestId))
+    .limit(1);
+  if (!existing) return fail("NOT_FOUND", "Request tidak ditemukan");
+  if (existing.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Request dari outlet lain");
+  }
+  if (existing.status === "cancelled") {
+    return fail("ALREADY_CANCELLED", "Sudah dibatalkan, tidak bisa diselesaikan");
+  }
+  if (existing.status === "completed") {
+    return fail("ALREADY_COMPLETED", "PR sudah selesai");
+  }
+
+  const [updated] = await db
+    .update(purchaseRequests)
+    .set({
+      status: "completed",
+      completedAt: new Date(),
+      updatedAt: new Date(),
+      updatedBy: session.user.id,
+    })
+    .where(eq(purchaseRequests.id, requestId))
+    .returning();
+
+  await logAudit({
+    eventType: "purchase_request.complete",
+    userId: session.user.id,
+    entityType: "purchase_request",
+    entityId: requestId,
+    payload: {
+      summary: "Permintaan belanja ditandai Selesai manual oleh owner",
+      before: { status: existing.status },
+      after: { status: "completed" },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+    },
+  }).catch((e) => console.error("[audit purchase_request.complete]", e));
+
+  return ok(updated);
+}
+
 export async function markWhatsappSent(
   requestId: string,
 ): Promise<ApiResult<{ ok: true }>> {
