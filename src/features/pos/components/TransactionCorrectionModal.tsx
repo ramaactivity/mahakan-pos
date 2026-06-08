@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Mail, Plus, Trash2 } from "lucide-react";
 import {
   Button,
@@ -93,8 +93,18 @@ export function TransactionCorrectionModal({
   } | null>(null);
 
   // Reset state setiap kali dibuka — pre-fill dengan current trx values.
+  // Dijaga init-key ref: hanya jalan sekali per trx + sekali lagi saat
+  // currentSplitBreakdown async selesai loading (null→ada). Identitas `trx`/
+  // breakdown yang berubah belakangan TIDAK menimpa input user yg belum submit.
+  const prefillKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!open || !trx) return;
+    if (!open || !trx) {
+      prefillKeyRef.current = null;
+      return;
+    }
+    const prefillKey = `${trx.id}:${currentSplitBreakdown ? "loaded" : "pending"}`;
+    if (prefillKeyRef.current === prefillKey) return;
+    prefillKeyRef.current = prefillKey;
     /* eslint-disable react-hooks/set-state-in-effect */
     setCorrectedPaymentMethod(trx.paymentMethod as PaymentMethod);
     setCorrectedTotal(String(trx.total));

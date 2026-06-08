@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Banknote,
   CheckCircle2,
@@ -90,10 +90,18 @@ export function SplitPaymentModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Reset + load breakdown sekali per bill yg dibuka. Dijaga init-key ref:
+  // identitas `bill` yg berubah (parent refetch tiap 45 dtk) TIDAK reset input
+  // pembayaran yg sedang diisi user. Sama pola dgn MenuItemFormModal fix.
+  const initKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!open || !bill) return;
+    if (!open || !bill) {
+      initKeyRef.current = null;
+      return;
+    }
+    if (initKeyRef.current === bill.id) return;
+    initKeyRef.current = bill.id;
     let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
     setBreakdownLoading(true);
     setSplitKind("nominal");
     setAmountInput("");
@@ -102,7 +110,6 @@ export function SplitPaymentModal({
     setPerMenuQty({});
     setError(null);
     setSubmitting(false);
-    /* eslint-enable react-hooks/set-state-in-effect */
     void (async () => {
       const res = await getSplitBreakdown(bill.id);
       if (cancelled) return;

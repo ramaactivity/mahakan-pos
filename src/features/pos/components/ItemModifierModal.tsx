@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Modal } from "@/components/ui";
 import type { CartLineItemModifier } from "@/features/pos/types";
 import { buildLineItem } from "@/features/pos/cartStore";
@@ -43,8 +43,17 @@ export function ItemModifierModal({
 
   // Reset state + seed default selections when item changes. Pakai modifiers
   // yang lagi available (prefetched > fetched > empty) sebagai dasar default.
+  // Dijaga init-key ref pada item.id: seed sekali per item. Tanpa ini, identitas
+  // `prefetchedModifiers` yg berubah (mis. `?? []` jadi array baru tiap render
+  // PosShell saat item varian tanpa modifier) akan reset pilihan Hot/Iced user.
+  const seedKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!item) return;
+    if (!item) {
+      seedKeyRef.current = null;
+      return;
+    }
+    if (seedKeyRef.current === item.id) return;
+    seedKeyRef.current = item.id;
     const defaultVariant: Variant | null =
       item.priceType === "variant"
         ? item.priceHot !== null
@@ -53,7 +62,6 @@ export function ItemModifierModal({
             ? "iced"
             : null
         : null;
-    /* eslint-disable react-hooks/set-state-in-effect */
     setVariant(defaultVariant);
     // Seed selections dari prefetched modifiers (instant). Kalau prefetch ga
     // ada, fallback fetch effect bawah yang akan re-seed.
@@ -66,7 +74,6 @@ export function ItemModifierModal({
       }
     }
     setSelections(next);
-    /* eslint-enable react-hooks/set-state-in-effect */
   }, [item, prefetchedModifiers]);
 
   useEffect(() => {

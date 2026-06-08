@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Calculator } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Calculator, Flame, Snowflake } from "lucide-react";
 import { Button, Input, Modal, Select, toast } from "@/components/ui";
 import {
   isOk,
@@ -57,8 +57,27 @@ export function MenuItemFormModal({
   const [suggestion, setSuggestion] =
     useState<MenuItemPriceSuggestion | null>(null);
 
+  // Bug fix (feedback Anisa) — form ini sebelumnya re-init tiap kali prop
+  // `categories` ganti identitas. `categories` di-refetch tiap 20 dtk oleh
+  // useLiveRefresh di ItemsList → array identity baru → useEffect re-run →
+  // SEMUA field (termasuk HPP Hot/Iced yg lagi diketik tapi belum disimpan)
+  // ke-reset ke nilai DB. Gejala: ngetik kolom kedua, kolom pertama hilang;
+  // atau didiemkan beberapa detik angkanya lenyap.
+  // Fix: hanya init sekali per "buka modal / ganti item", dijaga init-key ref —
+  // BUKAN tiap identitas prop berubah.
+  const initKeyRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!open || !mode) return;
+    if (!open || !mode) {
+      // Modal tertutup → reset penanda supaya buka ulang item yg sama re-init.
+      initKeyRef.current = null;
+      return;
+    }
+    const initKey = mode.kind === "edit" ? `edit:${mode.item.id}` : "create";
+    // Sudah di-init untuk konteks ini → JANGAN timpa ketikan user.
+    if (initKeyRef.current === initKey) return;
+    initKeyRef.current = initKey;
+
     /* eslint-disable react-hooks/set-state-in-effect */
     setError(null);
     setSubmitting(false);
@@ -98,6 +117,8 @@ export function MenuItemFormModal({
     } else {
       setName("");
       setDescription("");
+      // Default kategori diisi oleh effect terpisah (lihat bawah) supaya
+      // categories yg datang belakangan / berubah identitas tak nimpa field lain.
       setCategoryId(categories[0]?.id ?? "");
       setPriceType("fixed");
       setPriceFixed(
@@ -114,6 +135,15 @@ export function MenuItemFormModal({
     }
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open, mode, categories]);
+
+  // Isi default kategori (create mode) saat daftar kategori baru tersedia,
+  // TANPA menimpa field lain. Hanya jalan kalau user belum pilih kategori.
+  useEffect(() => {
+    if (open && mode?.kind === "create" && !categoryId && categories.length) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCategoryId(categories[0].id);
+    }
+  }, [open, mode, categories, categoryId]);
 
   const createPrefillSource =
     mode?.kind === "create" && mode.prefillPrice && mode.prefillSource
@@ -362,6 +392,7 @@ export function MenuItemFormModal({
             onChange={(e) =>
               setPriceFixed(e.target.value.replace(/[^\d]/g, ""))
             }
+            leadingIcon={<span className="text-sm font-medium">Rp</span>}
             hint={parsedFixed > 0 ? `Preview: ${formatRupiah(parsedFixed)}` : undefined}
             placeholder="20000"
           />
@@ -375,6 +406,7 @@ export function MenuItemFormModal({
               onChange={(e) =>
                 setPriceHot(e.target.value.replace(/[^\d]/g, ""))
               }
+              leadingIcon={<Flame className="size-4 text-amber-600" aria-hidden />}
               hint={
                 parsedHot !== null && parsedHot > 0
                   ? formatRupiah(parsedHot)
@@ -389,6 +421,7 @@ export function MenuItemFormModal({
               onChange={(e) =>
                 setPriceIced(e.target.value.replace(/[^\d]/g, ""))
               }
+              leadingIcon={<Snowflake className="size-4 text-sky-600" aria-hidden />}
               hint={
                 parsedIced !== null && parsedIced > 0
                   ? formatRupiah(parsedIced)
@@ -423,50 +456,22 @@ export function MenuItemFormModal({
               </Button>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5 rounded-md border border-neutral-200 bg-white p-2.5">
-                <Input
-                  label="HPP Hot"
-                  type="text"
-                  inputMode="numeric"
-                  value={costHot}
-                  onChange={(e) =>
-                    setCostHot(e.target.value.replace(/[^\d]/g, ""))
-                  }
-                  placeholder="contoh: 4000"
-                  hint={
-                    parsedCostHot !== null && parsedCostHot > 0
-                      ? `Preview: ${formatRupiah(parsedCostHot)}`
-                      : "Kosongkan kalau hot tak dijual / fallback resep"
-                  }
-                />
-                <MarginLine
-                  marginPct={marginHot}
-                  price={parsedHot}
-                  emptyHint="Isi harga & HPP Hot untuk lihat margin."
-                />
-              </div>
-              <div className="space-y-1.5 rounded-md border border-neutral-200 bg-white p-2.5">
-                <Input
-                  label="HPP Iced"
-                  type="text"
-                  inputMode="numeric"
-                  value={costIced}
-                  onChange={(e) =>
-                    setCostIced(e.target.value.replace(/[^\d]/g, ""))
-                  }
-                  placeholder="contoh: 15000"
-                  hint={
-                    parsedCostIced !== null && parsedCostIced > 0
-                      ? `Preview: ${formatRupiah(parsedCostIced)}`
-                      : "Kosongkan kalau iced tak dijual / fallback resep"
-                  }
-                />
-                <MarginLine
-                  marginPct={marginIced}
-                  price={parsedIced}
-                  emptyHint="Isi harga & HPP Iced untuk lihat margin."
-                />
-              </div>
+              <VariantCostCard
+                variant="hot"
+                value={costHot}
+                onChange={(v) => setCostHot(v)}
+                parsedCost={parsedCostHot}
+                marginPct={marginHot}
+                price={parsedHot}
+              />
+              <VariantCostCard
+                variant="iced"
+                value={costIced}
+                onChange={(v) => setCostIced(v)}
+                parsedCost={parsedCostIced}
+                marginPct={marginIced}
+                price={parsedIced}
+              />
             </div>
           </div>
         ) : (
@@ -481,6 +486,7 @@ export function MenuItemFormModal({
                   onChange={(e) =>
                     setCost(e.target.value.replace(/[^\d]/g, ""))
                   }
+                  leadingIcon={<span className="text-sm font-medium">Rp</span>}
                   placeholder="contoh: 12000"
                   hint={
                     parsedCost !== null && parsedCost > 0
@@ -549,17 +555,94 @@ function MarginLine({
   if (marginPct === null) {
     return <p className="text-xs text-neutral-500">{emptyHint}</p>;
   }
+  const positive = marginPct >= 0;
   return (
-    <p className="text-xs text-neutral-600">
-      Margin:{" "}
-      <strong
+    <p className="flex flex-wrap items-center gap-1.5 text-xs text-neutral-600">
+      <span className="text-neutral-500">Margin</span>
+      <span
         className={cn(
-          marginPct >= 0 ? "text-mahakan-green-700" : "text-danger-500",
+          "rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums",
+          positive
+            ? "bg-mahakan-green-50 text-mahakan-green-700"
+            : "bg-danger-100 text-danger-500",
         )}
       >
         {marginPct.toFixed(1)}%
-      </strong>{" "}
-      (dari harga {formatRupiah(price ?? 0)})
+      </span>
+      <span className="text-neutral-500">dari {formatRupiah(price ?? 0)}</span>
     </p>
+  );
+}
+
+// Feedback Anisa — dua HPP per varian gampang ketuker karena identik.
+// Kartu ini kasih identitas visual tegas: Hot = amber + ikon api,
+// Iced = sky + ikon salju, plus prefix "Rp" biar jelas ini nominal rupiah.
+const VARIANT_THEME = {
+  hot: {
+    label: "HPP Hot",
+    icon: Flame,
+    chip: "Hot",
+    placeholder: "contoh: 4000",
+    emptyHint: "Kosongkan kalau hot tak dijual / fallback resep",
+    marginEmpty: "Isi harga & HPP Hot untuk lihat margin.",
+    card: "border-amber-200 bg-amber-50/40",
+    chipClass: "bg-amber-100 text-amber-700",
+  },
+  iced: {
+    label: "HPP Iced",
+    icon: Snowflake,
+    chip: "Iced",
+    placeholder: "contoh: 15000",
+    emptyHint: "Kosongkan kalau iced tak dijual / fallback resep",
+    marginEmpty: "Isi harga & HPP Iced untuk lihat margin.",
+    card: "border-sky-200 bg-sky-50/40",
+    chipClass: "bg-sky-100 text-sky-700",
+  },
+} as const;
+
+function VariantCostCard({
+  variant,
+  value,
+  onChange,
+  parsedCost,
+  marginPct,
+  price,
+}: {
+  variant: "hot" | "iced";
+  value: string;
+  onChange: (next: string) => void;
+  parsedCost: number | null;
+  marginPct: number | null;
+  price: number | null;
+}) {
+  const t = VARIANT_THEME[variant];
+  const Icon = t.icon;
+  return (
+    <div className={cn("space-y-2 rounded-md border p-2.5", t.card)}>
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold",
+          t.chipClass,
+        )}
+      >
+        <Icon className="size-3.5" aria-hidden />
+        {t.chip}
+      </span>
+      <Input
+        label={t.label}
+        type="text"
+        inputMode="numeric"
+        value={value}
+        onChange={(e) => onChange(e.target.value.replace(/[^\d]/g, ""))}
+        leadingIcon={<span className="text-sm font-medium">Rp</span>}
+        placeholder={t.placeholder}
+        hint={
+          parsedCost !== null && parsedCost > 0
+            ? `Preview: ${formatRupiah(parsedCost)}`
+            : t.emptyHint
+        }
+      />
+      <MarginLine marginPct={marginPct} price={price} emptyHint={t.marginEmpty} />
+    </div>
   );
 }

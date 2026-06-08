@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Mail, Pencil, Trash2 } from "lucide-react";
 import {
   Button,
@@ -97,9 +97,18 @@ export function ProposeEntryChangeModal({
     };
   }, [open, entityType, mode]);
 
-  // Pre-fill form on entity change
+  // Pre-fill form sekali per entity. Dijaga init-key ref biar identitas
+  // `entity` yang berubah (mis. parent re-render / refetch) TIDAK menimpa
+  // ketikan user yang belum disubmit. Sama pola dgn MenuItemFormModal fix.
+  const prefillKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!entity) return;
+    if (!open || !entity) {
+      prefillKeyRef.current = null;
+      return;
+    }
+    if (prefillKeyRef.current === entity.id) return;
+    prefillKeyRef.current = entity.id;
+    /* eslint-disable react-hooks/set-state-in-effect */
     setDateValue(getEntityDate(entity));
     setDescriptionValue(entity.description ?? "");
     setAmountRaw(String(entity.amount));
@@ -107,7 +116,8 @@ export function ProposeEntryChangeModal({
     if (isExpense(entity)) {
       setCategoryIdValue(entity.categoryId);
     }
-  }, [entity]);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [open, entity]);
 
   function resetAll() {
     setReason("");
