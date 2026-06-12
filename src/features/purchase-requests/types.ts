@@ -40,8 +40,15 @@ export interface CancelPurchaseRequestInput {
   reason: string;
 }
 
+/** Feedback Cacil 2026-06-12 — item PR + flag "sudah ditarik ke pembelian/PO
+ * aktif (non-cancelled)". Dipakai UI untuk membedakan item yang menunggu
+ * penerimaan PO vs yang benar-benar belum diproses. */
+export type PurchaseRequestItemWithLink = PurchaseRequestItem & {
+  inActivePurchase: boolean;
+};
+
 export interface PurchaseRequestWithItems extends PurchaseRequest {
-  items: PurchaseRequestItem[];
+  items: PurchaseRequestItemWithLink[];
   createdByName: string | null;
   cancelledByName: string | null;
   shiftStartedAt: Date | null;

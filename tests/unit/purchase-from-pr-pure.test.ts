@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  categorizePrItem,
   computePrStatus,
   getPurchaseGroupBlockers,
   groupItemsBySupplier,
@@ -229,5 +230,71 @@ describe("computePrLineDefault (harga saran)", () => {
       belanjaPerCogs: 1000,
     });
     expect(d.unitCost).toBe(10000);
+  });
+});
+
+/* Feedback Cacil 2026-06-12 — bucket per item PR. Definisi tunggal yang
+ * dipakai detail modal, RequestCard, Tarik ke Pembelian, dan stats. */
+describe("categorizePrItem", () => {
+  it("rejected menang atas semua state lain", () => {
+    expect(
+      categorizePrItem({
+        receivedQty: 5,
+        rejectedAt: new Date(),
+        inActivePurchase: true,
+      }),
+    ).toBe("rejected");
+  });
+
+  it("received > 0 → bought (walau kurang dari request = final owner)", () => {
+    expect(
+      categorizePrItem({
+        receivedQty: 1,
+        rejectedAt: null,
+        inActivePurchase: false,
+      }),
+    ).toBe("bought");
+  });
+
+  it("received > 0 dalam PO aktif tetap bought (received menang)", () => {
+    expect(
+      categorizePrItem({
+        receivedQty: 3,
+        rejectedAt: null,
+        inActivePurchase: true,
+      }),
+    ).toBe("bought");
+  });
+
+  it("received 0 tapi sudah ditarik ke PO aktif → ordered (cegah dobel-tarik)", () => {
+    expect(
+      categorizePrItem({
+        receivedQty: 0,
+        rejectedAt: null,
+        inActivePurchase: true,
+      }),
+    ).toBe("ordered");
+  });
+
+  it("received 0 tanpa link PO → outstanding (boleh ditarik)", () => {
+    expect(
+      categorizePrItem({
+        receivedQty: 0,
+        rejectedAt: null,
+        inActivePurchase: false,
+      }),
+    ).toBe("outstanding");
+  });
+
+  it("PO dibatalkan (link tidak aktif lagi) → kembali outstanding", () => {
+    // caller (fetchActivePurchaseLinkIds) sudah exclude purchase cancelled,
+    // jadi inActivePurchase=false → item bisa ditarik ulang.
+    expect(
+      categorizePrItem({
+        receivedQty: 0,
+        rejectedAt: null,
+        inActivePurchase: false,
+      }),
+    ).toBe("outstanding");
   });
 });

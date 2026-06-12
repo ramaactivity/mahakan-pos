@@ -1,8 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   FileText,
   MessageCircle,
   Package,
@@ -16,8 +19,13 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui";
+import {
+  categorizePrItem,
+  type PrItemBucket,
+} from "@/features/purchase-requests/group-items-pure";
 import type {
   PurchaseRequestItem,
+  PurchaseRequestItemWithLink,
   PurchaseRequestStatus,
   PurchaseRequestWithItems,
 } from "@/features/purchase-requests/types";
@@ -72,14 +80,46 @@ export function PurchaseRequestDetailModal({
     staleTime: 30 * 1000,
   });
 
+  /* Feedback Cacil 2026-06-12 — toggle section "Sudah diproses". Keyed ke
+   * request.id primitif (BUKAN object identity — pitfall form-reset wipe):
+   * default collapse selama masih ada item belum diproses, expand kalau
+   * semuanya sudah diproses (mis. PR Selesai). */
+  const [processedToggle, setProcessedToggle] = useState<{
+    id: string;
+    open: boolean;
+  } | null>(null);
+
   if (!request) return null;
 
   const canEdit =
     request.status !== "cancelled" && request.status !== "completed";
-  /* Sesi AE-177 — basis ITEM (bukan jumlah qty lintas satuan).
-   * Feedback Anisa 2026-06-08: item dianggap "sudah dibeli" begitu dapat ≥1
-   * unit (qty kurang dari request = keputusan final owner). Yang menahan PR
-   * dari Selesai hanya item yang BELUM dibeli sama sekali (received 0). */
+  /* Feedback Cacil 2026-06-12 — item dipecah per bucket (1 definisi dengan
+   * server/Tarik ke Pembelian via categorizePrItem):
+   *  - outstanding : belum diproses sama sekali → tabel utama + bisa Tolak/Tarik
+   *  - ordered     : sudah ditarik ke PO aktif, menunggu diterima
+   *  - bought      : sudah dibeli/diterima ≥1 unit (qty kurang = final owner)
+   *  - rejected    : ditolak
+   * Bucket selain outstanding masuk section "Sudah diproses" (collapsed). */
+  const bucketOf = new Map<string, PrItemBucket>(
+    request.items.map((it) => [
+      it.id,
+      categorizePrItem({
+        receivedQty: Number(it.receivedQty),
+        rejectedAt: it.rejectedAt,
+        inActivePurchase: it.inActivePurchase,
+      }),
+    ]),
+  );
+  const outstandingItems = request.items.filter(
+    (it) => bucketOf.get(it.id) === "outstanding",
+  );
+  const processedItems = request.items.filter(
+    (it) => bucketOf.get(it.id) !== "outstanding",
+  );
+  const orderedCount = request.items.filter(
+    (it) => bucketOf.get(it.id) === "ordered",
+  ).length;
+
   const activeItems = request.items.filter((i) => !i.rejectedAt);
   const boughtItemCount = activeItems.filter(
     (i) => Number(i.receivedQty) > 0,
@@ -88,10 +128,11 @@ export function PurchaseRequestDetailModal({
     activeItems.length > 0
       ? Math.round((boughtItemCount / activeItems.length) * 100)
       : 0;
-  const unboughtItemCount = activeItems.length - boughtItemCount;
-  const anyRemaining = activeItems.some(
-    (i) => Number(i.receivedQty) < Number(i.requestedQty),
-  );
+
+  const processedOpen =
+    processedToggle?.id === request.id
+      ? processedToggle.open
+      : outstandingItems.length === 0;
 
   return (
     <Modal
@@ -111,10 +152,16 @@ export function PurchaseRequestDetailModal({
             <p className="text-xs text-neutral-600">
               <Package className="mr-1 inline size-3.5" />
               {request.items.length} bahan
-              {unboughtItemCount > 0 ? (
+              {outstandingItems.length > 0 ? (
                 <span className="text-warning-600">
                   {" "}
-                  · {unboughtItemCount} belum dibeli
+                  · {outstandingItems.length} belum diproses
+                </span>
+              ) : null}
+              {orderedCount > 0 ? (
+                <span className="text-info-500">
+                  {" "}
+                  · {orderedCount} dalam PO
                 </span>
               ) : null}
             </p>
@@ -208,29 +255,25 @@ export function PurchaseRequestDetailModal({
           </div>
         ) : null}
 
-        {/* Items table */}
-        <ResponsiveTable<PurchaseRequestItem>
-          rows={request.items}
-          rowKey={(it) => it.id}
-          columns={purchaseRequestItemColumns()}
-          rowActions={
-            canEdit
-              ? (it) => {
-                  if (it.rejectedAt) {
-                    return (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-danger-100 px-2 py-0.5 text-[10px] font-semibold text-danger-500">
-                        <X className="size-3" /> Rejected
-                      </span>
-                    );
-                  }
-                  const remaining =
-                    Number(it.requestedQty) - Number(it.receivedQty);
-                  const itemDone = remaining === 0;
-                  return (
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                      {/* Sesi AE-177 — PR = request-only. Terima barang lewat
-                          Pembelian/GR. Sisa aksi per-item: Tolak. */}
-                      {!itemDone ? (
+        {/* Feedback Cacil 2026-06-12 — tabel utama = HANYA item yang belum
+            diproses. Item yang sudah dibeli/ditarik/ditolak pindah ke section
+            "Sudah diproses" di bawah (collapsed) supaya tidak terbaca sebagai
+            item yang masih harus dibeli. */}
+        {outstandingItems.length > 0 ? (
+          <div className="space-y-1.5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-warning-600">
+              Belum diproses ({outstandingItems.length} item)
+            </p>
+            <ResponsiveTable<PurchaseRequestItemWithLink>
+              rows={outstandingItems}
+              rowKey={(it) => it.id}
+              columns={outstandingColumns()}
+              rowActions={
+                canEdit
+                  ? (it) => (
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {/* Sesi AE-177 — PR = request-only. Terima barang lewat
+                            Pembelian/GR. Sisa aksi per-item: Tolak. */}
                         <Button
                           size="sm"
                           variant="outline"
@@ -241,13 +284,56 @@ export function PurchaseRequestDetailModal({
                           <X className="size-4" />
                           Tolak
                         </Button>
-                      ) : null}
-                    </div>
-                  );
-                }
-              : undefined
-          }
-        />
+                      </div>
+                    )
+                  : undefined
+              }
+            />
+          </div>
+        ) : (
+          <div className="rounded-md border border-mahakan-green-200 bg-mahakan-green-50/60 p-3 text-xs text-mahakan-green-900">
+            <CheckCircle2 className="mr-1 inline size-3.5" />
+            Semua item sudah diproses
+            {orderedCount > 0
+              ? ` — ${orderedCount} item menunggu penerimaan PO (cek tab PO / Terima Barang).`
+              : "."}
+          </div>
+        )}
+
+        {/* Section item yang sudah diproses (dibeli / dalam PO / ditolak) */}
+        {processedItems.length > 0 ? (
+          <div className="rounded-md border border-neutral-200">
+            <button
+              type="button"
+              onClick={() =>
+                setProcessedToggle({ id: request.id, open: !processedOpen })
+              }
+              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+              aria-expanded={processedOpen}
+            >
+              <span className="flex items-center gap-1.5">
+                {processedOpen ? (
+                  <ChevronDown className="size-3.5" />
+                ) : (
+                  <ChevronRight className="size-3.5" />
+                )}
+                Sudah diproses ({processedItems.length} item)
+              </span>
+              <span className="text-[11px] font-normal text-neutral-500">
+                dibeli / dalam PO / ditolak
+              </span>
+            </button>
+            {processedOpen ? (
+              <div className="border-t border-neutral-200 p-2">
+                <ResponsiveTable<PurchaseRequestItemWithLink>
+                  rows={processedItems}
+                  rowKey={(it) => it.id}
+                  columns={processedColumns(bucketOf)}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* Cancel reason (kalau dibatalkan) */}
         {request.status === "cancelled" && request.cancelReason ? (
@@ -279,7 +365,10 @@ export function PurchaseRequestDetailModal({
               >
                 <CheckCircle2 className="size-4" /> Tandai Selesai
               </Button>
-              {anyRemaining ? (
+              {/* Feedback Cacil 2026-06-12 — Tarik hanya kalau masih ada item
+                  yang BELUM diproses (dulu: anyRemaining received<requested →
+                  item under-buy/dalam PO bisa ketarik lagi = dobel data). */}
+              {outstandingItems.length > 0 ? (
                 <Button size="sm" onClick={() => onPullToPurchase(request)}>
                   <FileText className="size-4" />
                   Tarik ke Pembelian
@@ -308,50 +397,71 @@ function formatRequestLabel(request: PurchaseRequestWithItems): string {
   })}`;
 }
 
-function purchaseRequestItemColumns(): ResponsiveColumn<PurchaseRequestItem>[] {
-  return [
-    {
-      key: "ingredient",
-      label: "Bahan",
-      primary: true,
-      render: (it) => (
-        <div>
-          <p className="font-medium text-neutral-900">
-            {it.ingredientNameSnapshot}
+function ingredientColumn(): ResponsiveColumn<PurchaseRequestItemWithLink> {
+  return {
+    key: "ingredient",
+    label: "Bahan",
+    primary: true,
+    render: (it) => (
+      <div>
+        <p className="font-medium text-neutral-900">
+          {it.ingredientNameSnapshot}
+        </p>
+        {it.ingredientId == null ? (
+          <p className="text-[10px] uppercase tracking-wider text-warning-600">
+            Manual · belum link master
           </p>
-          {it.ingredientId == null ? (
-            <p className="text-[10px] uppercase tracking-wider text-warning-600">
-              Manual · belum link master
-            </p>
-          ) : null}
-          {it.notes ? (
-            <p className="text-xs text-neutral-600">{it.notes}</p>
-          ) : null}
-        </div>
-      ),
-    },
-    /* Sesi AE-122 — dedicated UNIT/SATUAN column. Sebelumnya inline kecil
-     * di kolom Diminta. Owner request: lebih prominent supaya jelas
-     * unit yang di-request (mis. Pcs vs Kg). */
-    {
-      key: "unit",
-      label: "Satuan",
-      render: (it) => (
-        <span className="inline-flex rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-700">
-          {it.unitSnapshot}
-        </span>
-      ),
-    },
-    {
-      key: "requested",
-      label: "Diminta",
-      align: "right",
-      render: (it) => (
-        <span className="font-mono tabular-nums">
-          {Number(it.requestedQty).toLocaleString("id-ID")}
-        </span>
-      ),
-    },
+        ) : null}
+        {it.notes ? (
+          <p className="text-xs text-neutral-600">{it.notes}</p>
+        ) : null}
+      </div>
+    ),
+  };
+}
+
+/* Sesi AE-122 — dedicated UNIT/SATUAN column, prominent supaya jelas unit
+ * yang di-request (mis. Pcs vs Kg). */
+function unitColumn(): ResponsiveColumn<PurchaseRequestItemWithLink> {
+  return {
+    key: "unit",
+    label: "Satuan",
+    render: (it) => (
+      <span className="inline-flex rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-700">
+        {it.unitSnapshot}
+      </span>
+    ),
+  };
+}
+
+function requestedColumn(): ResponsiveColumn<PurchaseRequestItemWithLink> {
+  return {
+    key: "requested",
+    label: "Diminta",
+    align: "right",
+    render: (it) => (
+      <span className="font-mono tabular-nums">
+        {Number(it.requestedQty).toLocaleString("id-ID")}
+      </span>
+    ),
+  };
+}
+
+/* Tabel "Belum diproses" — item yang belum dibeli/ditarik sama sekali.
+ * Tanpa kolom Diterima/Sisa (selalu 0/penuh — cuma noise). */
+function outstandingColumns(): ResponsiveColumn<PurchaseRequestItemWithLink>[] {
+  return [ingredientColumn(), unitColumn(), requestedColumn()];
+}
+
+/* Tabel "Sudah diproses" — status per item menggantikan kolom "Sisa" yang
+ * dulu bikin item under-buy terbaca seperti masih harus dibeli. */
+function processedColumns(
+  bucketOf: Map<string, PrItemBucket>,
+): ResponsiveColumn<PurchaseRequestItemWithLink>[] {
+  return [
+    ingredientColumn(),
+    unitColumn(),
+    requestedColumn(),
     {
       key: "received",
       label: "Diterima",
@@ -363,25 +473,26 @@ function purchaseRequestItemColumns(): ResponsiveColumn<PurchaseRequestItem>[] {
       ),
     },
     {
-      key: "remaining",
-      label: "Sisa",
+      key: "state",
+      label: "Status",
       align: "right",
       render: (it) => {
-        const remaining = Number(it.requestedQty) - Number(it.receivedQty);
-        const itemDone = remaining === 0;
+        const bucket = bucketOf.get(it.id);
+        if (bucket === "rejected") {
+          return (
+            <span className="inline-flex items-center gap-1 rounded-full bg-danger-100 px-2 py-0.5 text-[10px] font-semibold text-danger-500">
+              <X className="size-3" /> Ditolak
+            </span>
+          );
+        }
+        if (bucket === "ordered") {
+          return <Badge variant="info">Dalam PO · menunggu</Badge>;
+        }
+        const under = Number(it.receivedQty) < Number(it.requestedQty);
         return (
-          <span
-            className={cn(
-              "font-mono tabular-nums",
-              itemDone
-                ? "text-mahakan-green-700"
-                : remaining > 0
-                  ? "text-warning-500"
-                  : "text-neutral-900",
-            )}
-          >
-            {remaining.toLocaleString("id-ID")}
-          </span>
+          <Badge variant="success">
+            {under ? "Dibeli (qty disesuaikan)" : "Dibeli"}
+          </Badge>
         );
       },
     },

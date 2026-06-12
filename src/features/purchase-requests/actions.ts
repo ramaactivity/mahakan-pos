@@ -1,11 +1,13 @@
 "use server";
 
-import { and, desc, eq, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   ingredients,
+  purchaseItems,
   purchaseRequestItems,
   purchaseRequests,
+  purchases,
   shifts,
   supplierIngredients,
   suppliers,
@@ -48,8 +50,9 @@ export interface PurchaseRequestStats {
   agingOpenCount: number;
   /** PR completed bulan kalender ini. */
   completedThisMonth: number;
-  /** Jumlah ITEM belum diterima (received < requested, belum ditolak) di PR
-   *  open/partial. Sesi AE-177 — hitung item, bukan jumlah qty lintas satuan. */
+  /** Jumlah ITEM belum diproses (received == 0, belum ditolak, belum ditarik
+   *  ke PO aktif) di PR open/partial. Sesi AE-177 — hitung item, bukan jumlah
+   *  qty lintas satuan. Feedback Cacil 2026-06-12 — selaras categorizePrItem. */
   pendingItemCount: number;
 }
 
@@ -118,12 +121,14 @@ export async function getPurchaseRequestStats(): Promise<
     );
 
   /* Sesi AE-177 — HITUNG ITEM (bukan jumlah qty lintas satuan, yg dulu bikin
-   * angka tak bermakna gr+Btl+L dijumlah). Item belum diterima = received <
-   * requested DAN belum ditolak, di PR open/partial. */
-  const [pendingRow] = await db
-    .select({
-      count: sql<string>`COUNT(*) FILTER (WHERE ${purchaseRequestItems.receivedQty} < ${purchaseRequestItems.requestedQty} AND ${purchaseRequestItems.rejectedAt} IS NULL)::int`,
-    })
+   * angka tak bermakna gr+Btl+L dijumlah).
+   * Feedback Cacil 2026-06-12 — definisi selaras categorizePrItem: item
+   * "belum dibeli" = receivedQty == 0 (under-buy = keputusan final owner,
+   * bukan pending) DAN belum ditolak DAN belum ditarik ke PO aktif.
+   * 2 query terpisah (bukan correlated NOT EXISTS) — hindari pitfall
+   * Drizzle: kolom senama (received_qty ada di purchase_items juga). */
+  const pendingCandidates = await db
+    .select({ id: purchaseRequestItems.id })
     .from(purchaseRequestItems)
     .innerJoin(
       purchaseRequests,
@@ -134,8 +139,14 @@ export async function getPurchaseRequestStats(): Promise<
         eq(purchaseRequests.outletId, outletId),
         isNull(purchaseRequests.deletedAt),
         inArray(purchaseRequests.status, ["open", "partial"]),
+        eq(purchaseRequestItems.receivedQty, 0),
+        isNull(purchaseRequestItems.rejectedAt),
       ),
     );
+  const pendingLinked = await fetchActivePurchaseLinkIds(
+    pendingCandidates.map((r) => r.id),
+  );
+  const pendingItemCount = pendingCandidates.length - pendingLinked.size;
 
   return ok({
     openCount: counts.open,
@@ -144,7 +155,7 @@ export async function getPurchaseRequestStats(): Promise<
     cancelledCount: counts.cancelled,
     agingOpenCount: Number(agingRow?.count ?? 0),
     completedThisMonth: Number(monthRow?.count ?? 0),
-    pendingItemCount: Number(pendingRow?.count ?? 0),
+    pendingItemCount,
   });
 }
 
@@ -361,6 +372,32 @@ export async function createPurchaseRequest(
   return ok(result);
 }
 
+/**
+ * Feedback Cacil 2026-06-12 — PR item dianggap "sudah ditarik ke pembelian"
+ * kalau punya baris purchase_items yang parent purchase-nya belum dibatalkan
+ * (status != 'cancelled' — konsisten filter COGS/GR sesi AE-177g). Dipakai
+ * untuk menyembunyikan item itu dari daftar outstanding + Tarik ke Pembelian
+ * walau barangnya belum diterima (PO ordered, GR belum) → cegah dobel-tarik.
+ */
+async function fetchActivePurchaseLinkIds(
+  itemIds: string[],
+): Promise<Set<string>> {
+  if (itemIds.length === 0) return new Set();
+  const rows = await db
+    .selectDistinct({ prItemId: purchaseItems.purchaseRequestItemId })
+    .from(purchaseItems)
+    .innerJoin(purchases, eq(purchases.id, purchaseItems.purchaseId))
+    .where(
+      and(
+        inArray(purchaseItems.purchaseRequestItemId, itemIds),
+        ne(purchases.status, "cancelled"),
+      ),
+    );
+  const set = new Set<string>();
+  for (const r of rows) if (r.prItemId) set.add(r.prItemId);
+  return set;
+}
+
 export interface ListPurchaseRequestsOptions {
   status?: PurchaseRequestStatus | "all";
   /** Default 50. */
@@ -427,10 +464,22 @@ export async function listPurchaseRequests(
     .where(inArray(purchaseRequestItems.requestId, requestIds))
     .orderBy(purchaseRequestItems.requestId, purchaseRequestItems.displayOrder);
 
-  const byRequestId = new Map<string, typeof itemRows>();
+  // Feedback Cacil 2026-06-12 — tandai item yang sudah ditarik ke pembelian/PO
+  // aktif supaya UI bisa memisahkan "dalam PO (menunggu diterima)" dari
+  // "belum diproses".
+  const activeLinkIds = await fetchActivePurchaseLinkIds(
+    itemRows.map((i) => i.id),
+  );
+
+  const byRequestId = new Map<
+    string,
+    Array<(typeof itemRows)[number] & { inActivePurchase: boolean }>
+  >();
   for (const it of itemRows) {
     if (!byRequestId.has(it.requestId)) byRequestId.set(it.requestId, []);
-    byRequestId.get(it.requestId)!.push(it);
+    byRequestId
+      .get(it.requestId)!
+      .push({ ...it, inActivePurchase: activeLinkIds.has(it.id) });
   }
 
   // Fetch cancelledBy names lazily kalau ada.
@@ -771,8 +820,10 @@ export async function markWhatsappSent(
 /* ============================================================================
  * Sesi AE-57 — List PR yang siap di-tarik ke Pembelian.
  *
- * Filter: status open OR partial, items yang masih outstanding (received <
- * requested AND !rejected). Sort: oldest first (FIFO).
+ * Filter: status open OR partial, items yang masih outstanding. Outstanding
+ * (feedback Cacil 2026-06-12, selaras computePrStatus): receivedQty == 0,
+ * !rejected, dan BELUM ditarik ke pembelian/PO aktif (cek link purchase_items
+ * → purchases non-cancelled). Sort: oldest first (FIFO).
  *
  * Per item enriched dengan:
  *  - outstandingQty = requestedQty - receivedQty
@@ -868,13 +919,25 @@ export async function listOpenPurchaseRequestsForPurchase(): Promise<
     }
   }
 
+  /* Feedback Cacil 2026-06-12 — definisi outstanding diselaraskan dgn
+   * computePrStatus + categorizePrItem:
+   *  - receivedQty > 0 → SUDAH dibeli (qty kurang = keputusan final owner,
+   *    sesi AE-177/Anisa) → jangan tawarkan lagi (dulu muncul lagi sbg sisa
+   *    → risiko dobel-beli).
+   *  - sudah ditarik ke PO aktif (ordered, GR belum) → jangan tawarkan lagi
+   *    → cegah dobel-tarik selagi barang dalam perjalanan. */
+  const activeLinkIds = await fetchActivePurchaseLinkIds(
+    itemRows.map((i) => i.id),
+  );
+
   // Group items per request
   const itemsByRequest = new Map<string, PrItemForPurchase[]>();
   for (const it of itemRows) {
     const requestedQty = Number(it.requestedQty);
     const receivedQty = Number(it.receivedQty);
     const outstandingQty = requestedQty - receivedQty;
-    if (outstandingQty <= 0) continue; // skip fully-received items
+    if (receivedQty > 0) continue; // sudah dibeli (under-buy = final owner)
+    if (activeLinkIds.has(it.id)) continue; // sudah dalam PO aktif (menunggu GR)
 
     const suggested = it.ingredientId
       ? suggestedSupplierByIng.get(it.ingredientId)

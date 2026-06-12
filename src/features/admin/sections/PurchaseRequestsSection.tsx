@@ -31,6 +31,7 @@ import {
   markPurchaseRequestComplete,
   rejectItem,
 } from "@/features/purchase-requests/actions";
+import { categorizePrItem } from "@/features/purchase-requests/group-items-pure";
 import {
   isOk,
   type PurchaseRequestItem,
@@ -252,7 +253,7 @@ export function PurchaseRequestsSection() {
             value={String(stats.openCount + stats.partialCount)}
             sub={
               stats.pendingItemCount > 0
-                ? `${stats.pendingItemCount} item belum diterima`
+                ? `${stats.pendingItemCount} item belum diproses`
                 : "Tidak ada pending"
             }
             accent={
@@ -533,8 +534,24 @@ export function PurchaseRequestsSection() {
         {completeTarget
           ? (() => {
               const active = completeTarget.items.filter((i) => !i.rejectedAt);
-              const unbought = active.filter(
-                (i) => Number(i.receivedQty) === 0,
+              /* Feedback Cacil 2026-06-12 — bedakan "belum diproses" vs
+               * "sudah dalam PO (menunggu diterima)" pakai definisi bucket
+               * yang sama dengan detail modal. */
+              const unprocessed = active.filter(
+                (i) =>
+                  categorizePrItem({
+                    receivedQty: Number(i.receivedQty),
+                    rejectedAt: i.rejectedAt,
+                    inActivePurchase: i.inActivePurchase,
+                  }) === "outstanding",
+              );
+              const inPo = active.filter(
+                (i) =>
+                  categorizePrItem({
+                    receivedQty: Number(i.receivedQty),
+                    rejectedAt: i.rejectedAt,
+                    inActivePurchase: i.inActivePurchase,
+                  }) === "ordered",
               );
               const under = active.filter(
                 (i) =>
@@ -548,17 +565,23 @@ export function PurchaseRequestsSection() {
                     kamu sudah selesai memproses PR ini—walau ada item yang
                     sengaja dibeli lebih sedikit atau tidak jadi dibeli.
                   </p>
-                  {unbought.length > 0 ? (
+                  {unprocessed.length > 0 ? (
                     <div className="rounded-md border border-warning-300 bg-warning-100/40 p-3">
                       <p className="mb-1 text-xs font-semibold text-warning-600">
-                        {unbought.length} item belum dibeli sama sekali:
+                        {unprocessed.length} item belum diproses sama sekali:
                       </p>
                       <p className="text-xs text-neutral-700">
-                        {unbought
+                        {unprocessed
                           .map((i) => i.ingredientNameSnapshot)
                           .join(", ")}
                       </p>
                     </div>
+                  ) : null}
+                  {inPo.length > 0 ? (
+                    <p className="text-xs text-neutral-500">
+                      {inPo.length} item sedang dalam PO (penerimaannya tetap
+                      tercatat walau PR sudah Selesai).
+                    </p>
                   ) : null}
                   {under.length > 0 ? (
                     <p className="text-xs text-neutral-500">
@@ -624,8 +647,10 @@ interface RequestCardProps {
  * scan saat ada banyak PR. */
 function RequestCard({ request, onShowDetail }: RequestCardProps) {
   /* Sesi AE-177 — basis ITEM (bukan jumlah qty lintas satuan).
-   * Feedback Anisa 2026-06-08: "dibeli" = dapat ≥1 unit (qty kurang OK);
-   * yang outstanding hanya item yg belum dibeli sama sekali (received 0). */
+   * Feedback Anisa 2026-06-08: "dibeli" = dapat ≥1 unit (qty kurang OK).
+   * Feedback Cacil 2026-06-12: item yang sudah DITARIK ke PO aktif (menunggu
+   * diterima) bukan lagi "belum dibeli" — pakai categorizePrItem (definisi
+   * sama dgn detail modal + Tarik ke Pembelian). */
   const activeItems = request.items.filter((i) => !i.rejectedAt);
   const boughtItemCount = activeItems.filter(
     (i) => Number(i.receivedQty) > 0,
@@ -634,7 +659,17 @@ function RequestCard({ request, onShowDetail }: RequestCardProps) {
     activeItems.length > 0
       ? Math.round((boughtItemCount / activeItems.length) * 100)
       : 0;
-  const outstandingItemCount = activeItems.length - boughtItemCount;
+  const buckets = request.items.map((i) =>
+    categorizePrItem({
+      receivedQty: Number(i.receivedQty),
+      rejectedAt: i.rejectedAt,
+      inActivePurchase: i.inActivePurchase,
+    }),
+  );
+  const outstandingItemCount = buckets.filter(
+    (b) => b === "outstanding",
+  ).length;
+  const orderedItemCount = buckets.filter((b) => b === "ordered").length;
   return (
     <Card
       className="cursor-pointer transition-colors hover:border-mahakan-green-700 hover:shadow-sm"
@@ -673,7 +708,12 @@ function RequestCard({ request, onShowDetail }: RequestCardProps) {
               {request.items.length} bahan
               {outstandingItemCount > 0 ? (
                 <span className="ml-1 text-warning-500">
-                  ({outstandingItemCount} belum dibeli)
+                  ({outstandingItemCount} belum diproses)
+                </span>
+              ) : null}
+              {orderedItemCount > 0 ? (
+                <span className="ml-1 text-info-500">
+                  ({orderedItemCount} dalam PO)
                 </span>
               ) : null}
             </span>

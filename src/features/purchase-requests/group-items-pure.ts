@@ -193,3 +193,33 @@ export function computePrStatus(items: PrItemForStatus[]): PrStatus {
   if (hasReceived) return "partial";
   return "open";
 }
+
+/**
+ * Feedback Cacil 2026-06-12 — bucket per ITEM untuk tampilan halaman PR.
+ * Satu definisi dipakai semua surface (detail modal, card, Tarik ke
+ * Pembelian, stats) supaya tidak ada item "sudah diproses" yang nongol
+ * lagi sebagai outstanding (akar dobel-tarik / dobel-data).
+ *
+ *  - rejected    : ditolak owner — dikecualikan dari pemenuhan.
+ *  - bought      : sudah dibeli/diterima ≥1 unit (qty kurang dari request =
+ *                  keputusan final owner, BUKAN sisa — konsisten computePrStatus).
+ *  - ordered     : sudah DITARIK ke pembelian/PO aktif (non-cancelled) tapi
+ *                  barang belum diterima (GR belum). Tidak boleh ditarik lagi.
+ *  - outstanding : benar-benar belum diproses — hanya bucket ini yang boleh
+ *                  muncul di daftar "belum dibeli" + Tarik ke Pembelian.
+ */
+export type PrItemBucket = "rejected" | "bought" | "ordered" | "outstanding";
+
+export interface PrItemForBucket {
+  receivedQty: number;
+  rejectedAt: Date | null;
+  /** Item punya link purchase_items → purchases dengan status != 'cancelled'. */
+  inActivePurchase: boolean;
+}
+
+export function categorizePrItem(item: PrItemForBucket): PrItemBucket {
+  if (item.rejectedAt != null) return "rejected";
+  if (item.receivedQty > 0) return "bought";
+  if (item.inActivePurchase) return "ordered";
+  return "outstanding";
+}
