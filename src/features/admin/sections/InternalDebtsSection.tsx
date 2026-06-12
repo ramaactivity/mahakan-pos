@@ -147,6 +147,13 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
     0,
   );
   const activeCount = parties.filter((p) => p.totalOutstanding > 0).length;
+  /* Count dari agregat per-pihak (akurat), BUKAN length list riwayat yang
+   * di-limit 100 — audit AE-181. */
+  const totalEntryCount = parties.reduce((s, p) => s + p.entryCount, 0);
+  const totalRepaymentCount = parties.reduce(
+    (s, p) => s + p.repaymentCount,
+    0,
+  );
 
   async function handleDeleteParty(p: InternalDebtPartyListRow) {
     if (!confirm(`Hapus ${p.name} dari daftar pihak? Tidak bisa di-undo.`)) {
@@ -238,10 +245,10 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
                 Hutang Masuk (Riwayat)
               </p>
               <p className="text-xl font-bold text-neutral-900">
-                {entriesQuery.isLoading ? (
+                {partiesQuery.isLoading ? (
                   <Skeleton className="h-7 w-12" />
                 ) : (
-                  `${entries.length} entry`
+                  `${totalEntryCount} entry`
                 )}
               </p>
               <p className="text-[11px] text-neutral-600">
@@ -258,10 +265,10 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
                 Riwayat Cicilan
               </p>
               <p className="text-xl font-bold text-neutral-900">
-                {repaymentsQuery.isLoading ? (
+                {partiesQuery.isLoading ? (
                   <Skeleton className="h-7 w-12" />
                 ) : (
-                  `${repayments.length} transaksi`
+                  `${totalRepaymentCount} transaksi`
                 )}
               </p>
               <Button

@@ -13,6 +13,7 @@ import {
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { errorChainIncludes, logAndSanitize } from "@/lib/server-error";
+import { startOfWibDateUtc, todayWibIso } from "@/features/cash/helpers";
 import {
   lockBankAccountAdvisory,
   lockInternalDebtParty,
@@ -386,8 +387,11 @@ export async function postInternalDebtEntry(
   );
   if (!party) return fail("NOT_FOUND", "Pihak tidak ditemukan");
 
-  const occurredAt = v.occurredAt ? new Date(v.occurredAt) : new Date();
-  const entryDate = occurredAt.toISOString().slice(0, 10);
+  /* Audit AE-181 — tanggal pakai kalender WIB. Default new Date() +
+   * toISOString() menghasilkan tanggal UTC = KEMARIN kalau sebelum 07:00
+   * WIB. Backdate eksplisit di-anchor ke 00:00 WIB (pattern jurnal lain). */
+  const entryDate = v.occurredAt ? v.occurredAt.slice(0, 10) : todayWibIso();
+  const occurredAt = v.occurredAt ? startOfWibDateUtc(entryDate) : new Date();
 
   /* Pre-resolve per kind: akun beban + kategori (expense_advance) atau
    * bank code (cash_loan) di luar transaction. */
@@ -458,7 +462,12 @@ export async function postInternalDebtEntry(
             outletId: session.user.outletId,
             expenseDate: entryDate,
             categoryId: v.categoryId!,
-            description: `${v.description} (talangan ${party.name})`,
+            /* Cap 200 char — kontrak panjang deskripsi expense (input UI
+             * Keuangan max 200); suffix nama pihak bisa bikin lewat. */
+            description: `${v.description} (talangan ${party.name})`.slice(
+              0,
+              200,
+            ),
             amount: v.amount,
             paymentMethod: "other",
             sourceType: "internal_debt",
@@ -612,7 +621,8 @@ export async function reverseInternalDebtEntry(
       : "1112";
   }
 
-  const entryDate = new Date().toISOString().slice(0, 10);
+  /* Audit AE-181 — reversal di-post pada tanggal HARI INI kalender WIB. */
+  const entryDate = todayWibIso();
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -774,8 +784,9 @@ export async function postInternalDebtRepayment(
   const bankAccountCode = resolveBankCodeFromBankName(res.bank.bankName);
   const bankLabel = bankLabelOf(res.bank);
 
-  const occurredAt = v.occurredAt ? new Date(v.occurredAt) : new Date();
-  const entryDate = occurredAt.toISOString().slice(0, 10);
+  /* Audit AE-181 — kalender WIB (lihat catatan di postInternalDebtEntry). */
+  const entryDate = v.occurredAt ? v.occurredAt.slice(0, 10) : todayWibIso();
+  const occurredAt = v.occurredAt ? startOfWibDateUtc(entryDate) : new Date();
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -945,7 +956,8 @@ export async function reverseInternalDebtRepayment(
     : "1112";
   const bankLabel = bank ? bankLabelOf(bank) : "(unknown bank)";
 
-  const entryDate = new Date().toISOString().slice(0, 10);
+  /* Audit AE-181 — reversal di-post pada tanggal HARI INI kalender WIB. */
+  const entryDate = todayWibIso();
 
   try {
     const result = await db.transaction(async (tx) => {
