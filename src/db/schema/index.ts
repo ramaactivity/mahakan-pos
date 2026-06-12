@@ -41,6 +41,7 @@ export * from "./investor_statement_emails";
 /* Sesi AE-80 — Modal & Dividen v2 (ledger / mutasi dinamis). */
 export * from "./creditors";
 export * from "./creditor_repayments";
+export * from "./internal_debts";
 export * from "./share_transactions";
 export * from "./withdrawal_requests";
 /* Sesi AE-123 — Web Push subscription registry untuk notif setoran pending. */

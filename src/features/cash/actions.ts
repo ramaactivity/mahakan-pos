@@ -405,6 +405,15 @@ export async function updateExpense(
       "Refund auto tidak bisa di-edit manual",
     );
   }
+  /* Sesi AE-180 — expense hasil talangan owner/pengelola di-manage dari
+   * halaman Hutang Internal (jurnal Cr 2170, bukan kas). Edit manual di
+   * sini bikin expense & hutang internal diverge. */
+  if (current.sourceType === "internal_debt") {
+    return fail(
+      "BUSINESS_RULE_VIOLATION",
+      "Pengeluaran ini berasal dari talangan Hutang Internal — kelola (reverse) dari halaman Hutang Internal",
+    );
+  }
 
   const ageMs = Date.now() - current.createdAt.getTime();
   const within24h = ageMs <= 24 * 60 * 60 * 1000;
@@ -546,6 +555,7 @@ export async function deleteExpense(id: string): Promise<ApiResult<{ id: string 
       amount: expenses.amount,
       expenseDate: expenses.expenseDate,
       refundedTransactionId: expenses.refundedTransactionId,
+      sourceType: expenses.sourceType,
     })
     .from(expenses)
     .where(
@@ -561,6 +571,14 @@ export async function deleteExpense(id: string): Promise<ApiResult<{ id: string 
     return fail(
       "BUSINESS_RULE_VIOLATION",
       "Refund auto tidak bisa di-hapus manual",
+    );
+  }
+  /* Sesi AE-180 — talangan Hutang Internal: hapus harus via reverse entry
+   * di halaman Hutang Internal supaya jurnal + outstanding ikut dibalik. */
+  if (current.sourceType === "internal_debt") {
+    return fail(
+      "BUSINESS_RULE_VIOLATION",
+      "Pengeluaran ini berasal dari talangan Hutang Internal — reverse dari halaman Hutang Internal",
     );
   }
 

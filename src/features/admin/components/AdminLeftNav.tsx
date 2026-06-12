@@ -59,6 +59,7 @@ export type AdminSection =
   | "audit"
   | "journal_retry"
   | "investors"
+  | "internal_debts"
   | "operasional_checklist"
   | "nota_archive"
   | "settings";
@@ -167,6 +168,9 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       /* Sesi AE-63 — Investor + Pengelola + distribusi dividen bulanan. */
       { key: "investors", label: "Investor", Icon: HandCoins, ownerOnly: false },
+      /* Sesi AE-180 — Hutang Internal (Talangan Owner/Pengelola). Halaman
+       * terpisah dari Investor (owner directive). */
+      { key: "internal_debts", label: "Hutang Internal", Icon: Landmark },
     ],
   },
   {

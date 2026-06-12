@@ -72,9 +72,13 @@ export const expenses = pgTable(
      * - 'manual' = Owner/staff input via Kas section / POS petty cash
      * - 'purchase' = auto-created by purchase confirm (sesi O)
      * - 'payroll' = auto-created by payroll mark-paid (sesi Q)
-     * - 'refund' = auto-created by transaction refund (counter-balance) */
+     * - 'refund' = auto-created by transaction refund (counter-balance)
+     * - 'internal_debt' = auto-created by talangan owner/pengelola (sesi
+     *   AE-180). Jurnal di-post modul internal-debts (Cr 2170, BUKAN kas)
+     *   — hook expense_create skip sourceType != 'manual'. Edit/hapus
+     *   hanya via halaman Hutang Internal (reverse entry). */
     sourceType: text("source_type", {
-      enum: ["manual", "purchase", "payroll", "refund"],
+      enum: ["manual", "purchase", "payroll", "refund", "internal_debt"],
     })
       .notNull()
       .default("manual"),

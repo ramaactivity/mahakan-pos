@@ -149,6 +149,11 @@ const OperasionalChecklistSection = lazy(() =>
     default: m.OperasionalChecklistSection,
   })),
 );
+const InternalDebtsSection = lazy(() =>
+  import("@/features/admin/sections/InternalDebtsSection").then((m) => ({
+    default: m.InternalDebtsSection,
+  })),
+);
 const NotaArchiveSection = lazy(() =>
   import("@/features/admin/sections/NotaArchiveSection").then((m) => ({
     default: m.NotaArchiveSection,
@@ -182,6 +187,7 @@ const VALID_SECTIONS: ReadonlySet<AdminSection> = new Set([
   "audit",
   "journal_retry",
   "investors",
+  "internal_debts",
   "operasional_checklist",
   "nota_archive",
   "settings",
@@ -404,6 +410,8 @@ export function AdminShell() {
               <JournalRetryQueueSection />
             ) : section === "investors" ? (
               <InvestorsSection viewerRole={session.user.role} />
+            ) : section === "internal_debts" ? (
+              <InternalDebtsSection viewerRole={session.user.role} />
             ) : section === "operasional_checklist" ? (
               <OperasionalChecklistSection viewerRole={session.user.role} />
             ) : section === "nota_archive" ? (

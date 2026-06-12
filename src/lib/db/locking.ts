@@ -1,6 +1,11 @@
 import "server-only";
 import { inArray, sql } from "drizzle-orm";
-import { investors, pengelola, creditors } from "@/db/schema";
+import {
+  investors,
+  pengelola,
+  creditors,
+  internalDebtParties,
+} from "@/db/schema";
 import type { Database } from "@/db";
 
 /**
@@ -86,6 +91,21 @@ export async function lockCreditor(
     .select({ id: creditors.id })
     .from(creditors)
     .where(inArray(creditors.id, [id]))
+    .for("update");
+}
+
+/**
+ * Sesi AE-180 — Lock internal debt party row by id. Serialize concurrent
+ * entry/repayment yang mutate totalOutstanding party yang sama.
+ */
+export async function lockInternalDebtParty(
+  tx: TxLike,
+  id: string,
+): Promise<void> {
+  await tx
+    .select({ id: internalDebtParties.id })
+    .from(internalDebtParties)
+    .where(inArray(internalDebtParties.id, [id]))
     .for("update");
 }
 

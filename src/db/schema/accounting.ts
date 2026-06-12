@@ -231,6 +231,22 @@ export const journalEntries = pgTable(
          * yang baru di-create). Journal: Dr 3101 Modal Owner / Cr 2150
          * Hutang Kreditur senilai principalOriginal. */
         "investor_to_creditor_conversion",
+        /* Sesi AE-180 — Hutang Internal (Talangan Owner/Pengelola).
+         *
+         * internal_debt_expense: talangan biaya — owner bayar pengeluaran
+         *   pakai uang pribadi (Dr <akun beban> / Cr 2170 Hutang Internal).
+         *   sourceId = internal_debt_entries.id.
+         * internal_debt_loan: pinjaman tunai masuk ke rekening bisnis
+         *   (Dr <bank> / Cr 2170). sourceId = internal_debt_entries.id.
+         * internal_debt_entry_reversal: jurnal pembalik entry (salah input).
+         * internal_debt_repayment: cicilan hutang internal (Dr 2170 /
+         *   Cr <bank>). sourceId = internal_debt_repayments.id.
+         * internal_debt_repayment_reversal: jurnal pembalik cicilan. */
+        "internal_debt_expense",
+        "internal_debt_loan",
+        "internal_debt_entry_reversal",
+        "internal_debt_repayment",
+        "internal_debt_repayment_reversal",
         /* Sesi AE-116 — COGS period close adjustment.
          *
          * Reconcile recognized HPP (pos_sale running) vs actual COGS (WAC

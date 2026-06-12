@@ -582,6 +582,13 @@
       "when": 1780390504805,
       "tag": "0082_faithful_wonder_man",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1781279951521,
+      "tag": "0083_stormy_wither",
+      "breakpoints": true
     }
   ]
 }

@@ -67,6 +67,12 @@ export type JournalSourceType =
   | "share_buyback_reversal"
   /* Sesi AE-80 follow-up — convert investor → kreditur. */
   | "investor_to_creditor_conversion"
+  /* Sesi AE-180 — Hutang Internal (Talangan Owner/Pengelola). */
+  | "internal_debt_expense"
+  | "internal_debt_loan"
+  | "internal_debt_entry_reversal"
+  | "internal_debt_repayment"
+  | "internal_debt_repayment_reversal"
   /* Sesi AE-116 — COGS period close adjustment (reconcile recognized vs actual). */
   | "cogs_period_close";
 

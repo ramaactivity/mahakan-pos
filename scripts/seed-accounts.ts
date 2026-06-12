@@ -77,6 +77,8 @@ const DEFAULTS: DefaultAccount[] = [
   /* Sesi AE-80 — Modal & Dividen v2. */
   { code: "2150", name: "Hutang Kreditur", type: "liability", normalBalance: "credit", parentCode: "2100", isSystem: true, displayOrder: 30, notes: "Hutang pinjaman ke kreditur (pemberi pinjaman non-equity). Cr saat creditor created; Dr saat cicilan pokok dibayar (creditor_repayments)." },
   { code: "2160", name: "Hutang Dividen Investor", type: "liability", normalBalance: "credit", parentCode: "2100", isSystem: true, displayOrder: 40, notes: "Saldo dividen yang sudah ke-credit ke investor tapi belum dicairkan. Cr saat distribution v2 posted (re-classify dari 3201 Prive); Dr saat withdrawal posted." },
+  /* Sesi AE-180 — Hutang Internal (Talangan Owner/Pengelola). */
+  { code: "2170", name: "Hutang Internal (Talangan)", type: "liability", normalBalance: "credit", parentCode: "2100", isSystem: true, displayOrder: 50, notes: "Sesi AE-180: Hutang ke owner/pengelola/orang dalam yang nalangin pengeluaran atau minjamin tunai (tanpa bunga). Cr saat entry talangan/pinjaman posted (internal_debt_entries); Dr saat cicilan dibayar (internal_debt_repayments). Pinjaman formal berbunga tetap pakai 2150 Hutang Kreditur." },
 
   // ============ 3xxx EKUITAS ============
   { code: "3101", name: "Modal Owner", type: "equity", normalBalance: "credit", parentCode: "3100", isSystem: true, displayOrder: 1, notes: "Setoran modal awal + tambahan setoran" },

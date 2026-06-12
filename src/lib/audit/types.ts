@@ -217,6 +217,14 @@ export const AUDIT_EVENT_TYPES = [
   "investor.convert_to_creditor",
   "creditor_repayment.post",
   "creditor_repayment.reverse",
+  /* Sesi AE-180 — Hutang Internal (Talangan Owner/Pengelola). */
+  "internal_debt_party.create",
+  "internal_debt_party.update",
+  "internal_debt_party.delete",
+  "internal_debt_entry.post",
+  "internal_debt_entry.reverse",
+  "internal_debt_repayment.post",
+  "internal_debt_repayment.reverse",
   "share_transaction.p2p_transfer",
   "share_transaction.company_buyback",
   "share_transaction.reverse",
@@ -392,6 +400,10 @@ export type AuditEntityType =
   | "withdrawal_request"
   | "creditor"
   | "creditor_repayment"
+  /* Sesi AE-180 — Hutang Internal (Talangan Owner/Pengelola). */
+  | "internal_debt_party"
+  | "internal_debt_entry"
+  | "internal_debt_repayment"
   | "share_transaction"
   | "promo"
   | "employee_career_history"
