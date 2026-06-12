@@ -223,3 +223,30 @@ export function categorizePrItem(item: PrItemForBucket): PrItemBucket {
   if (item.inActivePurchase) return "ordered";
   return "outstanding";
 }
+
+/**
+ * Feedback Cacil 2026-06-12 (audit lanjutan) — terapkan delta penerimaan ke
+ * pasangan kolom receivedQty (bigint) + receivedQtyDecimal (mirror, = truth).
+ * Dipakai `cancelPurchase` untuk UN-BUMP kontribusi pembelian yang dibatalkan
+ * supaya item PR tidak terkunci "Dibeli" selamanya.
+ *
+ * Invariant yang dijaga:
+ *  - decimal tidak pernah negatif (clamp 0; debu float < 1e-6 dianggap 0) —
+ *    konsisten ck constraint received_qty >= 0.
+ *  - decimal > 0 → bigint >= 1 (pola bump existing pakai max(1, round)),
+ *    supaya bucket "bought" (receivedQty > 0) tetap akurat untuk sisa
+ *    kontribusi pembelian lain yang masih aktif.
+ */
+export function applyPrReceiveDelta(args: {
+  currentDecimal: number;
+  delta: number;
+}): { receivedQty: number; receivedQtyDecimal: string } {
+  const raw = args.currentDecimal + args.delta;
+  const nextDecimal = raw < 1e-6 ? 0 : raw;
+  const nextBigint =
+    nextDecimal > 0 ? Math.max(1, Math.round(nextDecimal)) : 0;
+  return {
+    receivedQty: nextBigint,
+    receivedQtyDecimal: nextDecimal.toFixed(4),
+  };
+}

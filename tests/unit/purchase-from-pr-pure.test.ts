@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyPrReceiveDelta,
   categorizePrItem,
   computePrStatus,
   getPurchaseGroupBlockers,
@@ -296,5 +297,45 @@ describe("categorizePrItem", () => {
         inActivePurchase: false,
       }),
     ).toBe("outstanding");
+  });
+});
+
+/* Feedback Cacil 2026-06-12 (audit lanjutan) — un-bump receivedQty PR saat
+ * cancelPurchase. Decimal = truth; bigint jaga invariant >0 → ≥1. */
+describe("applyPrReceiveDelta", () => {
+  it("un-bump penuh → balik ke 0 (item bisa ditarik ulang)", () => {
+    const r = applyPrReceiveDelta({ currentDecimal: 5, delta: -5 });
+    expect(r.receivedQty).toBe(0);
+    expect(r.receivedQtyDecimal).toBe("0.0000");
+  });
+
+  it("un-bump sebagian → sisa kontribusi pembelian lain tetap", () => {
+    const r = applyPrReceiveDelta({ currentDecimal: 8, delta: -5 });
+    expect(r.receivedQty).toBe(3);
+    expect(r.receivedQtyDecimal).toBe("3.0000");
+  });
+
+  it("clamp 0 — un-bump melebihi current (bump min-1 inflation) tidak negatif", () => {
+    const r = applyPrReceiveDelta({ currentDecimal: 0.3, delta: -1 });
+    expect(r.receivedQty).toBe(0);
+    expect(r.receivedQtyDecimal).toBe("0.0000");
+  });
+
+  it("sisa pecahan kecil > 0 → bigint tetap ≥1 (bucket bought akurat)", () => {
+    const r = applyPrReceiveDelta({ currentDecimal: 5.3, delta: -5 });
+    expect(r.receivedQty).toBe(1); // max(1, round(0.3))
+    expect(r.receivedQtyDecimal).toBe("0.3000");
+  });
+
+  it("debu float < 1e-6 dianggap 0", () => {
+    const r = applyPrReceiveDelta({ currentDecimal: 5, delta: -4.9999999 });
+    expect(r.receivedQty).toBe(0);
+    expect(r.receivedQtyDecimal).toBe("0.0000");
+  });
+
+  it("delta positif (bump) juga konsisten", () => {
+    const r = applyPrReceiveDelta({ currentDecimal: 0, delta: 0.5 });
+    expect(r.receivedQty).toBe(1);
+    expect(r.receivedQtyDecimal).toBe("0.5000");
   });
 });

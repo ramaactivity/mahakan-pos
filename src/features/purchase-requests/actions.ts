@@ -539,7 +539,9 @@ export async function rejectItem(input: {
     | "ITEM_NOT_FOUND"
     | "REQUEST_NOT_FOUND"
     | "CROSS_OUTLET"
-    | "REQUEST_CANCELLED";
+    | "REQUEST_CANCELLED"
+    | "ITEM_ALREADY_BOUGHT"
+    | "ITEM_IN_ACTIVE_PO";
   type RejectResult =
     | { error: RejectErr }
     | { requestId: string; newStatus: PurchaseRequestStatus };
@@ -568,6 +570,28 @@ export async function rejectItem(input: {
     // Idempotent — kalau already rejected, just return current status.
     if (item.rejectedAt) {
       return { requestId: parent.id, newStatus: parent.status };
+    }
+
+    /* Feedback Cacil 2026-06-12 (audit lanjutan) — guard server. Tombol Tolak
+     * di UI sudah hanya muncul utk item outstanding, tapi tab basi/race masih
+     * bisa nembak action ini utk item yang sudah dibeli / sedang dalam PO
+     * aktif. Tolak di sini supaya bucket tetap konsisten. */
+    if (Number(item.receivedQty) > 0) {
+      return { error: "ITEM_ALREADY_BOUGHT" };
+    }
+    const activeLink = await tx
+      .select({ id: purchaseItems.id })
+      .from(purchaseItems)
+      .innerJoin(purchases, eq(purchases.id, purchaseItems.purchaseId))
+      .where(
+        and(
+          eq(purchaseItems.purchaseRequestItemId, item.id),
+          ne(purchases.status, "cancelled"),
+        ),
+      )
+      .limit(1);
+    if (activeLink.length > 0) {
+      return { error: "ITEM_IN_ACTIVE_PO" };
     }
 
     await tx
@@ -640,6 +664,10 @@ export async function rejectItem(input: {
       REQUEST_NOT_FOUND: "Request tidak ditemukan",
       CROSS_OUTLET: "Request dari outlet lain",
       REQUEST_CANCELLED: "Request sudah dibatalkan",
+      ITEM_ALREADY_BOUGHT:
+        "Item sudah dibeli — tidak bisa ditolak. Refresh halaman untuk lihat status terbaru.",
+      ITEM_IN_ACTIVE_PO:
+        "Item sedang dalam PO aktif (menunggu diterima). Batalkan PO-nya dulu kalau memang tidak jadi.",
     };
     return fail(result.error, messages[result.error]);
   }
@@ -933,8 +961,23 @@ export async function listOpenPurchaseRequestsForPurchase(): Promise<
   // Group items per request
   const itemsByRequest = new Map<string, PrItemForPurchase[]>();
   for (const it of itemRows) {
-    const requestedQty = Number(it.requestedQty);
-    const receivedQty = Number(it.receivedQty);
+    /* Feedback Cacil 2026-06-12 (audit lanjutan) — pakai decimal mirror
+     * (= truth, sesi AE-16/AE-62e). Kolom bigint = max(1, floor(qty)) →
+     * request staff 0.5 Kg tampil/prefill jadi 1 Kg kalau baca bigint. */
+    const reqDecimal = it.requestedQtyDecimal
+      ? Number(it.requestedQtyDecimal)
+      : NaN;
+    const requestedQty =
+      Number.isFinite(reqDecimal) && reqDecimal > 0
+        ? reqDecimal
+        : Number(it.requestedQty);
+    const recvDecimal = it.receivedQtyDecimal
+      ? Number(it.receivedQtyDecimal)
+      : NaN;
+    const receivedQty =
+      Number.isFinite(recvDecimal) && recvDecimal > 0
+        ? recvDecimal
+        : Number(it.receivedQty);
     const outstandingQty = requestedQty - receivedQty;
     if (receivedQty > 0) continue; // sudah dibeli (under-buy = final owner)
     if (activeLinkIds.has(it.id)) continue; // sudah dalam PO aktif (menunggu GR)

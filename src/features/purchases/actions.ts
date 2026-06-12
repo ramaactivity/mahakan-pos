@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   expenseCategories,
@@ -20,7 +20,10 @@ import {
 import { computeNewWac } from "@/features/cogs/cogs-calc";
 import { cascadeCostUpdate } from "@/features/inventory/preparation-flow";
 import { getStockMode } from "@/features/inventory/flag";
-import { computePrStatus } from "@/features/purchase-requests/group-items-pure";
+import {
+  applyPrReceiveDelta,
+  computePrStatus,
+} from "@/features/purchase-requests/group-items-pure";
 import { fetchLastFinalizedOpname } from "@/features/stock-opname/queries";
 import { toJakartaDateOnly } from "@/lib/date";
 import { auth } from "@/lib/auth";
@@ -338,12 +341,32 @@ export async function createPurchase(
           for (const row of prRows) prHeaderMap.set(row.id, row);
         }
 
+        /* Feedback Cacil 2026-06-12 (audit lanjutan) — guard server anti
+         * dobel-tarik. Filter "outstanding" di modal Tarik hanya level
+         * tampilan; tab basi / dua device bisa tetap submit item yang sudah
+         * dibeli atau sudah dalam PO aktif → link dobel + bump dobel.
+         * Row PR di-lock FOR UPDATE di atas → dua submit bersamaan serial,
+         * yang kedua kena guard ini. */
+        const linkedRows = await tx
+          .select({ prItemId: purchaseItems.purchaseRequestItemId })
+          .from(purchaseItems)
+          .innerJoin(purchases, eq(purchases.id, purchaseItems.purchaseId))
+          .where(
+            and(
+              inArray(purchaseItems.purchaseRequestItemId, prItemIds),
+              ne(purchases.status, "cancelled"),
+            ),
+          );
+        const alreadyLinked = new Set(
+          linkedRows.map((r) => r.prItemId).filter(Boolean),
+        );
+
         // Validate each linked item
         /* Sesi AE-177 — keputusan owner: qty pembelian boleh LEBIH/KURANG
          * dari yang di-request staff (pertimbangan pasar/promo ada di
          * tangan Purchasing). Disparity tercatat di PR (requestedQty)
-         * vs actual receivedQty (boleh > requested). computePrStatus tetap
-         * mark "completed" begitu received >= requested.
+         * vs actual receivedQty. Item dianggap beres begitu received > 0
+         * (under-buy = keputusan final owner, feedback Anisa 2026-06-08).
          * (Sebelumnya: throw PR_OVER_RECEIVE → blok save.) */
         for (const { item, ing } of resolved) {
           if (!item.purchaseRequestItemId) continue;
@@ -359,6 +382,12 @@ export async function createPurchase(
           }
           if (prItem.rejectedAt) {
             throw new Error(`PR_ITEM_REJECTED:${ing.name}`);
+          }
+          if (Number(prItem.receivedQty) > 0) {
+            throw new Error(`PR_ITEM_ALREADY_BOUGHT:${ing.name}`);
+          }
+          if (alreadyLinked.has(item.purchaseRequestItemId)) {
+            throw new Error(`PR_ITEM_ALREADY_LINKED:${ing.name}`);
           }
         }
       }
@@ -863,6 +892,21 @@ export async function createPurchase(
         `Bahan "${ingName}": item PR sudah ditolak, tidak bisa di-belikan`,
       );
     }
+    /* Feedback Cacil 2026-06-12 — anti dobel-tarik (tab basi / race). */
+    if (msg.startsWith("PR_ITEM_ALREADY_BOUGHT:")) {
+      const ingName = msg.slice("PR_ITEM_ALREADY_BOUGHT:".length);
+      return fail(
+        "CONFLICT",
+        `Bahan "${ingName}": item PR ini sudah pernah dibeli. Refresh halaman — kalau memang mau beli lagi, pakai Catat Pembelian biasa (tanpa tarik PR).`,
+      );
+    }
+    if (msg.startsWith("PR_ITEM_ALREADY_LINKED:")) {
+      const ingName = msg.slice("PR_ITEM_ALREADY_LINKED:".length);
+      return fail(
+        "CONFLICT",
+        `Bahan "${ingName}": item PR ini sudah ditarik ke PO aktif (menunggu diterima). Refresh halaman untuk lihat status terbaru.`,
+      );
+    }
     return fail(
       "DB_ERROR",
       logAndSanitize(e, "purchases.create", "Gagal menyimpan pembelian"),
@@ -1115,6 +1159,161 @@ export async function cancelPurchase(
             deletedBy: session.user.id,
           })
           .where(eq(expenses.id, p.expenseId));
+      }
+
+      /* Feedback Cacil 2026-06-12 (audit lanjutan) — UN-BUMP receivedQty PR.
+       * Sebelumnya cancel membalik stok + jurnal + expense tapi TIDAK membalik
+       * purchase_request_items.receivedQty → item PR terkunci "Dibeli"
+       * selamanya dan (sejak bucket 91e2ca1) tidak bisa ditarik ulang.
+       * Kurangi sebesar kontribusi pembelian INI saja: received_qty raw per
+       * line dikonversi ke satuan master dengan jalur konversi yang SAMA
+       * dengan bump (convertPurchaseQty + pack supplier + packConversions +
+       * tier belanja/tracking; gagal konversi → fallback raw, mirror bump).
+       * Decimal = truth, clamp 0; bigint jaga invariant >0 → ≥1
+       * (applyPrReceiveDelta). Lalu recompute status PR. */
+      const cancelLinkedItems = await tx
+        .select()
+        .from(purchaseItems)
+        .where(eq(purchaseItems.purchaseId, v.id));
+      const prLinked = cancelLinkedItems.filter((i) => i.purchaseRequestItemId);
+      if (prLinked.length > 0) {
+        const linkIngIds = Array.from(
+          new Set(prLinked.map((i) => i.ingredientId)),
+        );
+        const linkIngRows = await tx
+          .select()
+          .from(ingredients)
+          .where(inArray(ingredients.id, linkIngIds));
+        const linkIngById = new Map(linkIngRows.map((r) => [r.id, r] as const));
+
+        const packMap = new Map<string, PackInfo>();
+        if (p.supplierId && linkIngIds.length > 0) {
+          const packRows = await tx
+            .select({
+              ingredientId: supplierIngredients.ingredientId,
+              packSize: supplierIngredients.packSize,
+              packUnit: supplierIngredients.packUnit,
+            })
+            .from(supplierIngredients)
+            .where(
+              and(
+                eq(supplierIngredients.outletId, session.user.outletId),
+                eq(supplierIngredients.supplierId, p.supplierId),
+                inArray(supplierIngredients.ingredientId, linkIngIds),
+                isNull(supplierIngredients.deletedAt),
+              ),
+            );
+          for (const r of packRows) {
+            const size = parseFloat(r.packSize);
+            if (Number.isFinite(size) && size > 0) {
+              packMap.set(r.ingredientId, {
+                packSize: size,
+                packUnit: r.packUnit,
+              });
+            }
+          }
+        }
+
+        const prItemIds = prLinked.map((i) => i.purchaseRequestItemId!);
+        const prItemRows = await tx
+          .select()
+          .from(purchaseRequestItems)
+          .where(inArray(purchaseRequestItems.id, prItemIds))
+          .for("update");
+        const prItemMap = new Map(prItemRows.map((r) => [r.id, r] as const));
+        const touchedRequestIds = new Set<string>();
+
+        for (const it of prLinked) {
+          const prItem = prItemMap.get(it.purchaseRequestItemId!);
+          if (!prItem) continue;
+          const rawReceived =
+            parseFloat(it.receivedQtyDecimal ?? "") || Number(it.receivedQty);
+          if (!(rawReceived > 0)) continue; // line ini belum pernah diterima
+
+          const ing = linkIngById.get(it.ingredientId);
+          let masterQty = rawReceived; // fallback: anggap sudah satuan master
+          if (ing) {
+            const existingPacks =
+              (ing.packConversions as Array<{
+                unitLabel: string;
+                qtyPerBase: number;
+              }> | null) ?? [];
+            const tierPacks: Array<{ unitLabel: string; qtyPerBase: number }> =
+              [];
+            if (ing.unitBelanja && ing.unitBelanjaPerCogs) {
+              const per = parseFloat(ing.unitBelanjaPerCogs);
+              if (Number.isFinite(per) && per > 0)
+                tierPacks.push({ unitLabel: ing.unitBelanja, qtyPerBase: per });
+            }
+            if (ing.unitTracking && ing.unitTrackingPerCogs) {
+              const per = parseFloat(ing.unitTrackingPerCogs);
+              if (Number.isFinite(per) && per > 0)
+                tierPacks.push({
+                  unitLabel: ing.unitTracking,
+                  qtyPerBase: per,
+                });
+            }
+            const conv = convertPurchaseQty({
+              qty: rawReceived,
+              fromUnit: it.unitOverride ?? it.unitSnapshot ?? ing.unit,
+              masterUnit: ing.unit,
+              pack: packMap.get(it.ingredientId) ?? null,
+              ingredientPacks: mergePackConversions(existingPacks, tierPacks),
+            });
+            if (conv.ok) masterQty = conv.qtyMaster;
+          }
+
+          const currentDecimal = prItem.receivedQtyDecimal
+            ? Number(prItem.receivedQtyDecimal)
+            : Number(prItem.receivedQty);
+          const next = applyPrReceiveDelta({
+            currentDecimal,
+            delta: -masterQty,
+          });
+          await tx
+            .update(purchaseRequestItems)
+            .set({
+              receivedQty: next.receivedQty,
+              receivedQtyDecimal: next.receivedQtyDecimal,
+              updatedAt: new Date(),
+            })
+            .where(eq(purchaseRequestItems.id, prItem.id));
+          prItemMap.set(prItem.id, {
+            ...prItem,
+            receivedQty: next.receivedQty,
+            receivedQtyDecimal: next.receivedQtyDecimal,
+          });
+          touchedRequestIds.add(prItem.requestId);
+        }
+
+        for (const requestId of touchedRequestIds) {
+          const allItems = await tx
+            .select()
+            .from(purchaseRequestItems)
+            .where(eq(purchaseRequestItems.requestId, requestId));
+          const newStatus = computePrStatus(
+            allItems.map((r) => ({
+              requestedQty: Number(r.requestedQty),
+              receivedQty: Number(r.receivedQty),
+              rejectedAt: r.rejectedAt,
+            })),
+          );
+          const [pr] = await tx
+            .select()
+            .from(purchaseRequests)
+            .where(eq(purchaseRequests.id, requestId))
+            .limit(1);
+          if (pr && pr.status !== "cancelled" && newStatus !== pr.status) {
+            await tx
+              .update(purchaseRequests)
+              .set({
+                status: newStatus,
+                completedAt: newStatus === "completed" ? new Date() : null,
+                updatedAt: new Date(),
+              })
+              .where(eq(purchaseRequests.id, requestId));
+          }
+        }
       }
     });
   } catch (e) {
@@ -1448,6 +1647,69 @@ export async function createPurchaseOrder(
           throw new Error("OUTLET_MISMATCH");
         }
       }
+
+      /* Feedback Cacil 2026-06-12 (audit lanjutan) — validasi PR item utk PO.
+       * Sebelumnya createPurchaseOrder TIDAK validasi link PR sama sekali
+       * (exists/outlet/cancelled/rejected lolos semua) + tanpa guard
+       * anti dobel-tarik. Mirror blok validasi createPurchase: lock FOR
+       * UPDATE → dua tarik bersamaan serial, yang kedua kena guard. */
+      const poPrItemIds = v.items
+        .map((i) => i.purchaseRequestItemId)
+        .filter((id): id is string => Boolean(id));
+      if (poPrItemIds.length > 0) {
+        const prItemRows = await tx
+          .select()
+          .from(purchaseRequestItems)
+          .where(inArray(purchaseRequestItems.id, poPrItemIds))
+          .for("update");
+        const prItemMap = new Map(prItemRows.map((r) => [r.id, r] as const));
+        const prIds = Array.from(new Set(prItemRows.map((r) => r.requestId)));
+        const prRows =
+          prIds.length > 0
+            ? await tx
+                .select()
+                .from(purchaseRequests)
+                .where(inArray(purchaseRequests.id, prIds))
+            : [];
+        const prHeaderMap = new Map(prRows.map((r) => [r.id, r] as const));
+        const linkedRows = await tx
+          .select({ prItemId: purchaseItems.purchaseRequestItemId })
+          .from(purchaseItems)
+          .innerJoin(purchases, eq(purchases.id, purchaseItems.purchaseId))
+          .where(
+            and(
+              inArray(purchaseItems.purchaseRequestItemId, poPrItemIds),
+              ne(purchases.status, "cancelled"),
+            ),
+          );
+        const alreadyLinked = new Set(
+          linkedRows.map((r) => r.prItemId).filter(Boolean),
+        );
+        for (const item of v.items) {
+          if (!item.purchaseRequestItemId) continue;
+          const ingName = ingById.get(item.ingredientId)?.name ?? "Bahan";
+          const prItem = prItemMap.get(item.purchaseRequestItemId);
+          if (!prItem) throw new Error("PR_ITEM_NOT_FOUND");
+          const pr = prHeaderMap.get(prItem.requestId);
+          if (!pr) throw new Error("PR_NOT_FOUND");
+          if (pr.outletId !== session.user.outletId) {
+            throw new Error("OUTLET_MISMATCH");
+          }
+          if (pr.status === "cancelled") {
+            throw new Error(`PR_CANCELLED:${ingName}`);
+          }
+          if (prItem.rejectedAt) {
+            throw new Error(`PR_ITEM_REJECTED:${ingName}`);
+          }
+          if (Number(prItem.receivedQty) > 0) {
+            throw new Error(`PR_ITEM_ALREADY_BOUGHT:${ingName}`);
+          }
+          if (alreadyLinked.has(item.purchaseRequestItemId)) {
+            throw new Error(`PR_ITEM_ALREADY_LINKED:${ingName}`);
+          }
+        }
+      }
+
       let total = 0;
       for (const item of v.items) total += Math.round(item.qty * item.unitCost);
 
@@ -1512,6 +1774,39 @@ export async function createPurchaseOrder(
       return fail("NOT_FOUND", "Salah satu bahan tidak ditemukan / non-aktif");
     if (msg === "OUTLET_MISMATCH")
       return fail("FORBIDDEN", "Bahan dari outlet lain — kontak admin");
+    /* Feedback Cacil 2026-06-12 — validasi PR + anti dobel-tarik di PO. */
+    if (msg === "PR_ITEM_NOT_FOUND")
+      return fail("NOT_FOUND", "Item Permintaan Belanja tidak ditemukan");
+    if (msg === "PR_NOT_FOUND")
+      return fail("NOT_FOUND", "Permintaan Belanja tidak ditemukan");
+    if (msg.startsWith("PR_CANCELLED:")) {
+      const ingName = msg.slice("PR_CANCELLED:".length);
+      return fail(
+        "CONFLICT",
+        `Bahan "${ingName}": Permintaan Belanja-nya sudah dibatalkan`,
+      );
+    }
+    if (msg.startsWith("PR_ITEM_REJECTED:")) {
+      const ingName = msg.slice("PR_ITEM_REJECTED:".length);
+      return fail(
+        "CONFLICT",
+        `Bahan "${ingName}": item PR sudah ditolak, tidak bisa di-belikan`,
+      );
+    }
+    if (msg.startsWith("PR_ITEM_ALREADY_BOUGHT:")) {
+      const ingName = msg.slice("PR_ITEM_ALREADY_BOUGHT:".length);
+      return fail(
+        "CONFLICT",
+        `Bahan "${ingName}": item PR ini sudah pernah dibeli. Refresh halaman — kalau memang mau beli lagi, pakai Catat Pembelian biasa (tanpa tarik PR).`,
+      );
+    }
+    if (msg.startsWith("PR_ITEM_ALREADY_LINKED:")) {
+      const ingName = msg.slice("PR_ITEM_ALREADY_LINKED:".length);
+      return fail(
+        "CONFLICT",
+        `Bahan "${ingName}": item PR ini sudah ditarik ke PO aktif (menunggu diterima). Refresh halaman untuk lihat status terbaru.`,
+      );
+    }
     return fail(
       "DB_ERROR",
       logAndSanitize(e, "purchases.order_create", "Gagal menyimpan PO"),

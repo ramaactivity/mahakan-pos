@@ -434,6 +434,14 @@ function unitColumn(): ResponsiveColumn<PurchaseRequestItemWithLink> {
   };
 }
 
+/* Feedback Cacil 2026-06-12 (audit lanjutan) — qty tampil pakai decimal
+ * mirror (= truth). Bigint = max(1, floor) → request staff 0.5 Kg tampil
+ * jadi 1 Kg kalau baca bigint. Mirror riwayat staff /m/po. */
+function qtyDisplay(bigintVal: unknown, decimalVal: string | null): number {
+  const d = decimalVal ? Number(decimalVal) : NaN;
+  return Number.isFinite(d) && d > 0 ? d : Number(bigintVal);
+}
+
 function requestedColumn(): ResponsiveColumn<PurchaseRequestItemWithLink> {
   return {
     key: "requested",
@@ -441,7 +449,9 @@ function requestedColumn(): ResponsiveColumn<PurchaseRequestItemWithLink> {
     align: "right",
     render: (it) => (
       <span className="font-mono tabular-nums">
-        {Number(it.requestedQty).toLocaleString("id-ID")}
+        {qtyDisplay(it.requestedQty, it.requestedQtyDecimal).toLocaleString(
+          "id-ID",
+        )}
       </span>
     ),
   };
@@ -468,7 +478,9 @@ function processedColumns(
       align: "right",
       render: (it) => (
         <span className="font-mono tabular-nums">
-          {Number(it.receivedQty).toLocaleString("id-ID")}
+          {qtyDisplay(it.receivedQty, it.receivedQtyDecimal).toLocaleString(
+            "id-ID",
+          )}
         </span>
       ),
     },
@@ -488,7 +500,9 @@ function processedColumns(
         if (bucket === "ordered") {
           return <Badge variant="info">Dalam PO · menunggu</Badge>;
         }
-        const under = Number(it.receivedQty) < Number(it.requestedQty);
+        const under =
+          qtyDisplay(it.receivedQty, it.receivedQtyDecimal) <
+          qtyDisplay(it.requestedQty, it.requestedQtyDecimal);
         return (
           <Badge variant="success">
             {under ? "Dibeli (qty disesuaikan)" : "Dibeli"}
