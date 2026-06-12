@@ -15,6 +15,8 @@ import {
 import { ShiftDetailModal } from "./shifts/ShiftDetailModal";
 import { useApprovalsSummary } from "@/features/approvals/useApprovalsSummary";
 import { isOk, listShifts, type Shift } from "@/features/shifts";
+import { ForceCloseShiftModal } from "./shifts/ForceCloseShiftModal";
+import { hasPermission, type Role } from "@/lib/auth/rbac";
 import { getOwnOutlet } from "@/features/outlets";
 import { listUsers, type PublicUser } from "@/features/users";
 import { formatRupiah } from "@/lib/format";
@@ -25,9 +27,18 @@ import { cn } from "@/lib/utils";
  * Live value di-fetch dari outlet.settings.thresholds.shiftVarianceAlert. */
 const DEFAULT_VARIANCE_THRESHOLD = 10_000;
 
-export function ShiftsSection() {
+interface ShiftsSectionProps {
+  /** Audit POS E2E 2026-06-12 — gate tombol Tutup Paksa (owner only). */
+  viewerRole?: Role;
+}
+
+export function ShiftsSection({ viewerRole }: ShiftsSectionProps) {
   const [varianceFilter, setVarianceFilter] = useState<"all" | "flag">("all");
   const [openShift, setOpenShift] = useState<Shift | null>(null);
+  const [forceCloseTarget, setForceCloseTarget] = useState<Shift | null>(null);
+  const canForceClose = viewerRole
+    ? hasPermission(viewerRole, "shift.force_close")
+    : false;
   /* Sesi AE-160 — Rebalancing & Entry Changes queue dipindah ke Pusat
    * Persetujuan (#approvals). Halaman Shifts kembali fokus ke history. */
   const approvalsSummary = useApprovalsSummary(true);
@@ -288,7 +299,20 @@ export function ShiftsSection() {
                           )}
                         </td>
                         <td className="px-3 py-3">
-                          <div className="flex justify-end">
+                          <div className="flex justify-end gap-1">
+                            {/* Audit POS E2E 2026-06-12 — tutup paksa shift
+                                nginep dari backoffice (owner). Guard open-bill
+                                + approval tetap berlaku di server. */}
+                            {canForceClose && shift.status === "open" ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setForceCloseTarget(shift)}
+                                className="border-danger-300 text-danger-500 hover:bg-danger-50"
+                              >
+                                Tutup Paksa
+                              </Button>
+                            ) : null}
                             <Button
                               size="sm"
                               variant="ghost"
@@ -313,6 +337,20 @@ export function ShiftsSection() {
         shift={openShift}
         user={openShift ? (userById[openShift.userId] ?? null) : null}
         onClose={() => setOpenShift(null)}
+      />
+
+      <ForceCloseShiftModal
+        shift={forceCloseTarget}
+        openerName={
+          forceCloseTarget
+            ? (userById[forceCloseTarget.userId]?.name ?? null)
+            : null
+        }
+        onClose={() => setForceCloseTarget(null)}
+        onDone={() => {
+          setForceCloseTarget(null);
+          void shiftsQuery.refetch();
+        }}
       />
     </div>
   );

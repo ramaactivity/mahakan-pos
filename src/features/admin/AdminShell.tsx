@@ -379,7 +379,7 @@ export function AdminShell() {
             ) : section === "hr_operations" ? (
               <HrOperationsSection viewerRole={session.user.role} />
             ) : section === "shifts" ? (
-              <ShiftsSection />
+              <ShiftsSection viewerRole={session.user.role} />
             ) : section === "cash" ? (
               <CashSection viewerUserId={session.user.id} />
             ) : section === "setoran_tunai" ? (

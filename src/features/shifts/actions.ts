@@ -241,6 +241,22 @@ export async function openShift(
         openingCash: parsed.data.openingCash,
       })
       .returning();
+    /* Audit POS E2E 2026-06-12 — buka shift dulu satu-satunya aksi shift
+     * tanpa jejak audit eksplisit (tutup/koreksi/rebalance sudah ada). */
+    logAudit({
+      eventType: "shift.open",
+      userId: session.user.id,
+      entityType: "shift",
+      entityId: row.id,
+      payload: {
+        summary: `Buka shift — kas awal ${parsed.data.openingCash.toLocaleString("id-ID")}`,
+        after: { openingCash: parsed.data.openingCash },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }).catch((e) => console.error("[audit shift.open]", e));
     return ok(row);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "DB error";
@@ -676,6 +692,64 @@ export async function closeShift(
       depositError: autoDepositError,
     },
   });
+}
+
+/**
+ * Audit POS E2E 2026-06-12 — TUTUP PAKSA shift nginep (owner-only).
+ *
+ * Skenario: kasir lupa tutup shift semalam → besoknya shift masih open,
+ * transaksi hari ini nyangkut ke shift kemarin, dan tidak ada jalan tutup
+ * dari backoffice (harus lewat POS). Action ini = WRAPPER TIPIS di atas
+ * `closeShift` supaya SEMUA logika uang ikut otomatis (guard open-bill +
+ * pending-approval, expected cash, variance + jurnal 6902, settlement
+ * fallback) — TANPA duplikasi kode uang. Owner tetap wajib hitung kas fisik
+ * laci (variance jujur, bukan auto-0) + isi alasan.
+ *
+ * Bedanya dari tutup normal: permission `shift.force_close` (owner) +
+ * jejak audit `shift.force_close` + alasan dicap di notes.
+ */
+export async function forceCloseShift(input: {
+  shiftId: string;
+  actualCash: number;
+  reason: string;
+}): Promise<ApiResult<CloseShiftResult>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "shift.force_close")) {
+    return fail("FORBIDDEN", "Hanya Owner yang bisa tutup paksa shift");
+  }
+  const reason = input.reason.trim();
+  if (reason.length < 3) {
+    return fail("VALIDATION_ERROR", "Alasan minimal 3 karakter");
+  }
+  if (!Number.isFinite(input.actualCash) || input.actualCash < 0) {
+    return fail("VALIDATION_ERROR", "Kas dihitung tidak boleh negatif");
+  }
+
+  const res = await closeShift({
+    shiftId: input.shiftId,
+    actualCash: Math.round(input.actualCash),
+    notes: `[TUTUP PAKSA owner] ${reason}`,
+    handoverMessage: null,
+  });
+  if (!res.success) return res;
+
+  logAudit({
+    eventType: "shift.force_close",
+    userId: session.user.id,
+    entityType: "shift",
+    entityId: input.shiftId,
+    payload: {
+      summary: `Tutup paksa shift — ${reason} (variance ${(res.data.shift.variance ?? 0).toLocaleString("id-ID")})`,
+      after: {
+        actualCash: Math.round(input.actualCash),
+        variance: res.data.shift.variance,
+        reason,
+      },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  }).catch((e) => console.error("[audit shift.force_close]", e));
+
+  return res;
 }
 
 // =========================================================================

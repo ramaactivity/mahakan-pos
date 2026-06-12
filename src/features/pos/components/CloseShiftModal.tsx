@@ -6,6 +6,7 @@ import {
   Banknote,
   CheckCircle2,
   ChevronDown,
+  Copy,
   CreditCard,
   Loader2,
   MessageSquare,
@@ -22,7 +23,16 @@ import {
   Spinner,
   toast,
 } from "@/components/ui";
-import { isOk, closeShift, type Shift } from "@/features/shifts";
+import {
+  isOk,
+  closeShift,
+  type CloseShiftResult,
+  type Shift,
+} from "@/features/shifts";
+import {
+  buildShiftCloseSummaryText,
+  normalizePhoneForWa,
+} from "@/features/shifts/close-summary-text";
 import {
   getTransaction,
   listTransactions,
@@ -202,6 +212,14 @@ export function CloseShiftModal({
   const [lowStock, setLowStock] = useState<LowStockIngredient[]>([]);
   const [ownerPhone, setOwnerPhone] = useState<string | null>(null);
 
+  /* Audit POS E2E 2026-06-12 — step Ringkasan Tutup Shift setelah close
+   * sukses: kasir bisa kirim WA owner / salin sebelum lanjut popup belanja.
+   * Sebelumnya tidak ada jejak ringkasan sama sekali (cuma toast). */
+  const [closedResult, setClosedResult] = useState<CloseShiftResult | null>(
+    null,
+  );
+  const [belanjaShown, setBelanjaShown] = useState(false);
+
   // Sesi AE-4 — gunakan shift.id (bukan shift object) supaya parent re-render
   // ga trigger refetch loop yang bikin "breathing" loading spinner.
   useEffect(() => {
@@ -224,6 +242,8 @@ export function CloseShiftModal({
     setDepositNotes("");
     setError(null);
     setSubmitting(false);
+    setClosedResult(null);
+    setBelanjaShown(false);
     /* eslint-enable react-hooks/set-state-in-effect */
 
     async function load() {
@@ -514,14 +534,22 @@ export function CloseShiftModal({
       lowStockRes.success && lowStockRes.data.length > 0
         ? lowStockRes.data
         : [];
-    if (lowStockItems.length > 0) {
-      setLowStock(lowStockItems);
-      setOwnerPhone(outletRes.success ? outletRes.data.phone : null);
+    setLowStock(lowStockItems);
+    setOwnerPhone(outletRes.success ? outletRes.data.phone : null);
+    /* Audit POS E2E 2026-06-12 — tampilkan step Ringkasan dulu (WA/salin),
+     * popup belanja menyusul dari tombol Lanjut. */
+    setClosedResult(res.data);
+    setSubmitting(false);
+  }
+
+  /* Selesai dari step Ringkasan: kalau ada stok menipis dan belum lewat
+   * popup belanja → buka dulu; selain itu tutup modal. */
+  function handleSummaryDone() {
+    if (lowStock.length > 0 && !belanjaShown) {
+      setBelanjaShown(true);
       setBelanjaOpen(true);
-      setSubmitting(false);
       return;
     }
-
     onClosed();
   }
 
@@ -592,18 +620,32 @@ export function CloseShiftModal({
     <>
       <Modal
         open={open}
-        onClose={onClose}
+        onClose={closedResult ? handleSummaryDone : onClose}
         title="Tutup Shift"
         description={
-          blockedByOpenBills
-            ? `${openBills.length} bill belum dibayar — selesaikan dulu sebelum tutup.`
-            : "Hitung kas fisik di laci, bandingkan dengan Kas Harusnya. Settlement channel diisi seperlunya."
+          closedResult
+            ? "Shift berhasil ditutup — kirim ringkasan ke owner atau salin."
+            : blockedByOpenBills
+              ? `${openBills.length} bill belum dibayar — selesaikan dulu sebelum tutup.`
+              : "Hitung kas fisik di laci, bandingkan dengan Kas Harusnya. Settlement channel diisi seperlunya."
         }
         size="fullscreen"
         bodyPadding="none"
         disableEscClose={submitting}
         footer={
-          blockedByOpenBills ? (
+          closedResult ? (
+            <div className="flex w-full items-center justify-end gap-3">
+              <Button
+                onClick={handleSummaryDone}
+                size="xl"
+                className="!h-12 min-w-[200px] !text-base"
+              >
+                {lowStock.length > 0 && !belanjaShown
+                  ? "Lanjut — Cek Belanja"
+                  : "Selesai"}
+              </Button>
+            </div>
+          ) : blockedByOpenBills ? (
             <div className="flex w-full items-center justify-between gap-3">
               <Button variant="ghost" onClick={onClose} disabled={loading}>
                 Tutup
@@ -635,7 +677,16 @@ export function CloseShiftModal({
           )
         }
       >
-        {loading ? (
+        {closedResult ? (
+          <ClosedSummaryView
+            text={buildShiftCloseSummaryText({
+              shift: closedResult.shift,
+              summary: closedResult.summary,
+              cashierName,
+            })}
+            ownerPhone={ownerPhone}
+          />
+        ) : loading ? (
           <div className="flex h-full items-center justify-center">
             <Spinner className="size-6 text-mahakan-green-700" />
           </div>
@@ -1898,5 +1949,73 @@ function NumKey({
     >
       {label}
     </button>
+  );
+}
+
+/* ============================================================================
+ * Audit POS E2E 2026-06-12 — Step Ringkasan Tutup Shift.
+ * Tampil setelah closeShift sukses: teks laporan siap kirim WA owner / salin.
+ * ========================================================================== */
+function ClosedSummaryView({
+  text,
+  ownerPhone,
+}: {
+  text: string;
+  ownerPhone: string | null;
+}) {
+  return (
+    <div
+      className="mx-auto flex h-full w-full max-w-2xl flex-col gap-4 overflow-y-auto p-5 touch:p-4"
+      style={{ overscrollBehavior: "contain" }}
+    >
+      <div className="flex items-center gap-2 rounded-md border border-mahakan-green-200 bg-mahakan-green-50 p-3 text-sm font-medium text-mahakan-green-900">
+        <CheckCircle2 className="size-5 shrink-0" />
+        Shift berhasil ditutup. Ringkasan di bawah siap dikirim ke owner.
+      </div>
+      <pre className="whitespace-pre-wrap rounded-md border border-neutral-200 bg-white p-4 font-mono text-xs leading-relaxed text-neutral-800">
+        {text}
+      </pre>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          size="lg"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(text);
+              toast.success("Ringkasan disalin");
+            } catch {
+              toast.error("Gagal menyalin — blok teks di atas lalu salin manual");
+            }
+          }}
+        >
+          <Copy className="size-4" /> Salin Ringkasan
+        </Button>
+        <Button
+          size="lg"
+          disabled={!ownerPhone}
+          title={
+            ownerPhone
+              ? undefined
+              : "No. WA owner belum diisi — set di Pengaturan outlet"
+          }
+          onClick={() => {
+            if (!ownerPhone) return;
+            window.open(
+              `https://wa.me/${normalizePhoneForWa(ownerPhone)}?text=${encodeURIComponent(text)}`,
+              "_blank",
+              "noopener,noreferrer",
+            );
+          }}
+        >
+          <MessageSquare className="size-4" /> Kirim WA Owner
+        </Button>
+      </div>
+      {!ownerPhone ? (
+        <p className="text-xs text-neutral-500">
+          Tombol WA nonaktif karena nomor owner belum diisi di Pengaturan
+          outlet. Pakai Salin Ringkasan lalu kirim manual.
+        </p>
+      ) : null}
+    </div>
   );
 }
