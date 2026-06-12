@@ -57,6 +57,10 @@ export interface CreateCreditorInput {
    * Untuk kasus kreditur adalah orang yang sama dengan investor (mis.
    * investor inactive yang minjamin uang baru terpisah). */
   linkedInvestorId?: string | null;
+  /** Audit AE-181 — rekening bisnis penerima uang pinjaman. Diisi = Dr
+   * bank / Cr 2150 (uang masuk sekarang); kosong = hutang lama → Dr 3301
+   * penyesuaian saldo / Cr 2150. */
+  receivedBankAccountId?: string | null;
 }
 
 export interface UpdateCreditorInput extends Partial<CreateCreditorInput> {

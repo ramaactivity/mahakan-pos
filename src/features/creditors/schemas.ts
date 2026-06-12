@@ -30,6 +30,10 @@ export const createCreditorSchema = z
     dueDate: isoDateOptional,
     notes: z.string().trim().max(1000).nullish(),
     linkedInvestorId: z.string().uuid().nullish(),
+    /* Audit AE-181 — rekening bisnis penerima uang pinjaman. Diisi =
+     * jurnal Dr bank / Cr 2150 (uang masuk sekarang). Kosong = hutang
+     * lama → Dr 3301 / Cr 2150 (penyesuaian saldo). */
+    receivedBankAccountId: z.string().uuid().nullish(),
   })
   .refine(
     (v) =>

@@ -20,6 +20,7 @@ import {
 } from "@/lib/db/locking";
 import { recordJournal } from "@/features/accounting/posting";
 import {
+  mapCreditorCreate,
   mapCreditorRepayment,
   mapCreditorRepaymentReversal,
 } from "@/features/accounting/mapping/creditorRepayment";
@@ -161,33 +162,97 @@ export async function createCreditor(
     }
   }
 
-  try {
-    const [row] = await db
-      .insert(creditors)
-      .values({
-        outletId: session.user.outletId,
-        fullName: v.fullName,
-        nickname: v.nickname ?? null,
-        nik: v.nik ?? null,
-        email: v.email ?? null,
-        phone: v.phone ?? null,
-        address: v.address ?? null,
-        bankName: v.bankName ?? null,
-        bankAccountNumber: v.bankAccountNumber ?? null,
-        bankAccountHolderName: v.bankAccountHolderName ?? null,
-        principalOriginal: v.principalOriginal,
-        principalOutstanding: v.principalOriginal, // initial = full
-        interestRatePct: String(v.interestRatePct ?? 0),
-        interestPeriod: v.interestPeriod ?? "monthly",
-        startDate: v.startDate,
-        dueDate: v.dueDate ?? null,
-        notes: v.notes ?? null,
-        status: "active",
-        linkedInvestorId: v.linkedInvestorId ?? null,
-        createdBy: session.user.id,
-        updatedBy: session.user.id,
+  /* Audit AE-181 — resolve rekening penerima uang pinjaman (kalau diisi).
+   * Diisi → jurnal Dr bank; kosong → hutang lama, Dr 3301 penyesuaian. */
+  let receivedBankCode: string | null = null;
+  if (v.receivedBankAccountId) {
+    const [bank] = await db
+      .select({
+        outletId: bankAccounts.outletId,
+        bankName: bankAccounts.bankName,
+        isActive: bankAccounts.isActive,
       })
-      .returning();
+      .from(bankAccounts)
+      .where(eq(bankAccounts.id, v.receivedBankAccountId))
+      .limit(1);
+    if (!bank) {
+      return fail(
+        "NOT_FOUND",
+        "Rekening penerima tidak ditemukan",
+        "receivedBankAccountId",
+      );
+    }
+    if (bank.outletId !== session.user.outletId) {
+      return fail(
+        "FORBIDDEN",
+        "Rekening dari outlet lain",
+        "receivedBankAccountId",
+      );
+    }
+    if (!bank.isActive) {
+      return fail(
+        "BANK_INACTIVE",
+        "Rekening penerima non-aktif",
+        "receivedBankAccountId",
+      );
+    }
+    receivedBankCode = resolveBankCodeFromBankName(bank.bankName);
+  }
+
+  try {
+    /* Audit AE-181 — insert + jurnal pengakuan hutang dalam 1 transaction.
+     * Sebelumnya createCreditor TIDAK post jurnal sama sekali → GL 2150
+     * understate vs subledger (drift 12,9jt terdeteksi audit). */
+    const row = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(creditors)
+        .values({
+          outletId: session.user.outletId,
+          fullName: v.fullName,
+          nickname: v.nickname ?? null,
+          nik: v.nik ?? null,
+          email: v.email ?? null,
+          phone: v.phone ?? null,
+          address: v.address ?? null,
+          bankName: v.bankName ?? null,
+          bankAccountNumber: v.bankAccountNumber ?? null,
+          bankAccountHolderName: v.bankAccountHolderName ?? null,
+          principalOriginal: v.principalOriginal,
+          principalOutstanding: v.principalOriginal, // initial = full
+          interestRatePct: String(v.interestRatePct ?? 0),
+          interestPeriod: v.interestPeriod ?? "monthly",
+          startDate: v.startDate,
+          dueDate: v.dueDate ?? null,
+          notes: v.notes ?? null,
+          status: "active",
+          linkedInvestorId: v.linkedInvestorId ?? null,
+          createdBy: session.user.id,
+          updatedBy: session.user.id,
+        })
+        .returning();
+
+      await recordJournal({
+        outletId: session.user.outletId,
+        entryDate: v.startDate.slice(0, 10),
+        description: `Pengakuan hutang kreditur ${v.fullName} — Rp ${v.principalOriginal.toLocaleString("id-ID")}${receivedBankCode ? "" : " (hutang lama / penyesuaian saldo)"}`,
+        sourceType: "creditor_create",
+        sourceId: created.id,
+        lines: mapCreditorCreate({
+          principal: v.principalOriginal,
+          bankAccountCode: receivedBankCode,
+          creditorName: v.fullName,
+        }),
+        status: "posted",
+        actorId: session.user.id,
+        metadata: {
+          creditorId: created.id,
+          principal: v.principalOriginal,
+          receivedBankAccountId: v.receivedBankAccountId ?? null,
+        },
+      });
+
+      return created;
+    });
 
     logAudit({
       eventType: "creditor.create",
@@ -1196,23 +1261,65 @@ export async function bulkImportCreditors(
     }
   }
 
+  /* Audit AE-181 — kreditur hasil import = hutang lama → post jurnal
+   * pengakuan Dr 3301 (penyesuaian saldo) / Cr 2150 sebesar OUTSTANDING
+   * (bukan original — porsi yang sudah dicicil pre-sistem jangan diakui).
+   * Jurnal gagal → kreditur tetap ke-insert tapi dilaporkan di errors
+   * supaya owner post manual (idempotent via sourceId=creditor.id). */
+  const insertedForJournal: Array<{
+    id: string;
+    rowIdx: number;
+    name: string;
+    amount: number;
+    startDate: string;
+  }> = [];
+
   if (dedupedRows.length > 0) {
     try {
-      const insertedIds = await db
+      const insertedRows = await db
         .insert(creditors)
         .values(dedupedRows.map((d) => d.values))
         .onConflictDoNothing()
-        .returning({ id: creditors.id });
-      result.inserted = insertedIds.length;
-      const raced = dedupedRows.length - insertedIds.length;
+        .returning({
+          id: creditors.id,
+          fullName: creditors.fullName,
+          principalOutstanding: creditors.principalOutstanding,
+          startDate: creditors.startDate,
+        });
+      result.inserted = insertedRows.length;
+      const raced = dedupedRows.length - insertedRows.length;
       if (raced > 0) result.skippedDuplicate += raced;
+      for (const r of insertedRows) {
+        insertedForJournal.push({
+          id: r.id,
+          rowIdx: -1,
+          name: r.fullName,
+          amount: Number(r.principalOutstanding),
+          startDate: String(r.startDate),
+        });
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Batch insert error";
       console.error("[creditor bulk import batch failed]", msg);
       for (const d of dedupedRows) {
         try {
-          await db.insert(creditors).values(d.values);
+          const [r] = await db
+            .insert(creditors)
+            .values(d.values)
+            .returning({
+              id: creditors.id,
+              fullName: creditors.fullName,
+              principalOutstanding: creditors.principalOutstanding,
+              startDate: creditors.startDate,
+            });
           result.inserted += 1;
+          insertedForJournal.push({
+            id: r.id,
+            rowIdx: d.rowIdx,
+            name: r.fullName,
+            amount: Number(r.principalOutstanding),
+            startDate: String(r.startDate),
+          });
         } catch (rowErr) {
           const rmsg = rowErr instanceof Error ? rowErr.message : "DB error";
           if (/ux_creditors_outlet_nik/.test(rmsg)) {
@@ -1225,6 +1332,33 @@ export async function bulkImportCreditors(
           }
         }
       }
+    }
+  }
+
+  for (const ins of insertedForJournal) {
+    if (ins.amount <= 0) continue; // import lunas — tidak ada hutang diakui
+    try {
+      await recordJournal({
+        outletId: session.user.outletId,
+        entryDate: ins.startDate.slice(0, 10),
+        description: `Pengakuan hutang kreditur ${ins.name} (import) — Rp ${ins.amount.toLocaleString("id-ID")}`,
+        sourceType: "creditor_create",
+        sourceId: ins.id,
+        lines: mapCreditorCreate({
+          principal: ins.amount,
+          bankAccountCode: null, // import = hutang lama
+          creditorName: ins.name,
+        }),
+        status: "posted",
+        actorId: session.user.id,
+        metadata: { creditorId: ins.id, principal: ins.amount, via: "import" },
+      });
+    } catch (jErr) {
+      result.errors.push({
+        row: ins.rowIdx,
+        reason: `Kreditur "${ins.name}" ter-import tapi jurnal pengakuan gagal — post manual via Akuntansi (Dr 3301 / Cr 2150 Rp ${ins.amount.toLocaleString("id-ID")})`,
+      });
+      console.error("[creditor.import journal]", jErr);
     }
   }
 

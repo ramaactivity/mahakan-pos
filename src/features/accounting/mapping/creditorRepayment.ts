@@ -19,6 +19,50 @@ import type { JournalLineInput } from "../posting";
 const ACCOUNT_HUTANG_KREDITUR = "2150";
 const ACCOUNT_BEBAN_BUNGA = "6701";
 
+/**
+ * Audit AE-181 — jurnal pengakuan hutang saat kreditur dibuat/diimport.
+ *
+ * Mode "uang masuk sekarang" (pinjaman baru, kas masuk rekening bisnis):
+ *   Dr <bank account>            principal
+ *      Cr 2150 Hutang Kreditur   principal
+ *
+ * Mode "hutang lama" (import historis, uang sudah masuk sebelum sistem):
+ *   Dr 3301 Saldo Laba Ditahan   principal   (penyesuaian saldo)
+ *      Cr 2150 Hutang Kreditur   principal
+ */
+const ACCOUNT_SALDO_LABA = "3301";
+
+export interface CreditorCreateMappingInput {
+  /** Nominal hutang yang diakui (Rupiah) — pakai outstanding utk import. */
+  principal: number;
+  /** Pre-resolved bank COA code kalau uang masuk sekarang; null = historis. */
+  bankAccountCode: string | null;
+  creditorName: string;
+}
+
+export function mapCreditorCreate(
+  input: CreditorCreateMappingInput,
+): JournalLineInput[] {
+  const principal = Math.floor(input.principal);
+  if (principal <= 0) {
+    throw new Error("MAP_CREDITOR_CREATE_NONPOSITIVE");
+  }
+  return [
+    {
+      accountCode: input.bankAccountCode ?? ACCOUNT_SALDO_LABA,
+      debit: principal,
+      description: input.bankAccountCode
+        ? `Uang pinjaman masuk dari ${input.creditorName}`
+        : `Penyesuaian saldo — hutang lama ${input.creditorName}`,
+    },
+    {
+      accountCode: ACCOUNT_HUTANG_KREDITUR,
+      credit: principal,
+      description: `Pengakuan hutang ke ${input.creditorName}`,
+    },
+  ];
+}
+
 export interface CreditorRepaymentMappingInput {
   /** Pokok cicilan (Rupiah). Min 0, total > 0. */
   principalAmount: number;

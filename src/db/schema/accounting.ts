@@ -169,6 +169,10 @@ export const journalEntries = pgTable(
         "purchase_create",
         "purchase_pay",
         "purchase_cancel",
+        /* Audit AE-181 — cancel purchase yang SUDAH dibayar wajib membalik
+         * jurnal pembayarannya juga (Dr bank / Cr 2101). Sebelumnya hanya
+         * jurnal create yang dibalik → 2101 + bank drift per cancel-paid. */
+        "purchase_pay_reversal",
         "payroll_paid",
         "expense_create",
         "expense_void",
@@ -222,6 +226,11 @@ export const journalEntries = pgTable(
         "dividend_withdrawal_reversal",
         "creditor_repayment",
         "creditor_repayment_reversal",
+        /* Audit AE-181 — kreditur baru/import kini langsung Cr 2150 saat
+         * dibuat (sebelumnya GL hanya dapat credit dari konversi investor →
+         * Neraca understate). Dr = bank (uang masuk sekarang) atau 3301
+         * (hutang lama / penyesuaian saldo). sourceId = creditor.id. */
+        "creditor_create",
         "share_buyback",
         "share_buyback_reversal",
         /* Sesi AE-80 follow-up — convert investor → kreditur.

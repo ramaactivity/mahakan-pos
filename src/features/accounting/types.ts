@@ -37,6 +37,8 @@ export type JournalSourceType =
   | "purchase_create"
   | "purchase_pay"
   | "purchase_cancel"
+  /* Audit AE-181 — reversal jurnal pembayaran saat cancel purchase paid. */
+  | "purchase_pay_reversal"
   | "payroll_paid"
   | "expense_create"
   | "expense_void"
@@ -63,6 +65,8 @@ export type JournalSourceType =
   | "dividend_withdrawal_reversal"
   | "creditor_repayment"
   | "creditor_repayment_reversal"
+  /* Audit AE-181 — jurnal pengakuan hutang saat kreditur dibuat/diimport. */
+  | "creditor_create"
   | "share_buyback"
   | "share_buyback_reversal"
   /* Sesi AE-80 follow-up — convert investor → kreditur. */

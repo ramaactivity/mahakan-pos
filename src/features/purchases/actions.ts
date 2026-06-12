@@ -1417,6 +1417,27 @@ export async function cancelPurchase(
         "purchase_cancel",
       );
     }
+
+      /* Audit AE-181 — purchase yang SUDAH dibayar lalu di-cancel: balik
+       * juga jurnal PEMBAYARAN (Dr bank / Cr 2101). Sebelumnya hanya jurnal
+       * create yang dibalik → 2101 ketinggalan debit + bank tidak balik.
+       * Hook self-skip kalau jurnal purchase_pay tidak pernah ada. */
+      if (purchaseRow.paidAt) {
+        const { fireJournalHook, postJournalForPurchasePayReversal } =
+          await import("@/features/accounting/hooks");
+        fireJournalHook(
+          () =>
+            postJournalForPurchasePayReversal({
+              outletId: session.user.outletId,
+              purchaseId: v.id,
+              purchaseLabel:
+                purchaseRow.invoiceNo ??
+                `purchase ${purchaseRow.id.slice(0, 8)}`,
+              actorId: session.user.id,
+            }),
+          "purchase_pay_reversal",
+        );
+      }
     }
   }
 
@@ -1447,6 +1468,12 @@ export async function markPurchasePaid(
   const v = parsed.data;
 
   let expenseId: string | null = null;
+  /* Audit AE-181 — basis bayar TOP = total GR diterima (bukan totalAmount
+   * ordered). Untuk PO partial/under-receive: Cr 2101 terjadi per-GR sebesar
+   * yang diterima → debit pelunasan harus simetris, kalau pakai totalAmount
+   * full maka 2101 jadi negatif (drift terdeteksi di GL produksi). */
+  let paidBase = 0;
+  let paidIsTop = false;
   try {
     await db.transaction(async (tx) => {
       const [p] = await tx
@@ -1463,8 +1490,27 @@ export async function markPurchasePaid(
       if (!p) throw new Error("NOT_FOUND");
       if (p.status !== "pending_payment") throw new Error("BAD_STATE");
 
-      // Auto-create kas expense (best-effort).
-      const [defaultCat] = await tx
+      paidIsTop = p.paymentMethod === "top";
+      /* TOP belum terima barang sama sekali → belum ada hutang ter-jurnal,
+       * tandai lunas bakal bikin 2101 negatif. Terima barang dulu. */
+      if (paidIsTop && p.receiptStatus === "ordered") {
+        throw new Error("NOT_RECEIVED");
+      }
+      const [grSum] = await tx
+        .select({
+          total: sql<number>`coalesce(sum(${goodsReceipts.totalAmount}),0)::bigint`,
+        })
+        .from(goodsReceipts)
+        .where(eq(goodsReceipts.purchaseId, v.id));
+      const grTotal = Number(grSum?.total ?? 0);
+      /* Fallback totalAmount untuk purchase legacy tanpa GR rows. */
+      paidBase = grTotal > 0 ? grTotal : Number(p.totalAmount);
+
+      // Auto-create kas expense (best-effort). Audit AE-181: hanya TOP —
+      // non-TOP sudah punya expense per-GR (uang keluar saat terima barang),
+      // mark-paid non-TOP cuma flip status.
+      const [defaultCat] = paidIsTop
+        ? await tx
         .select()
         .from(expenseCategories)
         .where(
@@ -1474,7 +1520,8 @@ export async function markPurchasePaid(
           ),
         )
         .orderBy(asc(expenseCategories.displayOrder))
-        .limit(1);
+        .limit(1)
+        : [undefined];
 
       if (defaultCat) {
         const [exp] = await tx
@@ -1486,7 +1533,7 @@ export async function markPurchasePaid(
             description: `Lunas TOP — ${paymentMethodLabel(v.paymentMethod)}${
               p.invoiceNo ? ` · ${p.invoiceNo}` : ""
             } (purchase ${p.id.slice(0, 8)})`,
-            amount: p.totalAmount,
+            amount: paidBase,
             paymentMethod: expensePaymentMethod(v.paymentMethod),
             /* Sesi AE-79 — tag sebagai purchase (lihat catatan sama di
              * createPurchase line ~545). */
@@ -1518,6 +1565,11 @@ export async function markPurchasePaid(
       return fail(
         "BAD_STATE",
         "Pembelian tidak dalam status pending_payment",
+      );
+    if (msg === "NOT_RECEIVED")
+      return fail(
+        "NOT_RECEIVED",
+        "Belum ada barang diterima — catat penerimaan (GR) dulu sebelum tandai lunas",
       );
     return fail(
       "DB_ERROR",
@@ -1551,8 +1603,11 @@ export async function markPurchasePaid(
       .from(purchases)
       .where(eq(purchases.id, v.id))
       .limit(1);
-    if (purchaseRow) {
-      const todayWib = new Date().toISOString().slice(0, 10);
+    /* Audit AE-181 — jurnal pelunasan hanya untuk TOP (Dr 2101 / Cr bank);
+     * non-TOP tidak punya hutang dagang ter-jurnal. Total = paidBase (GR
+     * diterima), tanggal kalender WIB. */
+    if (purchaseRow && paidIsTop) {
+      const todayWib = todayJakartaIso();
       const { fireJournalHook, postJournalForPurchasePay } = await import(
         "@/features/accounting/hooks"
       );
@@ -1569,7 +1624,7 @@ export async function markPurchasePaid(
               | "transfer_bca"
               | "transfer_bri"
               | "transfer_other",
-            total: Number(purchaseRow.totalAmount),
+            total: paidBase,
             entryDate: todayWib,
             actorId: session.user.id,
           }),

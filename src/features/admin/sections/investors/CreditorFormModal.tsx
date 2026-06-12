@@ -20,6 +20,11 @@ import {
   type CreateCreditorInput,
 } from "@/features/creditors";
 import { listInvestors } from "@/features/investors/actions";
+import {
+  formatBankAccountDisplay,
+  listBankAccounts,
+  type BankAccount,
+} from "@/features/bank-accounts";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 
 /**
@@ -60,6 +65,10 @@ export function CreditorFormModal({
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [linkedInvestorId, setLinkedInvestorId] = useState<string | null>(null);
+  /* Audit AE-181 — rekening penerima uang pinjaman (create mode). Kosong =
+   * hutang lama (Dr 3301 penyesuaian saldo). */
+  const [receivedBankAccountId, setReceivedBankAccountId] = useState("");
+  const [bankList, setBankList] = useState<BankAccount[]>([]);
 
   /* Investor list untuk optional link (create mode only). */
   const investorsQuery = useQuery({
@@ -119,8 +128,18 @@ export function CreditorFormModal({
       setNotes("");
       setLinkedInvestorId(null);
     }
+    setReceivedBankAccountId("");
     setSubmitting(false);
     /* eslint-enable react-hooks/set-state-in-effect */
+    if (!initial) {
+      let cancelled = false;
+      void listBankAccounts().then((res) => {
+        if (!cancelled && res.ok) setBankList(res.data);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
   }, [open, initial]);
 
   /* Auto-fill contact/bank fields kalau owner pilih investor di link picker
@@ -179,6 +198,7 @@ export function CreditorFormModal({
       dueDate: dueDate || null,
       notes: notes.trim() || null,
       linkedInvestorId: linkedInvestorId ?? null,
+      receivedBankAccountId: receivedBankAccountId || null,
     };
 
     setSubmitting(true);
@@ -327,6 +347,35 @@ export function CreditorFormModal({
             }
             required
           />
+          {!initial ? (
+            /* Audit AE-181 — tentukan sisi debit jurnal pengakuan hutang:
+             * rekening dipilih = uang masuk sekarang (Dr bank); kosong =
+             * hutang lama (Dr 3301 penyesuaian saldo). */
+            <Select
+              label="Uang Pinjaman Masuk Ke"
+              options={[
+                {
+                  value: "none",
+                  label: "— Hutang lama (tanpa uang masuk sekarang) —",
+                },
+                ...bankList
+                  .filter((b) => b.isActive)
+                  .map((b) => ({
+                    value: b.id,
+                    label: formatBankAccountDisplay(b),
+                  })),
+              ]}
+              value={receivedBankAccountId || "none"}
+              onValueChange={(v) =>
+                setReceivedBankAccountId(v === "none" ? "" : v)
+              }
+              hint={
+                receivedBankAccountId
+                  ? "Jurnal: Dr Bank / Cr 2150 Hutang Kreditur"
+                  : "Jurnal: Dr 3301 Penyesuaian Saldo / Cr 2150 (uang sudah masuk sebelum sistem)"
+              }
+            />
+          ) : null}
           <Input
             label="Bunga (%)"
             type="number"

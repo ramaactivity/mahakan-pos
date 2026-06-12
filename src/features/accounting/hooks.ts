@@ -10,6 +10,7 @@ import {
   expenses,
   incomes,
   journalEntries,
+  journalLines,
   transactionItems,
   transactions,
   splitPayments,
@@ -1290,6 +1291,65 @@ export async function postJournalForPurchaseCancel(args: {
  *
  * Returns the resolved account.code untuk passing ke mapping.
  */
+
+/**
+ * Audit AE-181 — reversal jurnal PEMBAYARAN saat purchase yang sudah paid
+ * di-cancel. Tanpa ini cancel hanya membalik jurnal create → 2101
+ * ketinggalan debit pelunasan + bank tidak balik (drift -800rb terdeteksi
+ * di GL produksi, legacy Mei). Self-skip kalau jurnal purchase_pay tidak
+ * pernah ada (mis. auto-journal OFF saat pembayaran). Idempotent via
+ * (sourceType='purchase_pay_reversal', sourceId=purchaseId).
+ */
+export async function postJournalForPurchasePayReversal(args: {
+  outletId: string;
+  purchaseId: string;
+  purchaseLabel: string;
+  actorId: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+
+  const [payEntry] = await db
+    .select({
+      id: journalEntries.id,
+      entryNumber: journalEntries.entryNumber,
+    })
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.outletId, args.outletId),
+        eq(journalEntries.sourceType, "purchase_pay"),
+        eq(journalEntries.sourceId, args.purchaseId),
+        eq(journalEntries.status, "posted"),
+      ),
+    )
+    .limit(1);
+  if (!payEntry) return; // pembayaran tidak pernah ter-jurnal
+
+  const lines = await db
+    .select()
+    .from(journalLines)
+    .where(eq(journalLines.entryId, payEntry.id));
+  if (lines.length === 0) return;
+
+  await recordJournal({
+    outletId: args.outletId,
+    entryDate: new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10),
+    description: `Reverse pembayaran (cancel) ${args.purchaseLabel} — balik ${payEntry.entryNumber}`,
+    sourceType: "purchase_pay_reversal",
+    sourceId: args.purchaseId,
+    lines: lines.map((l) => ({
+      accountId: l.accountId,
+      debit: Number(l.credit),
+      credit: Number(l.debit),
+      description: `Reverse bayar (cancel): ${l.description ?? ""}`,
+    })),
+    actorId: args.actorId,
+    metadata: { reversesEntryId: payEntry.id, purchaseId: args.purchaseId },
+  });
+}
+
 export async function resolveExpenseAccountCode(
   outletId: string,
   expenseAccountId: string | null,
