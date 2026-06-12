@@ -3,10 +3,20 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { journalRetryQueue, journalEntries, users } from "@/db/schema";
+import {
+  expenseCategories,
+  expenses,
+  journalEntries,
+  journalRetryQueue,
+  refundEvents,
+  stockOpnameSessions,
+  transactions,
+  users,
+} from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { extractDbError } from "@/lib/db-error";
+import { formatDate, formatDateTime, formatRupiah } from "@/lib/format";
 import { logAndSanitize } from "@/lib/server-error";
 import {
   postJournalForExpenseCreate,
@@ -23,8 +33,10 @@ import {
   isRetryableHookLabel,
   type EnqueueJournalFailureInput,
   type JournalRetryQueueListRow,
+  type JournalRetryQueueRow,
   type ListJournalQueueOptions,
   type RetryQueueHookLabel,
+  type SourceContextField,
 } from "./retry-queue-types";
 
 /**
@@ -455,6 +467,320 @@ export async function abandonJournalQueueRow(input: {
 }
 
 // ============================================================
+// Source context enrichment (list view)
+// ============================================================
+
+/* Feedback owner 2026-06-12 — orang finance/accounting/inventory butuh tahu
+ * "ini jurnal pending milik transaksi/aksi APA" sebelum berani klik Retry,
+ * bukan cuma stack trace coding. Lookup batch ke tabel sumber (best-effort,
+ * try/catch per lookup — lookup gagal tidak boleh nge-blank list, pattern
+ * sama dengan user-names lookup di bawah). */
+
+function argStr(args: unknown, key: string): string | null {
+  const v = (args as Record<string, unknown> | null)?.[key];
+  return typeof v === "string" ? v : null;
+}
+
+function argNum(args: unknown, key: string): number | null {
+  const v = (args as Record<string, unknown> | null)?.[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+const TRX_PAYMENT_LABEL: Record<string, string> = {
+  cash: "Tunai",
+  qris: "QRIS",
+  card_bca: "Kartu BCA",
+  card_bni: "Kartu BNI",
+  card_mandiri: "Kartu Mandiri",
+  card_bri: "Kartu BRI",
+  card_other: "Kartu Lainnya",
+  split: "Split Metode",
+};
+
+const TRX_STATUS_LABEL: Record<string, string> = {
+  paid: "Lunas",
+  voided: "Di-void",
+  refunded: "Refund penuh",
+  partially_refunded: "Refund sebagian",
+  open: "Open bill",
+};
+
+const EXPENSE_PAYMENT_LABEL: Record<string, string> = {
+  cash: "Tunai",
+  transfer: "Transfer",
+  other: "Lainnya",
+};
+
+const INCOME_PAYMENT_LABEL: Record<string, string> = {
+  cash: "Tunai",
+  transfer_bca: "Transfer BCA",
+};
+
+const OPNAME_STATUS_LABEL: Record<string, string> = {
+  in_progress: "Sedang berjalan",
+  pending_review: "Menunggu review",
+  completed: "Selesai (final)",
+  cancelled: "Dibatalkan",
+};
+
+interface TrxContextRow {
+  id: string;
+  transactionNumber: string;
+  total: number;
+  paymentMethod: string;
+  status: string;
+  customerName: string | null;
+  createdAt: Date;
+  cashierId: string;
+  voidReason: string | null;
+  refundReason: string | null;
+}
+
+interface SourceContextMaps {
+  trxById: Map<string, TrxContextRow>;
+  refundById: Map<
+    string,
+    { totalRefunded: number; reason: string; kind: string }
+  >;
+  expenseById: Map<
+    string,
+    {
+      description: string;
+      amount: number;
+      expenseDate: string;
+      paymentMethod: string;
+      categoryName: string | null;
+    }
+  >;
+  opnameById: Map<string, { periodLabel: string; status: string }>;
+  nameById: Map<string, string>;
+}
+
+function trxFields(
+  trx: TrxContextRow,
+  nameById: Map<string, string>,
+): SourceContextField[] {
+  const fields: SourceContextField[] = [
+    { label: "No. transaksi", value: trx.transactionNumber },
+    { label: "Waktu transaksi", value: formatDateTime(trx.createdAt) },
+    { label: "Total transaksi", value: formatRupiah(trx.total) },
+    {
+      label: "Pembayaran",
+      value: TRX_PAYMENT_LABEL[trx.paymentMethod] ?? trx.paymentMethod,
+    },
+    { label: "Kasir", value: nameById.get(trx.cashierId) ?? "—" },
+  ];
+  if (trx.customerName) {
+    fields.push({ label: "Pelanggan", value: trx.customerName });
+  }
+  fields.push({
+    label: "Status transaksi",
+    value: TRX_STATUS_LABEL[trx.status] ?? trx.status,
+  });
+  return fields;
+}
+
+/** Build ringkasan + detail bisnis per row. Return summary null kalau source
+ * record tidak ketemu (mis. sudah dihapus / args snapshot incomplete) —
+ * UI fallback ke tampilan lama. */
+function buildSourceContext(
+  r: JournalRetryQueueRow,
+  maps: SourceContextMaps,
+): { summary: string | null; fields: SourceContextField[] } {
+  const a = r.hookArgs;
+  const fields: SourceContextField[] = [];
+
+  if (
+    r.hookLabel === "pos_sale" ||
+    r.hookLabel === "pos_void" ||
+    r.hookLabel === "pos_refund"
+  ) {
+    const trxId = argStr(a, "transactionId");
+    const trx = trxId ? maps.trxById.get(trxId) : undefined;
+    if (!trx) {
+      return {
+        summary: trxId
+          ? `Transaksi POS (ID ${trxId.slice(0, 8)}…) — data transaksi tidak ditemukan`
+          : null,
+        fields,
+      };
+    }
+    fields.push(...trxFields(trx, maps.nameById));
+    const kasir = maps.nameById.get(trx.cashierId) ?? "—";
+
+    if (r.hookLabel === "pos_sale") {
+      fields.push({
+        label: "Jurnal yang tertunda",
+        value:
+          "Pencatatan penjualan (pendapatan + kas/bank + HPP) — transaksi sudah tersimpan di POS, tinggal pembukuannya",
+      });
+      return {
+        summary: `Transaksi ${trx.transactionNumber} — ${formatRupiah(trx.total)} (${TRX_PAYMENT_LABEL[trx.paymentMethod] ?? trx.paymentMethod}), kasir ${kasir}`,
+        fields,
+      };
+    }
+
+    if (r.hookLabel === "pos_void") {
+      if (trx.voidReason) {
+        fields.push({ label: "Alasan void", value: trx.voidReason });
+      }
+      fields.push({
+        label: "Jurnal yang tertunda",
+        value:
+          "Pembalikan jurnal penjualan (void) — void sudah terjadi di POS, pembukuannya belum",
+      });
+      return {
+        summary: `Void transaksi ${trx.transactionNumber} — ${formatRupiah(trx.total)}, kasir ${kasir}`,
+        fields,
+      };
+    }
+
+    // pos_refund
+    const refundEventId = argStr(a, "refundEventId");
+    const refund = refundEventId
+      ? maps.refundById.get(refundEventId)
+      : undefined;
+    const refundedAmount =
+      refund?.totalRefunded ?? argNum(a, "refundedAmount") ?? null;
+    if (refundedAmount !== null) {
+      fields.push({
+        label: "Nominal refund",
+        value: `${formatRupiah(refundedAmount)}${refund?.kind === "partial" ? " (refund sebagian)" : refund?.kind === "full" ? " (refund penuh)" : ""}`,
+      });
+    }
+    if (refund?.reason) {
+      fields.push({ label: "Alasan refund", value: refund.reason });
+    }
+    fields.push({
+      label: "Jurnal yang tertunda",
+      value:
+        "Pengurangan pendapatan + kas keluar refund — refund sudah terjadi di POS, pembukuannya belum",
+    });
+    return {
+      summary: `Refund ${refundedAmount !== null ? formatRupiah(refundedAmount) : "—"} untuk transaksi ${trx.transactionNumber}`,
+      fields,
+    };
+  }
+
+  if (r.hookLabel === "expense_create") {
+    const expenseId = argStr(a, "expenseId");
+    const exp = expenseId ? maps.expenseById.get(expenseId) : undefined;
+    if (!exp) {
+      return {
+        summary: expenseId
+          ? `Pengeluaran (ID ${expenseId.slice(0, 8)}…) — data pengeluaran tidak ditemukan`
+          : null,
+        fields,
+      };
+    }
+    fields.push(
+      { label: "Deskripsi", value: exp.description },
+      { label: "Kategori", value: exp.categoryName ?? "—" },
+      { label: "Nominal", value: formatRupiah(exp.amount) },
+      { label: "Tanggal pengeluaran", value: formatDate(exp.expenseDate) },
+      {
+        label: "Pembayaran",
+        value: EXPENSE_PAYMENT_LABEL[exp.paymentMethod] ?? exp.paymentMethod,
+      },
+      {
+        label: "Jurnal yang tertunda",
+        value:
+          "Pencatatan beban + kas keluar — pengeluaran sudah tersimpan, pembukuannya belum",
+      },
+    );
+    return {
+      summary: `Pengeluaran "${exp.description}" — ${formatRupiah(exp.amount)} (${formatDate(exp.expenseDate)})`,
+      fields,
+    };
+  }
+
+  if (r.hookLabel === "income_create") {
+    // Args snapshot sudah self-contained (amount/description/dll) — tidak
+    // perlu lookup DB.
+    const description = argStr(a, "description");
+    const amount = argNum(a, "amount");
+    const paymentMethod = argStr(a, "paymentMethod");
+    const entryDate = argStr(a, "entryDate");
+    if (description === null && amount === null) {
+      return { summary: null, fields };
+    }
+    if (description) fields.push({ label: "Deskripsi", value: description });
+    if (amount !== null) {
+      fields.push({ label: "Nominal", value: formatRupiah(amount) });
+    }
+    if (paymentMethod) {
+      fields.push({
+        label: "Pembayaran",
+        value: INCOME_PAYMENT_LABEL[paymentMethod] ?? paymentMethod,
+      });
+    }
+    if (entryDate) {
+      fields.push({ label: "Tanggal", value: formatDate(entryDate) });
+    }
+    fields.push({
+      label: "Jurnal yang tertunda",
+      value:
+        "Pencatatan pemasukan lain + kas masuk — pemasukan sudah tersimpan, pembukuannya belum",
+    });
+    return {
+      summary: `Pemasukan "${description ?? "—"}" — ${amount !== null ? formatRupiah(amount) : "—"}`,
+      fields,
+    };
+  }
+
+  if (r.hookLabel === "opname_adjustment") {
+    const sessionId = argStr(a, "opnameSessionId");
+    const session = sessionId ? maps.opnameById.get(sessionId) : undefined;
+    const sessionLabel =
+      argStr(a, "sessionLabel") ?? session?.periodLabel ?? null;
+    const entryDate = argStr(a, "entryDate");
+    if (!sessionLabel && !session) {
+      return { summary: null, fields };
+    }
+    if (sessionLabel) {
+      fields.push({ label: "Sesi opname", value: sessionLabel });
+    }
+    if (session) {
+      fields.push({
+        label: "Status sesi",
+        value: OPNAME_STATUS_LABEL[session.status] ?? session.status,
+      });
+    }
+    if (entryDate) {
+      fields.push({ label: "Tanggal jurnal", value: formatDate(entryDate) });
+    }
+    // sectionDiffs = [{section, diffValue}] — net rupiah per bagian.
+    // Positif = surplus stok, negatif = kekurangan.
+    const diffs = (a as Record<string, unknown> | null)?.sectionDiffs;
+    let totalDiff: number | null = null;
+    if (Array.isArray(diffs)) {
+      totalDiff = 0;
+      for (const d of diffs) {
+        const v = (d as Record<string, unknown> | null)?.diffValue;
+        if (typeof v === "number" && Number.isFinite(v)) totalDiff += v;
+      }
+    }
+    if (totalDiff !== null) {
+      fields.push({
+        label: "Nilai penyesuaian",
+        value: `${totalDiff < 0 ? "-" : "+"}${formatRupiah(Math.abs(totalDiff))} (${totalDiff < 0 ? "stok kurang dari catatan" : totalDiff > 0 ? "stok lebih dari catatan" : "tidak ada selisih"})`,
+      });
+    }
+    fields.push({
+      label: "Jurnal yang tertunda",
+      value:
+        "Penyesuaian nilai persediaan hasil opname — hasil opname sudah tersimpan, pembukuannya belum",
+    });
+    return {
+      summary: `Opname ${sessionLabel ?? "—"}${totalDiff !== null ? ` — penyesuaian ${totalDiff < 0 ? "-" : "+"}${formatRupiah(Math.abs(totalDiff))}` : ""}`,
+      fields,
+    };
+  }
+
+  return { summary: null, fields };
+}
+
+// ============================================================
 // Public: list + stats
 // ============================================================
 
@@ -496,6 +822,119 @@ export async function listJournalQueue(
     return fail("DB_ERROR", `Gagal load antrian: ${dbErr.formatted}`);
   }
 
+  /* Lookup batch ke tabel sumber per hook label — semua best-effort
+   * (lookup gagal → row tampil tanpa konteks bisnis, bukan blank list). */
+  const trxIds = new Set<string>();
+  const refundEventIds = new Set<string>();
+  const expenseIds = new Set<string>();
+  const opnameSessionIds = new Set<string>();
+  for (const r of rows) {
+    if (
+      r.hookLabel === "pos_sale" ||
+      r.hookLabel === "pos_void" ||
+      r.hookLabel === "pos_refund"
+    ) {
+      const id = argStr(r.hookArgs, "transactionId");
+      if (id) trxIds.add(id);
+    }
+    if (r.hookLabel === "pos_refund") {
+      const id = argStr(r.hookArgs, "refundEventId");
+      if (id) refundEventIds.add(id);
+    }
+    if (r.hookLabel === "expense_create") {
+      const id = argStr(r.hookArgs, "expenseId");
+      if (id) expenseIds.add(id);
+    }
+    if (r.hookLabel === "opname_adjustment") {
+      const id = argStr(r.hookArgs, "opnameSessionId");
+      if (id) opnameSessionIds.add(id);
+    }
+  }
+
+  const maps: SourceContextMaps = {
+    trxById: new Map(),
+    refundById: new Map(),
+    expenseById: new Map(),
+    opnameById: new Map(),
+    nameById: new Map(),
+  };
+
+  if (trxIds.size > 0) {
+    try {
+      const trxRows = await db
+        .select({
+          id: transactions.id,
+          transactionNumber: transactions.transactionNumber,
+          total: transactions.total,
+          paymentMethod: transactions.paymentMethod,
+          status: transactions.status,
+          customerName: transactions.customerName,
+          createdAt: transactions.createdAt,
+          cashierId: transactions.cashierId,
+          voidReason: transactions.voidReason,
+          refundReason: transactions.refundReason,
+        })
+        .from(transactions)
+        .where(inArray(transactions.id, Array.from(trxIds)));
+      for (const t of trxRows) maps.trxById.set(t.id, t);
+    } catch (e) {
+      console.error("[listJournalQueue trx lookup]", e);
+    }
+  }
+  if (refundEventIds.size > 0) {
+    try {
+      const refundRows = await db
+        .select({
+          id: refundEvents.id,
+          totalRefunded: refundEvents.totalRefunded,
+          reason: refundEvents.reason,
+          kind: refundEvents.kind,
+        })
+        .from(refundEvents)
+        .where(inArray(refundEvents.id, Array.from(refundEventIds)));
+      for (const r of refundRows) maps.refundById.set(r.id, r);
+    } catch (e) {
+      console.error("[listJournalQueue refund lookup]", e);
+    }
+  }
+  if (expenseIds.size > 0) {
+    try {
+      const expRows = await db
+        .select({
+          id: expenses.id,
+          description: expenses.description,
+          amount: expenses.amount,
+          expenseDate: expenses.expenseDate,
+          paymentMethod: expenses.paymentMethod,
+          categoryName: expenseCategories.name,
+        })
+        .from(expenses)
+        .leftJoin(
+          expenseCategories,
+          eq(expenses.categoryId, expenseCategories.id),
+        )
+        .where(inArray(expenses.id, Array.from(expenseIds)));
+      for (const x of expRows) maps.expenseById.set(x.id, x);
+    } catch (e) {
+      console.error("[listJournalQueue expense lookup]", e);
+    }
+  }
+  if (opnameSessionIds.size > 0) {
+    try {
+      const opRows = await db
+        .select({
+          id: stockOpnameSessions.id,
+          periodLabel: stockOpnameSessions.periodLabel,
+          status: stockOpnameSessions.status,
+        })
+        .from(stockOpnameSessions)
+        .where(inArray(stockOpnameSessions.id, Array.from(opnameSessionIds)));
+      for (const o of opRows) maps.opnameById.set(o.id, o);
+    } catch (e) {
+      console.error("[listJournalQueue opname lookup]", e);
+    }
+  }
+
   /* Resolve display names. Sesi AE-76 — replace `sql\`= ANY(${array})\``
    * dengan inArray() helper. Pattern lama tidak reliable di prod
    * (Neon serverless) — sama bug yang fix-ed di sesi AE-68 (investors).
@@ -507,6 +946,8 @@ export async function listJournalQueue(
     if (r.resolvedByUserId) userIds.add(r.resolvedByUserId);
     if (r.abandonedByUserId) userIds.add(r.abandonedByUserId);
   }
+  // Nama kasir transaksi sumber ikut di-resolve (1 query gabungan).
+  for (const t of maps.trxById.values()) userIds.add(t.cashierId);
   const nameById = new Map<string, string>();
   if (userIds.size > 0) {
     try {
@@ -522,22 +963,29 @@ export async function listJournalQueue(
     }
   }
 
+  maps.nameById = nameById;
+
   return ok(
-    rows.map((r) => ({
-      ...r,
-      lastRetryByName: r.lastRetryByUserId
-        ? (nameById.get(r.lastRetryByUserId) ?? null)
-        : null,
-      resolvedByName: r.resolvedByUserId
-        ? (nameById.get(r.resolvedByUserId) ?? null)
-        : null,
-      abandonedByName: r.abandonedByUserId
-        ? (nameById.get(r.abandonedByUserId) ?? null)
-        : null,
-      hookDisplayName: isRetryableHookLabel(r.hookLabel)
-        ? HOOK_REGISTRY[r.hookLabel].displayName
-        : r.hookLabel,
-    })),
+    rows.map((r) => {
+      const ctx = buildSourceContext(r, maps);
+      return {
+        ...r,
+        lastRetryByName: r.lastRetryByUserId
+          ? (nameById.get(r.lastRetryByUserId) ?? null)
+          : null,
+        resolvedByName: r.resolvedByUserId
+          ? (nameById.get(r.resolvedByUserId) ?? null)
+          : null,
+        abandonedByName: r.abandonedByUserId
+          ? (nameById.get(r.abandonedByUserId) ?? null)
+          : null,
+        hookDisplayName: isRetryableHookLabel(r.hookLabel)
+          ? HOOK_REGISTRY[r.hookLabel].displayName
+          : r.hookLabel,
+        sourceSummary: ctx.summary,
+        sourceContext: ctx.fields,
+      };
+    }),
   );
 }
 

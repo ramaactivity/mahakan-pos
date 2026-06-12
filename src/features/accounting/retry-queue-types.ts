@@ -30,11 +30,24 @@ export interface ListJournalQueueOptions {
   limit?: number;
 }
 
+/** Label/value pair berbahasa manusia untuk blok "Detail Transaksi" di UI. */
+export interface SourceContextField {
+  label: string;
+  value: string;
+}
+
 export interface JournalRetryQueueListRow extends JournalRetryQueueRow {
   lastRetryByName: string | null;
   resolvedByName: string | null;
   abandonedByName: string | null;
   hookDisplayName: string;
+  /** Ringkasan bisnis 1 baris, mis. "Transaksi MHK-0123 — Rp 85.000 (QRIS),
+   * kasir Bayu". Null kalau source record tidak ketemu / args tidak lengkap. */
+  sourceSummary: string | null;
+  /** Detail transaksi sumber (nomor, nominal, kasir, dst) — supaya finance/
+   * accounting/inventory paham jurnal pending ini milik aksi apa SEBELUM
+   * klik Retry, tanpa harus baca error coding / args snapshot. */
+  sourceContext: SourceContextField[];
 }
 
 export interface EnqueueJournalFailureInput {

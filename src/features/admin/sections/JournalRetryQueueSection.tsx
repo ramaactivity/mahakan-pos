@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  Info,
   RefreshCw,
   RotateCcw,
   XCircle,
@@ -31,6 +32,52 @@ import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Tab = "pending" | "resolved" | "abandoned" | "all";
+
+/**
+ * Feedback owner 2026-06-12 — terjemahkan error teknis ke bahasa manusia
+ * supaya finance/accounting/inventory paham apa yang terjadi + apa yang
+ * perlu dicek sebelum klik Retry. Pattern-match error umum; fallback null
+ * (UI tampilkan saran generik).
+ */
+function explainError(lastError: string): {
+  explanation: string;
+  safeToRetry: boolean;
+} | null {
+  const e = lastError.toLowerCase();
+  if (
+    /connection terminated|connection refused|econnreset|etimedout|timeout|fetch failed|socket hang up|terminating connection/.test(
+      e,
+    )
+  ) {
+    return {
+      explanation:
+        "Koneksi ke database terputus sesaat (gangguan jaringan/server, bukan salah input). Transaksi aslinya aman tersimpan — jurnalnya saja yang belum tercatat. Biasanya langsung berhasil saat di-Retry.",
+      safeToRetry: true,
+    };
+  }
+  if (/invalid input syntax|22p02|numeric field overflow/.test(e)) {
+    return {
+      explanation:
+        "Ada nilai yang formatnya tidak cocok dengan pembukuan (mis. angka desimal masuk ke kolom angka bulat). Retry kemungkinan gagal lagi dengan error yang sama. Cek dulu nilai transaksi di Detail Transaksi — kalau Retry tetap gagal, catat manual via Akuntansi → Jurnal Manual lalu Abandon antrian ini.",
+      safeToRetry: false,
+    };
+  }
+  if (/duplicate key|unique constraint|already exists/.test(e)) {
+    return {
+      explanation:
+        "Jurnal ini kemungkinan sebenarnya sudah ter-post (sistem mencegah pencatatan dobel). Aman di-Retry — kalau jurnalnya memang sudah ada, sistem pakai yang sudah ada tanpa mencatat dobel.",
+      safeToRetry: true,
+    };
+  }
+  if (/foreign key|violates not-null|constraint/.test(e)) {
+    return {
+      explanation:
+        "Ada data rujukan yang tidak lengkap/tidak valid saat pencatatan jurnal. Cek dulu Detail Transaksi — kalau Retry tetap gagal, catat manual via Akuntansi → Jurnal Manual lalu Abandon antrian ini.",
+      safeToRetry: false,
+    };
+  }
+  return null;
+}
 
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: "pending", label: "Pending" },
@@ -285,7 +332,7 @@ export function JournalRetryQueueSection() {
         title="Abandon Antrian Retry"
         description={
           abandonTarget
-            ? `Hook ${abandonTarget.hookDisplayName} — error: ${abandonTarget.lastError.slice(0, 80)}`
+            ? `${abandonTarget.hookDisplayName}${abandonTarget.sourceSummary ? ` — ${abandonTarget.sourceSummary}` : ""} · error: ${abandonTarget.lastError.slice(0, 80)}`
             : undefined
         }
         size="md"
@@ -423,21 +470,18 @@ function QueueRowCard({
               </Badge>
             ) : null}
           </div>
+          {row.sourceSummary ? (
+            <p className="mt-1 text-xs font-medium text-neutral-800">
+              {row.sourceSummary}
+            </p>
+          ) : null}
           <p className="mt-1 text-[11px] text-neutral-600">
             <Clock className="inline size-3 mr-1 align-text-bottom" />
-            {formatDateTime(row.createdAt)}
-            {row.sourceType ? (
+            Gagal {formatDateTime(row.createdAt)}
+            {row.sourceId ? (
               <>
-                {" · "}
-                <span className="font-mono">{row.sourceType}</span>
-                {row.sourceId ? (
-                  <>
-                    {" · "}
-                    <span className="font-mono">
-                      {row.sourceId.slice(0, 8)}…
-                    </span>
-                  </>
-                ) : null}
+                {" · ID "}
+                <span className="font-mono">{row.sourceId.slice(0, 8)}…</span>
               </>
             ) : null}
           </p>
@@ -446,15 +490,33 @@ function QueueRowCard({
           </p>
           {expanded ? (
             <div className="mt-2 space-y-2">
-              {row.lastErrorStack ? (
-                <pre className="max-h-32 overflow-auto rounded bg-neutral-50 p-2 text-[10px] leading-tight text-neutral-700">
-                  {row.lastErrorStack}
-                </pre>
+              {row.sourceContext.length > 0 ? (
+                <div className="rounded border border-neutral-200 bg-white p-2.5">
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                    Detail Transaksi
+                  </p>
+                  <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
+                    {row.sourceContext.map((f) => (
+                      <Fragment key={f.label}>
+                        <dt className="text-neutral-500">{f.label}</dt>
+                        <dd className="min-w-0 font-medium text-neutral-900">
+                          {f.value}
+                        </dd>
+                      </Fragment>
+                    ))}
+                  </dl>
+                </div>
               ) : null}
+              <ErrorExplanation lastError={row.lastError} />
               <details className="text-[11px]">
                 <summary className="cursor-pointer text-neutral-600">
-                  Args snapshot
+                  Detail teknis (error + args — untuk developer)
                 </summary>
+                {row.lastErrorStack ? (
+                  <pre className="mt-1 max-h-32 overflow-auto rounded bg-neutral-50 p-2 text-[10px] leading-tight text-neutral-700">
+                    {row.lastErrorStack}
+                  </pre>
+                ) : null}
                 <pre className="mt-1 max-h-40 overflow-auto rounded bg-neutral-50 p-2 text-[10px] leading-tight text-neutral-700">
                   {JSON.stringify(row.hookArgs, null, 2)}
                 </pre>
@@ -490,7 +552,7 @@ function QueueRowCard({
             onClick={onToggleExpand}
             className="mt-1.5 text-[11px] text-mahakan-green-700 hover:underline"
           >
-            {expanded ? "Sembunyikan detail" : "Lihat detail"}
+            {expanded ? "Sembunyikan detail" : "Lihat detail transaksi"}
           </button>
         </div>
         {status === "pending" ? (
@@ -510,6 +572,30 @@ function QueueRowCard({
         ) : null}
       </div>
     </Card>
+  );
+}
+
+/** Kotak penjelasan error berbahasa manusia + indikasi aman/tidaknya Retry. */
+function ErrorExplanation({ lastError }: { lastError: string }) {
+  const hint = explainError(lastError);
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-2 rounded border p-2.5 text-xs",
+        hint?.safeToRetry === false
+          ? "border-warning-300 bg-warning-50/60 text-warning-900"
+          : "border-mahakan-green-200 bg-mahakan-green-50/40 text-neutral-800",
+      )}
+    >
+      <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+      <div className="min-w-0 flex-1">
+        <p className="font-semibold">Apa artinya error ini?</p>
+        <p className="mt-0.5">
+          {hint?.explanation ??
+            "Pencatatan jurnal gagal karena error teknis. Transaksi aslinya aman tersimpan — cek Detail Transaksi di atas untuk memastikan ini transaksi yang mana, lalu klik Retry. Kalau gagal lagi, catat manual via Akuntansi → Jurnal Manual lalu Abandon."}
+        </p>
+      </div>
+    </div>
   );
 }
 
