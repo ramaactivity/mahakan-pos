@@ -11,7 +11,7 @@ import {
 } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
-import { logAndSanitize } from "@/lib/server-error";
+import { errorChainIncludes, logAndSanitize } from "@/lib/server-error";
 import {
   lockBankAccountAdvisory,
   lockCreditor,
@@ -206,8 +206,9 @@ export async function createCreditor(
 
     return ok(row);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "";
-    if (msg.includes("ux_creditors_outlet_nik")) {
+    /* Sesi AE-180 — drizzle 0.45 bungkus error DB di .cause; pakai
+     * errorChainIncludes supaya unique-violation tetap terdeteksi. */
+    if (errorChainIncludes(e, "ux_creditors_outlet_nik")) {
       return fail(
         "DUPLICATE_NIK",
         "NIK sudah terdaftar untuk kreditur lain",

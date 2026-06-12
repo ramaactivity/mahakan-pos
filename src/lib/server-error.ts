@@ -43,6 +43,29 @@ function looksLikeDbError(e: unknown): boolean {
  * Custom-thrown "sentinel" Error.message yang ASCII-only (no spaces) di-pass
  * through karena biasanya code path internal yang caller sengaja matching.
  */
+/**
+ * Sesi AE-180 — cek substring di SELURUH rantai error (`e` + `e.cause` +
+ * cause-nya cause, max 5 level). Drizzle >= 0.36 membungkus DB error dalam
+ * `DrizzleQueryError` ("Failed query: ...") dengan error Postgres asli di
+ * `.cause` — pattern lama `e.message.includes("ux_constraint_name")` tidak
+ * pernah match lagi (constraint name cuma ada di cause). Pakai helper ini
+ * untuk deteksi unique-violation spesifik sebelum fallback logAndSanitize.
+ */
+export function errorChainIncludes(e: unknown, needle: string): boolean {
+  let cur: unknown = e;
+  for (let depth = 0; depth < 5 && cur; depth++) {
+    if (cur instanceof Error) {
+      if (typeof cur.message === "string" && cur.message.includes(needle)) {
+        return true;
+      }
+      cur = cur.cause;
+    } else {
+      return typeof cur === "string" && cur.includes(needle);
+    }
+  }
+  return false;
+}
+
 export function logAndSanitize(
   e: unknown,
   feature: string,

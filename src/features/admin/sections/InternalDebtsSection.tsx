@@ -67,9 +67,12 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
   const queryClient = useQueryClient();
   const canManage = hasPermission(viewerRole, "distribution.approve");
 
+  /* Default "all" — pihak baru selalu mulai dengan hutang Rp 0; kalau
+   * default "active" (outstanding > 0) pihak yang baru ditambah tidak
+   * muncul di list → owner kira gagal & input dobel (insiden 2026-06-12). */
   const [statusFilter, setStatusFilter] = useState<
     "active" | "settled" | "all"
-  >("active");
+  >("all");
   const [partyFormTarget, setPartyFormTarget] = useState<
     InternalDebtParty | null | undefined
   >(undefined);
@@ -266,7 +269,7 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
       {/* Action bar */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1 rounded-md border border-neutral-200 bg-white p-1">
-          {(["active", "settled", "all"] as const).map((s) => (
+          {(["all", "active", "settled"] as const).map((s) => (
             <button
               key={s}
               type="button"

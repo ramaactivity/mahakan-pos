@@ -11,7 +11,7 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
-import { logAndSanitize } from "@/lib/server-error";
+import { errorChainIncludes, logAndSanitize } from "@/lib/server-error";
 import { computeNewStock, formatMovementDelta } from "@/lib/stock-decimal";
 import { jakartaMonthLabel } from "./cadence";
 import { computeDiffStats } from "./diff-stats";
@@ -271,8 +271,8 @@ export async function startOpname(
       return s;
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Database error";
-    if (msg.includes("ux_opname_sessions_active_per_outlet")) {
+    /* Sesi AE-180 — drizzle 0.45 bungkus error DB di .cause. */
+    if (errorChainIncludes(e, "ux_opname_sessions_active_per_outlet")) {
       return fail(
         "CONFLICT",
         "Sesi opname aktif sudah ada — refresh dan coba lagi.",

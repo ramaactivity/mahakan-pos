@@ -6,7 +6,7 @@ import { suppliers } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
-import { logAndSanitize } from "@/lib/server-error";
+import { errorChainIncludes, logAndSanitize } from "@/lib/server-error";
 import { fetchSupplierById, fetchSuppliers } from "./queries";
 import {
   createSupplierSchema,
@@ -96,8 +96,8 @@ export async function createSupplier(
 
     return ok(created);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Database error";
-    if (msg.includes("ux_suppliers_outlet_name_active")) {
+    /* Sesi AE-180 — drizzle 0.45 bungkus error DB di .cause. */
+    if (errorChainIncludes(e, "ux_suppliers_outlet_name_active")) {
       return fail(
         "CONFLICT",
         `Supplier dengan nama "${v.name}" sudah ada`,
@@ -172,8 +172,8 @@ export async function updateSupplier(
 
     return ok(updated);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Database error";
-    if (msg.includes("ux_suppliers_outlet_name_active")) {
+    /* Sesi AE-180 — drizzle 0.45 bungkus error DB di .cause. */
+    if (errorChainIncludes(e, "ux_suppliers_outlet_name_active")) {
       return fail("CONFLICT", "Nama supplier sudah dipakai", "name");
     }
     return fail("DB_ERROR", logAndSanitize(e, "suppliers", "Operasi database gagal"));

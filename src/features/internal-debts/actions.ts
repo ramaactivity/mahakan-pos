@@ -12,7 +12,7 @@ import {
 } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
-import { logAndSanitize } from "@/lib/server-error";
+import { errorChainIncludes, logAndSanitize } from "@/lib/server-error";
 import {
   lockBankAccountAdvisory,
   lockInternalDebtParty,
@@ -214,11 +214,12 @@ export async function createInternalDebtParty(
 
     return ok(row);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "";
-    if (msg.includes("ux_internal_debt_parties_outlet_name")) {
+    /* Drizzle 0.45 bungkus error DB di .cause — pakai errorChainIncludes,
+     * BUKAN e.message.includes (constraint name tidak ada di wrapper). */
+    if (errorChainIncludes(e, "ux_internal_debt_parties_outlet_name")) {
       return fail(
         "DUPLICATE_NAME",
-        "Nama sudah terdaftar sebagai pihak hutang internal",
+        `"${v.name}" sudah terdaftar sebagai pihak — cek daftar dengan filter "Semua" (mungkin tersembunyi karena hutangnya Rp 0)`,
         "name",
       );
     }
@@ -297,11 +298,10 @@ export async function updateInternalDebtParty(
 
     return ok(row);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "";
-    if (msg.includes("ux_internal_debt_parties_outlet_name")) {
+    if (errorChainIncludes(e, "ux_internal_debt_parties_outlet_name")) {
       return fail(
         "DUPLICATE_NAME",
-        "Nama sudah terdaftar sebagai pihak hutang internal",
+        "Nama sudah dipakai pihak lain — cek daftar dengan filter \"Semua\"",
         "name",
       );
     }
