@@ -87,10 +87,14 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
   const [reverseReason, setReverseReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  /* Selalu fetch SEMUA pihak — filter status diterapkan client-side hanya
+   * untuk tampilan tabel. Kalau query ikut filter, tombol "Catat Hutang" +
+   * dropdown pihak di modal ikut kosong saat filter "Belum Lunas" tidak
+   * punya hasil (insiden 2026-06-12: tombol mati padahal pihak ada). */
   const partiesQuery = useQuery({
-    queryKey: ["admin", "internal-debt-parties", statusFilter],
+    queryKey: ["admin", "internal-debt-parties"],
     queryFn: async () => {
-      const res = await fetchInternalDebtParties({ status: statusFilter });
+      const res = await fetchInternalDebtParties({ status: "all" });
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data;
     },
@@ -130,6 +134,12 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
   }
 
   const parties = partiesQuery.data ?? [];
+  const displayParties =
+    statusFilter === "all"
+      ? parties
+      : statusFilter === "active"
+        ? parties.filter((p) => p.totalOutstanding > 0)
+        : parties.filter((p) => p.totalOutstanding === 0);
   const entries = entriesQuery.data ?? [];
   const repayments = repaymentsQuery.data ?? [];
   const totalOutstanding = parties.reduce(
@@ -325,15 +335,21 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
                 ? partiesQuery.error.message
                 : String(partiesQuery.error)}
             </Card>
-          ) : parties.length === 0 ? (
+          ) : displayParties.length === 0 ? (
             <EmptyCard
               icon={HandCoins}
               title={
-                statusFilter === "active"
-                  ? "Tidak ada hutang internal berjalan"
-                  : "Belum ada pihak untuk filter ini"
+                parties.length === 0
+                  ? "Belum ada pihak terdaftar"
+                  : statusFilter === "active"
+                    ? "Tidak ada hutang internal berjalan — semua lunas"
+                    : "Belum ada pihak untuk filter ini"
               }
-              description="Klik 'Tambah Pihak' lalu 'Catat Hutang' saat owner/pengelola nalangin pengeluaran."
+              description={
+                parties.length === 0
+                  ? "Klik 'Tambah Pihak' lalu 'Catat Hutang' saat owner/pengelola nalangin pengeluaran."
+                  : "Ganti filter ke 'Semua' untuk lihat seluruh pihak."
+              }
             />
           ) : (
             <div className="overflow-x-auto">
@@ -351,7 +367,7 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
-                  {parties.map((p) => (
+                  {displayParties.map((p) => (
                     <tr key={p.id} className="hover:bg-neutral-50">
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap items-center gap-1.5">
