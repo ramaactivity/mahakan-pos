@@ -1,7 +1,8 @@
 # ACCOUNTS — Akun yang BENAR untuk POS Mahakan
 
-> ⚠️ **WAJIB BACA SEBELUM DEPLOY.** Deploy HARUS selalu pakai akun Vercel yang sama
-> (yang sudah proven works). Kalau lagi login pakai akun lain → STOP, ganti dulu.
+> Deploy utama sekarang **otomatis via push GitHub** (lihat [DEPLOY.md](./DEPLOY.md)) — untuk
+> ini login akun Vercel TIDAK relevan (trigger di server). Akun Vercel di bawah ini hanya
+> dipakai untuk **CLI fallback** (`vercel --prod`) dan akses dashboard. Tetap pastikan benar.
 
 ## ✅ Akun Vercel yang BENAR (PRODUCTION) — satu-satunya
 
@@ -24,14 +25,14 @@
 > Catatan: per 2026-06-08, Vercel CLI di mesin ini sedang **login ke akun SALAH
 > (`masram-s-projects`)**. Sebelum deploy WAJIB ganti ke `ramaactivity98-5695s-projects` dulu.
 
-## Cara CEK akun sebelum deploy (WAJIB)
+## Cara CEK akun (hanya perlu untuk CLI fallback)
 
 ```bash
 npx vercel teams ls
 ```
 
 Tanda ✔ **harus** di baris `ramaactivity98-5695s-projects`.
-Kalau ✔ ada di `masram-s-projects` atau akun lain → **JANGAN deploy** → ganti dulu (bawah).
+Kalau ✔ ada di `masram-s-projects` atau akun lain → ganti dulu (bawah) sebelum pakai `vercel --prod`.
 
 ## Ganti ke akun yang BENAR
 
@@ -53,11 +54,12 @@ Setelah ganti, ulangi `npx vercel teams ls` untuk konfirmasi ✔ pindah ke akun 
 cocok dgn project **mahakan-pos** di scope `ramaactivity98-5695s-projects`. Tidak perlu re-link.
 Cukup pastikan akun aktif benar (lihat atas), lalu `npx vercel --prod --yes`.
 
-## Akun GitHub (push source-of-truth)
+## Akun GitHub (push = deploy)
 
 - Git user: `ramaactivity`
 - Branch produksi: `release/phase-1` (push ke sini; **JANGAN** ke `main` yang dormant)
-- Push ke GitHub **tidak** trigger build Vercel (sengaja — lihat [DEPLOY.md](./DEPLOY.md)).
+- Push ke `release/phase-1` **OTOMATIS memicu Production deploy** di Vercel (sejak 2026-06-12;
+  Production Branch Vercel di-set `release/phase-1`). Lihat [DEPLOY.md](./DEPLOY.md).
 
 ---
 Lihat juga: [DEPLOY.md](./DEPLOY.md) untuk langkah commit → push → deploy lengkap.
