@@ -80,9 +80,16 @@ export async function fireSettlementJournalHook(
       .limit(1);
     bankAccountCode = bankAcc?.code ?? null;
   }
+  /* Sesi AE-182 — fallback ke periodTo (hari settlement-nya), BUKAN hari ini.
+   * Dulu pakai `new Date()`: untuk cron harian itu wajar (uang masuk bank
+   * H+1), tapi begitu dipakai untuk mengejar backlog, settlement bulan Mei
+   * mendarat di bulan berjalan dan merusak laporan DUA bulan sekaligus.
+   * Bukti: backfill 2026-08-04 sempat menempatkan 46 jurnal settlement
+   * (Rp 25,2jt) di Agustus padahal periodenya Mei–Juli. Aturan sekarang sama
+   * persis dengan yang dipakai sapuan otomatis di accounting/auto-retry.ts. */
   const entryDate = row.bankCreditedAt
     ? new Date(row.bankCreditedAt).toISOString().slice(0, 10)
-    : new Date().toISOString().slice(0, 10);
+    : String(row.periodTo);
   fireJournalHook(
     () =>
       postJournalForAggregatorSettlement({

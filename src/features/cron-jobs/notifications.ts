@@ -586,13 +586,14 @@ export async function runJournalSweepJob(): Promise<CronJobResult> {
           sweep.queueResolved +
           sweep.salesPosted +
           sweep.voidsPosted +
-          sweep.expensesPosted;
+          sweep.expensesPosted +
+          sweep.settlementsPosted;
         if (fixed === 0 && sweep.failed === 0) continue;
         const push = await sendCategorizedPush("finance_close", outlet.id, {
           title: `Jurnal dipulihkan otomatis: ${fixed}`,
           body:
             `${sweep.salesPosted} penjualan, ${sweep.voidsPosted} void, ` +
-            `${sweep.expensesPosted} pengeluaran, ${sweep.queueResolved} dari antrian` +
+            `${sweep.expensesPosted} pengeluaran, ${sweep.settlementsPosted} settlement, ${sweep.queueResolved} dari antrian` +
             (sweep.failed > 0 ? ` — ${sweep.failed} masih gagal, cek Antrian Jurnal.` : ""),
           url: "/dashboard#journal_retry",
           tag: "journal-sweep",

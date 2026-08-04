@@ -30,6 +30,8 @@ import "server-only";
 import { and, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  aggregatorSettlements,
+  chartOfAccounts,
   expenses,
   journalEntries,
   journalRetryQueue,
@@ -63,6 +65,8 @@ export interface JournalSweepResult {
   voidsPosted: number;
   /** Pengeluaran tanpa jurnal yang berhasil di-posting. */
   expensesPosted: number;
+  /** Settlement QRIS/EDC/aggregator tanpa jurnal yang berhasil di-posting. */
+  settlementsPosted: number;
   /** Sumber yang di-scan (transaksi + pengeluaran dalam window). */
   scanned: number;
   /** Sumber yang tetap gagal saat di-posting ulang. */
@@ -102,6 +106,7 @@ function emptyResult(): JournalSweepResult {
     salesPosted: 0,
     voidsPosted: 0,
     expensesPosted: 0,
+    settlementsPosted: 0,
     scanned: 0,
     failed: 0,
     errors: [],
@@ -402,6 +407,98 @@ async function sweepMissingSales(
   }
 }
 
+/**
+ * Settlement QRIS / EDC / aggregator yang barisnya sudah ada tapi jurnalnya
+ * tidak pernah tercatat. Korban bug yang sama: `fireSettlementJournalHook`
+ * juga fire-and-forget, DAN label "aggregator_settlement" belum di-wire ke
+ * retry queue — jadi hilangnya benar-benar tanpa jejak.
+ *
+ * Efek di buku: piutang QRIS menumpuk (uangnya sudah masuk bank tapi
+ * piutangnya tidak pernah di-clear) dan saldo bank ikut salah. Per audit
+ * 2026-08-04: 37 dari 39 baris settlement tidak punya jurnal.
+ */
+async function sweepMissingSettlements(
+  opts: JournalSweepOptions,
+  result: JournalSweepResult,
+): Promise<void> {
+  const sinceIso = jakartaDateOf(startDateOf(opts));
+  const conds = [gte(aggregatorSettlements.periodTo, sinceIso)];
+  if (opts.outletId) {
+    conds.push(eq(aggregatorSettlements.outletId, opts.outletId));
+  }
+
+  const rows = await db
+    .select()
+    .from(aggregatorSettlements)
+    .where(and(...conds));
+  if (rows.length === 0) return;
+  result.scanned += rows.length;
+
+  const index = await indexJournaledSources(rows.map((r) => r.id));
+  const missing = rows.filter((r) => !index.any.has(r.id));
+  if (missing.length === 0) return;
+
+  const { postJournalForAggregatorSettlement } = await import("./hooks");
+
+  for (const row of missing) {
+    if (opts.dryRun) {
+      result.settlementsPosted++;
+      continue;
+    }
+    try {
+      let bankAccountCode: string | null = null;
+      if (row.bankAccountId) {
+        const [acc] = await db
+          .select({ code: chartOfAccounts.code })
+          .from(chartOfAccounts)
+          .where(eq(chartOfAccounts.id, row.bankAccountId))
+          .limit(1);
+        bankAccountCode = acc?.code ?? null;
+      }
+      const actorId =
+        row.createdBy ?? (await resolveSweepActor(row.outletId, null));
+      if (!actorId) {
+        result.failed++;
+        result.errors.push(
+          `settlement ${row.channel} ${row.periodTo}: tidak ada actor untuk jurnal`,
+        );
+        continue;
+      }
+      await postJournalForAggregatorSettlement({
+        outletId: row.outletId,
+        settlementId: row.id,
+        channel: row.channel as
+          | "edc_bca"
+          | "gofood"
+          | "grabfood"
+          | "shopeefood"
+          | "qris",
+        grossAmount: Number(row.grossAmount),
+        feeAmount: Number(row.feeAmount),
+        netAmount: Number(row.netAmount),
+        bankAccountCode,
+        periodFrom: String(row.periodFrom),
+        periodTo: String(row.periodTo),
+        /* Tanggal jurnal = tanggal uang masuk bank kalau tercatat, kalau
+         * tidak ya hari terakhir periode settlement — BUKAN hari sapuan.
+         * Kalau pakai hari sapuan, settlement Mei mendarat di Agustus dan
+         * dua bulan sekaligus jadi salah. */
+        entryDate: String(row.bankCreditedAt
+          ? jakartaDateOf(row.bankCreditedAt)
+          : row.periodTo),
+        referenceNo: row.referenceNo,
+        actorId,
+      });
+      result.settlementsPosted++;
+    } catch (e) {
+      result.failed++;
+      result.errors.push(
+        `settlement ${row.channel} ${row.periodTo}: ${errMsg(e)}`,
+      );
+    }
+  }
+}
+
 async function sweepMissingVoids(
   opts: JournalSweepOptions,
   result: JournalSweepResult,
@@ -557,6 +654,7 @@ export async function sweepJournalGaps(
     ["penjualan", () => sweepMissingSales(opts, result)],
     ["void", () => sweepMissingVoids(opts, result)],
     ["pengeluaran", () => sweepMissingExpenses(opts, result)],
+    ["settlement", () => sweepMissingSettlements(opts, result)],
   ];
 
   for (const [name, run] of steps) {
@@ -571,7 +669,8 @@ export async function sweepJournalGaps(
     result.queueResolved +
     result.salesPosted +
     result.voidsPosted +
-    result.expensesPosted;
+    result.expensesPosted +
+    result.settlementsPosted;
 
   if ((opts.audit ?? true) && !opts.dryRun && (fixed > 0 || result.failed > 0)) {
     await logAudit({
@@ -580,7 +679,7 @@ export async function sweepJournalGaps(
       entityType: "journal_entry",
       entityId: null,
       payload: {
-        summary: `🧹 Sapu jurnal kosong: ${fixed} jurnal dipulihkan (${result.salesPosted} penjualan, ${result.voidsPosted} void, ${result.expensesPosted} pengeluaran, ${result.queueResolved} dari antrian)${result.failed > 0 ? `, ${result.failed} masih gagal` : ""}`,
+        summary: `🧹 Sapu jurnal kosong: ${fixed} jurnal dipulihkan (${result.salesPosted} penjualan, ${result.voidsPosted} void, ${result.expensesPosted} pengeluaran, ${result.settlementsPosted} settlement, ${result.queueResolved} dari antrian)${result.failed > 0 ? `, ${result.failed} masih gagal` : ""}`,
         context: { ...result, errors: result.errors.slice(0, 10) },
       },
       metadata: opts.outletId

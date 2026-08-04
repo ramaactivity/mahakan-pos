@@ -170,7 +170,7 @@ export function JournalRetryQueueSection() {
       toast.info("Tidak ada jurnal kosong — semua sudah tercatat.");
     } else {
       toast.success(
-        `✓ ${d.fixed} jurnal dipulihkan (${d.salesPosted} penjualan, ${d.voidsPosted} void, ${d.expensesPosted} pengeluaran, ${d.queueResolved} dari antrian)` +
+        `✓ ${d.fixed} jurnal dipulihkan (${d.salesPosted} penjualan, ${d.voidsPosted} void, ${d.expensesPosted} pengeluaran, ${d.settlementsPosted} settlement, ${d.queueResolved} dari antrian)` +
           (d.failed > 0 ? ` — ${d.failed} masih gagal.` : ""),
       );
     }
@@ -243,9 +243,9 @@ export function JournalRetryQueueSection() {
       <Card className="border-mahakan-green-200 bg-mahakan-green-50/50 p-4 text-sm text-neutral-700">
         <p>
           <strong>Jurnal dipulihkan otomatis.</strong> Setiap jam sistem
-          memeriksa transaksi & pengeluaran 7 hari terakhir yang jurnalnya
-          belum tercatat, lalu mencatatnya sendiri — termasuk antrian di bawah
-          ini. Tombol <em>Sapu Jurnal Kosong</em> menjalankan pemeriksaan yang
+          memeriksa transaksi, pengeluaran, dan settlement QRIS/EDC 7 hari
+          terakhir yang jurnalnya belum tercatat, lalu mencatatnya sendiri —
+          termasuk antrian di bawah ini. Tombol <em>Sapu Jurnal Kosong</em> menjalankan pemeriksaan yang
           sama sekarang juga, mundur 30 hari.
         </p>
       </Card>

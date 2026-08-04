@@ -423,6 +423,7 @@ export async function sweepJournalGapsAction(input?: {
     salesPosted: number;
     voidsPosted: number;
     expensesPosted: number;
+    settlementsPosted: number;
     queueResolved: number;
     failed: number;
     errors: string[];
@@ -442,10 +443,15 @@ export async function sweepJournalGapsAction(input?: {
     });
     return ok({
       fixed:
-        r.queueResolved + r.salesPosted + r.voidsPosted + r.expensesPosted,
+        r.queueResolved +
+        r.salesPosted +
+        r.voidsPosted +
+        r.expensesPosted +
+        r.settlementsPosted,
       salesPosted: r.salesPosted,
       voidsPosted: r.voidsPosted,
       expensesPosted: r.expensesPosted,
+      settlementsPosted: r.settlementsPosted,
       queueResolved: r.queueResolved,
       failed: r.failed,
       errors: r.errors.slice(0, 10),
