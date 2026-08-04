@@ -337,6 +337,36 @@ describe("mapOpnameAdjustment", () => {
     expect(lines.find((l) => l.accountCode === "1141")?.debit).toBe(50000);
   });
 
+  /* Sesi AE-182 — diffValue = qty desimal × harga desimal, jadi pecahan.
+   * Kolom debit/credit bertipe bigint; nilai pecahan ditolak Postgres
+   * (SQLSTATE 22P02) dan bikin jurnal opname gagal permanen. Tiga jurnal
+   * opname hilang karena ini sebelum diperbaiki. */
+  it("nilai desimal dibulatkan ke rupiah bulat (bigint-safe)", () => {
+    const lines = mapOpnameAdjustment({
+      ...base,
+      sectionDiffs: [
+        { section: "kitchen", diffValue: -428_126.8473 },
+        { section: "bar", diffValue: 12_345.6 },
+      ],
+    });
+    expect(isBalanced(lines)).toBe(true);
+    for (const l of lines) {
+      expect(Number.isInteger(l.debit ?? 0)).toBe(true);
+      expect(Number.isInteger(l.credit ?? 0)).toBe(true);
+    }
+    expect(lines.find((l) => l.accountCode === "1140")?.credit).toBe(428_127);
+    expect(lines.find((l) => l.accountCode === "1141")?.debit).toBe(12_346);
+    expect(lines.find((l) => l.accountCode === "6903")?.debit).toBe(415_781);
+  });
+
+  it("pecahan di bawah setengah rupiah dianggap nol", () => {
+    const lines = mapOpnameAdjustment({
+      ...base,
+      sectionDiffs: [{ section: "kitchen", diffValue: 0.4 }],
+    });
+    expect(lines).toEqual([]);
+  });
+
   it("all zero diffs → empty array", () => {
     expect(
       mapOpnameAdjustment({

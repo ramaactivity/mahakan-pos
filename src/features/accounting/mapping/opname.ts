@@ -54,12 +54,22 @@ function persediaanCode(section: OpnameSectionDiff["section"]): string {
 export function mapOpnameAdjustment(
   input: OpnameAdjustmentInput,
 ): JournalLineInput[] {
-  // Aggregate per persediaan code (kitchen+bar+other) untuk avoid duplicate line.
+  /* Sesi AE-182 — WAJIB bulatkan. diffValue = qty desimal × unit_cost
+   * desimal, jadi hasilnya hampir selalu pecahan (mis. 428126.8473).
+   * Kolom journal_lines.debit/credit bertipe bigint → Postgres menolak
+   * dengan SQLSTATE 22P02 "invalid input syntax for type bigint" dan
+   * jurnal opname GAGAL PERMANEN (retry pun tetap gagal karena args
+   * snapshot-nya masih pecahan). Tiga jurnal opname hilang karena ini
+   * sebelum diperbaiki: Mei, 14 Juli, 1 Agustus 2026.
+   *
+   * Bulatkan per SECTION dulu (bukan di akhir) supaya baris persediaan dan
+   * baris lawan 6903 dihitung dari angka bulat yang sama → selalu balance. */
   const byCode: Record<string, number> = {};
   for (const sd of input.sectionDiffs) {
-    if (sd.diffValue === 0) continue;
+    const value = Math.round(sd.diffValue);
+    if (value === 0) continue;
     const code = persediaanCode(sd.section);
-    byCode[code] = (byCode[code] ?? 0) + sd.diffValue;
+    byCode[code] = (byCode[code] ?? 0) + value;
   }
 
   const lines: JournalLineInput[] = [];

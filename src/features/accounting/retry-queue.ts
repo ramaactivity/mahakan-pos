@@ -404,6 +404,61 @@ export async function retryJournalQueueRow(input: {
 }
 
 // ============================================================
+// Public: sapu jurnal kosong (manual trigger, sesi AE-182)
+// ============================================================
+
+/**
+ * Jalankan sapuan sekarang juga: retry semua antrian pending + cari
+ * transaksi/pengeluaran yang tidak punya jurnal lalu posting ulang.
+ *
+ * Versi cron-nya jalan otomatis tiap jam dengan lookback 7 hari. Tombol ini
+ * untuk owner yang mau langsung menutup celah tanpa menunggu, dan bisa
+ * mundur lebih jauh (default 30 hari).
+ */
+export async function sweepJournalGapsAction(input?: {
+  lookbackDays?: number;
+}): Promise<
+  ApiResult<{
+    fixed: number;
+    salesPosted: number;
+    voidsPosted: number;
+    expensesPosted: number;
+    queueResolved: number;
+    failed: number;
+    errors: string[];
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "journal_retry.retry")) {
+    return fail("FORBIDDEN", "Tidak punya hak menjalankan sapuan jurnal");
+  }
+  const { sweepJournalGaps } = await import("./auto-retry");
+  try {
+    const r = await sweepJournalGaps({
+      outletId: session.user.outletId,
+      lookbackDays: Math.min(Math.max(input?.lookbackDays ?? 30, 1), 400),
+      limit: 300,
+      queueCooldownMinutes: 0,
+    });
+    return ok({
+      fixed:
+        r.queueResolved + r.salesPosted + r.voidsPosted + r.expensesPosted,
+      salesPosted: r.salesPosted,
+      voidsPosted: r.voidsPosted,
+      expensesPosted: r.expensesPosted,
+      queueResolved: r.queueResolved,
+      failed: r.failed,
+      errors: r.errors.slice(0, 10),
+    });
+  } catch (e) {
+    return fail(
+      "SWEEP_FAILED",
+      logAndSanitize(e, "journal-sweep", "Sapuan jurnal gagal dijalankan"),
+    );
+  }
+}
+
+// ============================================================
 // Public: abandon (owner mark manual-fixed elsewhere)
 // ============================================================
 

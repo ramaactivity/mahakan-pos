@@ -302,6 +302,10 @@ export const AUDIT_EVENT_TYPES = [
   "journal.retry.succeeded",
   "journal.retry.failed",
   "journal.retry.abandoned",
+  /* Sesi AE-182 — sapuan otomatis (cron/manual) yang mencari transaksi &
+   * pengeluaran tanpa jurnal lalu memposting ulang. Ringkasan hasil sapuan
+   * masuk sini supaya owner punya jejak apa yang dipulihkan kapan. */
+  "journal.sweep.completed",
   "opening_balance.posted",
   "report.income_statement.export",
   "report.balance_sheet.export",

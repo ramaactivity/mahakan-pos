@@ -28,6 +28,8 @@ const VALID_JOBS: ReadonlyArray<CronJob> = [
   "operasional-monthly-day28",
   /* Sesi AE-165 — auto-settlement QRIS/EDC harian. */
   "cashless-settlement",
+  /* Sesi AE-182 — sapu jurnal kosong (juga jalan otomatis tiap jam). */
+  "journal-sweep",
 ];
 
 export async function GET(request: NextRequest) {
@@ -77,13 +79,29 @@ export async function GET(request: NextRequest) {
     job = getJobForCurrentHour();
   }
 
+  /* Sesi AE-182 — sapu jurnal kosong jalan SETIAP kali cron menyapa (tiap
+   * jam), bukan cuma di slot jam tertentu. Ini jaring pengaman pembukuan:
+   * kalau ada transaksi yang jurnalnya belum tercatat, paling lama 1 jam
+   * sudah dipulihkan otomatis tanpa owner klik apa pun.
+   *
+   * Dilewati kalau job yang diminta memang journal-sweep (biar tidak dobel)
+   * dan tidak boleh menjatuhkan job utama kalau gagal. */
+  let sweep: Awaited<ReturnType<typeof runJob>> | null = null;
+  if (jobParam !== "journal-sweep") {
+    try {
+      sweep = await runJob("journal-sweep");
+    } catch (e) {
+      console.error("[cron journal-sweep]", e);
+    }
+  }
+
   if (!job) {
     return NextResponse.json({
       ok: true,
-      data: { skipped: true, reason: "no job for current hour" },
+      data: { skipped: true, reason: "no job for current hour", sweep },
     });
   }
 
   const result = await runJob(job);
-  return NextResponse.json({ ok: true, data: result });
+  return NextResponse.json({ ok: true, data: { ...result, sweep } });
 }

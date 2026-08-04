@@ -19,6 +19,7 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { consumeApproverToken } from "@/lib/auth/approver";
 import { logAudit } from "@/lib/audit/logger";
+import { runAfterResponse } from "@/lib/after-response";
 import { logAndSanitize } from "@/lib/server-error";
 import {
   applyStockDeductions,
@@ -933,8 +934,9 @@ export async function createTransaction(
 
     // Best-effort sold-out re-eval after main tx commits.
     if (result.deductedIngredientIds.length > 0) {
-      reevaluateSoldOutForIngredients(result.deductedIngredientIds).catch(
-        (e) => console.error("[sold-out re-eval]", e),
+      runAfterResponse(
+        () => reevaluateSoldOutForIngredients(result.deductedIngredientIds),
+        "sold-out-sale",
       );
     }
 
@@ -947,69 +949,73 @@ export async function createTransaction(
       // can filter complimented transactions distinctly from regular promo
       // discounts.
       const isCompliment = (v.discountReason ?? "").startsWith("Compliment:");
-      logAudit({
-        eventType: isCompliment
-          ? "transaction.compliment.applied"
-          : "transaction.discount.applied",
-        userId: session.user.id,
-        approverId: discountApproverId,
-        entityType: "transaction",
-        entityId: result.trx.id,
-        payload: {
-          summary: isCompliment
-            ? `Compliment Rp${validation.recomputedDiscountAmount.toLocaleString("id-ID")} pada ${result.trx.transactionNumber} (${(v.discountReason ?? "").replace(/^Compliment:\s*/, "")})`
-            : `Diskon ${v.discountType === "percent" ? `${v.discountValue}%` : `Rp${validation.recomputedDiscountAmount.toLocaleString("id-ID")}`} pada ${result.trx.transactionNumber} (${v.discountReason ?? "tanpa alasan"})`,
-          context: {
-            transactionNumber: result.trx.transactionNumber,
-            discountType: v.discountType,
-            discountValue: v.discountValue,
-            discountAmount: validation.recomputedDiscountAmount,
-            reason: v.discountReason,
-            subtotalBefore: validation.recomputedSubtotal,
-            totalAfter: validation.recomputedTotal,
-            isCompliment,
+      runAfterResponse(() =>
+        logAudit({
+          eventType: isCompliment
+            ? "transaction.compliment.applied"
+            : "transaction.discount.applied",
+          userId: session.user.id,
+          approverId: discountApproverId,
+          entityType: "transaction",
+          entityId: result.trx.id,
+          payload: {
+            summary: isCompliment
+              ? `Compliment Rp${validation.recomputedDiscountAmount.toLocaleString("id-ID")} pada ${result.trx.transactionNumber} (${(v.discountReason ?? "").replace(/^Compliment:\s*/, "")})`
+              : `Diskon ${v.discountType === "percent" ? `${v.discountValue}%` : `Rp${validation.recomputedDiscountAmount.toLocaleString("id-ID")}`} pada ${result.trx.transactionNumber} (${v.discountReason ?? "tanpa alasan"})`,
+            context: {
+              transactionNumber: result.trx.transactionNumber,
+              discountType: v.discountType,
+              discountValue: v.discountValue,
+              discountAmount: validation.recomputedDiscountAmount,
+              reason: v.discountReason,
+              subtotalBefore: validation.recomputedSubtotal,
+              totalAfter: validation.recomputedTotal,
+              isCompliment,
+            },
           },
-        },
-        metadata: {
-          outletId: session.user.outletId,
-          actorRole: session.user.role,
-        },
-      }).catch((e) => console.error("[audit discount]", e));
+          metadata: {
+            outletId: session.user.outletId,
+            actorRole: session.user.role,
+          },
+        }), "audit-discount");
     }
 
     // Loyalty redemption audit — emitted after the sale tx commits since
     // the deduction was atomic with the insert. Records the count of
     // points spent + new member balance for compliance/abuse monitoring.
-    if (redeemPoints > 0 && result.memberAfterRedeem) {
-      logAudit({
-        eventType: "transaction.points.redeemed",
-        userId: session.user.id,
-        entityType: "transaction",
-        entityId: result.trx.id,
-        payload: {
-          summary: `-${redeemPoints} poin pada TRX ${result.trx.transactionNumber} (Rp${computeRedemptionAmount(redeemPoints).toLocaleString("id-ID")} discount)`,
-          context: {
-            transactionNumber: result.trx.transactionNumber,
-            customerId: customerId,
-            pointsRedeemed: redeemPoints,
-            rupiahRedeemed: computeRedemptionAmount(redeemPoints),
-            memberBalanceAfter: result.memberAfterRedeem.totalPoints,
-            memberPhone: result.memberAfterRedeem.phone,
+    const memberAfterRedeem = result.memberAfterRedeem;
+    if (redeemPoints > 0 && memberAfterRedeem) {
+      runAfterResponse(() =>
+        logAudit({
+          eventType: "transaction.points.redeemed",
+          userId: session.user.id,
+          entityType: "transaction",
+          entityId: result.trx.id,
+          payload: {
+            summary: `-${redeemPoints} poin pada TRX ${result.trx.transactionNumber} (Rp${computeRedemptionAmount(redeemPoints).toLocaleString("id-ID")} discount)`,
+            context: {
+              transactionNumber: result.trx.transactionNumber,
+              customerId: customerId,
+              pointsRedeemed: redeemPoints,
+              rupiahRedeemed: computeRedemptionAmount(redeemPoints),
+              memberBalanceAfter: memberAfterRedeem.totalPoints,
+              memberPhone: memberAfterRedeem.phone,
+            },
           },
-        },
-        metadata: {
-          outletId: session.user.outletId,
-          actorRole: session.user.role,
-        },
-      }).catch((e) => console.error("[audit redeem]", e));
+          metadata: {
+            outletId: session.user.outletId,
+            actorRole: session.user.role,
+          },
+        }), "audit-redeem");
     }
 
     // Loyalty earn — best-effort, fired after the sale tx commits. Skipped
     // when called from saveAsOpenBill (status will be flipped to "open"
     // before the bill is paid; closeOpenBill fires earn later).
     if (!opts.skipEarn && customerId !== null) {
-      earnPointsForTransaction(result.trx.id).catch((e) =>
-        console.error("[loyalty earn]", e),
+      runAfterResponse(
+        () => earnPointsForTransaction(result.trx.id),
+        "loyalty-earn",
       );
     }
 
@@ -1223,8 +1229,9 @@ export async function voidTransaction(
   }
 
   if (restoredIngredientIds.length > 0) {
-    reevaluateSoldOutForIngredients(restoredIngredientIds).catch((e) =>
-      console.error("[sold-out re-eval void]", e),
+    runAfterResponse(
+      () => reevaluateSoldOutForIngredients(restoredIngredientIds),
+      "sold-out-void",
     );
   }
 
@@ -1500,8 +1507,9 @@ export async function refundTransaction(
   }
 
   if (restoredIngredientIds.length > 0) {
-    reevaluateSoldOutForIngredients(restoredIngredientIds).catch((e) =>
-      console.error("[sold-out re-eval refund]", e),
+    runAfterResponse(
+      () => reevaluateSoldOutForIngredients(restoredIngredientIds),
+      "sold-out-refund",
     );
   }
 
@@ -2668,24 +2676,25 @@ export async function saveAsOpenBill(
 
   // Sesi AE-34 — fire-and-forget audit log (existing pattern di createTransaction).
   // Audit advisory, tolerant brief delay; tidak perlu blocking response.
-  logAudit({
-    eventType: "transaction.open_bill.create",
-    userId: session.user.id,
-    entityType: "transaction",
-    entityId: created.data.id,
-    payload: {
-      summary: `Open bill ${created.data.transactionNumber} disimpan (Pager ${created.data.pagerNumber}, total Rp${created.data.total.toLocaleString("id-ID")})`,
-      context: {
-        transactionNumber: created.data.transactionNumber,
-        total: created.data.total,
-        itemCount: created.data.items.length,
+  runAfterResponse(() =>
+    logAudit({
+      eventType: "transaction.open_bill.create",
+      userId: session.user.id,
+      entityType: "transaction",
+      entityId: created.data.id,
+      payload: {
+        summary: `Open bill ${created.data.transactionNumber} disimpan (Pager ${created.data.pagerNumber}, total Rp${created.data.total.toLocaleString("id-ID")})`,
+        context: {
+          transactionNumber: created.data.transactionNumber,
+          total: created.data.total,
+          itemCount: created.data.items.length,
+        },
       },
-    },
-    metadata: {
-      outletId: session.user.outletId,
-      actorRole: session.user.role,
-    },
-  }).catch((e) => console.error("[audit open_bill]", e));
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }), "audit-open-bill");
 
   // Sesi AE-34 — skip fetchTransactionById (yang trigger 3 round-trips:
   // select trx + items + mods + customer). created.data sudah lengkap
@@ -3002,8 +3011,9 @@ export async function closeOpenBill(
 
   // Loyalty earn at close — first time the bill becomes "paid".
   if (current.customerId !== null) {
-    earnPointsForTransaction(input.transactionId).catch((e) =>
-      console.error("[loyalty earn close]", e),
+    runAfterResponse(
+      () => earnPointsForTransaction(input.transactionId),
+      "loyalty-earn-close",
     );
   }
 
@@ -3175,8 +3185,9 @@ export async function cancelOpenBill(
   }
 
   if (restoredIngredientIds.length > 0) {
-    reevaluateSoldOutForIngredients(restoredIngredientIds).catch((err) =>
-      console.error("[sold-out re-eval cancel open bill]", err),
+    runAfterResponse(
+      () => reevaluateSoldOutForIngredients(restoredIngredientIds),
+      "sold-out-cancel-open-bill",
     );
   }
 
@@ -3512,33 +3523,35 @@ export async function addSplitPayment(
   }
 
   // Audit (best-effort, mirrors createTransaction pattern).
-  logAudit({
-    eventType: "transaction.split_payment.add",
-    userId: session.user.id,
-    entityType: "transaction",
-    entityId: v.transactionId,
-    payload: {
-      summary: `Split ${v.splitKind} Rp${v.amount.toLocaleString("id-ID")} via ${v.paymentMethod} pada ${current.transactionNumber}`,
-      context: {
-        transactionNumber: current.transactionNumber,
-        amount: v.amount,
-        paymentMethod: v.paymentMethod,
-        splitKind: v.splitKind,
-        itemsCount: v.items?.length ?? 0,
-        totalPaidAfter: breakdown.totalPaid + v.amount,
-        billTotal: current.total,
+  runAfterResponse(() =>
+    logAudit({
+      eventType: "transaction.split_payment.add",
+      userId: session.user.id,
+      entityType: "transaction",
+      entityId: v.transactionId,
+      payload: {
+        summary: `Split ${v.splitKind} Rp${v.amount.toLocaleString("id-ID")} via ${v.paymentMethod} pada ${current.transactionNumber}`,
+        context: {
+          transactionNumber: current.transactionNumber,
+          amount: v.amount,
+          paymentMethod: v.paymentMethod,
+          splitKind: v.splitKind,
+          itemsCount: v.items?.length ?? 0,
+          totalPaidAfter: breakdown.totalPaid + v.amount,
+          billTotal: current.total,
+        },
       },
-    },
-    metadata: {
-      outletId: session.user.outletId,
-      actorRole: session.user.role,
-    },
-  }).catch((e) => console.error("[audit split]", e));
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }), "audit-split");
 
   // Loyalty earn — only when this split closes the bill.
   if (newTotalPaid >= current.total && current.customerId !== null) {
-    earnPointsForTransaction(v.transactionId).catch((e) =>
-      console.error("[loyalty earn split]", e),
+    runAfterResponse(
+      () => earnPointsForTransaction(v.transactionId),
+      "loyalty-earn-split",
     );
   }
 

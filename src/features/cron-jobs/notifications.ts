@@ -46,7 +46,10 @@ export type CronJob =
   | "operasional-weekly-sunday"
   | "operasional-monthly-day28"
   /* Sesi AE-165 — auto-settlement QRIS/EDC harian dari POS. */
-  | "cashless-settlement";
+  | "cashless-settlement"
+  /* Sesi AE-182 — sapu jurnal kosong + auto-retry antrian. Jalan TIAP JAM
+   * (bukan slot jam tertentu) karena ini jaring pengaman pembukuan. */
+  | "journal-sweep";
 
 export interface CronJobResult {
   job: CronJob;
@@ -548,8 +551,69 @@ export function getJobForCurrentHour(): CronJob | null {
   return null;
 }
 
+/**
+ * Sesi AE-182 — Job jaring pengaman pembukuan. Beda dari job lain: TIDAK
+ * terikat jam tertentu, dijalankan tiap kali cron menyapa (tiap jam) dari
+ * route handler. Isi kerjanya di features/accounting/auto-retry.ts.
+ *
+ * Notifikasi hanya dikirim kalau ada yang benar-benar dipulihkan atau ada
+ * yang tetap gagal — supaya tidak jadi spam tiap jam.
+ */
+export async function runJournalSweepJob(): Promise<CronJobResult> {
+  const result: CronJobResult = {
+    job: "journal-sweep",
+    outletsProcessed: 0,
+    notifSent: 0,
+    errors: [],
+  };
+  try {
+    const { sweepJournalGaps } = await import("@/features/accounting/auto-retry");
+    const outletList = await db
+      .select({ id: outlets.id, name: outlets.name })
+      .from(outlets)
+      .where(isNull(outlets.deletedAt));
+
+    for (const outlet of outletList) {
+      result.outletsProcessed++;
+      try {
+        const sweep = await sweepJournalGaps({
+          outletId: outlet.id,
+          lookbackDays: 7,
+          limit: 200,
+        });
+        result.errors.push(...sweep.errors.slice(0, 5));
+        const fixed =
+          sweep.queueResolved +
+          sweep.salesPosted +
+          sweep.voidsPosted +
+          sweep.expensesPosted;
+        if (fixed === 0 && sweep.failed === 0) continue;
+        const push = await sendCategorizedPush("finance_close", outlet.id, {
+          title: `Jurnal dipulihkan otomatis: ${fixed}`,
+          body:
+            `${sweep.salesPosted} penjualan, ${sweep.voidsPosted} void, ` +
+            `${sweep.expensesPosted} pengeluaran, ${sweep.queueResolved} dari antrian` +
+            (sweep.failed > 0 ? ` — ${sweep.failed} masih gagal, cek Antrian Jurnal.` : ""),
+          url: "/dashboard#journal_retry",
+          tag: "journal-sweep",
+        });
+        result.notifSent += push.sent;
+      } catch (e) {
+        result.errors.push(
+          `outlet ${outlet.id}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+  } catch (e) {
+    result.errors.push(e instanceof Error ? e.message : String(e));
+  }
+  return result;
+}
+
 export async function runJob(job: CronJob): Promise<CronJobResult> {
   switch (job) {
+    case "journal-sweep":
+      return runJournalSweepJob();
     case "cashless-settlement":
       return runCashlessSettlementJob();
     case "attendance-morning":

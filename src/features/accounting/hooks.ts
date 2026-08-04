@@ -2,7 +2,8 @@ import "server-only";
 
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { extractDbError } from "@/lib/db-error";
+import { extractDbError, isTransientDbError } from "@/lib/db-error";
+import { runAfterResponse } from "@/lib/after-response";
 import {
   bankAccounts,
   chartOfAccounts,
@@ -1601,7 +1602,80 @@ export function fireJournalHook(
     args: Record<string, unknown>;
   },
 ): void {
-  fn().catch(async (e) => {
+  /* Sesi AE-182 — dulu di sini `fn().catch(...)` telanjang. Response server
+   * action dikirim duluan, instance Vercel dibekukan, promise jurnal mati di
+   * tengah query ("Connection terminated unexpectedly") DAN blok .catch di
+   * bawah ikut mati → tidak ada audit log, tidak ada baris retry-queue.
+   * Hasilnya 855 transaksi lunas tanpa jurnal sama sekali (audit 2026-08-04).
+   *
+   * Sekarang dibungkus runAfterResponse → `after()` menahan instance sampai
+   * jurnal selesai, tanpa memperlambat response ke kasir. Plus retry
+   * in-process untuk error koneksi sesaat (hook idempotent lewat
+   * recordJournal, jadi aman diulang). */
+  runAfterResponse(
+    () => runJournalHookWithRetry(fn, label, context, retrySpec),
+    `journal:${label}`,
+  );
+}
+
+/** Berapa kali hook diulang sendiri sebelum masuk antrian retry. */
+const HOOK_MAX_ATTEMPTS = 3;
+/** Jeda antar percobaan (ms). Index = percobaan ke-n yang baru saja gagal. */
+const HOOK_RETRY_DELAYS_MS = [400, 1_500];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function runJournalHookWithRetry(
+  fn: () => Promise<void>,
+  label: string,
+  context?: {
+    sourceId?: string;
+    outletId?: string;
+    actorId?: string;
+  },
+  retrySpec?: {
+    label: string;
+    args: Record<string, unknown>;
+  },
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= HOOK_MAX_ATTEMPTS; attempt++) {
+    try {
+      await fn();
+      if (attempt > 1) {
+        console.warn(
+          `[journal:${label}] sukses setelah percobaan ke-${attempt}`,
+        );
+      }
+      return;
+    } catch (e) {
+      lastError = e;
+      /* Hanya error koneksi/timeout yang layak diulang. Error data
+       * (imbalance, constraint, period locked) diulang pun tetap gagal —
+       * langsung ke antrian supaya owner lihat. */
+      if (!isTransientDbError(e) || attempt === HOOK_MAX_ATTEMPTS) break;
+      await sleep(HOOK_RETRY_DELAYS_MS[attempt - 1] ?? 1_500);
+    }
+  }
+  await handleJournalHookFailure(lastError, label, context, retrySpec);
+}
+
+async function handleJournalHookFailure(
+  e: unknown,
+  label: string,
+  context?: {
+    sourceId?: string;
+    outletId?: string;
+    actorId?: string;
+  },
+  retrySpec?: {
+    label: string;
+    args: Record<string, unknown>;
+  },
+): Promise<void> {
+  await (async () => {
     /* Sesi AE-76 — Drizzle wrap PG errors sebagai DrizzleQueryError dengan
      * message = "Failed query: <SQL>" dan cause = original PG error. Kalau
      * cuma capture e.message, owner lihat SQL tanpa reason aktual (unique
@@ -1697,5 +1771,5 @@ export function fireJournalHook(
         console.error(`[journal:${label}] push notif fail`, pushErr);
       }
     }
-  });
+  })();
 }

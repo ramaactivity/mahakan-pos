@@ -115,6 +115,53 @@ export function extractDbError(e: unknown): ExtractedDbError {
   return { reason, sqlstate, constraint, detail, formatted };
 }
 
+/**
+ * Sesi AE-182 — apakah error ini sekadar masalah koneksi sesaat (bukan
+ * masalah data)? Kalau ya, operasi idempotent boleh diulang otomatis.
+ *
+ * Sumber error yang kita lihat di produksi (audit 2026-08-04):
+ *   - "Connection terminated unexpectedly" — socket WS ke Neon putus saat
+ *     instance serverless dibekukan / Neon auto-suspend.
+ *   - "Client has encountered a connection error and is not queryable"
+ *   - timeout ambil koneksi dari pool (connectionTimeoutMillis).
+ *   - SQLSTATE kelas 08 (connection exception) + 57P01 (admin shutdown) +
+ *     40001/40P01 (serialization failure / deadlock — aman diulang).
+ */
+const TRANSIENT_SQLSTATES = new Set([
+  "57P01", // admin_shutdown
+  "57P02", // crash_shutdown
+  "57P03", // cannot_connect_now
+  "40001", // serialization_failure
+  "40P01", // deadlock_detected
+]);
+
+const TRANSIENT_MESSAGE_PATTERNS = [
+  /connection terminated/i,
+  /connection error/i,
+  /not queryable/i,
+  /timeout exceeded when trying to connect/i,
+  /connection timeout/i,
+  /socket hang up/i,
+  /econnreset/i,
+  /epipe/i,
+  /fetch failed/i,
+  /terminating connection/i,
+  /server closed the connection/i,
+];
+
+export function isTransientDbError(e: unknown): boolean {
+  const info = extractDbError(e);
+  if (info.sqlstate) {
+    if (TRANSIENT_SQLSTATES.has(info.sqlstate)) return true;
+    /* Kelas 08 = connection exception (08000, 08003, 08006, 08001, 08004). */
+    if (info.sqlstate.startsWith("08")) return true;
+    /* SQLSTATE lain = error data → jangan diulang. */
+    return false;
+  }
+  const haystack = `${info.reason} ${e instanceof Error ? e.message : ""}`;
+  return TRANSIENT_MESSAGE_PATTERNS.some((re) => re.test(haystack));
+}
+
 /** Quick check: is this a PG unique-violation? */
 export function isUniqueViolation(e: unknown): boolean {
   const info = extractDbError(e);

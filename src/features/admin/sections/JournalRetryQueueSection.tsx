@@ -9,6 +9,7 @@ import {
   Info,
   RefreshCw,
   RotateCcw,
+  Sparkles,
   XCircle,
 } from "lucide-react";
 import {
@@ -26,6 +27,7 @@ import {
   getJournalQueuePendingCount,
   listJournalQueue,
   retryJournalQueueRow,
+  sweepJournalGapsAction,
 } from "@/features/accounting/retry-queue";
 import type { JournalRetryQueueListRow } from "@/features/accounting/retry-queue-types";
 import { formatDateTime } from "@/lib/format";
@@ -107,6 +109,7 @@ export function JournalRetryQueueSection() {
   const [abandonReason, setAbandonReason] = useState("");
   const [abandonSubmitting, setAbandonSubmitting] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [sweeping, setSweeping] = useState(false);
 
   const listQuery = useQuery({
     queryKey: ["admin", "journal-retry-queue", { status: tab }],
@@ -152,6 +155,28 @@ export function JournalRetryQueueSection() {
     refresh();
   }
 
+  /* Sesi AE-182 — jalankan sapuan sekarang: retry antrian + cari transaksi
+   * dan pengeluaran 30 hari terakhir yang jurnalnya belum tercatat. */
+  async function onSweep() {
+    setSweeping(true);
+    const res = await sweepJournalGapsAction({ lookbackDays: 30 });
+    setSweeping(false);
+    if (!res.ok) {
+      toast.error(res.error.message);
+      return;
+    }
+    const d = res.data;
+    if (d.fixed === 0 && d.failed === 0) {
+      toast.info("Tidak ada jurnal kosong — semua sudah tercatat.");
+    } else {
+      toast.success(
+        `✓ ${d.fixed} jurnal dipulihkan (${d.salesPosted} penjualan, ${d.voidsPosted} void, ${d.expensesPosted} pengeluaran, ${d.queueResolved} dari antrian)` +
+          (d.failed > 0 ? ` — ${d.failed} masih gagal.` : ""),
+      );
+    }
+    refresh();
+  }
+
   async function onAbandon() {
     if (!abandonTarget) return;
     const reason = abandonReason.trim();
@@ -192,6 +217,18 @@ export function JournalRetryQueueSection() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Sesi AE-182 — sapuan manual. Versi otomatisnya jalan tiap jam
+              lewat cron; tombol ini untuk owner yang mau langsung. */}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onSweep}
+            disabled={sweeping}
+            aria-label="Sapu jurnal kosong"
+          >
+            <Sparkles className={cn("size-4", sweeping && "animate-pulse")} />
+            {sweeping ? "Menyapu…" : "Sapu Jurnal Kosong"}
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -202,6 +239,16 @@ export function JournalRetryQueueSection() {
           </Button>
         </div>
       </header>
+
+      <Card className="border-mahakan-green-200 bg-mahakan-green-50/50 p-4 text-sm text-neutral-700">
+        <p>
+          <strong>Jurnal dipulihkan otomatis.</strong> Setiap jam sistem
+          memeriksa transaksi & pengeluaran 7 hari terakhir yang jurnalnya
+          belum tercatat, lalu mencatatnya sendiri — termasuk antrian di bawah
+          ini. Tombol <em>Sapu Jurnal Kosong</em> menjalankan pemeriksaan yang
+          sama sekarang juga, mundur 30 hari.
+        </p>
+      </Card>
 
       <div className="grid gap-3 sm:grid-cols-3">
         <StatCard
