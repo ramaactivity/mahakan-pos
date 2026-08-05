@@ -129,12 +129,17 @@ export type CreateAggregatorSettlementInput = {
 export type CashlessMdrConfig = {
   mdrQrisPct: number;
   mdrEdcBcaPct: number;
+  /* Sesi AE-182 — MDR per mesin EDC. Default 0 sama seperti BCA; owner bisa
+   * override lewat outlets.settings.cashless kalau bank menagih fee. */
+  mdrEdcBniPct: number;
+  mdrEdcBriPct: number;
+  mdrEdcOtherPct: number;
 };
 
 /** Sesi AE-165 — hasil generate settlement QRIS/EDC dari POS. */
 export type GenerateCashlessResult = {
   created: Array<{
-    channel: "qris" | "edc_bca";
+    channel: "qris" | "edc_bca" | "edc_bni" | "edc_bri" | "edc_other";
     date: string;
     gross: number;
     fee: number;

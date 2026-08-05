@@ -42,6 +42,9 @@ import {
 } from "./queries";
 import {
   DEFAULT_MDR_EDC_BCA_PCT,
+  DEFAULT_MDR_EDC_BNI_PCT,
+  DEFAULT_MDR_EDC_BRI_PCT,
+  DEFAULT_MDR_EDC_OTHER_PCT,
   DEFAULT_MDR_QRIS_PCT,
   enumerateDatesIso,
   fireSettlementJournalHook,
@@ -929,6 +932,9 @@ export async function getCashlessMdrConfig(): Promise<
   return ok({
     mdrQrisPct: c?.mdrQrisPct ?? DEFAULT_MDR_QRIS_PCT,
     mdrEdcBcaPct: c?.mdrEdcBcaPct ?? DEFAULT_MDR_EDC_BCA_PCT,
+    mdrEdcBniPct: c?.mdrEdcBniPct ?? DEFAULT_MDR_EDC_BNI_PCT,
+    mdrEdcBriPct: c?.mdrEdcBriPct ?? DEFAULT_MDR_EDC_BRI_PCT,
+    mdrEdcOtherPct: c?.mdrEdcOtherPct ?? DEFAULT_MDR_EDC_OTHER_PCT,
   });
 }
 
@@ -957,6 +963,17 @@ export async function updateCashlessMdrConfig(input: {
       ...(current.cashless ?? {}),
       mdrQrisPct: parsed.data.mdrQrisPct,
       mdrEdcBcaPct: parsed.data.mdrEdcBcaPct,
+      /* Field EDC lain opsional — kalau form tidak mengirim, nilai lama
+       * dipertahankan lewat spread di atas. */
+      ...(parsed.data.mdrEdcBniPct !== undefined
+        ? { mdrEdcBniPct: parsed.data.mdrEdcBniPct }
+        : {}),
+      ...(parsed.data.mdrEdcBriPct !== undefined
+        ? { mdrEdcBriPct: parsed.data.mdrEdcBriPct }
+        : {}),
+      ...(parsed.data.mdrEdcOtherPct !== undefined
+        ? { mdrEdcOtherPct: parsed.data.mdrEdcOtherPct }
+        : {}),
     },
   };
   await db
@@ -974,7 +991,14 @@ export async function updateCashlessMdrConfig(input: {
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
   }).catch((e) => console.error("[audit cashless_mdr.update]", e));
-  return ok(parsed.data);
+  const merged = next.cashless ?? {};
+  return ok({
+    mdrQrisPct: merged.mdrQrisPct ?? DEFAULT_MDR_QRIS_PCT,
+    mdrEdcBcaPct: merged.mdrEdcBcaPct ?? DEFAULT_MDR_EDC_BCA_PCT,
+    mdrEdcBniPct: merged.mdrEdcBniPct ?? DEFAULT_MDR_EDC_BNI_PCT,
+    mdrEdcBriPct: merged.mdrEdcBriPct ?? DEFAULT_MDR_EDC_BRI_PCT,
+    mdrEdcOtherPct: merged.mdrEdcOtherPct ?? DEFAULT_MDR_EDC_OTHER_PCT,
+  });
 }
 
 /** Session action — generate dari POS untuk rentang tanggal (owner/manager). */

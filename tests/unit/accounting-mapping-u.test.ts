@@ -389,3 +389,54 @@ describe("mapOpnameAdjustment", () => {
     expect(lines.find((l) => l.accountCode === "6903")?.debit).toBe(15000);
   });
 });
+
+/* Sesi AE-182 — semua mesin EDC punya piutang + rekening tujuan sendiri.
+ * Sebelumnya cuma QRIS & EDC BCA yang di-settle otomatis, jadi piutang
+ * EDC BNI/BRI/Lainnya menumpuk tanpa pernah di-clear. */
+describe("kanal EDC tambahan (AE-182)", () => {
+  it("tiap kanal EDC punya akun piutang sendiri", async () => {
+    const { piutangCodeForChannel, isPiutangChannel } = await import(
+      "@/features/accounting/mapping/aggregatorSettlement"
+    );
+    expect(piutangCodeForChannel("qris")).toBe("1120");
+    expect(piutangCodeForChannel("edc_bca")).toBe("1121");
+    expect(piutangCodeForChannel("edc_bni")).toBe("1125");
+    expect(piutangCodeForChannel("edc_bri")).toBe("1127");
+    expect(piutangCodeForChannel("edc_other")).toBe("1128");
+    /* Aggregator TIDAK punya piutang — langsung akui pendapatan. */
+    expect(piutangCodeForChannel("gofood")).toBeNull();
+    expect(isPiutangChannel("edc_bni")).toBe(true);
+    expect(isPiutangChannel("gofood")).toBe(false);
+  });
+
+  it("rekening tujuan default mengikuti bank mesin EDC", async () => {
+    const { defaultBankCodeForChannel } = await import(
+      "@/features/accounting/mapping/aggregatorSettlement"
+    );
+    expect(defaultBankCodeForChannel("edc_bni")).toBe("1113");
+    expect(defaultBankCodeForChannel("edc_bri")).toBe("1111");
+    expect(defaultBankCodeForChannel("edc_bca")).toBe("1110");
+    expect(defaultBankCodeForChannel("edc_other")).toBe("1110");
+    expect(defaultBankCodeForChannel("qris")).toBe("1110");
+  });
+
+  it("settlement EDC BNI: Dr bank BNI, Cr piutang BNI, balance", async () => {
+    const { mapAggregatorSettlement } = await import(
+      "@/features/accounting/mapping/aggregatorSettlement"
+    );
+    const lines = mapAggregatorSettlement({
+      settlementId: "s-1",
+      outletId: "o-1",
+      entryDate: "2026-07-15",
+      channel: "edc_bni",
+      grossAmount: 30_000,
+      feeAmount: 0,
+      netAmount: 30_000,
+      bankAccountCode: "1113",
+      periodLabel: "2026-07-15",
+    });
+    expect(isBalanced(lines)).toBe(true);
+    expect(lines.find((l) => l.accountCode === "1113")?.debit).toBe(30_000);
+    expect(lines.find((l) => l.accountCode === "1125")?.credit).toBe(30_000);
+  });
+});

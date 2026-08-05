@@ -24,6 +24,7 @@ import {
 } from "./split-validation";
 import {
   mapAggregatorSettlement,
+  defaultBankCodeForChannel,
   mapCashDepositUnverified,
   mapCashDepositVerified,
   mapExpenseCreate,
@@ -627,7 +628,9 @@ export async function postJournalForAggregatorSettlement(args: {
 }): Promise<void> {
   if (!(await isAutoJournalEnabled(args.outletId))) return;
 
-  const code = args.bankAccountCode ?? "1110"; // default Bank BCA per design
+  /* Sesi AE-182 — default rekening mengikuti channel (EDC BNI → 1113,
+   * EDC BRI → 1111, sisanya BCA 1110), bukan lagi selalu BCA. */
+  const code = args.bankAccountCode ?? defaultBankCodeForChannel(args.channel);
   const periodLabel = `${args.periodFrom} → ${args.periodTo}`;
 
   const lines = mapAggregatorSettlement({

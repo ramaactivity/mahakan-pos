@@ -3,7 +3,8 @@
  *
  * 5 channels, 2 patterns:
  *
- * (A) qris / edc_bca — POS sale dah create piutang (1120/1121). Settlement =
+ * (A) qris / edc_bca / edc_bni / edc_bri / edc_other — POS sale dah create
+ *     piutang (1120/1121/1125/1127/1128). Settlement =
  *     piutang clearing event. Per design doc §4.10:
  *       Dr <bank account>                  net
  *       Dr 6402 Biaya QRIS / EDC (MDR)     fee
@@ -25,6 +26,9 @@ import type { JournalLineInput } from "../posting";
 
 export type AggregatorChannel =
   | "edc_bca"
+  | "edc_bni"
+  | "edc_bri"
+  | "edc_other"
   | "gofood"
   | "grabfood"
   | "shopeefood"
@@ -48,7 +52,23 @@ export type AggregatorSettlementInput = {
 };
 
 export function isPiutangChannel(channel: AggregatorChannel): boolean {
-  return channel === "qris" || channel === "edc_bca";
+  return piutangCodeForChannel(channel) !== null;
+}
+
+/**
+ * Sesi AE-182 — rekening tujuan default per channel. Mesin EDC bank X
+ * menyetor ke rekening bank X; QRIS + kartu lain jatuh ke BCA (rekening
+ * utama). Dipakai kalau settlement tidak menyimpan bankAccountId eksplisit.
+ */
+export function defaultBankCodeForChannel(channel: AggregatorChannel): string {
+  switch (channel) {
+    case "edc_bni":
+      return "1113"; // Bank BNI
+    case "edc_bri":
+      return "1111"; // Bank BRI
+    default:
+      return "1110"; // Bank BCA
+  }
 }
 
 /**
@@ -65,6 +85,12 @@ export function piutangCodeForChannel(
       return "1120";
     case "edc_bca":
       return "1121";
+    case "edc_bni":
+      return "1125";
+    case "edc_bri":
+      return "1127";
+    case "edc_other":
+      return "1128";
     default:
       return null;
   }

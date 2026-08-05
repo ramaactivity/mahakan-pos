@@ -16,6 +16,7 @@ export type { CashDepositVerifiedInput } from "./cashDeposit";
 export {
   mapAggregatorSettlement,
   isPiutangChannel,
+  defaultBankCodeForChannel,
   piutangCodeForChannel,
 } from "./aggregatorSettlement";
 export type {

@@ -91,6 +91,10 @@ export type OutletSettings = {
   cashless?: {
     mdrQrisPct?: number;
     mdrEdcBcaPct?: number;
+    /* Sesi AE-182 — MDR mesin EDC selain BCA. Default 0 kalau unset. */
+    mdrEdcBniPct?: number;
+    mdrEdcBriPct?: number;
+    mdrEdcOtherPct?: number;
   };
   /** Sesi AE-167 — pengaturan shift. */
   shift?: {

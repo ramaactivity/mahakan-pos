@@ -33,7 +33,19 @@ export const aggregatorSettlements = pgTable(
       .notNull()
       .references(() => outlets.id),
     channel: text("channel", {
-      enum: ["edc_bca", "gofood", "grabfood", "shopeefood", "qris"],
+      /* Sesi AE-182 — tambah edc_bni / edc_bri / edc_other supaya semua
+       * mesin EDC punya settlement otomatis, bukan cuma BCA. Kolom ini text
+       * polos tanpa CHECK constraint di DB, jadi tidak perlu migrasi. */
+      enum: [
+        "edc_bca",
+        "edc_bni",
+        "edc_bri",
+        "edc_other",
+        "gofood",
+        "grabfood",
+        "shopeefood",
+        "qris",
+      ],
     }).notNull(),
 
     periodFrom: date("period_from").notNull(),

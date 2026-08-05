@@ -157,4 +157,9 @@ export const generateCashlessSettlementSchema = z
 export const updateCashlessMdrSchema = z.object({
   mdrQrisPct: z.number().min(0).max(10),
   mdrEdcBcaPct: z.number().min(0).max(10),
+  /* Sesi AE-182 — opsional supaya form lama (2 field) tetap valid; kalau
+   * tidak dikirim, nilai lama dipertahankan. */
+  mdrEdcBniPct: z.number().min(0).max(10).optional(),
+  mdrEdcBriPct: z.number().min(0).max(10).optional(),
+  mdrEdcOtherPct: z.number().min(0).max(10).optional(),
 });

@@ -1924,10 +1924,20 @@ export async function getShiftVarianceThreshold(
  * Split-aware: leg split_payments dijumlahkan, parent 'split' di-skip.
  * Hanya transaksi status 'paid'. Day boundary [00:00 WIB, +24h).
  */
+/** Sesi AE-182 — bruto POS per channel cashless dalam satu hari WIB. */
+export type PosCashlessGross = {
+  qris: number;
+  cardBca: number;
+  cardBni: number;
+  cardBri: number;
+  /** card_mandiri + card_other → piutang "EDC Lainnya" (1128). */
+  cardOther: number;
+};
+
 export async function getPosCashlessGrossByDay(
   outletId: string,
   dateIso: string,
-): Promise<{ qris: number; cardBca: number }> {
+): Promise<PosCashlessGross> {
   const start = new Date(`${dateIso}T00:00:00+07:00`);
   const end = new Date(start.getTime() + 24 * 3600 * 1000);
 
@@ -1964,17 +1974,28 @@ export async function getPosCashlessGrossByDay(
     )
     .groupBy(splitPayments.paymentMethod);
 
-  let qris = 0;
-  let cardBca = 0;
-  for (const r of trxAgg) {
-    if (r.paymentMethod === "qris") qris += Number(r.total);
-    else if (r.paymentMethod === "card_bca") cardBca += Number(r.total);
+  const acc: PosCashlessGross = {
+    qris: 0,
+    cardBca: 0,
+    cardBni: 0,
+    cardBri: 0,
+    cardOther: 0,
+  };
+  /* card_mandiri digabung ke "Lainnya" karena piutangnya memang satu akun
+   * (1128) — Mahakan tidak punya rekening Mandiri. */
+  const BUCKET: Record<string, keyof PosCashlessGross> = {
+    qris: "qris",
+    card_bca: "cardBca",
+    card_bni: "cardBni",
+    card_bri: "cardBri",
+    card_mandiri: "cardOther",
+    card_other: "cardOther",
+  };
+  for (const r of [...trxAgg, ...splitAgg]) {
+    const bucket = BUCKET[r.paymentMethod];
+    if (bucket) acc[bucket] += Number(r.total);
   }
-  for (const r of splitAgg) {
-    if (r.paymentMethod === "qris") qris += Number(r.total);
-    else if (r.paymentMethod === "card_bca") cardBca += Number(r.total);
-  }
-  return { qris, cardBca };
+  return acc;
 }
 
 /**
@@ -1985,7 +2006,7 @@ export async function getPosCashlessGrossByDay(
  */
 export async function hasSettlementForDay(
   outletId: string,
-  channel: "qris" | "edc_bca",
+  channel: "qris" | "edc_bca" | "edc_bni" | "edc_bri" | "edc_other",
   dateIso: string,
 ): Promise<boolean> {
   const [row] = await db

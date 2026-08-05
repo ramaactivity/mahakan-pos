@@ -19,14 +19,28 @@ import { db } from "@/db";
 import { aggregatorSettlements, chartOfAccounts, outlets } from "@/db/schema";
 import { logAudit } from "@/lib/audit/logger";
 import { getPosCashlessGrossByDay, hasSettlementForDay } from "./queries";
+import type { PosCashlessGross } from "./queries";
 import type {
   AggregatorSettlement,
   CashlessMdrConfig,
   GenerateCashlessResult,
 } from "./types";
 
+const CHANNEL_LABEL: Record<string, string> = {
+  qris: "QRIS",
+  edc_bca: "EDC BCA",
+  edc_bni: "EDC BNI",
+  edc_bri: "EDC BRI",
+  edc_other: "EDC Kartu Lainnya",
+};
+
 export const DEFAULT_MDR_QRIS_PCT = 0.7;
 export const DEFAULT_MDR_EDC_BCA_PCT = 0;
+/* Sesi AE-182 — MDR mesin EDC selain BCA. Default 0 (sama seperti BCA);
+ * owner override lewat outlets.settings.cashless kalau bank menagih fee. */
+export const DEFAULT_MDR_EDC_BNI_PCT = 0;
+export const DEFAULT_MDR_EDC_BRI_PCT = 0;
+export const DEFAULT_MDR_EDC_OTHER_PCT = 0;
 
 /** Resolve rate MDR per channel untuk outletId (fallback default). */
 export async function resolveMdrConfig(
@@ -41,6 +55,9 @@ export async function resolveMdrConfig(
   return {
     mdrQrisPct: c?.mdrQrisPct ?? DEFAULT_MDR_QRIS_PCT,
     mdrEdcBcaPct: c?.mdrEdcBcaPct ?? DEFAULT_MDR_EDC_BCA_PCT,
+    mdrEdcBniPct: c?.mdrEdcBniPct ?? DEFAULT_MDR_EDC_BNI_PCT,
+    mdrEdcBriPct: c?.mdrEdcBriPct ?? DEFAULT_MDR_EDC_BRI_PCT,
+    mdrEdcOtherPct: c?.mdrEdcOtherPct ?? DEFAULT_MDR_EDC_OTHER_PCT,
   };
 }
 
@@ -95,12 +112,7 @@ export async function fireSettlementJournalHook(
       postJournalForAggregatorSettlement({
         outletId,
         settlementId: row.id,
-        channel: row.channel as
-          | "edc_bca"
-          | "gofood"
-          | "grabfood"
-          | "shopeefood"
-          | "qris",
+        channel: row.channel,
         grossAmount: Number(row.grossAmount),
         feeAmount: Number(row.feeAmount),
         netAmount: Number(row.netAmount),
@@ -140,13 +152,22 @@ export async function generateCashlessForOutlet(params: {
   const { outletId, createdBy, actorRole, from, to } = params;
   const mdr = await resolveMdrConfig(outletId);
   const dates = enumerateDatesIso(from, to);
+  /* Sesi AE-182 — semua mesin EDC ikut di-settle otomatis, bukan cuma BCA.
+   * Sebelumnya piutang EDC BNI/BRI/Lainnya menumpuk tanpa pernah di-clear. */
   const channels: Array<{
-    channel: "qris" | "edc_bca";
+    channel: "qris" | "edc_bca" | "edc_bni" | "edc_bri" | "edc_other";
     pct: number;
-    pick: (g: { qris: number; cardBca: number }) => number;
+    pick: (g: PosCashlessGross) => number;
   }> = [
     { channel: "qris", pct: mdr.mdrQrisPct, pick: (g) => g.qris },
     { channel: "edc_bca", pct: mdr.mdrEdcBcaPct, pick: (g) => g.cardBca },
+    { channel: "edc_bni", pct: mdr.mdrEdcBniPct, pick: (g) => g.cardBni },
+    { channel: "edc_bri", pct: mdr.mdrEdcBriPct, pick: (g) => g.cardBri },
+    {
+      channel: "edc_other",
+      pct: mdr.mdrEdcOtherPct,
+      pick: (g) => g.cardOther,
+    },
   ];
 
   const result: GenerateCashlessResult = {
@@ -177,7 +198,7 @@ export async function generateCashlessForOutlet(params: {
           feeAmount: fee,
           netAmount: net,
           source: "auto_pos",
-          notes: `Auto dari POS (${ch.channel === "qris" ? "QRIS" : "EDC BCA"})`,
+          notes: `Auto dari POS (${CHANNEL_LABEL[ch.channel]})`,
           createdBy,
         })
         .returning();
