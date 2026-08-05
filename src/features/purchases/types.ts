@@ -124,3 +124,57 @@ export interface TopOutstandingItem {
   /** Days from today (Asia/Jakarta) to dueDate. Negative = overdue. */
   daysToDue: number | null;
 }
+
+/**
+ * Sesi AE-184 — riwayat hutang dagang (pembelian TOP), termasuk yang SUDAH
+ * lunas. Sebelumnya layar Hutang hanya query `status='pending_payment'`
+ * sehingga begitu ditandai lunas catatannya hilang total — tidak bisa lagi
+ * ditelusuri kapan dibayar, lewat apa, dan siapa yang menandai.
+ */
+export type TopHistoryStatus = "pending_payment" | "paid" | "cancelled";
+
+export interface TopHistoryItem {
+  id: string;
+  purchaseDate: string;
+  supplierId: string | null;
+  supplierName: string | null;
+  invoiceNo: string | null;
+  /** Nilai pembelian yang dipesan. */
+  totalAmount: number;
+  dueDate: string | null;
+  /** Hari menuju jatuh tempo; negatif = lewat. Null kalau bukan TOP/sudah lunas. */
+  daysToDue: number | null;
+  status: TopHistoryStatus;
+  /** Kapan ditandai lunas. */
+  paidAt: string | null;
+  paidByName: string | null;
+  /** Cara bayar saat pelunasan (dari entry kas yang tercatat). */
+  settlementMethod: string | null;
+  /**
+   * Nominal yang benar-benar dibayar. Bisa BEDA dari totalAmount karena
+   * pelunasan TOP memakai basis barang yang diterima (GR), bukan yang
+   * dipesan — lihat audit AE-181. Null kalau tidak ada entry kas.
+   */
+  settlementAmount: number | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+}
+
+export interface TopHistoryOptions {
+  /** Default "all". */
+  status?: TopHistoryStatus | "all";
+  /** Filter tanggal pembelian (inklusif). */
+  fromDate?: string;
+  toDate?: string;
+  supplierId?: string;
+  limit?: number;
+}
+
+export interface TopHistorySummary {
+  outstandingCount: number;
+  outstandingAmount: number;
+  paidCount: number;
+  paidAmount: number;
+  cancelledCount: number;
+  cancelledAmount: number;
+}

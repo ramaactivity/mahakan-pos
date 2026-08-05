@@ -86,6 +86,10 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
   );
   const [reverseReason, setReverseReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  /* Sesi AE-184 — telusuri riwayat satu orang: klik baris pihak → dua tabel
+   * riwayat di bawah menyaring ke pihak itu saja. Tanpa ini owner harus
+   * memindai seluruh daftar campur untuk tahu utang & cicilan satu orang. */
+  const [historyPartyId, setHistoryPartyId] = useState<string | null>(null);
 
   /* Selalu fetch SEMUA pihak — filter status diterapkan client-side hanya
    * untuk tampilan tabel. Kalau query ikut filter, tombol "Catat Hutang" +
@@ -102,9 +106,12 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
   });
 
   const entriesQuery = useQuery({
-    queryKey: ["admin", "internal-debt-entries"],
+    queryKey: ["admin", "internal-debt-entries", historyPartyId],
     queryFn: async () => {
-      const res = await fetchInternalDebtEntries({ limit: 100 });
+      const res = await fetchInternalDebtEntries({
+        limit: 500,
+        ...(historyPartyId ? { partyId: historyPartyId } : {}),
+      });
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data;
     },
@@ -112,9 +119,12 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
   });
 
   const repaymentsQuery = useQuery({
-    queryKey: ["admin", "internal-debt-repayments"],
+    queryKey: ["admin", "internal-debt-repayments", historyPartyId],
     queryFn: async () => {
-      const res = await fetchInternalDebtRepayments({ limit: 100 });
+      const res = await fetchInternalDebtRepayments({
+        limit: 500,
+        ...(historyPartyId ? { partyId: historyPartyId } : {}),
+      });
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data;
     },
@@ -375,7 +385,19 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
                   {displayParties.map((p) => (
-                    <tr key={p.id} className="hover:bg-neutral-50">
+                    <tr
+                      key={p.id}
+                      onClick={() =>
+                        setHistoryPartyId((cur) =>
+                          cur === p.id ? null : p.id,
+                        )
+                      }
+                      className={cn(
+                        "cursor-pointer hover:bg-neutral-50",
+                        historyPartyId === p.id && "bg-mahakan-green-50/70",
+                      )}
+                      title="Klik untuk lihat riwayat hutang & cicilan orang ini"
+                    >
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="font-medium text-neutral-900">
@@ -415,7 +437,10 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
                         </Badge>
                       </td>
                       {canManage ? (
-                        <td className="px-3 py-2 text-right">
+                        <td
+                          className="px-3 py-2 text-right"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <div className="flex justify-end gap-1">
                             {p.totalOutstanding > 0 ? (
                               <Button
@@ -463,6 +488,31 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
           )}
         </CardContent>
       </Card>
+
+      {/* Penanda sedang menelusuri satu orang. */}
+      {historyPartyId ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-mahakan-green-200 bg-mahakan-green-50/60 px-3 py-2 text-sm">
+          <span className="text-neutral-700">
+            Menampilkan riwayat{" "}
+            <strong>
+              {parties.find((x) => x.id === historyPartyId)?.name ?? "pihak ini"}
+            </strong>{" "}
+            saja
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setHistoryPartyId(null)}
+          >
+            Tampilkan semua
+          </Button>
+        </div>
+      ) : (
+        <p className="text-xs text-neutral-500">
+          Klik salah satu baris pihak di atas untuk menelusuri riwayat hutang
+          &amp; cicilan orang tersebut.
+        </p>
+      )}
 
       {/* Entry history */}
       <Card>

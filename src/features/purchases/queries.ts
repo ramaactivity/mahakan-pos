@@ -2,6 +2,7 @@ import "server-only";
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  expenses,
   ingredients,
   purchaseItems,
   purchases,
@@ -14,6 +15,10 @@ import type {
   Purchase,
   PurchaseDetail,
   PurchaseListItem,
+  TopHistoryItem,
+  TopHistoryOptions,
+  TopHistoryStatus,
+  TopHistorySummary,
   TopOutstandingItem,
 } from "./types";
 
@@ -262,4 +267,131 @@ export async function fetchPurchasesByIngredient(
     });
   }
   return map;
+}
+
+/**
+ * Sesi AE-184 — riwayat hutang dagang: SEMUA pembelian TOP, lunas maupun
+ * belum. Hanya `payment_method='top'` yang dihitung sebagai hutang; pembelian
+ * cash/transfer memang tidak pernah jadi hutang jadi tidak masuk daftar.
+ *
+ * Cara bayar + nominal pelunasan diambil dari entry kas yang tertaut
+ * (`purchases.expense_id`) karena tabel purchases tidak menyimpan cara bayar
+ * saat pelunasan — hanya paidAt/paidBy.
+ */
+export async function fetchTopHistory(
+  outletId: string,
+  todayIso: string,
+  opts: TopHistoryOptions = {},
+): Promise<{ items: TopHistoryItem[]; summary: TopHistorySummary }> {
+  const conds = [
+    eq(purchases.outletId, outletId),
+    eq(purchases.paymentMethod, "top"),
+  ];
+  if (opts.status && opts.status !== "all") {
+    conds.push(eq(purchases.status, opts.status));
+  }
+  if (opts.fromDate) conds.push(gte(purchases.purchaseDate, opts.fromDate));
+  if (opts.toDate) conds.push(lte(purchases.purchaseDate, opts.toDate));
+  if (opts.supplierId) conds.push(eq(purchases.supplierId, opts.supplierId));
+
+  const rows = await db
+    .select({
+      id: purchases.id,
+      purchaseDate: purchases.purchaseDate,
+      supplierId: purchases.supplierId,
+      supplierName: suppliers.name,
+      invoiceNo: purchases.invoiceNo,
+      totalAmount: purchases.totalAmount,
+      dueDate: purchases.dueDate,
+      status: purchases.status,
+      paidAt: purchases.paidAt,
+      paidByName: users.name,
+      cancelledAt: purchases.cancelledAt,
+      cancelReason: purchases.cancelReason,
+      settlementMethod: expenses.paymentMethod,
+      settlementAmount: expenses.amount,
+    })
+    .from(purchases)
+    .leftJoin(suppliers, eq(suppliers.id, purchases.supplierId))
+    .leftJoin(users, eq(users.id, purchases.paidBy))
+    .leftJoin(expenses, eq(expenses.id, purchases.expenseId))
+    .where(and(...conds))
+    .orderBy(desc(purchases.purchaseDate), desc(purchases.createdAt))
+    .limit(Math.min(opts.limit ?? 500, LIMIT_CAP));
+
+  const today = Date.parse(`${todayIso}T00:00:00Z`);
+  const items: TopHistoryItem[] = rows.map((r) => {
+    /* Hitung jatuh tempo hanya untuk yang masih berjalan — untuk yang sudah
+     * lunas angka "telat sekian hari" tidak bermakna lagi. */
+    let daysToDue: number | null = null;
+    if (r.dueDate && r.status === "pending_payment") {
+      daysToDue = Math.round(
+        (Date.parse(`${r.dueDate}T00:00:00Z`) - today) / 86_400_000,
+      );
+    }
+    return {
+      id: r.id,
+      purchaseDate: r.purchaseDate,
+      supplierId: r.supplierId,
+      supplierName: r.supplierName,
+      invoiceNo: r.invoiceNo,
+      totalAmount: Number(r.totalAmount),
+      dueDate: r.dueDate,
+      daysToDue,
+      status: r.status as TopHistoryStatus,
+      paidAt: r.paidAt ? r.paidAt.toISOString() : null,
+      paidByName: r.paidByName ?? null,
+      settlementMethod: r.settlementMethod ?? null,
+      settlementAmount:
+        r.settlementAmount === null ? null : Number(r.settlementAmount),
+      cancelledAt: r.cancelledAt ? r.cancelledAt.toISOString() : null,
+      cancelReason: r.cancelReason ?? null,
+    };
+  });
+
+  /* Ringkasan dihitung dari SELURUH hutang TOP (menghormati filter tanggal &
+   * supplier, tapi mengabaikan filter status) supaya angka "Belum Bayar" dan
+   * "Lunas" tetap utuh saat owner sedang membuka salah satu tab. */
+  const baseConds = [
+    eq(purchases.outletId, outletId),
+    eq(purchases.paymentMethod, "top"),
+  ];
+  if (opts.fromDate) baseConds.push(gte(purchases.purchaseDate, opts.fromDate));
+  if (opts.toDate) baseConds.push(lte(purchases.purchaseDate, opts.toDate));
+  if (opts.supplierId) baseConds.push(eq(purchases.supplierId, opts.supplierId));
+
+  const agg = await db
+    .select({
+      status: purchases.status,
+      n: sql<string>`COUNT(*)`,
+      total: sql<string>`COALESCE(SUM(${purchases.totalAmount}), 0)`,
+    })
+    .from(purchases)
+    .where(and(...baseConds))
+    .groupBy(purchases.status);
+
+  const summary: TopHistorySummary = {
+    outstandingCount: 0,
+    outstandingAmount: 0,
+    paidCount: 0,
+    paidAmount: 0,
+    cancelledCount: 0,
+    cancelledAmount: 0,
+  };
+  for (const a of agg) {
+    const n = Number(a.n);
+    const total = Number(a.total);
+    if (a.status === "pending_payment") {
+      summary.outstandingCount = n;
+      summary.outstandingAmount = total;
+    } else if (a.status === "paid") {
+      summary.paidCount = n;
+      summary.paidAmount = total;
+    } else if (a.status === "cancelled") {
+      summary.cancelledCount = n;
+      summary.cancelledAmount = total;
+    }
+  }
+
+  return { items, summary };
 }

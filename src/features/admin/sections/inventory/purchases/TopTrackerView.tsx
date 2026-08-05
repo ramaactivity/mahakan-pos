@@ -16,10 +16,12 @@ import {
 } from "@/components/ui";
 import {
   isOk,
-  listTopOutstanding,
+  listTopHistory,
   markPurchasePaid,
   type PaymentMethod,
-  type TopOutstandingItem,
+  type TopHistoryItem,
+  type TopHistoryStatus,
+  type TopHistorySummary,
 } from "@/features/purchases";
 import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
@@ -33,6 +35,33 @@ const FILTER_LABELS: Record<Filter, string> = {
   due_soon: "Due ≤ 3 hari",
   overdue: "Lewat jatuh tempo",
 };
+
+/* Sesi AE-184 — dimensi STATUS, terpisah dari filter jatuh tempo. Sebelumnya
+ * layar ini cuma query pending_payment sehingga hutang yang sudah dibayar
+ * hilang total dari catatan. */
+type StatusTab = TopHistoryStatus | "all";
+
+const STATUS_LABELS: Record<StatusTab, string> = {
+  pending_payment: "Belum Bayar",
+  paid: "Sudah Lunas",
+  cancelled: "Dibatalkan",
+  all: "Semua",
+};
+
+const SETTLE_LABELS: Record<string, string> = {
+  cash: "Tunai",
+  transfer: "Transfer",
+  other: "Lainnya",
+};
+
+function formatTanggal(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
 
 const PAY_OPTIONS: Array<{ value: PaymentMethod; label: string }> = [
   { value: "cash", label: "Cash" },
@@ -48,12 +77,14 @@ export function TopTrackerView() {
     ? hasPermission(role, "purchase.mark_paid")
     : false;
 
-  const [items, setItems] = useState<TopOutstandingItem[]>([]);
+  const [items, setItems] = useState<TopHistoryItem[]>([]);
+  const [summary, setSummary] = useState<TopHistorySummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [filter, setFilter] = useState<Filter>("all");
+  const [statusTab, setStatusTab] = useState<StatusTab>("pending_payment");
 
-  const [payTarget, setPayTarget] = useState<TopOutstandingItem | null>(
+  const [payTarget, setPayTarget] = useState<TopHistoryItem | null>(
     null,
   );
   const [payMethod, setPayMethod] = useState<PaymentMethod>("cash");
@@ -65,39 +96,43 @@ export function TopTrackerView() {
     setLoading(true);
     /* eslint-enable react-hooks/set-state-in-effect */
     void (async () => {
-      const res = await listTopOutstanding();
+      const res = await listTopHistory({ status: statusTab });
       if (cancelled) return;
-      if (isOk(res)) setItems(res.data);
+      if (isOk(res)) {
+        setItems(res.data.items);
+        setSummary(res.data.summary);
+      }
       setLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [refreshKey]);
+  }, [refreshKey, statusTab]);
+
+  /* Saringan jatuh tempo hanya bermakna untuk hutang yang masih berjalan —
+   * untuk yang sudah lunas, "telat sekian hari" tidak relevan lagi. */
+  const dueFilterActive = statusTab === "pending_payment";
 
   const filtered = useMemo(() => {
-    if (filter === "all") return items;
+    if (!dueFilterActive || filter === "all") return items;
     if (filter === "due_soon")
       return items.filter(
         (i) => i.daysToDue !== null && i.daysToDue >= 0 && i.daysToDue <= 3,
       );
-    return items.filter(
-      (i) => i.daysToDue !== null && i.daysToDue < 0,
-    );
-  }, [items, filter]);
+    return items.filter((i) => i.daysToDue !== null && i.daysToDue < 0);
+  }, [items, filter, dueFilterActive]);
 
   const totals = useMemo(() => {
-    let totalAll = 0;
     let totalOverdue = 0;
     let totalDueSoon = 0;
     for (const i of items) {
-      totalAll += i.totalAmount;
+      if (i.status !== "pending_payment") continue;
       if (i.daysToDue !== null && i.daysToDue < 0)
         totalOverdue += i.totalAmount;
       if (i.daysToDue !== null && i.daysToDue >= 0 && i.daysToDue <= 3)
         totalDueSoon += i.totalAmount;
     }
-    return { totalAll, totalOverdue, totalDueSoon };
+    return { totalOverdue, totalDueSoon };
   }, [items]);
 
   function refresh() {
@@ -128,11 +163,11 @@ export function TopTrackerView() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="flex items-center gap-2 text-lg font-semibold text-neutral-900">
-            <Clock className="size-5" aria-hidden /> Hutang Dagang ({items.length})
+            <Clock className="size-5" aria-hidden /> Hutang Dagang
           </h2>
           <p className="text-xs text-neutral-500">
-            Pembelian TOP belum lunas. Tandai lunas akan otomatis catat
-            entry kas (kalau ada kategori expense).
+            Riwayat lengkap pembelian tempo (TOP) — yang belum dibayar maupun
+            yang sudah lunas. Tandai lunas otomatis mencatat entry kas.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={refresh}>
@@ -140,11 +175,19 @@ export function TopTrackerView() {
         </Button>
       </header>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      {/* Ringkasan dihitung dari SELURUH hutang TOP, bukan cuma tab yang
+          sedang dibuka — supaya angka belum-bayar tetap terlihat saat owner
+          sedang menelusuri yang sudah lunas. */}
+      <div className="grid gap-3 md:grid-cols-4">
         <SummaryCard
-          label="Total Outstanding"
-          value={formatRupiah(totals.totalAll)}
+          label={`Belum Bayar (${summary?.outstandingCount ?? 0})`}
+          value={formatRupiah(summary?.outstandingAmount ?? 0)}
           tone="info"
+        />
+        <SummaryCard
+          label={`Sudah Lunas (${summary?.paidCount ?? 0})`}
+          value={formatRupiah(summary?.paidAmount ?? 0)}
+          tone="neutral"
         />
         <SummaryCard
           label="Due ≤ 3 hari"
@@ -152,36 +195,72 @@ export function TopTrackerView() {
           tone={totals.totalDueSoon > 0 ? "warning" : "neutral"}
         />
         <SummaryCard
-          label="Overdue"
+          label="Lewat jatuh tempo"
           value={formatRupiah(totals.totalOverdue)}
           tone={totals.totalOverdue > 0 ? "danger" : "neutral"}
         />
       </div>
 
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="space-y-2 pb-2">
           <div
             className="flex flex-wrap gap-1.5"
             role="tablist"
-            aria-label="Filter status due"
+            aria-label="Filter status pembayaran"
           >
-            {(["all", "due_soon", "overdue"] as Filter[]).map((f) => (
+            {(
+              ["pending_payment", "paid", "cancelled", "all"] as StatusTab[]
+            ).map((t) => (
               <button
-                key={f}
+                key={t}
                 type="button"
-                onClick={() => setFilter(f)}
+                role="tab"
+                aria-selected={statusTab === t}
+                onClick={() => setStatusTab(t)}
                 className={cn(
-                  "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                  "rounded-full px-3 py-1 text-xs font-semibold transition-colors",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
-                  filter === f
+                  statusTab === t
                     ? "bg-mahakan-green-700 text-white"
                     : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200",
                 )}
               >
-                {FILTER_LABELS[f]}
+                {STATUS_LABELS[t]}
+                {t === "pending_payment" && summary
+                  ? ` (${summary.outstandingCount})`
+                  : t === "paid" && summary
+                    ? ` (${summary.paidCount})`
+                    : t === "cancelled" && summary
+                      ? ` (${summary.cancelledCount})`
+                      : ""}
               </button>
             ))}
           </div>
+          {/* Saringan jatuh tempo hanya muncul saat melihat yang belum bayar. */}
+          {dueFilterActive ? (
+            <div
+              className="flex flex-wrap gap-1.5"
+              role="tablist"
+              aria-label="Filter jatuh tempo"
+            >
+              {(["all", "due_soon", "overdue"] as Filter[]).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setFilter(f)}
+                  className={cn(
+                    "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                    filter === f
+                      ? "bg-neutral-800 text-white"
+                      : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200",
+                  )}
+                >
+                  {FILTER_LABELS[f]}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </CardHeader>
         <CardContent className="px-0">
           {loading ? (
@@ -193,8 +272,16 @@ export function TopTrackerView() {
           ) : filtered.length === 0 ? (
             <EmptyCard
               icon={CheckCircle2}
-              title="Tidak ada hutang dagang dalam filter ini"
-              description="Semua bersih ✓ — atau ubah filter status di atas untuk lihat invoice paid/cancelled."
+              title={
+                statusTab === "pending_payment"
+                  ? "Tidak ada hutang dagang berjalan"
+                  : "Tidak ada data untuk filter ini"
+              }
+              description={
+                statusTab === "pending_payment"
+                  ? "Semua hutang tempo sudah lunas ✓ — buka tab 'Sudah Lunas' untuk lihat riwayatnya."
+                  : "Ubah tab status di atas untuk lihat catatan lainnya."
+              }
             />
           ) : (
             <div className="overflow-x-auto">
@@ -209,7 +296,15 @@ export function TopTrackerView() {
                       Invoice
                     </th>
                     <th className="px-4 py-2 text-right font-medium">Total</th>
-                    <th className="px-4 py-2 text-left font-medium">Due</th>
+                    <th className="px-4 py-2 text-left font-medium">
+                      {dueFilterActive ? "Due" : "Status"}
+                    </th>
+                    {/* Kolom pelunasan cuma relevan di luar tab belum-bayar. */}
+                    {!dueFilterActive ? (
+                      <th className="px-4 py-2 text-left font-medium">
+                        Pelunasan
+                      </th>
+                    ) : null}
                     <th className="px-4 py-2 text-right font-medium">Aksi</th>
                   </tr>
                 </thead>
@@ -236,15 +331,67 @@ export function TopTrackerView() {
                           {formatRupiah(p.totalAmount)}
                         </td>
                         <td className="px-4 py-3 text-xs">
-                          <Badge variant={dueTone}>{dueText}</Badge>
-                          {p.dueDate ? (
-                            <p className="mt-0.5 text-[11px] text-neutral-500">
-                              {p.dueDate}
-                            </p>
-                          ) : null}
+                          {p.status === "pending_payment" ? (
+                            <>
+                              <Badge variant={dueTone}>{dueText}</Badge>
+                              {p.dueDate ? (
+                                <p className="mt-0.5 text-[11px] text-neutral-500">
+                                  {p.dueDate}
+                                </p>
+                              ) : null}
+                            </>
+                          ) : (
+                            <Badge
+                              variant={
+                                p.status === "paid" ? "success" : "neutral"
+                              }
+                            >
+                              {p.status === "paid"
+                                ? "Lunas ✓"
+                                : "Dibatalkan"}
+                            </Badge>
+                          )}
                         </td>
+                        {!dueFilterActive ? (
+                          <td className="px-4 py-3 text-xs">
+                            {p.paidAt ? (
+                              <>
+                                <p className="text-neutral-800">
+                                  {formatTanggal(p.paidAt)}
+                                  {p.settlementMethod ? (
+                                    <span className="text-neutral-500">
+                                      {" · "}
+                                      {SETTLE_LABELS[p.settlementMethod] ??
+                                        p.settlementMethod}
+                                    </span>
+                                  ) : null}
+                                </p>
+                                <p className="text-[11px] text-neutral-500">
+                                  {p.paidByName ?? "—"}
+                                  {/* Nominal bayar bisa BEDA dari total pesanan
+                                      karena basisnya barang yang diterima (GR),
+                                      bukan yang dipesan — audit AE-181. */}
+                                  {p.settlementAmount !== null &&
+                                  p.settlementAmount !== p.totalAmount ? (
+                                    <span className="ml-1 text-warning-700">
+                                      dibayar {formatRupiah(p.settlementAmount)}
+                                    </span>
+                                  ) : null}
+                                </p>
+                              </>
+                            ) : p.status === "cancelled" ? (
+                              <span className="text-neutral-400">
+                                {p.cancelReason ?? "—"}
+                              </span>
+                            ) : (
+                              <span className="text-neutral-400">—</span>
+                            )}
+                          </td>
+                        ) : null}
                         <td className="px-4 py-3 text-right">
-                          {canMarkPaid ? (
+                          {p.status !== "pending_payment" ? (
+                            <span className="text-xs text-neutral-400">—</span>
+                          ) : canMarkPaid ? (
                             <Button
                               size="sm"
                               variant="outline"

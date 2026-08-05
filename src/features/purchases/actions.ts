@@ -51,6 +51,7 @@ import {
   fetchPurchaseById,
   fetchPurchaseDetail,
   fetchPurchases,
+  fetchTopHistory,
   fetchTopOutstanding,
 } from "./queries";
 import {
@@ -65,6 +66,9 @@ import {
   type Purchase,
   type PurchaseDetail,
   type PurchaseListItem,
+  type TopHistoryItem,
+  type TopHistoryOptions,
+  type TopHistorySummary,
   type TopOutstandingItem,
 } from "./types";
 
@@ -139,6 +143,23 @@ export async function getPurchase(
     return fail("FORBIDDEN", "Tidak punya hak lihat pembelian");
   }
   return ok(await fetchPurchaseDetail(id, session.user.outletId));
+}
+
+/**
+ * Sesi AE-184 — riwayat hutang dagang lengkap (lunas + belum + batal).
+ * `listTopOutstanding` di bawah tetap ada untuk widget ringkas yang memang
+ * hanya butuh yang belum lunas.
+ */
+export async function listTopHistory(
+  opts: TopHistoryOptions = {},
+): Promise<ApiResult<{ items: TopHistoryItem[]; summary: TopHistorySummary }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat hutang dagang");
+  }
+  return ok(
+    await fetchTopHistory(session.user.outletId, todayJakartaIso(), opts),
+  );
 }
 
 export async function listTopOutstanding(): Promise<

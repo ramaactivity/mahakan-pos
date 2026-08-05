@@ -50,9 +50,12 @@ interface CreditorsTabProps {
 
 export function CreditorsTab({ canManage }: CreditorsTabProps) {
   const queryClient = useQueryClient();
+  /* Sesi AE-184 — default "all" supaya kreditur yang sudah lunas ikut
+   * kelihatan sejak halaman dibuka. Dengan default "active", riwayat
+   * pelunasan seolah hilang padahal cuma tersaring. */
   const [statusFilter, setStatusFilter] = useState<
     "active" | "settled" | "defaulted" | "all"
-  >("active");
+  >("all");
   const [formTarget, setFormTarget] = useState<Creditor | null | undefined>(
     undefined,
   );
