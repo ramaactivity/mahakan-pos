@@ -593,8 +593,8 @@ export async function closeShift(
       "@/features/accounting/hooks"
     );
     const closedDate = updated.closedAt
-      ? new Date(updated.closedAt).toISOString().slice(0, 10)
-      : new Date().toISOString().slice(0, 10);
+      ? toJakartaDateOnly(updated.closedAt)
+      : toJakartaDateOnly(new Date());
     fireJournalHook(
       () =>
         postJournalForShiftVariance({
@@ -617,11 +617,8 @@ export async function closeShift(
   if (v.depositAmount && v.depositAmount > 0) {
     try {
       const { createCashDeposit } = await import("@/features/finance/actions");
-      const isoDate = (d: Date | string | null | undefined): string => {
-        if (!d) return new Date().toISOString().slice(0, 10);
-        const dt = typeof d === "string" ? new Date(d) : d;
-        return dt.toISOString().slice(0, 10);
-      };
+      const isoDate = (d: Date | string | null | undefined): string =>
+        toJakartaDateOnly(d ?? new Date());
       const closedDate = isoDate(updated.closedAt);
       const openedDate = isoDate(current.openedAt);
       const depRes = await createCashDeposit({

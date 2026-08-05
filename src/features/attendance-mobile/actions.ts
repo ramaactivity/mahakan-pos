@@ -1,9 +1,16 @@
 "use server";
 
+import { headers } from "next/headers";
 import { eq, and, isNull, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { attendanceRecords, employees, outlets } from "@/db/schema";
 import { logAudit } from "@/lib/audit/logger";
+import { extractClientIpFromHeaders } from "@/lib/rate-limit";
+import {
+  checkAttendancePinLockout,
+  clearAttendancePinLockout,
+  recordAttendancePinFailure,
+} from "@/lib/attendance-pin-lockout";
 
 /**
  * Phase 4 (sesi AB) — server actions untuk mobile attendance route
@@ -45,10 +52,24 @@ const DEFAULT_GPS = { lat: -6.6753234, lng: 106.9298715, radiusMeters: 50 };
  * open attendance record (kalau ada — buat decide flow clock-in vs
  * clock-out di mobile UI) + outlet GPS center config.
  *
- * Anti-brute-force: TODO Phase 4-D add rate-limit per IP. Untuk MVP,
- * audit log every fail attempt + slow response 500ms via setTimeout.
+ * Anti-brute-force: rate limit per IP (10 fail / 15 menit) via shared
+ * @/lib/attendance-pin-lockout — bucket SAMA dengan route clock-mobile,
+ * jadi attempt di kedua endpoint dihitung bareng. Plus audit log every
+ * fail attempt + slow response via setTimeout (timing mitigation).
  */
 export async function verifyAttendancePin(pin: string): Promise<VerifyResult> {
+  /* Lockout di-cek SEBELUM bcrypt loop — same pattern dengan route
+   * /api/v1/attendance/clock-mobile. IP dari x-forwarded-for first value
+   * (Vercel populate), fallback x-real-ip → "unknown". */
+  const clientIp = extractClientIpFromHeaders(await headers());
+  const lockout = await checkAttendancePinLockout(clientIp);
+  if (lockout.locked) {
+    return {
+      ok: false,
+      error: { code: "RATE_LIMITED", message: lockout.message },
+    };
+  }
+
   if (!/^\d{4,6}$/.test(pin)) {
     return {
       ok: false,
@@ -91,6 +112,10 @@ export async function verifyAttendancePin(pin: string): Promise<VerifyResult> {
   await new Promise((r) => setTimeout(r, 300));
 
   if (!matched) {
+    /* Track failed attempt per IP — shared bucket dgn route clock-mobile.
+     * Setelah threshold, request berikutnya langsung RATE_LIMITED sebelum
+     * hit bcrypt. */
+    await recordAttendancePinFailure(clientIp, { source: "verify_pin" });
     /* Sesi AE-62ag — audit log PIN fail untuk Owner visibility anti-brute.
      * Catatan: tidak ada session/userId di endpoint mobile (PIN-only auth);
      * pakai null userId, entityId NULL — context cuma PIN prefix masked. */
@@ -111,6 +136,10 @@ export async function verifyAttendancePin(pin: string): Promise<VerifyResult> {
       },
     };
   }
+
+  // PIN benar — reset counter supaya legit user yg sempat typo tidak
+  // ke-lock (mirror route clock-mobile).
+  clearAttendancePinLockout(clientIp);
 
   if (matched.status !== "active") {
     logAudit({

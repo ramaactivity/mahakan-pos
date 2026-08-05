@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { extractDbError, isTransientDbError } from "@/lib/db-error";
 import { runAfterResponse } from "@/lib/after-response";
@@ -95,7 +95,14 @@ export async function postJournalForPosSale(args: {
     .where(eq(transactions.id, args.transactionId))
     .limit(1);
   if (!trx) return;
-  if (trx.status !== "paid") return;
+  /* Audit AE-186 — 'partially_refunded' juga diterima. Sapuan per jam
+   * memindai status ('paid','partially_refunded'); kalau jurnal sale hilang
+   * lalu transaksinya keburu di-refund sebagian, guard lama ('paid' saja)
+   * membuat hook no-op diam-diam → sapuan mengira berhasil, menghitung +1
+   * "dipulihkan" tiap jam selamanya, padahal gap-nya tidak pernah tertutup
+   * (jurnal refund ada, jurnal sale tidak → revenue net minus). Jurnal sale
+   * tetap full amount — refund punya jurnal terpisah (pos_refund). */
+  if (trx.status !== "paid" && trx.status !== "partially_refunded") return;
 
   const items = await db
     .select()
@@ -267,12 +274,20 @@ export async function postJournalForPosRefund(args: {
           ),
         );
       }
+      /* Audit AE-186 — alokasi non-terakhir di-cap ke sisa yang belum
+       * teralokasi. Tanpa cap, pembulatan ke atas bisa membuat jatah baris
+       * terakhir NEGATIF → JOURNAL_NEGATIVE_AMOUNT dilempar di setiap retry
+       * (args di-snapshot) → jurnal refund gagal permanen. */
       const allocs = splits.map((s, idx, arr) => {
         const isLast = idx === arr.length - 1;
+        const remaining = args.refundedAmount - allocated;
         const amt = isLast
-          ? args.refundedAmount - allocated
-          : Math.round(
-              (Number(s.amount) / splitTotal) * args.refundedAmount,
+          ? remaining
+          : Math.min(
+              remaining,
+              Math.round(
+                (Number(s.amount) / splitTotal) * args.refundedAmount,
+              ),
             );
         allocated += amt;
         return {
@@ -1402,6 +1417,12 @@ export async function postJournalForExpenseCreate(args: {
     .limit(1);
   if (!exp) return;
 
+  /* Audit AE-186 — expense yang sudah dihapus (soft-delete) JANGAN dijurnal.
+   * Skenario nyata: jurnal awal hilang (era instance beku) → owner hapus
+   * expense-nya → sapuan per jam melihat "expense tanpa jurnal" dan memposting
+   * beban untuk baris yang sudah tidak ada di UI mana pun. */
+  if (exp.deletedAt) return;
+
   // CRITICAL — only fires for sourceType='manual'. Payroll/purchase/refund
   // expenses have their own auto-journal hooks upstream (markPayrollPaid /
   // purchase.confirm / refundTransaction), so skipping here prevents
@@ -1529,6 +1550,174 @@ export async function postJournalForIncomeCreate(args: {
     lines,
     actorId: args.actorId,
   });
+}
+
+// ============================================================
+// Audit AE-186 — Sinkron jurnal saat expense/income di-EDIT atau di-HAPUS.
+//
+// Sebelumnya: edit nominal Rp500rb → Rp50rb atau hapus expense TIDAK pernah
+// menyentuh jurnalnya → GL menyimpan angka lama selamanya (kelas drift yang
+// sama dengan yang direkonsiliasi manual di audit AE-181). Sapuan per jam
+// hanya memposting jurnal yang HILANG, tidak mengoreksi nominal.
+//
+// Pola: pair-void (identik reverseJournalEntry) — entry lawan dibuat dengan
+// sourceType *_void + sourceId sumbernya (idempoten via unique active index),
+// lalu KEDUA sisi ditandai 'reversed' dalam satu transaksi. Untuk edit,
+// setelah void diposting ulang lewat hook create biasa (boleh, karena unique
+// index hanya menghitung entry aktif).
+// ============================================================
+
+async function pairVoidJournalForSource(args: {
+  outletId: string;
+  sourceType: "expense_create" | "income_create";
+  voidSourceType: "expense_void" | "income_void";
+  sourceId: string;
+  actorId: string;
+  reason: string;
+}): Promise<void> {
+  const [entry] = await db
+    .select({
+      id: journalEntries.id,
+      entryNumber: journalEntries.entryNumber,
+      entryDate: journalEntries.entryDate,
+    })
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.outletId, args.outletId),
+        eq(journalEntries.sourceType, args.sourceType),
+        eq(journalEntries.sourceId, args.sourceId),
+        eq(journalEntries.status, "posted"),
+      ),
+    )
+    .limit(1);
+  if (!entry) return; // belum pernah dijurnal — tidak ada yang dibalik
+
+  const lines = await db
+    .select({
+      accountId: journalLines.accountId,
+      debit: journalLines.debit,
+      credit: journalLines.credit,
+      description: journalLines.description,
+    })
+    .from(journalLines)
+    .where(eq(journalLines.entryId, entry.id))
+    .orderBy(asc(journalLines.lineNumber));
+
+  const counter = await recordJournal({
+    outletId: args.outletId,
+    entryDate: String(entry.entryDate),
+    description: `Reverse ${entry.entryNumber} — ${args.reason}`,
+    sourceType: args.voidSourceType,
+    sourceId: args.sourceId,
+    lines: lines.map((l) => ({
+      accountId: l.accountId,
+      debit: Number(l.credit),
+      credit: Number(l.debit),
+      description: `Reverse: ${l.description ?? ""}`,
+    })),
+    actorId: args.actorId,
+    metadata: { reversesEntryId: entry.id, reason: args.reason },
+  });
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(journalEntries)
+      .set({
+        status: "reversed",
+        reversedByEntryId: counter.entryId,
+        reverseReason: args.reason,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(journalEntries.id, entry.id),
+          eq(journalEntries.status, "posted"),
+        ),
+      );
+    await tx
+      .update(journalEntries)
+      .set({
+        status: "reversed",
+        reversesEntryId: entry.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(journalEntries.id, counter.entryId));
+  });
+}
+
+export async function postJournalForExpenseDelete(args: {
+  outletId: string;
+  expenseId: string;
+  actorId: string;
+  reason?: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+  await pairVoidJournalForSource({
+    outletId: args.outletId,
+    sourceType: "expense_create",
+    voidSourceType: "expense_void",
+    sourceId: args.expenseId,
+    actorId: args.actorId,
+    reason: args.reason ?? "Pengeluaran dihapus",
+  });
+}
+
+/** Edit expense → void jurnal lama + posting ulang dari row terkini. */
+export async function resyncJournalForExpenseUpdate(args: {
+  outletId: string;
+  expenseId: string;
+  actorId: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+  await pairVoidJournalForSource({
+    outletId: args.outletId,
+    sourceType: "expense_create",
+    voidSourceType: "expense_void",
+    sourceId: args.expenseId,
+    actorId: args.actorId,
+    reason: "Pengeluaran diedit — jurnal diposting ulang",
+  });
+  await postJournalForExpenseCreate(args);
+}
+
+export async function postJournalForIncomeDelete(args: {
+  outletId: string;
+  incomeId: string;
+  actorId: string;
+  reason?: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+  await pairVoidJournalForSource({
+    outletId: args.outletId,
+    sourceType: "income_create",
+    voidSourceType: "income_void",
+    sourceId: args.incomeId,
+    actorId: args.actorId,
+    reason: args.reason ?? "Pemasukan dihapus",
+  });
+}
+
+/** Edit income → void jurnal lama + posting ulang dengan nilai terbaru. */
+export async function resyncJournalForIncomeUpdate(args: {
+  outletId: string;
+  incomeId: string;
+  amount: number;
+  description: string;
+  paymentMethod: IncomePaymentMethod;
+  entryDate: string;
+  actorId: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+  await pairVoidJournalForSource({
+    outletId: args.outletId,
+    sourceType: "income_create",
+    voidSourceType: "income_void",
+    sourceId: args.incomeId,
+    actorId: args.actorId,
+    reason: "Pemasukan diedit — jurnal diposting ulang",
+  });
+  await postJournalForIncomeCreate(args);
 }
 
 // ============================================================

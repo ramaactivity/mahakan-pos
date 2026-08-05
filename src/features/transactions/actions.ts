@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, getTableColumns, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   approvalCodes,
@@ -29,11 +29,13 @@ import {
 } from "@/features/inventory/transaction-flow";
 import { getStockMode } from "@/features/inventory/flag";
 import {
-  bumpCustomerRedeemInTx,
   computeRedemptionAmount,
-  earnPointsForTransaction,
   findOrCreateCustomer,
 } from "@/features/customers";
+import {
+  bumpCustomerRedeemInTx,
+  earnPointsForTransaction,
+} from "@/features/customers/loyalty-internal";
 import {
   consumeApprovalCode,
   isOk as isApprovalOk,
@@ -1189,7 +1191,7 @@ export async function voidTransaction(
 
     // Sesi AE-62i — restore loyalty points for void.
     const { restorePointsOnTransactionRefund } = await import(
-      "@/features/customers/actions"
+      "@/features/customers/loyalty-internal"
     );
     await restorePointsOnTransactionRefund(tx, v.transactionId, {
       refundKind: "void",
@@ -1466,7 +1468,7 @@ export async function refundTransaction(
       // Sesi AE-62i — restore loyalty points (claw-back earned + re-credit
       // redeemed). Sebelumnya silent skip → loyalty ratchet bug.
       const { restorePointsOnTransactionRefund } = await import(
-        "@/features/customers/actions"
+        "@/features/customers/loyalty-internal"
       );
       await restorePointsOnTransactionRefund(tx, v.transactionId, {
         refundKind: "full",
@@ -1821,7 +1823,7 @@ export async function refundTransactionPartial(
     // cumulative reach total (nextStatus='refunded') → full clawback +
     // restore redeemed.
     const { restorePointsOnTransactionRefund } = await import(
-      "@/features/customers/actions"
+      "@/features/customers/loyalty-internal"
     );
     if (nextStatus === "refunded") {
       await restorePointsOnTransactionRefund(tx, v.transactionId, {
@@ -1926,14 +1928,48 @@ export async function refundTransactionPartial(
       .from(transactionItemsSchema)
       .where(eq(transactionItemsSchema.transactionId, result.transaction.id));
     // Build map id → per-item COGS-per-unit.
-    const costByItemId = new Map<string, { cat: string; cogsPerUnit: number; pricePerUnit: number; qty: number }>();
+    const costByItemId = new Map<string, { cat: string; cogsPerUnit: number; cogsTotal: number; pricePerUnit: number; qty: number }>();
     for (const it of itemRows) {
       costByItemId.set(it.id, {
         cat: it.itemCategoryName,
         cogsPerUnit: it.quantity > 0 ? Number(it.cogs ?? 0) / it.quantity : 0,
+        cogsTotal: Number(it.cogs ?? 0),
         pricePerUnit: it.quantity > 0 ? Number(it.subtotal) / it.quantity : 0,
         qty: it.quantity,
       });
+    }
+    /* Cap kumulatif COGS reversal di stamped item cogs. cogsPerUnit float
+     * + Math.round per refund event → across multiple partial refunds sum
+     * reversal bisa exceed stamped cogs beberapa rupiah (mis. cogs=11
+     * qty=3 → 3× round(11/3)=12 > 11). Rekonstruksi reversal event-event
+     * sebelumnya (formula round(cogsPerUnit×qty) deterministik sama) dari
+     * refund_event_items, lalu reversal event INI di-cap ke sisa
+     * (stamped cogs − prior reversed). */
+    const priorRefundRows = await db
+      .select({
+        transactionItemId: refundEventItems.transactionItemId,
+        quantityRefunded: refundEventItems.quantityRefunded,
+      })
+      .from(refundEventItems)
+      .innerJoin(
+        refundEvents,
+        eq(refundEventItems.refundEventId, refundEvents.id),
+      )
+      .where(
+        and(
+          eq(refundEvents.transactionId, result.transaction.id),
+          ne(refundEventItems.refundEventId, result.eventId),
+        ),
+      );
+    const priorReversedByItem = new Map<string, number>();
+    for (const r of priorRefundRows) {
+      const meta = costByItemId.get(r.transactionItemId);
+      if (!meta) continue;
+      priorReversedByItem.set(
+        r.transactionItemId,
+        (priorReversedByItem.get(r.transactionItemId) ?? 0) +
+          Math.round(meta.cogsPerUnit * r.quantityRefunded),
+      );
     }
     // computation.perItem berisi quantityRefunded + amountRefunded per item.
     // Aggregate by category untuk feed mapPosRefund.
@@ -1943,7 +1979,17 @@ export async function refundTransactionPartial(
       if (!meta) continue;
       const cur = aggMap.get(meta.cat) ?? { amount: 0, cogs: 0 };
       cur.amount += p.amountRefunded;
-      cur.cogs += Math.round(meta.cogsPerUnit * p.quantityRefunded);
+      const priorReversed = Math.min(
+        priorReversedByItem.get(p.transactionItemId) ?? 0,
+        meta.cogsTotal,
+      );
+      cur.cogs += Math.max(
+        0,
+        Math.min(
+          Math.round(meta.cogsPerUnit * p.quantityRefunded),
+          meta.cogsTotal - priorReversed,
+        ),
+      );
       aggMap.set(meta.cat, cur);
     }
     const aggItems = Array.from(aggMap.entries()).map(([cat, v]) => ({
@@ -3144,7 +3190,7 @@ export async function cancelOpenBill(
       // For open bill, earn TIDAK fired di saveAsOpenBill (skipEarn=true),
       // tapi redeem mungkin terjadi → restore those.
       const { restorePointsOnTransactionRefund } = await import(
-        "@/features/customers/actions"
+        "@/features/customers/loyalty-internal"
       );
       await restorePointsOnTransactionRefund(tx, v.transactionId, {
         refundKind: "void",

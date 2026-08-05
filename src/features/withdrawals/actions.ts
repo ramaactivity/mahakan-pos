@@ -11,6 +11,7 @@ import {
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { logAndSanitize } from "@/lib/server-error";
+import { jakartaDateOf, todayJakarta } from "@/lib/tz";
 import {
   lockBankAccountAdvisory,
   lockInvestors,
@@ -162,7 +163,7 @@ export async function postWithdrawal(
   })();
 
   const occurredAt = v.occurredAt ? new Date(v.occurredAt) : new Date();
-  const entryDate = occurredAt.toISOString().slice(0, 10);
+  const entryDate = jakartaDateOf(occurredAt);
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -369,7 +370,7 @@ export async function reverseWithdrawal(
         .join(" — ")
     : "(unknown bank)";
 
-  const entryDate = new Date().toISOString().slice(0, 10);
+  const entryDate = todayJakarta();
 
   try {
     const result = await db.transaction(async (tx) => {

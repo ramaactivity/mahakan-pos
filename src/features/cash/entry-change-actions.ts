@@ -371,6 +371,98 @@ export async function proposeEntryChange(input: ProposeEntryChangeInput): Promis
 // APPROVE
 // ============================================================
 
+/**
+ * Audit AE-186 — setelah koreksi di-apply, jurnal sumbernya WAJIB ikut
+ * disinkronkan. Sebelumnya: approve edit Rp500rb → Rp50rb atau approve hapus
+ * TIDAK menyentuh jurnal sama sekali → GL menyimpan angka lama selamanya
+ * (kelas drift yang direkonsiliasi manual di audit AE-181). Pola hook +
+ * retry-queue sama dengan updateExpense/deleteExpense di actions.ts.
+ */
+async function fireJournalSyncForEntryChange(
+  pec: typeof pendingEntryChanges.$inferSelect,
+  actor: { outletId: string; userId: string },
+): Promise<void> {
+  const {
+    fireJournalHook,
+    postJournalForExpenseDelete,
+    resyncJournalForExpenseUpdate,
+    postJournalForIncomeDelete,
+    resyncJournalForIncomeUpdate,
+  } = await import("@/features/accounting/hooks");
+  const ctx = {
+    sourceId: pec.entityId,
+    outletId: actor.outletId,
+    actorId: actor.userId,
+  };
+  if (pec.entityType === "expense") {
+    if (pec.operation === "delete") {
+      const hookArgs = {
+        outletId: actor.outletId,
+        expenseId: pec.entityId,
+        actorId: actor.userId,
+        reason: `Pengeluaran dihapus via Pusat Persetujuan — ${pec.reason}`,
+      };
+      fireJournalHook(
+        () => postJournalForExpenseDelete(hookArgs),
+        "expense_void",
+        ctx,
+        { label: "expense_void", args: hookArgs },
+      );
+    } else {
+      const hookArgs = {
+        outletId: actor.outletId,
+        expenseId: pec.entityId,
+        actorId: actor.userId,
+      };
+      fireJournalHook(
+        () => resyncJournalForExpenseUpdate(hookArgs),
+        "expense_resync",
+        ctx,
+        { label: "expense_resync", args: hookArgs },
+      );
+    }
+    return;
+  }
+  // income
+  if (pec.operation === "delete") {
+    const hookArgs = {
+      outletId: actor.outletId,
+      incomeId: pec.entityId,
+      actorId: actor.userId,
+      reason: `Pemasukan dihapus via Pusat Persetujuan — ${pec.reason}`,
+    };
+    fireJournalHook(
+      () => postJournalForIncomeDelete(hookArgs),
+      "income_void",
+      ctx,
+      { label: "income_void", args: hookArgs },
+    );
+    return;
+  }
+  /* Resync income butuh nilai row TERKINI (pasca-apply). */
+  const [inc] = await db
+    .select()
+    .from(incomes)
+    .where(eq(incomes.id, pec.entityId))
+    .limit(1);
+  if (!inc || inc.deletedAt) return;
+  const hookArgs = {
+    outletId: actor.outletId,
+    incomeId: inc.id,
+    amount: Number(inc.amount),
+    description: inc.description,
+    paymentMethod: inc.paymentMethod as "cash" | "transfer" | "other",
+    entryDate: String(inc.incomeDate),
+    actorId: actor.userId,
+  };
+  fireJournalHook(
+    () => resyncJournalForIncomeUpdate(hookArgs),
+    "income_resync",
+    ctx,
+    { label: "income_resync", args: hookArgs },
+  );
+}
+
 export async function approveEntryChange(input: {
   changeId: string;
   code: string;
@@ -538,6 +630,11 @@ export async function approveEntryChange(input: {
       context: { operation: pec.operation, entityType: pec.entityType, entityId: pec.entityId },
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  await fireJournalSyncForEntryChange(pec, {
+    outletId: session.user.outletId,
+    userId: session.user.id,
   });
 
   return ok({ changeId: pec.id, appliedAt: now });
@@ -708,6 +805,11 @@ export async function approveEntryChangeDirect(input: {
       },
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  await fireJournalSyncForEntryChange(pec, {
+    outletId: session.user.outletId,
+    userId: session.user.id,
   });
 
   return ok({ changeId: pec.id, appliedAt: now });

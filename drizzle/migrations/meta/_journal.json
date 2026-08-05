@@ -589,6 +589,13 @@
       "when": 1781279951521,
       "tag": "0083_stormy_wither",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1785946820428,
+      "tag": "0084_strange_radioactive_man",
+      "breakpoints": true
     }
   ]
 }

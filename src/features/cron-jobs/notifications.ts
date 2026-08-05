@@ -294,6 +294,14 @@ export async function runCashlessSettlementJob(): Promise<CronJobResult> {
     const yDate = new Date(`${todayWibIso()}T00:00:00Z`);
     yDate.setUTCDate(yDate.getUTCDate() - 1);
     const yesterday = yDate.toISOString().slice(0, 10);
+    /* Audit AE-186 — lookback 3 hari, bukan hanya kemarin. Slot cron 01:05
+     * WIB bisa terlewat (GitHub Actions delay/outage; getJobForCurrentHour
+     * hour-exact) → tanpa lookback, settlement hari itu TIDAK PERNAH dibuat
+     * dan piutang cashless menumpuk diam-diam. Idempoten: hari yang sudah
+     * punya settlement di-skip (hasSettlementForDay + unique index). */
+    const fDate = new Date(`${yesterday}T00:00:00Z`);
+    fDate.setUTCDate(fDate.getUTCDate() - 2);
+    const fromDate = fDate.toISOString().slice(0, 10);
 
     const outletList = await db
       .select({ id: outlets.id })
@@ -323,7 +331,7 @@ export async function runCashlessSettlementJob(): Promise<CronJobResult> {
           outletId: outlet.id,
           createdBy: owner.id,
           actorRole: "system",
-          from: yesterday,
+          from: fromDate,
           to: yesterday,
         });
         /* notifSent dipakai sebagai counter "settlement dibuat" untuk log. */

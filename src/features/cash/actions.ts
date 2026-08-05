@@ -538,6 +538,36 @@ export async function updateExpense(
     });
   }
 
+  /* Audit AE-186 — field yang mempengaruhi jurnal berubah → void jurnal lama
+   * + posting ulang. Tanpa ini, edit Rp500rb → Rp50rb meninggalkan GL di
+   * angka lama selamanya (kelas drift audit AE-181). */
+  const journalRelevantChanged =
+    current.amount !== row.amount ||
+    String(current.expenseDate) !== String(row.expenseDate) ||
+    current.paymentMethod !== row.paymentMethod ||
+    current.categoryId !== row.categoryId ||
+    current.bankAccountId !== row.bankAccountId;
+  if (journalRelevantChanged && current.sourceType === "manual") {
+    const { fireJournalHook, resyncJournalForExpenseUpdate } = await import(
+      "@/features/accounting/hooks"
+    );
+    const hookArgs = {
+      outletId: session.user.outletId,
+      expenseId: row.id,
+      actorId: session.user.id,
+    };
+    fireJournalHook(
+      () => resyncJournalForExpenseUpdate(hookArgs),
+      "expense_resync",
+      {
+        sourceId: row.id,
+        outletId: session.user.outletId,
+        actorId: session.user.id,
+      },
+      { label: "expense_resync", args: hookArgs },
+    );
+  }
+
   return ok(row);
 }
 
@@ -622,6 +652,31 @@ export async function deleteExpense(id: string): Promise<ApiResult<{ id: string 
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
   });
+
+  /* Audit AE-186 — jurnal expense_create yang sudah terlanjur posting ikut
+   * dibalik (pair-void, sourceType expense_void). Sebelumnya soft-delete
+   * meninggalkan beban di GL selamanya. */
+  if (current.sourceType === "manual") {
+    const { fireJournalHook, postJournalForExpenseDelete } = await import(
+      "@/features/accounting/hooks"
+    );
+    const hookArgs = {
+      outletId: session.user.outletId,
+      expenseId: row.id,
+      actorId: session.user.id,
+      reason: `Pengeluaran dihapus — ${current.description}`,
+    };
+    fireJournalHook(
+      () => postJournalForExpenseDelete(hookArgs),
+      "expense_void",
+      {
+        sourceId: row.id,
+        outletId: session.user.outletId,
+        actorId: session.user.id,
+      },
+      { label: "expense_void", args: hookArgs },
+    );
+  }
 
   return ok({ id: row.id });
 }
@@ -927,6 +982,39 @@ export async function updateIncome(
     });
   }
 
+  /* Audit AE-186 — field yang mempengaruhi jurnal berubah → void jurnal lama
+   * + posting ulang dengan nilai terbaru (paritas dengan updateExpense). */
+  const incomeJournalChanged =
+    current.amount !== row.amount ||
+    String(current.incomeDate) !== String(row.incomeDate) ||
+    current.paymentMethod !== row.paymentMethod ||
+    current.bankAccountId !== row.bankAccountId ||
+    current.accountId !== row.accountId;
+  if (incomeJournalChanged) {
+    const { fireJournalHook, resyncJournalForIncomeUpdate } = await import(
+      "@/features/accounting/hooks"
+    );
+    const hookArgs = {
+      outletId: session.user.outletId,
+      incomeId: row.id,
+      amount: Number(row.amount),
+      description: row.description,
+      paymentMethod: row.paymentMethod as "cash" | "transfer" | "other",
+      entryDate: String(row.incomeDate),
+      actorId: session.user.id,
+    };
+    fireJournalHook(
+      () => resyncJournalForIncomeUpdate(hookArgs),
+      "income_resync",
+      {
+        sourceId: row.id,
+        outletId: session.user.outletId,
+        actorId: session.user.id,
+      },
+      { label: "income_resync", args: hookArgs },
+    );
+  }
+
   return ok(row);
 }
 
@@ -1006,6 +1094,29 @@ export async function deleteIncome(
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
   });
+
+  /* Audit AE-186 — jurnal income_create ikut dibalik (pair-void). */
+  {
+    const { fireJournalHook, postJournalForIncomeDelete } = await import(
+      "@/features/accounting/hooks"
+    );
+    const hookArgs = {
+      outletId: session.user.outletId,
+      incomeId: row.id,
+      actorId: session.user.id,
+      reason: `Pemasukan dihapus — ${current.description}`,
+    };
+    fireJournalHook(
+      () => postJournalForIncomeDelete(hookArgs),
+      "income_void",
+      {
+        sourceId: row.id,
+        outletId: session.user.outletId,
+        actorId: session.user.id,
+      },
+      { label: "income_void", args: hookArgs },
+    );
+  }
 
   return ok({ id: row.id });
 }

@@ -11,6 +11,7 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { logAndSanitize } from "@/lib/server-error";
+import { todayJakarta } from "@/lib/tz";
 import {
   mapCapitalizeAsset,
   mapMonthlyDepreciation,
@@ -98,7 +99,7 @@ export async function listFixedAssets(): Promise<
     )
     .orderBy(asc(fixedAssets.acquiredDate));
 
-  const todayWib = new Date().toISOString().slice(0, 10);
+  const todayWib = todayJakarta();
   const result: FixedAssetRow[] = rows.map((r) => {
     const monthsElapsed = monthsBetween(r.acquiredDate as string, todayWib);
     const monthsDepreciatedFromLastDate = r.lastDepreciatedMonth
@@ -666,7 +667,7 @@ export async function postMonthlyDepreciation(
 
   // Last day of target month untuk entryDate.
   const [yyyy, mm] = targetYearMonth.split("-").map(Number);
-  const lastDay = new Date(yyyy, mm, 0).toISOString().slice(0, 10);
+  const lastDay = new Date(Date.UTC(yyyy, mm, 0)).toISOString().slice(0, 10);
 
   let entryId: string | null = null;
   try {

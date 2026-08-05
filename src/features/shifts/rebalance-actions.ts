@@ -16,6 +16,7 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { logAndSanitize } from "@/lib/server-error";
+import { jakartaDateOf, todayJakarta } from "@/lib/tz";
 import { sendEmail } from "@/lib/email/send";
 import { buildShiftRebalanceCodeEmail } from "@/lib/email/templates/shift-rebalance-code";
 import {
@@ -608,8 +609,8 @@ export async function approveShiftRebalance(input: {
 
   // 6. Fire journal hook (post-commit, fire-and-forget).
   const closedDate = shift.closedAt
-    ? new Date(shift.closedAt).toISOString().slice(0, 10)
-    : new Date().toISOString().slice(0, 10);
+    ? jakartaDateOf(new Date(shift.closedAt))
+    : todayJakarta();
   const shiftLabelForJournal = `Shift ${shift.id.slice(0, 8)} ${closedDate}`;
   fireJournalHook(
     async () => {
@@ -754,8 +755,8 @@ export async function approveShiftRebalanceDirect(input: {
   }
 
   const closedDate = shift.closedAt
-    ? new Date(shift.closedAt).toISOString().slice(0, 10)
-    : new Date().toISOString().slice(0, 10);
+    ? jakartaDateOf(new Date(shift.closedAt))
+    : todayJakarta();
   const shiftLabelForJournal = `Shift ${shift.id.slice(0, 8)} ${closedDate}`;
   fireJournalHook(
     async () => {

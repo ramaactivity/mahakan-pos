@@ -13,6 +13,7 @@ import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { errorChainIncludes, logAndSanitize } from "@/lib/server-error";
 import { computeNewStock, formatMovementDelta } from "@/lib/stock-decimal";
+import { todayJakarta } from "@/lib/tz";
 import { jakartaMonthLabel } from "./cadence";
 import { computeDiffStats } from "./diff-stats";
 import {
@@ -1004,7 +1005,7 @@ export async function finalizeOpname(
         .from(stockOpnameSessions)
         .where(eq(stockOpnameSessions.id, v.sessionId))
         .limit(1);
-      const todayWib = new Date().toISOString().slice(0, 10);
+      const todayWib = todayJakarta();
       const { fireJournalHook, postJournalForOpnameAdjustment } = await import(
         "@/features/accounting/hooks"
       );

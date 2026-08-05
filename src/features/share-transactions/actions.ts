@@ -11,6 +11,7 @@ import {
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { logAndSanitize } from "@/lib/server-error";
+import { jakartaDateOf, todayJakarta } from "@/lib/tz";
 import {
   lockBankAccountAdvisory,
   lockInvestors,
@@ -359,7 +360,7 @@ export async function companyBuyback(
   })();
 
   const occurredAt = v.occurredAt ? new Date(v.occurredAt) : new Date();
-  const entryDate = occurredAt.toISOString().slice(0, 10);
+  const entryDate = jakartaDateOf(occurredAt);
   const deltaStr = v.sharePctDelta.toFixed(4);
 
   try {
@@ -619,7 +620,7 @@ export async function reverseShareTransaction(
         });
         const journalResult = await recordJournal({
           outletId: session.user.outletId,
-          entryDate: new Date().toISOString().slice(0, 10),
+          entryDate: todayJakarta(),
           description: `Reversal buyback ${investorRow?.fullName ?? ""}: ${v.reason.slice(0, 100)}`,
           sourceType: "share_buyback_reversal",
           sourceId: st.id,

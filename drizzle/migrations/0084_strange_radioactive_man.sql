@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "ux_aggregator_settlements_outlet_channel_window" ON "aggregator_settlements" USING btree ("outlet_id","channel","period_from","period_to");

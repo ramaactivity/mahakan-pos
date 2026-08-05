@@ -80,6 +80,63 @@ export async function listCreditors(opts: {
   }));
 }
 
+/**
+ * Sesi AE-184 follow-up — summary kartu ringkasan dihitung di server dari
+ * SEMUA kreditur outlet, bukan dari daftar yang sedang tersaring di UI.
+ * Sebelumnya kartu "Total Hutang Outstanding" ikut filter status halaman
+ * (tab "Lunas" → Rp 0 padahal akun 2150 masih ada saldo) dan "Bunga YTD"
+ * dijumlah client-side dari fetchRepayments({ limit: 100 }) — diam-diam
+ * undercount begitu cicilan setahun lewat 100 baris.
+ *
+ * - totalOutstanding + activeCount: kreditur status 'active' (non-deleted).
+ * - interestYtd: SUM bunga cicilan status 'posted' tahun kalender berjalan,
+ *   batas tahun mengikuti Asia/Jakarta (bukan UTC).
+ */
+export interface CreditorSummary {
+  totalOutstanding: number;
+  activeCount: number;
+  interestYtd: number;
+}
+
+export async function getCreditorSummary(opts: {
+  outletId: string;
+}): Promise<CreditorSummary> {
+  const [outstanding] = await db
+    .select({
+      totalOutstanding: sql<number>`COALESCE(SUM(${creditors.principalOutstanding}), 0)::bigint`,
+      activeCount: sql<number>`COUNT(*)::int`,
+    })
+    .from(creditors)
+    .where(
+      and(
+        eq(creditors.outletId, opts.outletId),
+        isNull(creditors.deletedAt),
+        eq(creditors.status, "active"),
+      ),
+    );
+
+  const [interest] = await db
+    .select({
+      interestYtd: sql<number>`COALESCE(SUM(${creditorRepayments.interestAmount}), 0)::bigint`,
+    })
+    .from(creditorRepayments)
+    .where(
+      and(
+        eq(creditorRepayments.outletId, opts.outletId),
+        /* Sama seperti aggregate di listCreditors: cicilan reversed di-skip. */
+        eq(creditorRepayments.status, "posted"),
+        /* Tahun berjalan menurut wall-clock WIB. */
+        sql`(${creditorRepayments.occurredAt} AT TIME ZONE 'Asia/Jakarta') >= date_trunc('year', now() AT TIME ZONE 'Asia/Jakarta')`,
+      ),
+    );
+
+  return {
+    totalOutstanding: Number(outstanding?.totalOutstanding ?? 0),
+    activeCount: outstanding?.activeCount ?? 0,
+    interestYtd: Number(interest?.interestYtd ?? 0),
+  };
+}
+
 export async function fetchCreditorById(
   outletId: string,
   id: string,

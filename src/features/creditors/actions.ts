@@ -12,6 +12,7 @@ import {
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { errorChainIncludes, logAndSanitize } from "@/lib/server-error";
+import { jakartaDateOf, todayJakarta } from "@/lib/tz";
 import {
   lockBankAccountAdvisory,
   lockCreditor,
@@ -27,9 +28,11 @@ import {
 import { mapInvestorToCreditorConversion } from "@/features/accounting/mapping/investorToCreditorConversion";
 import { resolveBankCodeFromBankName } from "@/features/accounting/mapping/dividendWithdrawal";
 import {
+  getCreditorSummary,
   listCreditors,
   listCreditorRepayments,
   fetchCreditorById,
+  type CreditorSummary,
 } from "./queries";
 import {
   bulkImportCreditorsSchema,
@@ -89,6 +92,20 @@ export async function fetchCreditors(opts?: {
       status: opts?.status,
     }),
   );
+}
+
+/**
+ * Sesi AE-184 follow-up — summary kartu ringkasan (outstanding + bunga YTD)
+ * dihitung server-side, tidak terpengaruh filter status halaman.
+ */
+export async function fetchCreditorSummary(): Promise<
+  ApiResult<CreditorSummary>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "distribution.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat kreditur");
+  }
+  return ok(await getCreditorSummary({ outletId: session.user.outletId }));
 }
 
 export async function getCreditor(
@@ -501,7 +518,7 @@ export async function postRepayment(
   const principal = v.principalAmount;
   const interest = v.interestAmount ?? 0;
   const occurredAt = v.occurredAt ? new Date(v.occurredAt) : new Date();
-  const entryDate = occurredAt.toISOString().slice(0, 10);
+  const entryDate = jakartaDateOf(occurredAt);
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -708,7 +725,7 @@ export async function reverseRepayment(
         .join(" — ")
     : "(unknown bank)";
 
-  const entryDate = new Date().toISOString().slice(0, 10);
+  const entryDate = todayJakarta();
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -974,7 +991,7 @@ export async function convertInvestorToCreditor(
         investorName: inv.fullName,
         creditorName: cred.fullName,
       });
-      const entryDate = new Date().toISOString().slice(0, 10);
+      const entryDate = todayJakarta();
       const journalResult = await recordJournal({
         outletId: session.user.outletId,
         entryDate,

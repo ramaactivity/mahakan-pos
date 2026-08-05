@@ -4,6 +4,7 @@ export {
   createCreditor,
   deleteCreditor,
   fetchCreditors,
+  fetchCreditorSummary,
   fetchRepayments,
   getCreditor,
   postRepayment,

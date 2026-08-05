@@ -143,14 +143,26 @@ export function __resetRateLimitForTests(): void {
  * lockout daripada bypass).
  */
 export function extractClientIp(request: Request): string {
-  const xff = request.headers.get("x-forwarded-for");
+  return extractClientIpFromHeaders(request.headers);
+}
+
+/**
+ * Sama seperti extractClientIp tapi terima Headers-like langsung — dipakai
+ * server actions yang dapat headers via next/headers `headers()` (tidak
+ * punya Request object). Logic identik: x-forwarded-for first value →
+ * x-real-ip → "unknown".
+ */
+export function extractClientIpFromHeaders(headers: {
+  get(name: string): string | null;
+}): string {
+  const xff = headers.get("x-forwarded-for");
   if (xff) {
     // x-forwarded-for bisa contain chain "client, proxy1, proxy2" —
     // ambil yang paling kiri (asli client).
     const first = xff.split(",")[0]?.trim();
     if (first) return first;
   }
-  const real = request.headers.get("x-real-ip");
+  const real = headers.get("x-real-ip");
   if (real) return real.trim();
   return "unknown";
 }

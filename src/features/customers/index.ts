@@ -16,11 +16,14 @@ export {
   normalisePhone,
 } from "./types";
 
+/* Catatan: internal loyalty helpers (bumpCustomerEarnInTx,
+ * bumpCustomerRedeemInTx, earnPointsForTransaction,
+ * restorePointsOnTransactionRefund) SENGAJA tidak di-re-export dari sini —
+ * mereka server-only (./loyalty-internal) dan index ini di-import client
+ * components. Server callers import langsung dari
+ * "@/features/customers/loyalty-internal". */
 export {
-  bumpCustomerEarnInTx,
-  bumpCustomerRedeemInTx,
   customerStats,
-  earnPointsForTransaction,
   findOrCreateCustomer,
   getCustomer,
   listCustomers,

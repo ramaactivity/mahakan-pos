@@ -391,6 +391,14 @@ export async function getAccountBalances(args: {
   outletId: string;
   fromDate: string | null;
   toDate: string;
+  /** Audit AE-186 — laporan BER-JENDELA periode (Laba Rugi, Trial Balance
+   * per bulan, laba utk distribusi) wajib mengecualikan closing entry.
+   * Closing entry menyapu seluruh revenue/HPP/beban bulan itu ke laba
+   * ditahan; kalau ikut kehitung, Laba Rugi bulan yang sudah di-close
+   * kolaps jadi ~Rp 0. (Bug ini tak terlihat sebelum AE-183 karena filter
+   * periodenya memang mati.) Neraca/kumulatif JANGAN pakai flag ini —
+   * justru butuh closing entry supaya laba ditahan benar. */
+  excludeClosingEntries?: boolean;
 }): Promise<AccountBalanceRow[]> {
   const conditions = [
     eq(journalEntries.outletId, args.outletId),
@@ -399,6 +407,11 @@ export async function getAccountBalances(args: {
   ];
   if (args.fromDate) {
     conditions.push(gte(journalEntries.entryDate, args.fromDate));
+  }
+  if (args.excludeClosingEntries) {
+    conditions.push(
+      sql`${journalEntries.sourceType} NOT IN ('period_close', 'period_reopen')`,
+    );
   }
 
   const rows = await db

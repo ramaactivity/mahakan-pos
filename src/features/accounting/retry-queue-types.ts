@@ -11,7 +11,12 @@ export const RETRY_QUEUE_HOOK_LABELS = [
   "pos_void",
   "pos_refund",
   "expense_create",
+  /* Audit AE-186 — sinkron jurnal saat expense/income diedit/dihapus. */
+  "expense_void",
+  "expense_resync",
   "income_create",
+  "income_void",
+  "income_resync",
   "opname_adjustment",
 ] as const;
 

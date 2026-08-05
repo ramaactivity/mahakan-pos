@@ -20,7 +20,11 @@ import { formatDate, formatDateTime, formatRupiah } from "@/lib/format";
 import { logAndSanitize } from "@/lib/server-error";
 import {
   postJournalForExpenseCreate,
+  postJournalForExpenseDelete,
+  resyncJournalForExpenseUpdate,
   postJournalForIncomeCreate,
+  postJournalForIncomeDelete,
+  resyncJournalForIncomeUpdate,
   postJournalForOpnameAdjustment,
   postJournalForPosRefund,
   postJournalForPosSale,
@@ -109,9 +113,27 @@ const incomeCreateArgsSchema = z.object({
   incomeId: z.uuid(),
   amount: z.number().int().min(0),
   description: z.string(),
-  paymentMethod: z.enum(["cash", "transfer_bca"]),
+  /* Audit AE-186 — dulu ["cash","transfer_bca"]: tidak pernah cocok dengan
+   * nilai asli IncomePaymentMethod ("cash"|"transfer"|"other") → retry baris
+   * income_create dengan method transfer selalu gagal validasi snapshot. */
+  paymentMethod: z.enum(["cash", "transfer", "other"]),
   entryDate: z.string(),
   actorId: z.uuid(),
+});
+
+/* Audit AE-186 — hook sinkron edit/hapus expense & income. */
+const expenseVoidArgsSchema = z.object({
+  outletId: z.uuid(),
+  expenseId: z.uuid(),
+  actorId: z.uuid(),
+  reason: z.string().optional(),
+});
+
+const incomeVoidArgsSchema = z.object({
+  outletId: z.uuid(),
+  incomeId: z.uuid(),
+  actorId: z.uuid(),
+  reason: z.string().optional(),
 });
 
 const opnameAdjustmentArgsSchema = z.object({
@@ -156,6 +178,26 @@ const HOOK_REGISTRY: Record<RetryQueueHookLabel, HookRegistryEntry<any>> = {
     schema: incomeCreateArgsSchema,
     execute: postJournalForIncomeCreate,
     displayName: "Pemasukan",
+  },
+  expense_void: {
+    schema: expenseVoidArgsSchema,
+    execute: postJournalForExpenseDelete,
+    displayName: "Hapus Pengeluaran (reverse jurnal)",
+  },
+  expense_resync: {
+    schema: expenseVoidArgsSchema,
+    execute: resyncJournalForExpenseUpdate,
+    displayName: "Edit Pengeluaran (posting ulang jurnal)",
+  },
+  income_void: {
+    schema: incomeVoidArgsSchema,
+    execute: postJournalForIncomeDelete,
+    displayName: "Hapus Pemasukan (reverse jurnal)",
+  },
+  income_resync: {
+    schema: incomeCreateArgsSchema,
+    execute: resyncJournalForIncomeUpdate,
+    displayName: "Edit Pemasukan (posting ulang jurnal)",
   },
   opname_adjustment: {
     schema: opnameAdjustmentArgsSchema,

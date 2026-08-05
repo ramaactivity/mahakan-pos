@@ -16,6 +16,7 @@ import { sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { todayJakarta } from "@/lib/tz";
 import {
   createAggregatorSettlementSchema,
   createCashDepositSchema,
@@ -786,8 +787,8 @@ export async function unverifyCashDeposit(
       verifiedAt: null,
       // Pakai notes (existing column) untuk track revert reason — append.
       notes: current.notes
-        ? `${current.notes}\n[REVERTED ${new Date().toISOString().slice(0, 10)}]: ${parsed.data.reason}`
-        : `[REVERTED ${new Date().toISOString().slice(0, 10)}]: ${parsed.data.reason}`,
+        ? `${current.notes}\n[REVERTED ${todayJakarta()}]: ${parsed.data.reason}`
+        : `[REVERTED ${todayJakarta()}]: ${parsed.data.reason}`,
       updatedAt: new Date(),
     })
     .where(eq(cashDeposits.id, parsed.data.id))
@@ -834,7 +835,7 @@ export async function unverifyCashDeposit(
           amount: Number(row.amount),
           bankAccountCode,
           bankDestination: row.bankDestination,
-          entryDate: new Date().toISOString().slice(0, 10),
+          entryDate: todayJakarta(),
           referenceNo: row.referenceNo,
           reason: parsed.data.reason,
           actorId: session.user.id,

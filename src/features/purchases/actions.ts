@@ -1410,7 +1410,7 @@ export async function cancelPurchase(
       }));
       const cancelTotal = sectionLines.reduce((s, l) => s + l.amount, 0);
     if (cancelTotal > 0) {
-      const todayWib = new Date().toISOString().slice(0, 10);
+      const todayWib = todayJakartaIso();
       const { fireJournalHook, postJournalForPurchaseCancel } = await import(
         "@/features/accounting/hooks"
       );

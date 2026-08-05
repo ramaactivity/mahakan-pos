@@ -18,6 +18,7 @@ import { and, eq, gte, lte } from "drizzle-orm";
 import { db } from "@/db";
 import { aggregatorSettlements, chartOfAccounts, outlets } from "@/db/schema";
 import { logAudit } from "@/lib/audit/logger";
+import { jakartaDateOf } from "@/lib/tz";
 import { getPosCashlessGrossByDay, hasSettlementForDay } from "./queries";
 import type { PosCashlessGross } from "./queries";
 import type {
@@ -104,8 +105,10 @@ export async function fireSettlementJournalHook(
    * Bukti: backfill 2026-08-04 sempat menempatkan 46 jurnal settlement
    * (Rp 25,2jt) di Agustus padahal periodenya Mei–Juli. Aturan sekarang sama
    * persis dengan yang dipakai sapuan otomatis di accounting/auto-retry.ts. */
+  /* Audit AE-186 — jakartaDateOf, bukan slice UTC: uang masuk bank jam
+   * 00:00–06:59 WIB akan tercatat H-1 (di batas bulan malah salah periode). */
   const entryDate = row.bankCreditedAt
-    ? new Date(row.bankCreditedAt).toISOString().slice(0, 10)
+    ? jakartaDateOf(new Date(row.bankCreditedAt))
     : String(row.periodTo);
   fireJournalHook(
     () =>
@@ -187,6 +190,11 @@ export async function generateCashlessForOutlet(params: {
       }
       const fee = Math.round((grossAmt * ch.pct) / 100);
       const net = grossAmt - fee;
+      /* Audit AE-186 — onConflictDoNothing pada unique
+       * (outlet, channel, periodFrom, periodTo): kalau cron & klik manual
+       * berbarengan sama-sama lolos hasSettlementForDay, yang kalah race
+       * tidak menghasilkan baris (inserted undefined) → di-skip, tidak ada
+       * settlement dobel / jurnal dobel-clear piutang. */
       const [inserted] = await db
         .insert(aggregatorSettlements)
         .values({
@@ -201,7 +209,19 @@ export async function generateCashlessForOutlet(params: {
           notes: `Auto dari POS (${CHANNEL_LABEL[ch.channel]})`,
           createdBy,
         })
+        .onConflictDoNothing({
+          target: [
+            aggregatorSettlements.outletId,
+            aggregatorSettlements.channel,
+            aggregatorSettlements.periodFrom,
+            aggregatorSettlements.periodTo,
+          ],
+        })
         .returning();
+      if (!inserted) {
+        result.skipped += 1;
+        continue;
+      }
 
       logAudit({
         eventType: "aggregator_settlement.auto_generate",

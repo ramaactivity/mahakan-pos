@@ -30,6 +30,7 @@ import {
 import {
   deleteCreditor,
   fetchCreditors,
+  fetchCreditorSummary,
   fetchRepayments,
   isOk,
   reverseRepayment,
@@ -87,6 +88,22 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
     staleTime: 30 * 1000,
   });
 
+  /* Sesi AE-184 follow-up — kartu ringkasan pakai query summary server-side
+   * sendiri, queryKey TANPA statusFilter. Sebelumnya kartu dihitung dari
+   * creditorsQuery yang sudah tersaring server (tab "Lunas" → outstanding
+   * Rp 0 / "0 kreditur aktif" padahal 2150 masih ada saldo), dan Bunga YTD
+   * dijumlah dari fetchRepayments({ limit: 100 }) — undercount diam-diam
+   * begitu cicilan setahun lewat 100 baris. */
+  const summaryQuery = useQuery({
+    queryKey: ["admin", "creditor-summary"],
+    queryFn: async () => {
+      const res = await fetchCreditorSummary();
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+    staleTime: 30 * 1000,
+  });
+
   function refreshAll() {
     void queryClient.invalidateQueries({
       queryKey: ["admin", "creditors"],
@@ -94,24 +111,14 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
     void queryClient.invalidateQueries({
       queryKey: ["admin", "creditor-repayments"],
     });
+    void queryClient.invalidateQueries({
+      queryKey: ["admin", "creditor-summary"],
+    });
   }
 
   const creditors = creditorsQuery.data ?? [];
   const repayments = repaymentsQuery.data ?? [];
-  /* Sesi AE-184 — outstanding dihitung dari kreditur yang BELUM lunas saja,
-   * bukan dari daftar yang sedang ditampilkan. Sejak filter default diubah ke
-   * "Semua", menjumlah seluruh baris akan ikut menghitung yang berstatus
-   * settled — kartunya jadi mengklaim hutang yang sudah tidak ada. */
-  const totalOutstanding = creditors
-    .filter((c) => c.status !== "settled")
-    .reduce((s, c) => s + c.principalOutstanding, 0);
-  const totalInterestYtd = repayments
-    .filter(
-      (r) =>
-        r.status === "posted" &&
-        new Date(r.occurredAt).getFullYear() === new Date().getFullYear(),
-    )
-    .reduce((s, r) => s + r.interestAmount, 0);
+  const summary = summaryQuery.data;
 
   async function handleDelete(c: CreditorListRow) {
     if (!confirm(`Hapus kreditur ${c.fullName}? Tidak bisa di-undo.`)) {
@@ -160,15 +167,14 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
                 Total Hutang Outstanding
               </p>
               <p className="text-xl font-bold text-warning-700 font-mono">
-                {creditorsQuery.isLoading ? (
+                {summaryQuery.isLoading ? (
                   <Skeleton className="h-7 w-32" />
                 ) : (
-                  formatRupiah(totalOutstanding)
+                  formatRupiah(summary?.totalOutstanding ?? 0)
                 )}
               </p>
               <p className="text-[11px] text-neutral-600">
-                {creditors.filter((c) => c.status === "active").length}{" "}
-                kreditur aktif
+                {summary?.activeCount ?? 0} kreditur aktif
               </p>
             </div>
           </div>
@@ -181,10 +187,10 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
                 Bunga YTD (Tahun Ini)
               </p>
               <p className="text-xl font-bold text-danger-700 font-mono">
-                {repaymentsQuery.isLoading ? (
+                {summaryQuery.isLoading ? (
                   <Skeleton className="h-7 w-32" />
                 ) : (
-                  formatRupiah(totalInterestYtd)
+                  formatRupiah(summary?.interestYtd ?? 0)
                 )}
               </p>
               <p className="text-[11px] text-neutral-600">

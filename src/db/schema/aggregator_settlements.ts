@@ -7,6 +7,7 @@ import {
   bigint,
   date,
   index,
+  uniqueIndex,
   check,
   jsonb,
   integer,
@@ -102,6 +103,18 @@ export const aggregatorSettlements = pgTable(
       t.outletId,
       t.channel,
       t.periodFrom,
+    ),
+    /* Audit AE-186 — backstop anti-dobel di level DB. generateCashlessForOutlet
+     * dedup-nya SELECT-then-INSERT (TOCTOU): klik "Generate" manual yang
+     * berbarengan dengan cron 01:05 WIB bisa sama-sama lolos cek → dua baris
+     * settlement (sourceId beda) → recordJournal tidak bisa mendedup →
+     * piutang di-clear dobel. Unique ini membuat pihak yang kalah race
+     * ditolak DB; insert memakai onConflictDoNothing. */
+    uniqueIndex("ux_aggregator_settlements_outlet_channel_window").on(
+      t.outletId,
+      t.channel,
+      t.periodFrom,
+      t.periodTo,
     ),
     check(
       "ck_aggregator_settlements_period_range",

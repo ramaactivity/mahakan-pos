@@ -146,6 +146,10 @@ async function executeQueuedHook(
     postJournalForIncomeCreate,
     postJournalForOpnameAdjustment,
     postJournalForPosRefund,
+    postJournalForExpenseDelete,
+    resyncJournalForExpenseUpdate,
+    postJournalForIncomeDelete,
+    resyncJournalForIncomeUpdate,
   } = await import("./hooks");
   switch (label) {
     case "pos_sale":
@@ -167,6 +171,23 @@ async function executeQueuedHook(
     case "income_create":
       return postJournalForIncomeCreate(
         args as unknown as Parameters<typeof postJournalForIncomeCreate>[0],
+      );
+    /* Audit AE-186 — hook sinkron edit/hapus expense & income. */
+    case "expense_void":
+      return postJournalForExpenseDelete(
+        args as unknown as Parameters<typeof postJournalForExpenseDelete>[0],
+      );
+    case "expense_resync":
+      return resyncJournalForExpenseUpdate(
+        args as unknown as Parameters<typeof resyncJournalForExpenseUpdate>[0],
+      );
+    case "income_void":
+      return postJournalForIncomeDelete(
+        args as unknown as Parameters<typeof postJournalForIncomeDelete>[0],
+      );
+    case "income_resync":
+      return resyncJournalForIncomeUpdate(
+        args as unknown as Parameters<typeof resyncJournalForIncomeUpdate>[0],
       );
     case "opname_adjustment":
       return postJournalForOpnameAdjustment(
@@ -257,6 +278,10 @@ async function retryPendingQueue(
           .where(
             and(
               eq(journalEntries.outletId, row.outletId),
+              /* Audit AE-186 — tanpa filter sourceType, baris pos_void bisa
+               * tertaut ke entry pos_sale (sourceId sama-sama transactionId).
+               * Pola sama dengan manual-retry di retry-queue.ts. */
+              sql`${journalEntries.sourceType} = ${row.sourceType}`,
               eq(journalEntries.sourceId, row.sourceId),
               sql`${journalEntries.status} <> 'reversed'`,
             ),
@@ -589,6 +614,10 @@ async function sweepMissingExpenses(
   const conds = [
     gte(expenses.expenseDate, sinceIso),
     eq(expenses.sourceType, "manual"),
+    /* Audit AE-186 — expense terhapus jangan dihitung "belum dijurnal";
+     * postJournalForExpenseCreate juga menolaknya (guard deletedAt), tanpa
+     * filter ini sapuan mencobanya ulang tiap jam selamanya. */
+    isNull(expenses.deletedAt),
   ];
   if (opts.outletId) conds.push(eq(expenses.outletId, opts.outletId));
 

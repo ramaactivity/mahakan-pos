@@ -210,6 +210,9 @@ export async function computeDistributionForPeriod(
       outletId: session.user.outletId,
       fromDate,
       toDate,
+      /* Audit AE-186 — tanpa ini, laba bulan yang sudah di-close terhitung
+       * ~Rp 0 (closing entry ikut menyapu) → distribusi diam-diam nol. */
+      excludeClosingEntries: true,
     });
     const stmt = buildIncomeStatement(
       balances,
