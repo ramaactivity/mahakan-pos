@@ -45,10 +45,12 @@ import {
   buildGeneralLedger,
   buildIncomeStatement,
   buildTrialBalance,
+  buildLedgerAccountSummary,
   buildValidationReport,
   type BalanceSheetReport,
   type CashFlowStatement,
   type GeneralLedgerReport,
+  type LedgerAccountSummaryReport,
   type IncomeStatementReport,
   type TrialBalanceReport,
   type ValidationReport,
@@ -1449,6 +1451,42 @@ export async function fetchTrialBalance(args: {
     toDate: args.toDate,
   });
   return ok(buildTrialBalance(balances));
+}
+
+/**
+ * Sesi AE-183 — ringkasan saldo semua akun untuk tampilan awal Buku Besar
+ * (sebelum owner memilih akun tertentu). Dua query: mutasi sebelum periode
+ * (jadi saldo awal) + mutasi dalam periode. Hasilnya nyambung persis dengan
+ * detail per akun karena memakai konvensi tanda yang sama.
+ */
+export async function fetchLedgerAccountSummary(args: {
+  fromDate: string;
+  toDate: string;
+}): Promise<ApiResult<LedgerAccountSummaryReport>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.report.view")) {
+    return fail("FORBIDDEN", "Tidak punya akses laporan akuntansi");
+  }
+
+  /* Saldo awal = seluruh mutasi sampai H-1 tanggal mulai. */
+  const dayBefore = new Date(`${args.fromDate}T00:00:00Z`);
+  dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+  const beforeIso = dayBefore.toISOString().slice(0, 10);
+
+  const [opening, movement] = await Promise.all([
+    getAccountBalances({
+      outletId: session.user.outletId,
+      fromDate: null,
+      toDate: beforeIso,
+    }),
+    getAccountBalances({
+      outletId: session.user.outletId,
+      fromDate: args.fromDate,
+      toDate: args.toDate,
+    }),
+  ]);
+
+  return ok(buildLedgerAccountSummary({ opening, movement }));
 }
 
 export async function fetchIncomeStatement(args: {

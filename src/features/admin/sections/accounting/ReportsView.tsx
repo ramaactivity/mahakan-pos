@@ -10,7 +10,9 @@ import {
   ShieldCheck,
   TrendingUp,
   AlertTriangle,
+  ArrowLeft,
   ArrowUpDown,
+  ChevronRight,
   XCircle,
 } from "lucide-react";
 import {
@@ -45,6 +47,7 @@ import {
   fetchCashFlowStatement,
   fetchGeneralLedger,
   fetchIncomeStatement,
+  fetchLedgerAccountSummary,
   fetchTrialBalance,
   fetchValidationReport,
 } from "@/features/accounting/actions";
@@ -56,6 +59,7 @@ import type {
   CashFlowStatement,
   GeneralLedgerReport,
   IncomeStatementReport,
+  LedgerAccountSummaryReport,
   TrialBalanceReport,
   ValidationReport,
 } from "@/features/accounting/reports";
@@ -1041,6 +1045,11 @@ function GeneralLedgerTab({
   );
   const [report, setReport] = useState<GeneralLedgerReport | null>(null);
   const [loading, setLoading] = useState(false);
+  /* Sesi AE-183 — ringkasan semua akun untuk tampilan sebelum pilih akun. */
+  const [summary, setSummary] = useState<LedgerAccountSummaryReport | null>(
+    null,
+  );
+  const [summaryLoading, setSummaryLoading] = useState(false);
 
   useEffect(() => {
     fetchAccounts({ isActive: true }).then((res) => {
@@ -1077,6 +1086,28 @@ function GeneralLedgerTab({
     if (!accountId) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
+  }, [accountId, range.from, range.to]);
+
+  /* Ringkasan hanya dimuat saat belum ada akun terpilih — tidak perlu
+   * dihitung ulang saat owner sedang membaca detail satu akun. */
+  useEffect(() => {
+    if (accountId) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSummaryLoading(true);
+    void (async () => {
+      const res = await fetchLedgerAccountSummary({
+        fromDate: range.from,
+        toDate: range.to,
+      });
+      if (cancelled) return;
+      setSummaryLoading(false);
+      if (res.ok) setSummary(res.data);
+      else toast.error(res.error.message);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [accountId, range.from, range.to]);
 
   const accountOptions: ComboboxOption[] = useMemo(
@@ -1117,17 +1148,38 @@ function GeneralLedgerTab({
           }}
         />
       </div>
-      {report && report.entries.length > 0 ? (
-        <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-2">
+        {/* Sesi AE-183 — jalan pulang ke ringkasan setelah masuk detail akun. */}
+        {accountId ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setAccountId(null);
+              setReport(null);
+            }}
+          >
+            <ArrowLeft className="size-4" /> Semua akun
+          </Button>
+        ) : (
+          <span />
+        )}
+        {report && report.entries.length > 0 ? (
           <Button variant="outline" size="sm" onClick={onExportCsv}>
             <Download className="size-4" /> Export CSV
           </Button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
       {!accountId ? (
-        <div className="rounded-md border border-dashed border-neutral-200 p-8 text-center text-sm text-neutral-500">
-          Pilih akun untuk lihat buku besar.
-        </div>
+        summaryLoading || !summary ? (
+          <Skeleton className="h-64 w-full" />
+        ) : (
+          <LedgerAccountSummaryTable
+            summary={summary}
+            range={range}
+            onPick={setAccountId}
+          />
+        )
       ) : loading || !report ? (
         <Skeleton className="h-64 w-full" />
       ) : (
@@ -1199,6 +1251,166 @@ function GeneralLedgerTab({
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Sesi AE-183 — tabel "total per akun" yang tampil di Buku Besar SEBELUM owner
+ * memilih akun. Permintaan owner: area kosong di bawah filter diisi rekap
+ * seperti Neraca, dan tiap baris bisa diklik untuk langsung membuka detail.
+ *
+ * Kolom sengaja dibuat menyambung dengan tampilan detail: Saldo awal →
+ * Debit/Kredit periode → Saldo akhir. Jadi angka di baris ringkasan sama
+ * persis dengan header + footer di halaman detail akun tersebut.
+ */
+function LedgerAccountSummaryTable({
+  summary,
+  range,
+  onPick,
+}: {
+  summary: LedgerAccountSummaryReport;
+  range: { from: string; to: string };
+  onPick: (accountId: string) => void;
+}) {
+  if (summary.groups.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-neutral-200 p-8 text-center text-sm text-neutral-500">
+        Belum ada akun bersaldo atau bermutasi di periode {range.from} s/d{" "}
+        {range.to}.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-neutral-600">
+          Total per akun — periode{" "}
+          <span className="font-medium">
+            {range.from} s/d {range.to}
+          </span>
+          . Klik baris untuk lihat rincian buku besarnya.
+        </p>
+        <Badge variant={summary.balanced ? "success" : "danger"}>
+          {summary.balanced
+            ? "Debit = Kredit"
+            : `Timpang ${formatRupiah(Math.abs(summary.totalDebit - summary.totalCredit))}`}
+        </Badge>
+      </div>
+
+      {/* Tablet Galaxy A7 Lite: tabel lebar harus bisa digeser sendiri,
+          bukan bikin seluruh halaman ikut geser. */}
+      <div className="overflow-x-auto rounded-md border border-neutral-200">
+        <table className="min-w-full text-xs">
+          <thead className="bg-neutral-50">
+            <tr>
+              <th className="px-2 py-1.5 text-left">Akun</th>
+              <th className="px-2 py-1.5 text-right">Saldo awal</th>
+              <th className="px-2 py-1.5 text-right">Debit</th>
+              <th className="px-2 py-1.5 text-right">Kredit</th>
+              <th className="px-2 py-1.5 text-right">Saldo akhir</th>
+              <th className="px-2 py-1.5" aria-label="Buka rincian" />
+            </tr>
+          </thead>
+          {summary.groups.map((g) => (
+            <tbody key={g.type} className="divide-y divide-neutral-100">
+              <tr className="bg-neutral-50/70">
+                <td
+                  colSpan={6}
+                  className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-600"
+                >
+                  {g.label}
+                </td>
+              </tr>
+              {g.rows.map((r) => (
+                <tr
+                  key={r.accountId}
+                  onClick={() => onPick(r.accountId)}
+                  className="cursor-pointer transition-colors hover:bg-mahakan-green-50/60"
+                >
+                  <td className="px-2 py-1.5">
+                    <span className="font-mono text-neutral-500">{r.code}</span>{" "}
+                    <span className="font-medium">{r.name}</span>
+                    {r.isContra ? (
+                      <span className="ml-1 text-[10px] text-neutral-400">
+                        (kontra)
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono text-neutral-500">
+                    {formatRupiah(r.openingBalance)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono">
+                    {r.debitTotal > 0 ? formatRupiah(r.debitTotal) : "—"}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono">
+                    {r.creditTotal > 0 ? formatRupiah(r.creditTotal) : "—"}
+                  </td>
+                  <td
+                    className={cn(
+                      "px-2 py-1.5 text-right font-mono font-semibold",
+                      r.closingBalance < 0 && "text-red-600",
+                    )}
+                  >
+                    {formatRupiah(r.closingBalance)}
+                  </td>
+                  <td className="px-1 py-1.5 text-right">
+                    {/* Tombol nyata supaya bisa dijangkau keyboard + pembaca
+                        layar; baris tetap bisa diklik untuk sentuh cepat. */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onPick(r.accountId);
+                      }}
+                      aria-label={`Lihat buku besar ${r.code} ${r.name}`}
+                      className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+                    >
+                      <ChevronRight className="size-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              <tr className="bg-neutral-50 font-medium">
+                <td className="px-2 py-1.5 text-right">Subtotal {g.label}</td>
+                <td />
+                <td className="px-2 py-1.5 text-right font-mono">
+                  {formatRupiah(g.totalDebit)}
+                </td>
+                <td className="px-2 py-1.5 text-right font-mono">
+                  {formatRupiah(g.totalCredit)}
+                </td>
+                <td className="px-2 py-1.5 text-right font-mono">
+                  {formatRupiah(g.totalClosing)}
+                </td>
+                <td />
+              </tr>
+            </tbody>
+          ))}
+          <tfoot className="bg-neutral-100">
+            <tr>
+              <td className="px-2 py-2 text-right font-semibold" colSpan={2}>
+                Total mutasi periode
+              </td>
+              <td className="px-2 py-2 text-right font-mono font-bold">
+                {formatRupiah(summary.totalDebit)}
+              </td>
+              <td className="px-2 py-2 text-right font-mono font-bold">
+                {formatRupiah(summary.totalCredit)}
+              </td>
+              <td colSpan={2} />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {summary.hiddenEmptyAccounts > 0 ? (
+        <p className="text-xs text-neutral-500">
+          {summary.hiddenEmptyAccounts} akun lain disembunyikan karena tidak
+          punya saldo maupun mutasi di periode ini.
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -102,6 +102,164 @@ export function buildTrialBalance(
 }
 
 // ============================================================
+// Ringkasan Saldo per Akun (Buku Besar — tampilan sebelum pilih akun)
+// ============================================================
+
+/**
+ * Sesi AE-183 — permintaan owner: sebelum memilih akun di Buku Besar, area
+ * kosong di bawah filter menampilkan TOTAL PER AKUN seperti Neraca, dan tiap
+ * baris bisa diklik untuk langsung membuka detail buku besar akun itu.
+ *
+ * Beda dengan Trial Balance: di sini tiap akun ditampilkan lengkap dengan
+ * saldo awal → mutasi (debit/kredit) → saldo akhir, jadi angkanya nyambung
+ * persis dengan tampilan detail per akun. Trial Balance hanya menampilkan
+ * saldo bersih satu sisi tanpa saldo awal.
+ */
+export type LedgerSummaryRow = {
+  accountId: string;
+  code: string;
+  name: string;
+  type: AccountType;
+  normalBalance: NormalBalance;
+  isContra: boolean;
+  /** Saldo sebelum periode, sudah bertanda sesuai normalBalance. */
+  openingBalance: number;
+  /** Mutasi dalam periode. */
+  debitTotal: number;
+  creditTotal: number;
+  /** openingBalance + mutasi (bertanda sesuai normalBalance). */
+  closingBalance: number;
+};
+
+export type LedgerSummaryGroup = {
+  type: AccountType;
+  label: string;
+  rows: LedgerSummaryRow[];
+  totalDebit: number;
+  totalCredit: number;
+  totalClosing: number;
+};
+
+export type LedgerAccountSummaryReport = {
+  groups: LedgerSummaryGroup[];
+  totalDebit: number;
+  totalCredit: number;
+  /** True kalau total debit === total kredit (kontrol keseimbangan mutasi). */
+  balanced: boolean;
+  /** Jumlah akun aktif yang disembunyikan karena nol total (tanpa mutasi & tanpa saldo). */
+  hiddenEmptyAccounts: number;
+};
+
+const LEDGER_GROUP_ORDER: AccountType[] = [
+  "asset",
+  "liability",
+  "equity",
+  "revenue",
+  "cogs",
+  "expense",
+];
+
+const LEDGER_GROUP_LABEL: Record<AccountType, string> = {
+  asset: "Aset",
+  liability: "Kewajiban",
+  equity: "Ekuitas",
+  revenue: "Pendapatan",
+  cogs: "Harga Pokok Penjualan",
+  expense: "Beban",
+};
+
+/** Mutasi bertanda sesuai sisi normal akun (mirror buildGeneralLedger). */
+function signedMovement(
+  normalBalance: NormalBalance,
+  debit: number,
+  credit: number,
+): number {
+  return normalBalance === "debit" ? debit - credit : credit - debit;
+}
+
+export function buildLedgerAccountSummary(args: {
+  /** Mutasi SEBELUM tanggal mulai — dipakai sebagai saldo awal. */
+  opening: AccountBalanceRow[];
+  /** Mutasi DALAM periode. */
+  movement: AccountBalanceRow[];
+}): LedgerAccountSummaryReport {
+  const openingByAccount = new Map<string, number>();
+  for (const o of args.opening) {
+    openingByAccount.set(
+      o.accountId,
+      signedMovement(o.normalBalance, o.debitTotal, o.creditTotal),
+    );
+  }
+
+  const byType = new Map<AccountType, LedgerSummaryRow[]>();
+  let totalDebit = 0;
+  let totalCredit = 0;
+  let hiddenEmptyAccounts = 0;
+
+  for (const m of args.movement) {
+    const openingBalance = openingByAccount.get(m.accountId) ?? 0;
+    const closingBalance =
+      openingBalance +
+      signedMovement(m.normalBalance, m.debitTotal, m.creditTotal);
+
+    /* Sembunyikan akun yang benar-benar kosong (tidak ada saldo awal, tidak
+     * ada mutasi, saldo akhir nol) supaya daftar tidak penuh baris nol —
+     * jumlahnya tetap dilaporkan lewat hiddenEmptyAccounts. */
+    if (
+      openingBalance === 0 &&
+      m.debitTotal === 0 &&
+      m.creditTotal === 0 &&
+      closingBalance === 0
+    ) {
+      hiddenEmptyAccounts += 1;
+      continue;
+    }
+
+    const row: LedgerSummaryRow = {
+      accountId: m.accountId,
+      code: m.code,
+      name: m.name,
+      type: m.type,
+      normalBalance: m.normalBalance,
+      isContra: m.isContra,
+      openingBalance,
+      debitTotal: m.debitTotal,
+      creditTotal: m.creditTotal,
+      closingBalance,
+    };
+    const bucket = byType.get(m.type);
+    if (bucket) bucket.push(row);
+    else byType.set(m.type, [row]);
+
+    totalDebit += m.debitTotal;
+    totalCredit += m.creditTotal;
+  }
+
+  const groups: LedgerSummaryGroup[] = [];
+  for (const type of LEDGER_GROUP_ORDER) {
+    const rows = byType.get(type);
+    if (!rows || rows.length === 0) continue;
+    rows.sort((a, b) => a.code.localeCompare(b.code));
+    groups.push({
+      type,
+      label: LEDGER_GROUP_LABEL[type],
+      rows,
+      totalDebit: rows.reduce((s, r) => s + r.debitTotal, 0),
+      totalCredit: rows.reduce((s, r) => s + r.creditTotal, 0),
+      totalClosing: rows.reduce((s, r) => s + r.closingBalance, 0),
+    });
+  }
+
+  return {
+    groups,
+    totalDebit,
+    totalCredit,
+    balanced: totalDebit === totalCredit,
+    hiddenEmptyAccounts,
+  };
+}
+
+// ============================================================
 // Income Statement (Laba Rugi)
 // ============================================================
 
