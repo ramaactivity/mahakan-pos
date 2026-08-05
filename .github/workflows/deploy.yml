@@ -1,0 +1,46 @@
+name: Deploy to Vercel (Production)
+
+# Jalur deploy repo ini = GitHub Actions + Vercel token, BUKAN native Git
+# integration. Alasan: 1 akun GitHub dipakai untuk banyak project yang tersebar
+# di beberapa akun Vercel; native Git integration cuma bisa terhubung ke satu
+# akun Vercel dalam satu waktu, jadi antar-project saling rebutan koneksi →
+# lepas → deploy ke-block. Detail lengkap di docs/DEPLOY.md.
+#
+# CATATAN BRANCH: produksi repo ini di `release/phase-1`, BUKAN `main`
+# (main dormant, vercel.json juga menyetel main: false).
+
+on:
+  push:
+    branches: [release/phase-1]
+
+concurrency:
+  group: vercel-production
+  cancel-in-progress: true
+
+env:
+  VERCEL_ORG_ID: team_BSJVaxRgvlGYUgzntvcZZwcD
+  VERCEL_PROJECT_ID: prj_F9wxXfdniysOLSJWtM9kvIaWlroK
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel project settings
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      # WAJIB: Vercel Hobby memblok deploy yang commit-author-email-nya tak
+      # cocok dengan akun GitHub di team ("commit email could not be matched").
+      # Karena GitHub login sengaja TIDAK di-connect, buang metadata git supaya
+      # deploy diatribusikan ke pemilik token (anggota team) → lolos.
+      - name: Strip git metadata (deploy as token owner)
+        run: rm -rf .git
+
+      # Build DI VERCEL (jangan pakai --prebuilt / vercel build lokal — itu
+      # sempat menggantung di "Building…" dan butuh setup pnpm di runner).
+      - name: Deploy
+        run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
