@@ -78,6 +78,34 @@ function pad2(n: number): string {
 }
 
 /**
+ * Sesi AE-185 — format nomor jurnal, dipakai bersama oleh `recordJournal`
+ * (saat entry dibuat) dan `updateJournalEntryDate` (saat entry pindah bulan
+ * sehingga nomornya harus diterbitkan ulang). Dijadikan satu fungsi supaya
+ * kedua jalur tidak bisa menghasilkan format yang berbeda.
+ */
+export function formatJournalEntryNumber(
+  year: number,
+  month: number,
+  seq: number,
+): string {
+  return `JE-${year}${pad2(month)}-${pad4(seq)}`;
+}
+
+/** Kunci antrean nomor per (outlet, periode) — dipakai advisory lock. */
+export function journalSeqLockKey(
+  outletId: string,
+  year: number,
+  month: number,
+): string {
+  return `je-seq-${outletId}-${year}-${pad2(month)}`;
+}
+
+/** Apakah dua tanggal ISO berada di bulan kalender yang berbeda? */
+export function isDifferentPeriod(aIso: string, bIso: string): boolean {
+  return aIso.slice(0, 7) !== bIso.slice(0, 7);
+}
+
+/**
  * Resolve account refs in lines. Each line must have accountId OR accountCode.
  * Returns lines with accountId populated. Throws "ACCOUNT_NOT_FOUND" or
  * "ACCOUNT_INACTIVE" on resolve failure.
@@ -262,7 +290,7 @@ export async function recordJournal(
 
     // Advisory lock for serial entry number gen per (outlet, period).
     await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext(${`je-seq-${input.outletId}-${year}-${pad2(month)}`}))`,
+      sql`select pg_advisory_xact_lock(hashtext(${journalSeqLockKey(input.outletId, year, month)}))`,
     );
 
     /* Sesi AE-76 — RACE FIX: re-check existence AFTER lock acquired. Tanpa
@@ -316,7 +344,7 @@ export async function recordJournal(
       .where(eq(journalEntries.periodId, periodRow.id));
 
     const seq = maxSeq + 1;
-    const entryNumber = `JE-${year}${pad2(month)}-${pad4(seq)}`;
+    const entryNumber = formatJournalEntryNumber(year, month, seq);
 
     // Insert header
     const [insertedEntry] = await tx

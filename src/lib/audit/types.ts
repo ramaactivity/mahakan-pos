@@ -288,6 +288,9 @@ export const AUDIT_EVENT_TYPES = [
   "journal_entry.post",
   "journal_entry.update_draft",
   "journal_entry.reverse",
+  /* Sesi AE-185 — ubah tanggal jurnal yang sudah posted tanpa reverse.
+   * Payload menyimpan tanggal & nomor lama supaya jejaknya utuh. */
+  "journal_entry.date_changed",
   /* Sesi AE-63 phase4 — staff finance request: edit/hapus draft manual.
    * Posted entries tetap hanya reverse (audit trail). */
   "journal_entry.delete",

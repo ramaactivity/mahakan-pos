@@ -38,7 +38,14 @@ import {
   mapPeriodClose,
   type AccountBalance as PeriodCloseAccountBalance,
 } from "./mapping";
-import { recordJournal, resolveAccounts, validateLines } from "./posting";
+import {
+  formatJournalEntryNumber,
+  isDifferentPeriod,
+  journalSeqLockKey,
+  recordJournal,
+  resolveAccounts,
+  validateLines,
+} from "./posting";
 import {
   buildBalanceSheet,
   buildCashFlowStatement,
@@ -1072,7 +1079,13 @@ export async function saveManualJournal(
 export async function reverseJournalEntry(
   entryId: string,
   reason: string,
-): Promise<ApiResult<{ id: string; reverseEntryId: string }>> {
+): Promise<
+  ApiResult<{
+    id: string;
+    reverseEntryId: string;
+    reverseEntryNumber: string;
+  }>
+> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "accounting.journal.reverse")) {
     return fail("FORBIDDEN", "Hanya Owner yang dapat reverse entry");
@@ -1087,6 +1100,26 @@ export async function reverseJournalEntry(
     return fail("INVALID_STATE", `Entry status ${original.status}, tidak bisa di-reverse`);
   }
 
+  /* Sesi AE-185 — TOLAK kalau periodenya sudah dikunci. Periode terkunci
+   * artinya laporannya sudah difinalkan; reverse akan mengeluarkan entry ini
+   * dari total periode tersebut secara diam-diam. Sebelumnya tidak ada
+   * penjagaan ini sama sekali. */
+  const [origPeriod] = await db
+    .select({
+      status: accountingPeriods.status,
+      year: accountingPeriods.periodYear,
+      month: accountingPeriods.periodMonth,
+    })
+    .from(accountingPeriods)
+    .where(eq(accountingPeriods.id, original.periodId))
+    .limit(1);
+  if (origPeriod?.status === "locked") {
+    return fail(
+      "PERIOD_LOCKED",
+      `Periode ${origPeriod.year}-${String(origPeriod.month).padStart(2, "0")} sudah dikunci — buka kuncinya dulu di Akuntansi → Periode sebelum reverse.`,
+    );
+  }
+
   const counterLines = original.lines.map((l) => ({
     accountId: l.accountId,
     debit: Number(l.credit),
@@ -1098,7 +1131,13 @@ export async function reverseJournalEntry(
   try {
     reverseResult = await recordJournal({
       outletId: session.user.outletId,
-      entryDate: new Date().toISOString().slice(0, 10),
+      /* Sesi AE-185 — entry lawan mengikuti tanggal ASLI, bukan hari ini.
+       * Dulu pakai hari ini: reverse jurnal Mei menaruh lawannya di bulan
+       * berjalan, jadi jumlah entry dua periode ikut bergeser dan jejaknya
+       * susah dibaca. Karena keduanya ditandai 'reversed' (pair-void), saldo
+       * tetap nol di mana pun ditaruh — jadi menaruhnya sekandang dengan yang
+       * dibalik jelas lebih rapi. */
+      entryDate: String(original.entryDate),
       description: `Reverse ${original.entryNumber} — ${reason}`,
       sourceType: original.sourceType,
       // Use distinct sourceId to avoid idempotency collision (append "-rev")
@@ -1108,32 +1147,55 @@ export async function reverseJournalEntry(
       metadata: { reversesEntryId: original.id, reason },
     });
   } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.startsWith("PERIOD_LOCKED")) {
+      return fail(
+        "PERIOD_LOCKED",
+        `Periode ${msg.split(":")[1] ?? ""} sudah dikunci — buka kuncinya dulu di Akuntansi → Periode.`,
+      );
+    }
     return fail("DB_ERROR", logAndSanitize(e, "accounting", "Operasi database gagal"));
   }
 
-  // Mark original
-  await db
-    .update(journalEntries)
-    .set({
-      status: "reversed",
-      reversedByEntryId: reverseResult.entryId,
-      reverseReason: reason,
-      updatedAt: new Date(),
-    })
-    .where(eq(journalEntries.id, entryId));
+  /* Sesi AE-185 — kedua penandaan dalam SATU transaksi. Dulu dua update
+   * terpisah: kalau yang pertama sukses lalu prosesnya mati (persis kasus
+   * instance serverless dibekukan di sesi AE-182), hasilnya original
+   * 'reversed' tapi lawannya masih 'posted' → buku besar jadi minus sebesar
+   * entry aslinya. Satu transaksi menutup celah itu.
+   *
+   * Pair-void: KEDUA sisi ditandai 'reversed' supaya sama-sama keluar dari
+   * perhitungan saldo (net nol). Kalau cuma satu, netnya jadi -original. */
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(journalEntries)
+        .set({
+          status: "reversed",
+          reversedByEntryId: reverseResult.entryId,
+          reverseReason: reason,
+          updatedAt: new Date(),
+        })
+        .where(eq(journalEntries.id, entryId));
 
-  /* Mark counter-entry sebagai 'reversed' juga (pair void). Tanpa ini,
-   * counter status='posted' tetap masuk getAccountBalances sum sementara
-   * original di-exclude → net = -original (ledger salah arah). Dengan
-   * pair-void, kedua sisi excluded → net = 0 (akuntansi benar). */
-  await db
-    .update(journalEntries)
-    .set({
-      reversesEntryId: entryId,
-      status: "reversed",
-      updatedAt: new Date(),
-    })
-    .where(eq(journalEntries.id, reverseResult.entryId));
+      await tx
+        .update(journalEntries)
+        .set({
+          reversesEntryId: entryId,
+          status: "reversed",
+          updatedAt: new Date(),
+        })
+        .where(eq(journalEntries.id, reverseResult.entryId));
+    });
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(
+        e,
+        "accounting",
+        `Entry lawan ${reverseResult.entryNumber} sudah dibuat tapi penandaan gagal — jalankan reverse ulang atau perbaiki manual.`,
+      ),
+    );
+  }
 
   await logAudit({
     eventType: "journal_entry.reverse",
@@ -1141,12 +1203,229 @@ export async function reverseJournalEntry(
     entityType: "journal_entry",
     entityId: entryId,
     payload: {
-      summary: `Reverse ${original.entryNumber} — ${reason}`,
-      context: { reverseEntryId: reverseResult.entryId, reason },
+      summary: `Reverse ${original.entryNumber} → ${reverseResult.entryNumber} — ${reason}`,
+      context: {
+        reverseEntryId: reverseResult.entryId,
+        reverseEntryNumber: reverseResult.entryNumber,
+        entryDate: String(original.entryDate),
+        reason,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
     },
   });
 
-  return ok({ id: entryId, reverseEntryId: reverseResult.entryId });
+  return ok({
+    id: entryId,
+    reverseEntryId: reverseResult.entryId,
+    reverseEntryNumber: reverseResult.entryNumber,
+  });
+}
+
+/**
+ * Sesi AE-185 — UBAH TANGGAL jurnal yang sudah posted, tanpa harus reverse.
+ *
+ * Permintaan owner: salah ketik tanggal itu kesalahan sepele, tapi selama ini
+ * satu-satunya jalan adalah reverse lalu input ulang — meninggalkan dua entry
+ * sampah dan nomor jurnal terbuang. Sekarang tanggalnya bisa dikoreksi
+ * langsung, dengan jejak audit yang utuh.
+ *
+ * Yang dijaga:
+ *  - Periode ASAL maupun TUJUAN tidak boleh terkunci. Periode terkunci artinya
+ *    laporannya sudah difinalkan; memindahkan entry keluar/masuk diam-diam
+ *    akan mengubah laporan yang sudah dikunci.
+ *  - Entry berstatus 'reversed' tidak bisa diubah (sudah jadi arsip).
+ *  - Kalau pindah BULAN, nomor jurnal diterbitkan ulang mengikuti periode baru
+ *    (formatnya JE-YYYYMM-NNNN — kalau tidak, nomornya berbohong soal periode).
+ *    Nomor & tanggal lama disimpan di metadata + audit log.
+ *  - Seluruhnya dalam satu transaksi + advisory lock yang sama dengan
+ *    recordJournal, supaya nomor tidak tabrakan dengan entry yang dibuat
+ *    bersamaan.
+ *
+ * Saldo akun TIDAK berubah — hanya periode/tanggalnya. Yang bergeser adalah
+ * laporan bulanan (Laba Rugi bulan asal & tujuan).
+ */
+export async function updateJournalEntryDate(input: {
+  entryId: string;
+  newDate: string;
+  reason: string;
+}): Promise<
+  ApiResult<{
+    id: string;
+    entryNumber: string;
+    previousEntryNumber: string;
+    previousDate: string;
+    renumbered: boolean;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.journal.post")) {
+    return fail("FORBIDDEN", "Hanya Owner yang dapat mengubah tanggal jurnal");
+  }
+  const newDate = input.newDate?.trim() ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+    return fail("VALIDATION", "Tanggal harus format YYYY-MM-DD");
+  }
+  const reason = input.reason?.trim() ?? "";
+  if (reason.length < 5) {
+    return fail("VALIDATION", "Alasan perubahan minimal 5 karakter");
+  }
+
+  const original = await getJournalEntryById(session.user.outletId, input.entryId);
+  if (!original) return fail("NOT_FOUND", "Entry tidak ditemukan");
+  if (original.status === "reversed") {
+    return fail(
+      "INVALID_STATE",
+      "Entry sudah di-reverse — tanggalnya tidak bisa diubah lagi.",
+    );
+  }
+  const previousDate = String(original.entryDate);
+  if (previousDate === newDate) {
+    return fail("NO_CHANGE", "Tanggal barunya sama dengan yang sekarang.");
+  }
+
+  const [oldY, oldM] = previousDate.split("-").map(Number);
+  const [newY, newM] = newDate.split("-").map(Number);
+  const periodChanged = isDifferentPeriod(previousDate, newDate);
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      /* Periode ASAL — tidak boleh terkunci. */
+      const [oldPeriod] = await tx
+        .select({ status: accountingPeriods.status })
+        .from(accountingPeriods)
+        .where(eq(accountingPeriods.id, original.periodId))
+        .limit(1);
+      if (oldPeriod?.status === "locked") {
+        throw new Error(`LOCKED_SOURCE:${oldY}-${String(oldM).padStart(2, "0")}`);
+      }
+
+      /* Periode TUJUAN — cari, buat kalau belum ada, tolak kalau terkunci. */
+      let [targetPeriod] = await tx
+        .select({
+          id: accountingPeriods.id,
+          status: accountingPeriods.status,
+        })
+        .from(accountingPeriods)
+        .where(
+          and(
+            eq(accountingPeriods.outletId, session.user.outletId),
+            eq(accountingPeriods.periodYear, newY),
+            eq(accountingPeriods.periodMonth, newM),
+          ),
+        )
+        .limit(1);
+      if (!targetPeriod) {
+        [targetPeriod] = await tx
+          .insert(accountingPeriods)
+          .values({
+            outletId: session.user.outletId,
+            periodYear: newY,
+            periodMonth: newM,
+            status: "open",
+          })
+          .returning({
+            id: accountingPeriods.id,
+            status: accountingPeriods.status,
+          });
+      }
+      if (targetPeriod.status === "locked") {
+        throw new Error(`LOCKED_TARGET:${newY}-${String(newM).padStart(2, "0")}`);
+      }
+
+      let entryNumber = original.entryNumber;
+      if (periodChanged) {
+        /* Kunci urutan nomor untuk periode tujuan — pola sama persis dengan
+         * recordJournal supaya tidak tabrakan dengan entry yang lahir
+         * bersamaan. */
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${journalSeqLockKey(session.user.outletId, newY, newM)}))`,
+        );
+        const [{ maxSeq }] = await tx
+          .select({
+            maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${journalEntries.entryNumber} FROM '-([0-9]+)$') AS INT)), 0)::int`,
+          })
+          .from(journalEntries)
+          .where(eq(journalEntries.periodId, targetPeriod.id));
+        entryNumber = formatJournalEntryNumber(newY, newM, maxSeq + 1);
+      }
+
+      const metadata = {
+        ...((original.metadata as Record<string, unknown> | null) ?? {}),
+        dateChangedFrom: previousDate,
+        dateChangedAt: new Date().toISOString(),
+        dateChangeReason: reason,
+        ...(periodChanged
+          ? { previousEntryNumber: original.entryNumber }
+          : {}),
+      };
+
+      await tx
+        .update(journalEntries)
+        .set({
+          entryDate: newDate,
+          periodId: targetPeriod.id,
+          entryNumber,
+          metadata,
+          updatedAt: new Date(),
+        })
+        .where(eq(journalEntries.id, input.entryId));
+
+      return { entryNumber };
+    });
+
+    await logAudit({
+      eventType: "journal_entry.date_changed",
+      userId: session.user.id,
+      entityType: "journal_entry",
+      entityId: input.entryId,
+      payload: {
+        summary: `Tanggal ${original.entryNumber} diubah ${previousDate} → ${newDate}${
+          periodChanged ? ` (nomor jadi ${result.entryNumber})` : ""
+        } — ${reason}`,
+        context: {
+          previousDate,
+          newDate,
+          previousEntryNumber: original.entryNumber,
+          entryNumber: result.entryNumber,
+          periodChanged,
+          reason,
+        },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    });
+
+    return ok({
+      id: input.entryId,
+      entryNumber: result.entryNumber,
+      previousEntryNumber: original.entryNumber,
+      previousDate,
+      renumbered: periodChanged,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.startsWith("LOCKED_SOURCE:")) {
+      return fail(
+        "PERIOD_LOCKED",
+        `Periode asal ${msg.split(":")[1]} sudah dikunci — buka kuncinya dulu di Akuntansi → Periode.`,
+      );
+    }
+    if (msg.startsWith("LOCKED_TARGET:")) {
+      return fail(
+        "PERIOD_LOCKED",
+        `Periode tujuan ${msg.split(":")[1]} sudah dikunci — pilih tanggal lain atau buka kuncinya dulu.`,
+      );
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "accounting", "Gagal mengubah tanggal jurnal"),
+    );
+  }
 }
 
 /**

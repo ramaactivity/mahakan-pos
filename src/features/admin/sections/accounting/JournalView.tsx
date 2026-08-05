@@ -7,6 +7,7 @@ import {
   Filter,
   Info,
   Loader2,
+  CalendarDays,
   Pencil,
   Plus,
   RotateCcw,
@@ -17,8 +18,10 @@ import {
 import {
   Badge,
   Button,
+  DatePicker,
   DateRangePicker,
   Input,
+  Modal,
   Select,
   Skeleton,
   toast,
@@ -27,6 +30,7 @@ import {
   deleteDraftJournalEntry,
   fetchJournalEntries,
   reverseJournalEntry,
+  updateJournalEntryDate,
 } from "@/features/accounting/actions";
 import type {
   JournalEntryStatus,
@@ -110,6 +114,18 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
   const canDraft = hasPermission(viewerRole, "accounting.journal.draft");
   const canPost = hasPermission(viewerRole, "accounting.journal.post");
   const canReverse = hasPermission(viewerRole, "accounting.journal.reverse");
+  /* Sesi AE-185 — ubah tanggal memakai hak posting jurnal (owner). */
+  const canEditDate = hasPermission(viewerRole, "accounting.journal.post");
+
+  const [reverseTarget, setReverseTarget] =
+    useState<JournalEntryWithLines | null>(null);
+  const [reverseReason, setReverseReason] = useState("");
+  const [dateTarget, setDateTarget] = useState<JournalEntryWithLines | null>(
+    null,
+  );
+  const [newDate, setNewDate] = useState("");
+  const [dateReason, setDateReason] = useState("");
+  const [busy, setBusy] = useState(false);
 
   // Sesi AE-62c — auto-journal flag awareness untuk empty state CTA
   const queryClient = useQueryClient();
@@ -202,17 +218,58 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
     );
   }, [rows, searchQuery]);
 
-  async function onReverse(entry: JournalEntryWithLines) {
-    const reason = prompt(
-      `Alasan reverse ${entry.entryNumber}? (min 10 karakter)`,
-    );
-    if (!reason || reason.trim().length < 10) {
-      if (reason !== null) toast.error("Alasan minimal 10 karakter");
+  /* Sesi AE-185 — reverse pindah dari prompt() ke modal: alasan wajib itu
+   * jejak audit, jadi layak diberi ruang + peringatan yang jelas soal apa
+   * yang akan terjadi. prompt() juga tidak bisa dipakai di tablet POS. */
+  async function onReverseSubmit() {
+    if (!reverseTarget || busy) return;
+    const alasan = reverseReason.trim();
+    if (alasan.length < 10) {
+      toast.error("Alasan minimal 10 karakter");
       return;
     }
-    const res = await reverseJournalEntry(entry.id, reason.trim());
+    setBusy(true);
+    const res = await reverseJournalEntry(reverseTarget.id, alasan);
+    setBusy(false);
     if (res.ok) {
-      toast.success(`Entry ${entry.entryNumber} ter-reverse`);
+      toast.success(
+        `${reverseTarget.entryNumber} di-reverse oleh ${res.data.reverseEntryNumber}`,
+      );
+      setReverseTarget(null);
+      setReverseReason("");
+      void load();
+    } else {
+      toast.error(res.error.message);
+    }
+  }
+
+  /* Sesi AE-185 — koreksi tanggal tanpa reverse. */
+  async function onDateSubmit() {
+    if (!dateTarget || busy) return;
+    const alasan = dateReason.trim();
+    if (!newDate) {
+      toast.error("Pilih tanggal barunya dulu");
+      return;
+    }
+    if (alasan.length < 5) {
+      toast.error("Alasan minimal 5 karakter");
+      return;
+    }
+    setBusy(true);
+    const res = await updateJournalEntryDate({
+      entryId: dateTarget.id,
+      newDate,
+      reason: alasan,
+    });
+    setBusy(false);
+    if (res.ok) {
+      toast.success(
+        res.data.renumbered
+          ? `Tanggal diubah — nomor jurnal jadi ${res.data.entryNumber} (dulu ${res.data.previousEntryNumber})`
+          : `Tanggal ${res.data.entryNumber} diubah ke ${newDate}`,
+      );
+      setDateTarget(null);
+      setDateReason("");
       void load();
     } else {
       toast.error(res.error.message);
@@ -449,11 +506,140 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
           canReverse={canReverse}
           canDeleteDraft={canDraft}
           canEditDraft={canDraft}
-          onReverse={onReverse}
+          canEditDate={canEditDate}
+          onReverse={(e) => {
+            setReverseTarget(e);
+            setReverseReason("");
+          }}
+          onEditDate={(e) => {
+            setDateTarget(e);
+            setNewDate(String(e.entryDate));
+            setDateReason("");
+          }}
           onDeleteDraft={onDeleteDraft}
           onEditDraft={setEditEntry}
         />
       )}
+
+      {/* Sesi AE-185 — ubah tanggal jurnal tanpa reverse. */}
+      <Modal
+        open={dateTarget !== null}
+        onClose={() => setDateTarget(null)}
+        title="Ubah Tanggal Jurnal"
+        description={
+          dateTarget
+            ? `${dateTarget.entryNumber} · ${dateTarget.description}`
+            : ""
+        }
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setDateTarget(null)}
+              disabled={busy}
+            >
+              Batal
+            </Button>
+            <Button onClick={onDateSubmit} loading={busy}>
+              Simpan Tanggal
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-xs text-neutral-600">
+            Tanggal sekarang:{" "}
+            <span className="font-mono font-medium">
+              {dateTarget ? String(dateTarget.entryDate) : ""}
+            </span>
+          </p>
+          <DatePicker
+            label="Tanggal baru"
+            value={newDate}
+            onChange={(v) => setNewDate(v ?? "")}
+          />
+          <Input
+            label="Alasan perubahan"
+            value={dateReason}
+            onChange={(e) => setDateReason(e.target.value)}
+            placeholder="mis. salah ketik, seharusnya tanggal transaksi"
+            hint="Minimal 5 karakter — tersimpan di Audit Log."
+          />
+          {/* Peringatan pindah bulan: nomor jurnal ikut diterbitkan ulang. */}
+          {dateTarget &&
+          newDate &&
+          String(dateTarget.entryDate).slice(0, 7) !== newDate.slice(0, 7) ? (
+            <p className="rounded-md bg-warning-100/50 p-2 text-xs text-warning-700">
+              Pindah bulan: nomor jurnal akan diterbitkan ulang mengikuti
+              periode baru (nomor lama disimpan di riwayat). Laporan bulan asal
+              dan bulan tujuan sama-sama berubah.
+            </p>
+          ) : null}
+          {dateTarget && dateTarget.sourceType !== "manual" ? (
+            <p className="rounded-md bg-neutral-100 p-2 text-xs text-neutral-600">
+              Jurnal ini dibuat otomatis dari{" "}
+              <span className="font-mono">{dateTarget.sourceType}</span>.
+              Mengubah tanggalnya membuat jurnal tidak lagi sejalan dengan
+              tanggal transaksi sumbernya — pastikan itu memang yang diinginkan.
+            </p>
+          ) : null}
+          <p className="rounded-md bg-mahakan-green-100/40 p-2 text-xs text-mahakan-green-900">
+            Saldo akun tidak berubah — hanya periodenya yang bergeser. Tidak
+            ada entry baru yang dibuat, jadi tidak perlu reverse.
+          </p>
+        </div>
+      </Modal>
+
+      {/* Sesi AE-185 — reverse: dulu pakai prompt() bawaan browser. */}
+      <Modal
+        open={reverseTarget !== null}
+        onClose={() => setReverseTarget(null)}
+        title="Reverse Jurnal"
+        description={
+          reverseTarget
+            ? `${reverseTarget.entryNumber} · ${reverseTarget.description}`
+            : ""
+        }
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setReverseTarget(null)}
+              disabled={busy}
+            >
+              Batal
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={onReverseSubmit}
+              loading={busy}
+            >
+              Reverse
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Input
+            label="Alasan reverse"
+            value={reverseReason}
+            onChange={(e) => setReverseReason(e.target.value)}
+            placeholder="mis. dobel input, nominalnya keliru"
+            hint="Minimal 10 karakter — tersimpan di Audit Log."
+          />
+          <p className="rounded-md bg-warning-100/50 p-2 text-xs text-warning-700">
+            Sistem membuat entry lawan bertanggal sama, lalu keduanya ditandai
+            <em> reversed</em> sehingga saling meniadakan (saldo jadi nol).
+            Entry aslinya tetap tersimpan sebagai jejak audit.
+          </p>
+          <p className="text-xs text-neutral-600">
+            Kalau yang salah cuma tanggalnya, tidak perlu reverse — pakai
+            tombol kalender untuk mengoreksi tanggal langsung.
+          </p>
+        </div>
+      </Modal>
 
       {createOpen ? (
         <JournalEntryModal
@@ -488,7 +674,9 @@ function RowList({
   canReverse,
   canDeleteDraft,
   canEditDraft,
+  canEditDate,
   onReverse,
+  onEditDate,
   onDeleteDraft,
   onEditDraft,
 }: {
@@ -496,7 +684,9 @@ function RowList({
   canReverse: boolean;
   canDeleteDraft: boolean;
   canEditDraft: boolean;
+  canEditDate: boolean;
   onReverse: (e: JournalEntryWithLines) => void;
+  onEditDate: (e: JournalEntryWithLines) => void;
   onDeleteDraft: (e: JournalEntryWithLines) => void;
   onEditDraft: (e: JournalEntryWithLines) => void;
 }) {
@@ -528,6 +718,22 @@ function RowList({
               <span className="font-mono text-sm font-medium text-neutral-900">
                 {formatRupiah(totalDebit)}
               </span>
+              {/* Sesi AE-185 — koreksi tanggal tanpa perlu reverse. Tersedia
+                  untuk draft & posted; entry yang sudah di-reverse tidak. */}
+              {canEditDate && entry.status !== "reversed" ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onEditDate(entry);
+                  }}
+                  className="inline-flex items-center gap-1 rounded p-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-mahakan-green-700"
+                  aria-label={`Ubah tanggal ${entry.entryNumber}`}
+                  title="Ubah tanggal jurnal (tanpa reverse)"
+                >
+                  <CalendarDays className="size-3.5" />
+                </button>
+              ) : null}
               {canReverse && entry.status === "posted" ? (
                 <button
                   type="button"
