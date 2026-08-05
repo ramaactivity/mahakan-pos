@@ -122,19 +122,6 @@ export function TopTrackerView() {
     return items.filter((i) => i.daysToDue !== null && i.daysToDue < 0);
   }, [items, filter, dueFilterActive]);
 
-  const totals = useMemo(() => {
-    let totalOverdue = 0;
-    let totalDueSoon = 0;
-    for (const i of items) {
-      if (i.status !== "pending_payment") continue;
-      if (i.daysToDue !== null && i.daysToDue < 0)
-        totalOverdue += i.totalAmount;
-      if (i.daysToDue !== null && i.daysToDue >= 0 && i.daysToDue <= 3)
-        totalDueSoon += i.totalAmount;
-    }
-    return { totalOverdue, totalDueSoon };
-  }, [items]);
-
   function refresh() {
     setRefreshKey((k) => k + 1);
   }
@@ -191,13 +178,13 @@ export function TopTrackerView() {
         />
         <SummaryCard
           label="Due ≤ 3 hari"
-          value={formatRupiah(totals.totalDueSoon)}
-          tone={totals.totalDueSoon > 0 ? "warning" : "neutral"}
+          value={formatRupiah(summary?.dueSoonAmount ?? 0)}
+          tone={(summary?.dueSoonAmount ?? 0) > 0 ? "warning" : "neutral"}
         />
         <SummaryCard
           label="Lewat jatuh tempo"
-          value={formatRupiah(totals.totalOverdue)}
-          tone={totals.totalOverdue > 0 ? "danger" : "neutral"}
+          value={formatRupiah(summary?.overdueAmount ?? 0)}
+          tone={(summary?.overdueAmount ?? 0) > 0 ? "danger" : "neutral"}
         />
       </div>
 

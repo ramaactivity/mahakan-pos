@@ -98,10 +98,13 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
 
   const creditors = creditorsQuery.data ?? [];
   const repayments = repaymentsQuery.data ?? [];
-  const totalOutstanding = creditors.reduce(
-    (s, c) => s + c.principalOutstanding,
-    0,
-  );
+  /* Sesi AE-184 — outstanding dihitung dari kreditur yang BELUM lunas saja,
+   * bukan dari daftar yang sedang ditampilkan. Sejak filter default diubah ke
+   * "Semua", menjumlah seluruh baris akan ikut menghitung yang berstatus
+   * settled — kartunya jadi mengklaim hutang yang sudah tidak ada. */
+  const totalOutstanding = creditors
+    .filter((c) => c.status !== "settled")
+    .reduce((s, c) => s + c.principalOutstanding, 0);
   const totalInterestYtd = repayments
     .filter(
       (r) =>

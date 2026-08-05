@@ -373,6 +373,8 @@ export async function fetchTopHistory(
   const summary: TopHistorySummary = {
     outstandingCount: 0,
     outstandingAmount: 0,
+    dueSoonAmount: 0,
+    overdueAmount: 0,
     paidCount: 0,
     paidAmount: 0,
     cancelledCount: 0,
@@ -391,6 +393,26 @@ export async function fetchTopHistory(
       summary.cancelledCount = n;
       summary.cancelledAmount = total;
     }
+  }
+
+  /* Jatuh tempo dari SELURUH hutang berjalan (tidak ikut filter status),
+   * supaya kartu ringkasan tetap benar di tab mana pun. */
+  const dueRows = await db
+    .select({
+      dueDate: purchases.dueDate,
+      totalAmount: purchases.totalAmount,
+    })
+    .from(purchases)
+    .where(
+      and(...baseConds, eq(purchases.status, "pending_payment")),
+    );
+  for (const d of dueRows) {
+    if (!d.dueDate) continue;
+    const days = Math.round(
+      (Date.parse(`${d.dueDate}T00:00:00Z`) - today) / 86_400_000,
+    );
+    if (days < 0) summary.overdueAmount += Number(d.totalAmount);
+    else if (days <= 3) summary.dueSoonAmount += Number(d.totalAmount);
   }
 
   return { items, summary };

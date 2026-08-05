@@ -173,6 +173,14 @@ export interface TopHistoryOptions {
 export interface TopHistorySummary {
   outstandingCount: number;
   outstandingAmount: number;
+  /**
+   * Jatuh tempo dihitung SERVER-SIDE dari seluruh hutang berjalan, bukan dari
+   * baris yang sedang ditampilkan — kalau ikut tab, kartu "Lewat jatuh tempo"
+   * jadi Rp 0 saat owner membuka tab "Sudah Lunas", padahal hutang telatnya
+   * masih ada.
+   */
+  dueSoonAmount: number;
+  overdueAmount: number;
   paidCount: number;
   paidAmount: number;
   cancelledCount: number;
