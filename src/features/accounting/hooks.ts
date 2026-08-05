@@ -89,8 +89,21 @@ export async function postJournalForPosSale(args: {
 }): Promise<void> {
   if (!(await isAutoJournalEnabled(args.outletId))) return;
 
+  /* Audit AE-187 — proyeksi eksplisit (jalan di SETIAP penjualan + sapuan):
+   * cuma ~10 field yang dipakai, jangan tarik full row ~40 kolom. */
   const [trx] = await db
-    .select()
+    .select({
+      id: transactions.id,
+      outletId: transactions.outletId,
+      transactionNumber: transactions.transactionNumber,
+      status: transactions.status,
+      discountReason: transactions.discountReason,
+      createdAt: transactions.createdAt,
+      paymentMethod: transactions.paymentMethod,
+      total: transactions.total,
+      subtotal: transactions.subtotal,
+      discountAmount: transactions.discountAmount,
+    })
     .from(transactions)
     .where(eq(transactions.id, args.transactionId))
     .limit(1);
@@ -105,7 +118,11 @@ export async function postJournalForPosSale(args: {
   if (trx.status !== "paid" && trx.status !== "partially_refunded") return;
 
   const items = await db
-    .select()
+    .select({
+      itemCategoryName: transactionItems.itemCategoryName,
+      subtotal: transactionItems.subtotal,
+      cogs: transactionItems.cogs,
+    })
     .from(transactionItems)
     .where(eq(transactionItems.transactionId, args.transactionId));
 

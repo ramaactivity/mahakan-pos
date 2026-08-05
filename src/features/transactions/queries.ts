@@ -32,10 +32,7 @@ export interface ListTransactionsOptions {
   limit?: number;
 }
 
-export async function fetchTransactions(
-  opts: ListTransactionsOptions = {},
-): Promise<Paginated<Transaction>> {
-  const limit = opts.limit ?? 50;
+function buildTransactionListConds(opts: ListTransactionsOptions) {
   const conds = [];
   if (opts.shiftId) conds.push(eq(transactions.shiftId, opts.shiftId));
   if (opts.status) {
@@ -55,9 +52,75 @@ export async function fetchTransactions(
       sql`(lower(${transactions.transactionNumber}) like ${like} OR cast(${transactions.pagerNumber} as text) like ${like})`,
     );
   }
+  return conds;
+}
+
+export async function fetchTransactions(
+  opts: ListTransactionsOptions = {},
+): Promise<Paginated<Transaction>> {
+  const limit = opts.limit ?? 50;
+  const conds = buildTransactionListConds(opts);
 
   const rows = await db
     .select()
+    .from(transactions)
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(transactions.createdAt))
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  return {
+    items: hasMore ? rows.slice(0, limit) : rows,
+    total: rows.length,
+    hasMore,
+  };
+}
+
+/**
+ * Audit AE-187 — versi RINGAN untuk list yang di-poll POS (KDS 45s, Open
+ * Bill 45s). fetchTransactions menarik ~40 kolom full row; panel cuma pakai
+ * ±10 kolom (detail berat di-fetch lazy via getTransactionsByIds). Di poll
+ * sepanjang hari × tiap perangkat, selisihnya = egress Neon + bandwidth
+ * Vercel terbesar se-app. Kolom di sini = union kebutuhan OrderQueuePanel +
+ * OpenBillPanel — jangan tambah kolom besar (note masih perlu utk open bill).
+ */
+export type TransactionSummary = Pick<
+  Transaction,
+  | "id"
+  | "transactionNumber"
+  | "pagerNumber"
+  | "status"
+  | "orderType"
+  | "customerName"
+  | "paymentMethod"
+  | "total"
+  | "refundedAmount"
+  | "note"
+  | "createdAt"
+  | "servedAt"
+>;
+
+export async function fetchTransactionSummaries(
+  opts: ListTransactionsOptions = {},
+): Promise<Paginated<TransactionSummary>> {
+  const limit = opts.limit ?? 50;
+  const conds = buildTransactionListConds(opts);
+
+  const rows = await db
+    .select({
+      id: transactions.id,
+      transactionNumber: transactions.transactionNumber,
+      pagerNumber: transactions.pagerNumber,
+      status: transactions.status,
+      orderType: transactions.orderType,
+      customerName: transactions.customerName,
+      paymentMethod: transactions.paymentMethod,
+      total: transactions.total,
+      refundedAmount: transactions.refundedAmount,
+      note: transactions.note,
+      createdAt: transactions.createdAt,
+      servedAt: transactions.servedAt,
+    })
     .from(transactions)
     .where(conds.length ? and(...conds) : undefined)
     .orderBy(desc(transactions.createdAt))

@@ -96,7 +96,8 @@ export function ItemsList() {
 
   /* Sesi AE-176 — sinkron antar owner: refresh saat balik ke tab + polling
    * latar 20 detik (silent; edit menu lewat modal jadi list aman di-refresh). */
-  useLiveRefresh(() => setRefreshKey((k) => k + 1), 20 * 1000);
+  /* Audit AE-187 — 20s → 60s, selaras LIVE_QUERY_OPTS (fokus-refetch tetap). */
+  useLiveRefresh(() => setRefreshKey((k) => k + 1), 60 * 1000);
 
   // Phase 7.3 — pick up COGS Calculator prefill handoff. When owner clicks
   // "Save as Menu Item" in calculator, payload is written to sessionStorage

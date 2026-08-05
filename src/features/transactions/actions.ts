@@ -239,8 +239,10 @@ import {
   fetchTransactionByClientRefId,
   fetchTransactionById,
   fetchTransactions,
+  fetchTransactionSummaries,
   fetchTransactionsByIds,
   type ListTransactionsOptions,
+  type TransactionSummary,
 } from "./queries";
 import {
   addSplitPaymentSchema,
@@ -384,6 +386,18 @@ export async function listTransactions(
 ): Promise<ApiResult<Paginated<Transaction>>> {
   await requireSession();
   return ok(await fetchTransactions(opts));
+}
+
+/**
+ * Audit AE-187 — versi ringan (±10 kolom) untuk list yang di-poll POS tiap
+ * 45 detik (KDS + Open Bill). Pakai ini untuk polling; listTransactions
+ * full-row tetap ada untuk layar yang butuh semua kolom.
+ */
+export async function listTransactionSummaries(
+  opts: ListTransactionsOptions = {},
+): Promise<ApiResult<Paginated<TransactionSummary>>> {
+  await requireSession();
+  return ok(await fetchTransactionSummaries(opts));
 }
 
 export async function getTransaction(

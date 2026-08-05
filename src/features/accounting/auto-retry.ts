@@ -452,8 +452,23 @@ async function sweepMissingSettlements(
     conds.push(eq(aggregatorSettlements.outletId, opts.outletId));
   }
 
+  /* Audit AE-187 — proyeksi eksplisit: jangan seret kolom `lineItems`
+   * (JSONB besar) di sapuan yang jalan berkali-kali sehari. */
   const rows = await db
-    .select()
+    .select({
+      id: aggregatorSettlements.id,
+      outletId: aggregatorSettlements.outletId,
+      channel: aggregatorSettlements.channel,
+      periodFrom: aggregatorSettlements.periodFrom,
+      periodTo: aggregatorSettlements.periodTo,
+      grossAmount: aggregatorSettlements.grossAmount,
+      feeAmount: aggregatorSettlements.feeAmount,
+      netAmount: aggregatorSettlements.netAmount,
+      bankAccountId: aggregatorSettlements.bankAccountId,
+      bankCreditedAt: aggregatorSettlements.bankCreditedAt,
+      referenceNo: aggregatorSettlements.referenceNo,
+      createdBy: aggregatorSettlements.createdBy,
+    })
     .from(aggregatorSettlements)
     .where(and(...conds));
   if (rows.length === 0) return;

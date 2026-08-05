@@ -43,8 +43,27 @@ jobs:
       - name: Install deps
         run: npm ci
 
+      # Audit AE-187 — cache browser Playwright (hemat ±1-2 menit Actions
+      # per push; repo privat cuma 2.000 menit gratis/bulan). OS deps tetap
+      # di-install tiap run (apt cepat, tidak bisa di-cache).
+      - name: Get Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
       - name: Install Playwright browser (chromium)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright OS deps only (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
 
       - name: Wait for prod cache warmup (post-deploy)
         run: sleep 30

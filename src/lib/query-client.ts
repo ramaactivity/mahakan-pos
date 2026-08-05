@@ -20,15 +20,20 @@ import { QueryClient } from "@tanstack/react-query";
 /**
  * Sesi AE-176 — opsi "near-real-time" untuk halaman master yang sering
  * diedit BARENGAN beberapa owner (Inventory, Supplier, Menu). Refetch saat
- * tab difokus (instan begitu balik ke tab) + polling latar 20 detik. Polling
+ * tab difokus (instan begitu balik ke tab) + polling latar. Polling
  * default hanya jalan saat tab fokus (refetchIntervalInBackground=false) →
  * hemat Fluid CPU. JANGAN dipakai di layar dengan input aktif (mis. Opname
  * count) — refetch bisa menimpa ketikan.
+ *
+ * Audit AE-187 — interval 20s → 60s. Layar master ini menarik full table
+ * (mis. 330 bahan) tiap poll; di layar yang ditinggal terbuka seharian itu
+ * 3× invocation + egress yang tak perlu. Sinkron antar-owner tetap terasa
+ * instan karena refetchOnWindowFocus (begitu balik ke tab langsung fresh).
  */
 export const LIVE_QUERY_OPTS = {
-  staleTime: 10 * 1000,
+  staleTime: 30 * 1000,
   refetchOnWindowFocus: true,
-  refetchInterval: 20 * 1000,
+  refetchInterval: 60 * 1000,
 } as const;
 
 export function createQueryClient(): QueryClient {

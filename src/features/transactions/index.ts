@@ -31,6 +31,7 @@ export type {
   VoidTransactionInput,
 } from "./types";
 export { isOk } from "./types";
+export type { TransactionSummary } from "./queries";
 
 export {
   addSplitPayment,
@@ -42,6 +43,7 @@ export {
   getTransaction,
   getTransactionsByIds,
   listTransactions,
+  listTransactionSummaries,
   logTransactionReprint,
   markServed,
   markAllItemsDone,

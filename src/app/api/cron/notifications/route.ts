@@ -18,6 +18,13 @@ import {
   type CronJob,
 } from "@/features/cron-jobs/notifications";
 
+/* Audit AE-187 — route ini menjalankan journal-sweep + settlement generate,
+ * kerja terberat di seluruh app. Tanpa maxDuration eksplisit, plan Hobby
+ * bisa memutus function di default 10s → sapuan kepotong di tengah (aman
+ * karena idempoten, tapi tak pernah selesai saat data membesar). 60s =
+ * batas maksimal Hobby. */
+export const maxDuration = 60;
+
 const VALID_JOBS: ReadonlyArray<CronJob> = [
   "attendance-morning",
   "low-stock-scan",

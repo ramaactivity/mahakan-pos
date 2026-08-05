@@ -35,12 +35,12 @@ import { PrintStationButtons } from "./PrintStationButtons";
 import {
   getTransactionsByIds,
   isOk,
-  listTransactions,
+  listTransactionSummaries,
   markAllItemsDone,
   markServed,
   updateItemPrepStatus,
-  type Transaction,
   type TransactionItem,
+  type TransactionSummary,
   type TransactionWithItems,
 } from "@/features/transactions";
 import { categoryToStation } from "@/lib/printer/station-mapping";
@@ -101,7 +101,7 @@ export function OrderQueuePanel({
   refreshKey,
   onOpenSettings,
 }: OrderQueuePanelProps) {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [transactions, setTransactions] = useState<TransactionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [stationFilter, setStationFilter] = useState<StationFilter>("all");
@@ -130,7 +130,9 @@ export function OrderQueuePanel({
       // sebagian di-refund tetap muncul di KDS (kitchen perlu prepare
       // item yang tidak di-refund). Per-item badge tampil di item-level
       // kalau refundedQuantity > 0.
-      const res = await listTransactions({
+      /* Audit AE-187 — versi ringan (±10 kolom): list ini di-poll 45s
+       * sepanjang hari; full row ~40 kolom adalah egress terbesar se-app. */
+      const res = await listTransactionSummaries({
         from,
         to,
         status: ["paid", "partially_refunded"],
@@ -249,7 +251,7 @@ export function OrderQueuePanel({
   }
 
   // Compute per-transaction aggregate status from items.
-  function trxStatus(detail: TransactionWithItems | undefined, trx: Transaction): {
+  function trxStatus(detail: TransactionWithItems | undefined, trx: TransactionSummary): {
     label: string;
     aggregate: "pending" | "in_progress" | "done" | "served";
     pendingCount: number;
@@ -583,7 +585,7 @@ function StatCard({
 }
 
 interface OrderCardProps {
-  summary: Transaction;
+  summary: TransactionSummary;
   detail: TransactionWithItems | undefined;
   cashierName: string;
   receiptConfig: ReceiptConfig | null;
@@ -1044,7 +1046,7 @@ function StatusButtonGroup({
   );
 }
 
-function PaymentMethodInline({ trx }: { trx: Transaction }) {
+function PaymentMethodInline({ trx }: { trx: TransactionSummary }) {
   const method = trx.paymentMethod;
   let icon: React.ReactNode = null;
   let label = "";

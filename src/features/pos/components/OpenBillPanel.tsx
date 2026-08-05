@@ -32,8 +32,8 @@ import {
   cancelOpenBill,
   getTransactionsByIds,
   isOk,
-  listTransactions,
-  type Transaction,
+  listTransactionSummaries,
+  type TransactionSummary,
   type TransactionWithItems,
 } from "@/features/transactions";
 import type { ReceiptConfig } from "@/lib/printer/print-transaction";
@@ -80,7 +80,7 @@ export function OpenBillPanel({
   onCountChange,
   onBillPaid,
 }: OpenBillPanelProps) {
-  const [bills, setBills] = useState<Transaction[]>([]);
+  const [bills, setBills] = useState<TransactionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
   // Sesi AE-36 — nowMs untuk urgency calc, di-update tiap 30s (sama dgn tick).
@@ -115,7 +115,9 @@ export function OpenBillPanel({
       // actionable. Previously today-only filter hid old open bills,
       // blocking shift close (server-side guard counted them but UI
       // didn't show them). 100 limit handles up to ~100 stale bills.
-      const res = await listTransactions({
+      /* Audit AE-187 — versi ringan (±10 kolom): di-poll 45s sepanjang
+       * hari, tidak perlu full row ~40 kolom. */
+      const res = await listTransactionSummaries({
         status: "open",
         limit: 100,
       });
@@ -489,7 +491,7 @@ export function OpenBillPanel({
 }
 
 interface BillCardProps {
-  summary: Transaction;
+  summary: TransactionSummary;
   detail: TransactionWithItems | undefined;
   /** Bumped from parent's auto-refresh tick — used to invalidate age calc. */
   nowTick: number;

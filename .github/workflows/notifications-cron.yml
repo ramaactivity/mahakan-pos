@@ -17,9 +17,27 @@ name: notifications-cron
 # pengeluaran, dan settlement yang jurnalnya belum tercatat lalu posting.
 # Jaring pengaman pembukuan, jadi cron ini WAJIB hidup.
 #
-# Workflow ini jalan setiap jam at minute :05 (avoid peak top-of-hour
-# load di GitHub Actions queue). Jam-jam selain di atas → endpoint return
-# `skipped: true` (no-op).
+# Audit AE-187 — jadwal DIPADATKAN dari tiap jam (24 run/hari ≈ 720 menit
+# Actions/bulan; tiap run ditagih minimal 1 menit) ke 11 run/hari (≈ 330
+# menit/bulan). Repo privat cuma punya 2.000 menit gratis/bulan — kalau
+# jatah habis, SEMUA cron mati diam-diam (sweep, settlement, notif).
+#
+# Jam UTC yang dipilih = union dari SEMUA slot job (getJobForCurrentHour,
+# WIB = UTC+7) + cakupan sapuan jurnal max selang 3 jam:
+#   18 UTC = 01 WIB cashless-settlement (lookback 3 hari, slot terlewat aman)
+#   23 UTC = 06 WIB attendance-morning
+#   01 UTC = 08 WIB low-stock-scan
+#   03 UTC = 10 WIB operasional-monthly-day28 (tgl 28)
+#   12 UTC = 19 WIB operasional-weekly-sunday (Minggu)
+#   13 UTC = 20 WIB daily-digest
+#   14 UTC = 21 WIB operasional-daily-closing
+#   06, 09, 16, 21 UTC = slot tambahan murni untuk journal-sweep
+# Sapuan tetap jalan di SETIAP run (jaring pengaman ke-3 setelah after()+
+# retry in-process dan retry-queue — AE-186), max jeda antar sapuan 3 jam.
+# JANGAN kembali ke "5 * * * *" tanpa hitung ulang menit Actions.
+#
+# Minute :05 (avoid peak top-of-hour load di GitHub Actions queue).
+# Jam-jam selain slot job → endpoint tetap jalan journal-sweep saja.
 #
 # Required repo secret:
 #   CRON_SECRET — string acak, sama dengan Vercel env CRON_SECRET.
@@ -27,8 +45,7 @@ name: notifications-cron
 
 on:
   schedule:
-    # Top of each hour, +5 menit buffer
-    - cron: "5 * * * *"
+    - cron: "5 1,3,6,9,12,13,14,16,18,21,23 * * *"
   workflow_dispatch:
     inputs:
       job:

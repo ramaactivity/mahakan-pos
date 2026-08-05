@@ -1739,9 +1739,26 @@ export async function listAggregatorSettlements(opts: {
     conds.push(lte(aggregatorSettlements.periodTo, opts.toDate));
   }
 
+  /* Audit AE-187 — proyeksi eksplisit TANPA kolom `lineItems` (JSONB bisa
+   * ribuan order per baris; list cuma butuh lineItemsCount — kolom yang
+   * memang dibuat untuk itu di sesi AE-77, tapi row full-nya masih ikut
+   * terseret). Drilldown tetap via getAggregatorSettlementDetail. Plus cap
+   * 400 baris terbaru — settlement auto harian × channel tumbuh tanpa batas. */
   const rows = await db
     .select({
-      row: aggregatorSettlements,
+      id: aggregatorSettlements.id,
+      channel: aggregatorSettlements.channel,
+      periodFrom: aggregatorSettlements.periodFrom,
+      periodTo: aggregatorSettlements.periodTo,
+      grossAmount: aggregatorSettlements.grossAmount,
+      feeAmount: aggregatorSettlements.feeAmount,
+      netAmount: aggregatorSettlements.netAmount,
+      bankCreditedAt: aggregatorSettlements.bankCreditedAt,
+      referenceNo: aggregatorSettlements.referenceNo,
+      notes: aggregatorSettlements.notes,
+      lineItemsCount: aggregatorSettlements.lineItemsCount,
+      source: aggregatorSettlements.source,
+      createdAt: aggregatorSettlements.createdAt,
       creatorName: users.name,
     })
     .from(aggregatorSettlements)
@@ -1750,23 +1767,24 @@ export async function listAggregatorSettlements(opts: {
     .orderBy(
       desc(aggregatorSettlements.periodFrom),
       desc(aggregatorSettlements.createdAt),
-    );
+    )
+    .limit(400);
 
   return rows.map((r) => ({
-    id: r.row.id,
-    channel: r.row.channel as AggregatorChannel,
-    periodFrom: r.row.periodFrom,
-    periodTo: r.row.periodTo,
-    grossAmount: r.row.grossAmount,
-    feeAmount: r.row.feeAmount,
-    netAmount: r.row.netAmount,
-    bankCreditedAt: r.row.bankCreditedAt,
-    referenceNo: r.row.referenceNo,
-    notes: r.row.notes,
+    id: r.id,
+    channel: r.channel as AggregatorChannel,
+    periodFrom: r.periodFrom,
+    periodTo: r.periodTo,
+    grossAmount: r.grossAmount,
+    feeAmount: r.feeAmount,
+    netAmount: r.netAmount,
+    bankCreditedAt: r.bankCreditedAt,
+    referenceNo: r.referenceNo,
+    notes: r.notes,
     /* Sesi AE-77 — quick count untuk badge "12 orders" tanpa fetch full JSON. */
-    lineItemsCount: r.row.lineItemsCount ?? null,
-    source: (r.row.source ?? "manual") as "csv" | "auto_pos" | "manual",
-    createdAt: r.row.createdAt,
+    lineItemsCount: r.lineItemsCount ?? null,
+    source: (r.source ?? "manual") as "csv" | "auto_pos" | "manual",
+    createdAt: r.createdAt,
     createdByName: r.creatorName ?? null,
   }));
 }
