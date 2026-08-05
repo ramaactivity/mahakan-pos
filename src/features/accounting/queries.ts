@@ -365,6 +365,27 @@ export async function listPeriodStatuses(
  *
  * `fromDate` null = from beginning of time (untuk balance sheet as-of pattern).
  * `toDate` inclusive (entry_date <= toDate).
+ *
+ * ⚠️ Sesi AE-183 — PERBAIKAN BUG SERIUS. Syarat periode + status ada di klausa
+ * ON milik LEFT JOIN ke journal_entries. Pada LEFT JOIN, baris journal_lines
+ * yang entry-nya TIDAK memenuhi syarat tetap ikut keluar (kolom entry jadi
+ * NULL) — dan nilai debit/kredit-nya tetap terjumlah. Akibatnya filter tanggal
+ * TIDAK BEKERJA SAMA SEKALI: berapa pun periode yang dipilih, fungsi ini
+ * mengembalikan total sepanjang masa.
+ *
+ * Terbukti di produksi 2026-08-05 untuk akun 4101 (Penjualan Makanan):
+ *   Juli saja      → 11.656.000  (seharusnya 3.671.000)
+ *   s/d 30 Juni    → 11.656.000  (seharusnya 7.388.000)
+ *   Mei saja       → 11.656.000  (seharusnya 2.700.000)
+ *   sepanjang masa → 11.656.000  ✓ (cuma ini yang kebetulan benar)
+ *
+ * Dampaknya kena SEMUA laporan yang memakai fungsi ini: Trial Balance, Laba
+ * Rugi, Neraca, dan Validasi Drift — semuanya menampilkan angka sepanjang masa
+ * berapa pun periode yang dipilih owner.
+ *
+ * Perbaikannya: LEFT JOIN dipertahankan (supaya akun tanpa mutasi tetap muncul
+ * sebagai 0), tapi penjumlahan hanya menghitung baris yang join-nya BERHASIL —
+ * `journal_entries.id IS NOT NULL` berarti entry-nya lolos semua syarat ON.
  */
 export async function getAccountBalances(args: {
   outletId: string;
@@ -389,8 +410,8 @@ export async function getAccountBalances(args: {
       normalBalance: chartOfAccounts.normalBalance,
       isContra: chartOfAccounts.isContra,
       parentCode: chartOfAccounts.parentCode,
-      debitTotal: sql<string>`COALESCE(SUM(${journalLines.debit}), 0)`,
-      creditTotal: sql<string>`COALESCE(SUM(${journalLines.credit}), 0)`,
+      debitTotal: sql<string>`COALESCE(SUM(CASE WHEN ${journalEntries.id} IS NOT NULL THEN ${journalLines.debit} ELSE 0 END), 0)`,
+      creditTotal: sql<string>`COALESCE(SUM(CASE WHEN ${journalEntries.id} IS NOT NULL THEN ${journalLines.credit} ELSE 0 END), 0)`,
     })
     .from(chartOfAccounts)
     .leftJoin(journalLines, eq(journalLines.accountId, chartOfAccounts.id))
