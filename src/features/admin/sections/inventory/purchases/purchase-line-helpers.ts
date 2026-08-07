@@ -6,12 +6,15 @@
  * Helper ini pure (no DOM / no server). Aman di-import dari client.
  */
 
+import { format } from "date-fns";
+import { id as localeId } from "date-fns/locale";
 import {
   convertQty,
   scaleCostOnUnitChange,
   type IngredientPackConversion,
 } from "@/lib/unit-conversion";
 import { parseRupiah } from "@/lib/format";
+import { previewDueDateIso } from "@/features/purchases/payment-term";
 
 /* Sesi AE — list satuan umum yang staff Mahakan biasa pakai.  Master
  * unit dari ingredient akan otomatis pre-select; staff bisa override
@@ -329,4 +332,25 @@ export function applyUnitChange(
       ? String(Math.round(qtyForCalc * costForCalc))
       : row.total;
   return { ...pick(row), qty: newQty, unitCost: newCost, total: newTotal };
+}
+
+/**
+ * Sesi AE-190 — label jatuh tempo di bawah field TOP.
+ *
+ * Owner mengisi tempo manual mengikuti faktur, jadi yang dia butuhkan bukan
+ * jumlah harinya melainkan TANGGAL-nya — supaya bisa langsung dicocokkan
+ * dengan yang tertulis di faktur tanpa hitung mundur. Tanggalnya dihitung
+ * pakai `previewDueDateIso` (aritmetika sama persis dengan server).
+ *
+ * null = tempo/tanggal belum sah; pemanggil menampilkan hint biasa.
+ */
+export function dueDateLabel(
+  purchaseDateIso: string,
+  rawTerm: string,
+): string | null {
+  const iso = previewDueDateIso(purchaseDateIso, rawTerm);
+  if (!iso) return null;
+  /* Parse sebagai waktu LOKAL (bukan UTC) supaya tanggal yang tampil sama
+   * dengan tanggal yang tersimpan, tidak bergeser sehari. */
+  return format(new Date(`${iso}T00:00:00`), "d MMM yyyy", { locale: localeId });
 }

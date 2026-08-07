@@ -65,6 +65,7 @@ import {
   applyUnitChange,
   applyUnitCostChange,
   computePrLineDefault,
+  dueDateLabel,
   formatPurchaseQty,
   parsePurchaseQty,
   parseRupiahSafe,
@@ -792,6 +793,9 @@ function Step2Wizard({
   onUpdateCost: (v: boolean) => void;
 }) {
   const selectedCount = items.filter((i) => i.selected).length;
+  /* Sesi AE-190 — tanggal jatuh tempo dari tempo yang sedang diketik. */
+  const dueLabel =
+    paymentMethod === "top" ? dueDateLabel(purchaseDate, paymentTerm) : null;
 
   return (
     <div className="space-y-4">
@@ -837,9 +841,11 @@ function Step2Wizard({
           onChange={(e) => onPaymentTerm(sanitizePaymentTermInput(e.target.value))}
           disabled={paymentMethod !== "top"}
           hint={
-            paymentMethod === "top"
-              ? `Berlaku untuk semua PO/pembelian yang dibuat batch ini (1–${PAYMENT_TERM_MAX_DAYS})`
-              : "Hanya aktif untuk TOP"
+            paymentMethod !== "top"
+              ? "Hanya aktif untuk TOP"
+              : dueLabel
+                ? `Jatuh tempo: ${dueLabel} — berlaku untuk semua PO batch ini`
+                : `Berlaku untuk semua PO/pembelian yang dibuat batch ini (1–${PAYMENT_TERM_MAX_DAYS})`
           }
         />
       </div>

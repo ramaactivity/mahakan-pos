@@ -46,6 +46,7 @@ import {
   applyTotalChange,
   applyUnitChange,
   applyUnitCostChange,
+  dueDateLabel,
   formatPurchaseQty,
   parsePurchaseQty,
   parseRupiahSafe,
@@ -232,6 +233,13 @@ export function PurchaseOrderEditModal({
     }
     return t;
   }, [rows]);
+
+  /* Sesi AE-190 — tanggal jatuh tempo hasil tempo yang sedang diketik. */
+  const dueLabel = useMemo(
+    () =>
+      paymentMethod === "top" ? dueDateLabel(purchaseDate, paymentTerm) : null,
+    [paymentMethod, purchaseDate, paymentTerm],
+  );
 
   const patchRow = useCallback(
     (key: string, fn: (r: EditRow) => EditRow) => {
@@ -473,9 +481,11 @@ export function PurchaseOrderEditModal({
               }
               disabled={paymentMethod !== "top"}
               hint={
-                paymentMethod === "top"
-                  ? `Jatuh tempo = tanggal PO + sekian hari (1–${PAYMENT_TERM_MAX_DAYS})`
-                  : "Hanya aktif untuk TOP"
+                paymentMethod !== "top"
+                  ? "Hanya aktif untuk TOP"
+                  : dueLabel
+                    ? `Jatuh tempo: ${dueLabel} — cocokkan dengan faktur`
+                    : `Jatuh tempo = tanggal PO + sekian hari (1–${PAYMENT_TERM_MAX_DAYS})`
               }
             />
             <Input

@@ -48,7 +48,7 @@ import {
   type IngredientPackConversion,
   type PackInfo,
 } from "@/lib/unit-conversion";
-import { applyUnitChange } from "./purchase-line-helpers";
+import { applyUnitChange, dueDateLabel } from "./purchase-line-helpers";
 import { cn } from "@/lib/utils";
 
 interface PurchaseFormModalProps {
@@ -501,6 +501,14 @@ export function PurchaseFormModal({
    * Re-classify saat user ganti tanggal belanja atau modal baru fetch
    * opname terbaru. Status di-pass ke banner di body form supaya staff
    * paham implikasi sebelum klik Simpan. */
+  /* Sesi AE-190 — tanggal jatuh tempo yang akan tersimpan, untuk dicocokkan
+   * dengan faktur. null saat tempo belum sah → hint biasa yang tampil. */
+  const dueLabel = useMemo(
+    () =>
+      paymentMethod === "top" ? dueDateLabel(purchaseDate, paymentTerm) : null,
+    [paymentMethod, purchaseDate, paymentTerm],
+  );
+
   const backdateStatus: BackdateStatus = useMemo(
     () =>
       classifyPurchaseAgainstOpname({
@@ -1164,9 +1172,11 @@ export function PurchaseFormModal({
               }}
               disabled={paymentMethod !== "top"}
               hint={
-                paymentMethod === "top"
-                  ? `Bebas isi berapa pun, 1–${PAYMENT_TERM_MAX_DAYS} hari setelah tanggal pembelian`
-                  : "Hanya aktif untuk TOP"
+                paymentMethod !== "top"
+                  ? "Hanya aktif untuk TOP"
+                  : dueLabel
+                    ? `Jatuh tempo: ${dueLabel} — cocokkan dengan faktur`
+                    : `Bebas isi berapa pun, 1–${PAYMENT_TERM_MAX_DAYS} hari setelah tanggal pembelian`
               }
             />
             <Input

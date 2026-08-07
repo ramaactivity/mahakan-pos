@@ -3,6 +3,7 @@ import {
   PAYMENT_TERM_DEFAULT_DAYS,
   PAYMENT_TERM_MAX_DAYS,
   paymentTermOnSwitchToTop,
+  previewDueDateIso,
   resolvePaymentTermDays,
   resolveSupplierTermDays,
   sanitizePaymentTermInput,
@@ -78,6 +79,28 @@ describe("paymentTermOnSwitchToTop", () => {
   it("mempertahankan tempo yang sudah diketik user", () => {
     expect(paymentTermOnSwitchToTop("30")).toBe("30");
     expect(paymentTermOnSwitchToTop(" 45 ")).toBe("45");
+  });
+});
+
+describe("previewDueDateIso", () => {
+  it("cocok dengan aritmetika addDaysIso di server", () => {
+    expect(previewDueDateIso("2026-08-07", "29")).toBe("2026-09-05");
+    expect(previewDueDateIso("2026-08-07", "7")).toBe("2026-08-14");
+    expect(previewDueDateIso("2026-08-07", "1")).toBe("2026-08-08");
+  });
+
+  it("benar saat menyeberang bulan, tahun, dan tahun kabisat", () => {
+    expect(previewDueDateIso("2026-12-20", "30")).toBe("2027-01-19");
+    expect(previewDueDateIso("2028-02-27", "2")).toBe("2028-02-29");
+    expect(previewDueDateIso("2026-01-31", "30")).toBe("2026-03-02");
+  });
+
+  it("null saat tempo atau tanggal belum sah (hint biasa yang tampil)", () => {
+    expect(previewDueDateIso("2026-08-07", "")).toBeNull();
+    expect(previewDueDateIso("2026-08-07", "0")).toBeNull();
+    expect(previewDueDateIso("2026-08-07", "400")).toBeNull();
+    expect(previewDueDateIso("", "14")).toBeNull();
+    expect(previewDueDateIso("07/08/2026", "14")).toBeNull();
   });
 });
 

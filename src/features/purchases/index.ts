@@ -27,6 +27,7 @@ export {
   PAYMENT_TERM_DEFAULT_DAYS,
   PAYMENT_TERM_MAX_DAYS,
   paymentTermOnSwitchToTop,
+  previewDueDateIso,
   resolvePaymentTermDays,
   resolveSupplierTermDays,
   sanitizePaymentTermInput,

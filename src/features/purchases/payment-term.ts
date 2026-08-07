@@ -75,6 +75,28 @@ export function paymentTermOnSwitchToTop(current: string): string {
   return res.ok ? current.trim() : String(PAYMENT_TERM_DEFAULT_DAYS);
 }
 
+/**
+ * Tanggal jatuh tempo yang AKAN dipakai server, untuk ditampilkan di bawah
+ * field TOP — owner mengisi tempo manual mengikuti faktur, jadi dia perlu
+ * lihat tanggalnya langsung tanpa hitung mundur di kepala.
+ *
+ * Sengaja meniru `addDaysIso` di actions.ts persis (aritmetika UTC atas
+ * tanggal polos) supaya angka di layar = angka yang tersimpan. Kembalikan
+ * null kalau tanggal/tempo belum sah — pemanggil menampilkan hint biasa.
+ */
+export function previewDueDateIso(
+  purchaseDateIso: string,
+  rawTerm: string,
+): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(purchaseDateIso)) return null;
+  const term = resolvePaymentTermDays(rawTerm, true);
+  if (!term.ok) return null;
+  const d = new Date(`${purchaseDateIso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() + term.days);
+  return d.toISOString().slice(0, 10);
+}
+
 /** Term default supplier: 0 sah (= cash on delivery). */
 export function resolveSupplierTermDays(raw: string): PaymentTermResult {
   const trimmed = raw.trim();
