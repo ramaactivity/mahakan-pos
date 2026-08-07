@@ -107,6 +107,59 @@ export const createPurchaseSchema = z
     },
   );
 
+/**
+ * Sesi AE-188 — Edit PO (owner request).
+ *
+ * Alasan bisnis: PIC Operasional sering harus proses GR sebelum nota/harga
+ * final datang, jadi PO dibuat dengan harga Rp 0 dulu. Setelah nota datang,
+ * PO harus bisa diedit dan SEMUA turunannya (nilai GR, expense kas, jurnal)
+ * ikut disinkronkan.
+ *
+ * `id` per item: NULL = baris baru. Baris lama yang tidak dikirim = dihapus.
+ * Server menolak tambah/hapus/ubah-qty kalau PO sudah pernah di-GR (nilai
+ * fisik sudah masuk ke movement + gr_items) — yang boleh cuma harga.
+ */
+const updatePurchaseItemSchema = purchaseItemSchema.extend({
+  id: z.uuid().nullable().optional(),
+});
+
+export const updatePurchaseOrderSchema = z
+  .object({
+    id: z.uuid(),
+    supplierId: z.uuid().nullable(),
+    purchaseDate: dateString,
+    paymentMethod: paymentMethodEnum,
+    paymentTermDays: z.number().int().min(0).max(365).optional().default(0),
+    invoiceNo: z.string().trim().max(INVOICE_MAX).nullable().optional(),
+    notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
+    receiptImageUrls: z
+      .array(z.url().max(500))
+      .max(5, "Maksimal 5 foto nota per pembelian")
+      .nullable()
+      .optional(),
+    items: z
+      .array(updatePurchaseItemSchema)
+      .min(1, "Minimal 1 item pembelian")
+      .max(200, "Terlalu banyak item dalam 1 purchase"),
+  })
+  .refine(
+    (v) => {
+      const ids = v.items.map((i) => i.ingredientId);
+      return new Set(ids).size === ids.length;
+    },
+    "Item bahan duplikat dalam 1 purchase",
+  )
+  .refine(
+    (v) => {
+      if (v.paymentMethod === "top") return v.paymentTermDays > 0;
+      return v.paymentTermDays === 0;
+    },
+    {
+      message: "TOP wajib paymentTermDays > 0; non-TOP harus 0",
+      path: ["paymentTermDays"],
+    },
+  );
+
 export const cancelPurchaseSchema = z.object({
   id: z.uuid(),
   reason: z.string().trim().min(REASON_MIN).max(REASON_MAX),
@@ -118,6 +171,11 @@ export const markPaidSchema = z.object({
     (m) => m !== "top",
     "Payment method untuk lunas tidak boleh TOP",
   ),
+  /** Sesi AE-188 — tanggal pembayaran (owner request). Dipakai untuk
+   * `paid_at`, tanggal expense kas, DAN `entry_date` jurnal umum supaya
+   * pelunasan mendarat di periode yang benar (bukan selalu hari ini).
+   * Kosong = hari ini WIB (perilaku lama). */
+  paymentDate: dateString.optional(),
 });
 
 export type { } from "./types";

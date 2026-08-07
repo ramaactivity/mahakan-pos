@@ -1586,8 +1586,8 @@ export async function postJournalForIncomeCreate(args: {
 
 async function pairVoidJournalForSource(args: {
   outletId: string;
-  sourceType: "expense_create" | "income_create";
-  voidSourceType: "expense_void" | "income_void";
+  sourceType: "expense_create" | "income_create" | "purchase_create";
+  voidSourceType: "expense_void" | "income_void" | "purchase_create_void";
   sourceId: string;
   actorId: string;
   reason: string;
@@ -1735,6 +1735,60 @@ export async function resyncJournalForIncomeUpdate(args: {
     reason: "Pemasukan diedit — jurnal diposting ulang",
   });
   await postJournalForIncomeCreate(args);
+}
+
+/**
+ * Sesi AE-188 — PO diedit setelah barang diterima → jurnal GR-nya diposting
+ * ulang dengan nilai baru.
+ *
+ * Kenapa perlu: alur "harga Rp 0 dulu supaya PIC Operasional bisa GR" bikin
+ * GR pertama bernilai 0 → `receiveGoods` melewati posting jurnal sama sekali
+ * (guard `total > 0`). Begitu harga asli diisi lewat Edit PO, persediaan &
+ * kas/hutang harus tercatat. Sebaliknya kalau harga dikoreksi turun, jurnal
+ * lama wajib dibalik dulu — kalau tidak, GL menyimpan angka lama selamanya
+ * (kelas drift yang sama dengan audit AE-181).
+ *
+ * Pola sama dengan resync expense/income: pair-void (idempoten via unique
+ * index entry aktif) lalu posting ulang. `sourceId` = goodsReceiptId, sama
+ * dengan yang dipakai `receiveGoods` sejak AE-177h, supaya per-GR tetap unik.
+ *
+ * Total 0 → cukup dibalik, tidak ada entry baru (mapper menolak total ≤ 0).
+ */
+export async function resyncJournalForGoodsReceipt(args: {
+  outletId: string;
+  purchaseId: string;
+  goodsReceiptId: string;
+  purchaseLabel: string;
+  paymentMethod: PurchasePaymentMethod;
+  total: number;
+  lines: { section: IngredientSection; amount: number }[];
+  entryDate: string;
+  actorId: string;
+}): Promise<void> {
+  if (!(await isAutoJournalEnabled(args.outletId))) return;
+
+  await pairVoidJournalForSource({
+    outletId: args.outletId,
+    sourceType: "purchase_create",
+    voidSourceType: "purchase_create_void",
+    sourceId: args.goodsReceiptId,
+    actorId: args.actorId,
+    reason: "PO diedit — jurnal penerimaan diposting ulang",
+  });
+
+  if (args.total <= 0) return;
+
+  await postJournalForPurchaseCreate({
+    outletId: args.outletId,
+    purchaseId: args.purchaseId,
+    purchaseLabel: args.purchaseLabel,
+    paymentMethod: args.paymentMethod,
+    total: args.total,
+    lines: args.lines,
+    entryDate: args.entryDate,
+    actorId: args.actorId,
+    sourceId: args.goodsReceiptId,
+  });
 }
 
 // ============================================================

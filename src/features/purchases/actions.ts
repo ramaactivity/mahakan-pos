@@ -3,6 +3,7 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  accountingPeriods,
   expenseCategories,
   expenses,
   goodsReceipts,
@@ -46,6 +47,7 @@ import {
   cancelPurchaseSchema,
   createPurchaseSchema,
   markPaidSchema,
+  updatePurchaseOrderSchema,
 } from "./schemas";
 import {
   fetchPurchaseById,
@@ -70,6 +72,8 @@ import {
   type TopHistoryOptions,
   type TopHistorySummary,
   type TopOutstandingItem,
+  type UpdatePurchaseOrderInput,
+  type UpdatePurchaseOrderResult,
 } from "./types";
 
 async function requireSession() {
@@ -1488,6 +1492,45 @@ export async function markPurchasePaid(
   }
   const v = parsed.data;
 
+  /* Sesi AE-188 — tanggal pembayaran dari owner (default hari ini WIB).
+   * Dipakai untuk paid_at, tanggal expense kas, DAN entry_date jurnal umum
+   * supaya pelunasan mendarat di periode akuntansi yang benar. */
+  const todayWib = todayJakartaIso();
+  const payDate = v.paymentDate ?? todayWib;
+  if (payDate > todayWib) {
+    return fail(
+      "VALIDATION_ERROR",
+      "Tanggal pembayaran tidak boleh di masa depan",
+    );
+  }
+  /* Periode yang sudah dikunci akan menolak jurnal (recordJournal throw
+   * PERIOD_LOCKED). Kalau baru ketahuan setelah commit, baris pembayaran
+   * sudah tersimpan tapi GL-nya tidak — persis kelas drift yang
+   * direkonsiliasi manual di audit AE-181. Jadi dicegat di depan. */
+  {
+    const [year, month] = payDate.split("-").map(Number);
+    const [period] = await db
+      .select({ status: accountingPeriods.status })
+      .from(accountingPeriods)
+      .where(
+        and(
+          eq(accountingPeriods.outletId, session.user.outletId),
+          eq(accountingPeriods.periodYear, year),
+          eq(accountingPeriods.periodMonth, month),
+        ),
+      )
+      .limit(1);
+    if (period?.status === "locked") {
+      return fail(
+        "BAD_STATE",
+        `Periode ${payDate.slice(0, 7)} sudah dikunci — pilih tanggal pembayaran di periode yang masih terbuka.`,
+      );
+    }
+  }
+  /* paidAt disimpan jam 12.00 WIB supaya tanggalnya tetap terbaca sama
+   * di zona waktu manapun saat ditampilkan. */
+  const paidAtTs = new Date(`${payDate}T12:00:00+07:00`);
+
   let expenseId: string | null = null;
   /* Audit AE-181 — basis bayar TOP = total GR diterima (bukan totalAmount
    * ordered). Untuk PO partial/under-receive: Cr 2101 terjadi per-GR sebesar
@@ -1549,7 +1592,7 @@ export async function markPurchasePaid(
           .insert(expenses)
           .values({
             outletId: session.user.outletId,
-            expenseDate: todayJakartaIso(),
+            expenseDate: payDate,
             categoryId: defaultCat.id,
             description: `Lunas TOP — ${paymentMethodLabel(v.paymentMethod)}${
               p.invoiceNo ? ` · ${p.invoiceNo}` : ""
@@ -1570,7 +1613,7 @@ export async function markPurchasePaid(
         .update(purchases)
         .set({
           status: "paid",
-          paidAt: new Date(),
+          paidAt: paidAtTs,
           paidBy: session.user.id,
           expenseId,
           updatedAt: new Date(),
@@ -1604,8 +1647,8 @@ export async function markPurchasePaid(
     entityType: "purchase",
     entityId: v.id,
     payload: {
-      summary: `Tandai lunas — ${paymentMethodLabel(v.paymentMethod)}`,
-      context: { paymentMethod: v.paymentMethod, expenseId },
+      summary: `Tandai lunas ${payDate} — ${paymentMethodLabel(v.paymentMethod)}`,
+      context: { paymentMethod: v.paymentMethod, paymentDate: payDate, expenseId },
     },
     metadata: {
       outletId: session.user.outletId,
@@ -1626,9 +1669,9 @@ export async function markPurchasePaid(
       .limit(1);
     /* Audit AE-181 — jurnal pelunasan hanya untuk TOP (Dr 2101 / Cr bank);
      * non-TOP tidak punya hutang dagang ter-jurnal. Total = paidBase (GR
-     * diterima), tanggal kalender WIB. */
+     * diterima). Sesi AE-188: tanggal jurnal = tanggal pembayaran pilihan
+     * owner, bukan lagi selalu hari ini. */
     if (purchaseRow && paidIsTop) {
-      const todayWib = todayJakartaIso();
       const { fireJournalHook, postJournalForPurchasePay } = await import(
         "@/features/accounting/hooks"
       );
@@ -1646,7 +1689,7 @@ export async function markPurchasePaid(
               | "transfer_bri"
               | "transfer_other",
             total: paidBase,
-            entryDate: todayWib,
+            entryDate: payDate,
             actorId: session.user.id,
           }),
         "purchase_pay",
@@ -1901,6 +1944,700 @@ export async function createPurchaseOrder(
   });
 
   return ok({ id: resultId, totalAmount });
+}
+
+// ============================================================================
+// Edit PO (Sesi AE-188)
+// ============================================================================
+
+/**
+ * Konteks untuk layar Edit PO: detail + apakah boleh diedit dan sejauh mana.
+ *
+ * Dipisah dari `getPurchase` karena UI perlu tahu jumlah GR — itu yang
+ * menentukan apakah edit masih bebas (belum ada barang masuk) atau tinggal
+ * harga saja. Aturan di sini WAJIB cerminan `updatePurchaseOrder`; server
+ * tetap yang menegakkan, ini supaya form tidak menawarkan yang mustahil.
+ */
+export async function getPurchaseEditContext(id: string): Promise<
+  ApiResult<{
+    detail: PurchaseDetail;
+    goodsReceiptCount: number;
+    editable: boolean;
+    priceOnly: boolean;
+    blockedReason: string | null;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.update")) {
+    return fail("FORBIDDEN", "Hanya manager / owner yang boleh edit PO");
+  }
+  const detail = await fetchPurchaseDetail(id, session.user.outletId);
+  if (!detail) return fail("NOT_FOUND", "Pembelian tidak ditemukan");
+
+  const [grCount] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(goodsReceipts)
+    .where(eq(goodsReceipts.purchaseId, id));
+  const goodsReceiptCount = Number(grCount?.n ?? 0);
+  const priceOnly = goodsReceiptCount > 0;
+
+  let blockedReason: string | null = null;
+  if (detail.status === "cancelled") {
+    blockedReason = "PO ini sudah dibatalkan.";
+  } else if (detail.paymentMethod === "top" && detail.status === "paid") {
+    blockedReason =
+      "Hutang TOP ini sudah ditandai lunas — nilainya sudah dipakai jurnal pelunasan.";
+  } else if (!priceOnly && detail.receiptStatus !== "ordered") {
+    blockedReason =
+      "Ini pembelian langsung (bukan lewat alur PO → Terima Barang). Kalau ada yang salah, batalkan lalu catat ulang.";
+  }
+
+  return ok({
+    detail,
+    goodsReceiptCount,
+    editable: blockedReason === null,
+    priceOnly,
+    blockedReason,
+  });
+}
+
+/**
+ * Ubah PO yang sudah tersimpan.
+ *
+ * Latar belakang (owner, sesi AE-188): PIC Operasional sering harus memproses
+ * penerimaan barang (GR) SEBELUM nota/harga final diterima. Solusinya PO
+ * dibuat dengan harga Rp 0 dulu, lalu harga asli diisi di sini begitu nota
+ * datang. Karena itu edit harus ikut merapikan SEMUA turunan PO, bukan cuma
+ * angka di layar PO.
+ *
+ * Dua mode, dipilih otomatis dari kondisi PO:
+ *
+ *  1. **Belum ada GR** (`receiptStatus='ordered'`) — edit bebas: baris boleh
+ *     ditambah/dihapus, qty & satuan & supplier & metode bayar boleh berubah.
+ *     Tidak ada efek turunan sama sekali (stok, kas, dan jurnal memang baru
+ *     lahir saat GR).
+ *
+ *  2. **Sudah ada GR** (`partial` / `received`) — hanya HARGA yang boleh
+ *     berubah (plus nomor invoice, catatan, nota, tanggal & tempo). Qty,
+ *     satuan, daftar bahan, supplier, dan metode bayar dikunci karena sudah
+ *     terlanjur jadi movement stok + baris GR. Yang ikut disinkronkan:
+ *       - `purchase_items` + `purchases.total_amount`
+ *       - `goods_receipt_items` + `goods_receipts.total_amount`
+ *       - expense kas per GR (dibuat kalau tadinya Rp 0, di-soft-delete
+ *         kalau harga dikoreksi jadi 0 — kolom amount punya CHECK > 0)
+ *       - `inventory_movements.unit_cost_at_movement`
+ *       - HPP rata-rata bahan, HANYA untuk movement yang memang menambah
+ *         stok (mode perpetual); mode periodic tidak menyentuh stok sama
+ *         sekali sehingga tidak ada yang perlu dikoreksi
+ *       - jurnal GR (dibalik lalu diposting ulang) — lihat
+ *         `resyncJournalForGoodsReceipt`
+ *
+ * Ditolak: PO yang sudah dibatalkan, hutang TOP yang sudah ditandai lunas
+ * (nilainya sudah dipakai jurnal pelunasan), dan pembelian instan lama
+ * (`createPurchase`, tanpa baris GR) yang efeknya melekat ke purchaseId —
+ * itu harus dibatalkan lalu dicatat ulang.
+ */
+export async function updatePurchaseOrder(
+  input: UpdatePurchaseOrderInput,
+): Promise<ApiResult<UpdatePurchaseOrderResult>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.update")) {
+    return fail("FORBIDDEN", "Hanya manager / owner yang boleh edit PO");
+  }
+  const parsed = updatePurchaseOrderSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  /* Payload jurnal dikumpulkan di dalam transaksi, di-fire setelah commit
+   * (pola sama dengan receiveGoods — hook tidak boleh ikut transaksi). */
+  const journalJobs: Array<{
+    goodsReceiptId: string;
+    purchaseLabel: string;
+    paymentMethod: PaymentMethod;
+    total: number;
+    entryDate: string;
+    lines: Array<{
+      section: "kitchen" | "bar" | "supporting" | "cleaning" | null;
+      amount: number;
+    }>;
+  }> = [];
+  let newTotalAmount = 0;
+  let priceOnly = false;
+  let receiptsResynced = 0;
+  let expensesTouched = 0;
+  let oldTotalAmount = 0;
+
+  try {
+    await db.transaction(async (tx) => {
+      const [po] = await tx
+        .select()
+        .from(purchases)
+        .where(
+          and(
+            eq(purchases.id, v.id),
+            eq(purchases.outletId, session.user.outletId),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!po) throw new Error("NOT_FOUND");
+      if (po.status === "cancelled") throw new Error("CANCELLED");
+      if (po.paymentMethod === "top" && po.status === "paid") {
+        throw new Error("ALREADY_SETTLED");
+      }
+      oldTotalAmount = Number(po.totalAmount);
+
+      const grRows = await tx
+        .select()
+        .from(goodsReceipts)
+        .where(eq(goodsReceipts.purchaseId, po.id))
+        .orderBy(asc(goodsReceipts.receivedDate));
+      priceOnly = grRows.length > 0;
+      /* Pembelian instan lama (createPurchase): receiptStatus sudah
+       * 'received' tapi tidak punya baris GR — movement/expense/jurnalnya
+       * melekat ke purchaseId, bukan ke GR. Jalur resync di bawah tidak
+       * berlaku, jadi lebih jujur ditolak daripada bikin GL melenceng. */
+      if (!priceOnly && po.receiptStatus !== "ordered") {
+        throw new Error("LEGACY_INSTANT");
+      }
+
+      const existingItems = await tx
+        .select()
+        .from(purchaseItems)
+        .where(eq(purchaseItems.purchaseId, po.id));
+      const existingById = new Map(existingItems.map((r) => [r.id, r] as const));
+
+      const ingIds = Array.from(
+        new Set(v.items.map((i) => i.ingredientId)),
+      );
+      const ingRows = await tx
+        .select()
+        .from(ingredients)
+        .where(
+          and(inArray(ingredients.id, ingIds), isNull(ingredients.deletedAt)),
+        );
+      const ingById = new Map(ingRows.map((r) => [r.id, r] as const));
+      for (const item of v.items) {
+        const row = ingById.get(item.ingredientId);
+        if (!row) throw new Error("INGREDIENT_NOT_FOUND");
+        if (row.outletId !== session.user.outletId) {
+          throw new Error("OUTLET_MISMATCH");
+        }
+      }
+
+      // ---- Mode harga-saja: kunci semua yang sudah terlanjur jadi fisik ----
+      if (priceOnly) {
+        if (v.paymentMethod !== po.paymentMethod) {
+          throw new Error("METHOD_LOCKED");
+        }
+        if ((v.supplierId ?? null) !== (po.supplierId ?? null)) {
+          throw new Error("SUPPLIER_LOCKED");
+        }
+        if (v.items.length !== existingItems.length) {
+          throw new Error("LINES_LOCKED");
+        }
+        for (const item of v.items) {
+          if (!item.id) throw new Error("LINES_LOCKED");
+          const prev = existingById.get(item.id);
+          if (!prev) throw new Error("LINES_LOCKED");
+          if (prev.ingredientId !== item.ingredientId) {
+            throw new Error("LINES_LOCKED");
+          }
+          const prevQty = Number(prev.qtyDecimal ?? prev.qty);
+          if (Math.abs(prevQty - item.qty) > 1e-6) {
+            throw new Error(`QTY_LOCKED:${prev.ingredientNameSnapshot}`);
+          }
+          const prevUnit = prev.unitOverride ?? null;
+          const nextUnit = item.unit?.trim() || null;
+          if (prevUnit !== nextUnit) {
+            throw new Error(`UNIT_LOCKED:${prev.ingredientNameSnapshot}`);
+          }
+        }
+      }
+
+      // ---- Validasi link PR untuk baris yang BARU ditautkan ----
+      const newlyLinked = v.items.filter((i) => {
+        if (!i.purchaseRequestItemId) return false;
+        const prev = i.id ? existingById.get(i.id) : undefined;
+        return prev?.purchaseRequestItemId !== i.purchaseRequestItemId;
+      });
+      if (newlyLinked.length > 0) {
+        const linkIds = newlyLinked.map((i) => i.purchaseRequestItemId!);
+        const prItemRows = await tx
+          .select()
+          .from(purchaseRequestItems)
+          .where(inArray(purchaseRequestItems.id, linkIds))
+          .for("update");
+        const prItemMap = new Map(prItemRows.map((r) => [r.id, r] as const));
+        const prIds = Array.from(new Set(prItemRows.map((r) => r.requestId)));
+        const prRows =
+          prIds.length > 0
+            ? await tx
+                .select()
+                .from(purchaseRequests)
+                .where(inArray(purchaseRequests.id, prIds))
+            : [];
+        const prHeaderMap = new Map(prRows.map((r) => [r.id, r] as const));
+        /* Baris milik PO ini sendiri tidak dihitung sebagai "sudah ditarik". */
+        const linkedRows = await tx
+          .select({ prItemId: purchaseItems.purchaseRequestItemId })
+          .from(purchaseItems)
+          .innerJoin(purchases, eq(purchases.id, purchaseItems.purchaseId))
+          .where(
+            and(
+              inArray(purchaseItems.purchaseRequestItemId, linkIds),
+              ne(purchases.status, "cancelled"),
+              ne(purchases.id, po.id),
+            ),
+          );
+        const alreadyLinked = new Set(
+          linkedRows.map((r) => r.prItemId).filter(Boolean),
+        );
+        for (const item of newlyLinked) {
+          const ingName = ingById.get(item.ingredientId)?.name ?? "Bahan";
+          const prItem = prItemMap.get(item.purchaseRequestItemId!);
+          if (!prItem) throw new Error("PR_ITEM_NOT_FOUND");
+          const pr = prHeaderMap.get(prItem.requestId);
+          if (!pr) throw new Error("PR_NOT_FOUND");
+          if (pr.outletId !== session.user.outletId) {
+            throw new Error("OUTLET_MISMATCH");
+          }
+          if (pr.status === "cancelled") throw new Error(`PR_CANCELLED:${ingName}`);
+          if (prItem.rejectedAt) throw new Error(`PR_ITEM_REJECTED:${ingName}`);
+          if (Number(prItem.receivedQty) > 0) {
+            throw new Error(`PR_ITEM_ALREADY_BOUGHT:${ingName}`);
+          }
+          if (alreadyLinked.has(item.purchaseRequestItemId!)) {
+            throw new Error(`PR_ITEM_ALREADY_LINKED:${ingName}`);
+          }
+        }
+      }
+
+      // ---- Tulis baris item ----
+      const keptIds = new Set(
+        v.items.map((i) => i.id).filter((id): id is string => Boolean(id)),
+      );
+      const removed = existingItems.filter((r) => !keptIds.has(r.id));
+      if (removed.length > 0) {
+        /* Hanya mungkin di mode bebas (PO belum di-GR), jadi aman: belum ada
+         * movement / gr_item yang menunjuk baris ini. */
+        await tx.delete(purchaseItems).where(
+          inArray(
+            purchaseItems.id,
+            removed.map((r) => r.id),
+          ),
+        );
+      }
+
+      let total = 0;
+      for (const item of v.items) {
+        const lineTotal = Math.round(item.qty * item.unitCost);
+        total += lineTotal;
+        const ing = ingById.get(item.ingredientId)!;
+        if (item.id && existingById.has(item.id)) {
+          await tx
+            .update(purchaseItems)
+            .set({
+              ingredientId: item.ingredientId,
+              qty: Math.max(1, Math.round(item.qty)),
+              qtyDecimal: item.qty.toFixed(4),
+              unitCost: item.unitCost,
+              totalCost: lineTotal,
+              unitOverride: item.unit?.trim() || null,
+              purchaseRequestItemId: item.purchaseRequestItemId ?? null,
+            })
+            .where(eq(purchaseItems.id, item.id));
+        } else {
+          await tx.insert(purchaseItems).values({
+            purchaseId: po.id,
+            ingredientId: item.ingredientId,
+            qty: Math.max(1, Math.round(item.qty)),
+            qtyDecimal: item.qty.toFixed(4),
+            unitCost: item.unitCost,
+            totalCost: lineTotal,
+            movementId: null,
+            ingredientNameSnapshot: ing.name,
+            unitSnapshot: ing.unit,
+            unitOverride: item.unit?.trim() || null,
+            sectionSnapshot: ing.section,
+            purchaseRequestItemId: item.purchaseRequestItemId ?? null,
+          });
+        }
+      }
+      newTotalAmount = total;
+
+      // ---- Sinkronkan turunan GR (mode harga-saja) ----
+      let lastExpenseId: string | null = null;
+      if (priceOnly) {
+        const costByItemId = new Map<string, number>();
+        for (const item of v.items) {
+          if (item.id) costByItemId.set(item.id, item.unitCost);
+        }
+        const isTop = po.paymentMethod === "top";
+        const label = po.invoiceNo ?? `purchase ${po.id.slice(0, 8)}`;
+
+        for (const gr of grRows) {
+          const grItems = await tx
+            .select()
+            .from(goodsReceiptItems)
+            .where(eq(goodsReceiptItems.goodsReceiptId, gr.id));
+
+          let grTotal = 0;
+          const bySection = new Map<string, number>();
+          for (const gi of grItems) {
+            const newUnitCost = costByItemId.get(gi.purchaseItemId);
+            if (newUnitCost === undefined) continue;
+            const rawQty = Number(gi.receivedQtyDecimal ?? gi.receivedQty);
+            const newLineTotal = Math.round(rawQty * newUnitCost);
+            const oldLineTotal = Number(gi.totalCost);
+            grTotal += newLineTotal;
+            const key = gi.sectionSnapshot ?? "null";
+            bySection.set(key, (bySection.get(key) ?? 0) + newLineTotal);
+
+            await tx
+              .update(goodsReceiptItems)
+              .set({ unitCost: newUnitCost, totalCost: newLineTotal })
+              .where(eq(goodsReceiptItems.id, gi.id));
+
+            if (!gi.movementId) continue;
+            const [mv] = await tx
+              .select()
+              .from(inventoryMovements)
+              .where(eq(inventoryMovements.id, gi.movementId))
+              .for("update")
+              .limit(1);
+            if (!mv) continue;
+            /* Faktor konversi tidak dihitung ulang — cukup dibaca balik dari
+             * data yang sudah tersimpan (qty master di movement vs qty nota
+             * di baris GR). Aman terhadap perubahan master satuan setelahnya. */
+            const masterQty = Math.abs(
+              Number(mv.qtyDeltaDecimal ?? mv.qtyDelta),
+            );
+            if (masterQty > 0) {
+              await tx
+                .update(inventoryMovements)
+                .set({
+                  unitCostAtMovement: Math.max(
+                    0,
+                    Math.round(newLineTotal / masterQty),
+                  ),
+                })
+                .where(eq(inventoryMovements.id, mv.id));
+            }
+
+            /* HPP rata-rata: hanya kalau movement ini memang menambah stok.
+             * Mode periodic (stok cuma dari opname) → skippedStockUpdate=true
+             * → tidak ada nilai persediaan yang perlu dikoreksi. */
+            if (mv.skippedStockUpdate) continue;
+            const deltaValue = newLineTotal - oldLineTotal;
+            if (deltaValue === 0) continue;
+            const [ing] = await tx
+              .select()
+              .from(ingredients)
+              .where(eq(ingredients.id, gi.ingredientId))
+              .for("update")
+              .limit(1);
+            if (!ing) continue;
+            const stockNow = Number(ing.currentStockDecimal ?? ing.currentStock);
+            if (!(stockNow > 0)) continue;
+            const oldCost = ing.costPerUnit;
+            const newCost = Math.max(
+              0,
+              Math.round(oldCost + deltaValue / stockNow),
+            );
+            if (newCost === oldCost) continue;
+            await tx
+              .update(ingredients)
+              .set({
+                costPerUnit: newCost,
+                costLastChangedAt: new Date(),
+                updatedAt: new Date(),
+                updatedBy: session.user.id,
+              })
+              .where(eq(ingredients.id, ing.id));
+            await tx.insert(ingredientCostHistory).values({
+              outletId: session.user.outletId,
+              ingredientId: ing.id,
+              oldCostPerUnit: oldCost,
+              newCostPerUnit: newCost,
+              triggerType: "purchase_wac",
+              triggerRefType: "purchase",
+              triggerRefId: po.id,
+              changedQty: masterQty.toFixed(4),
+              changedValue: deltaValue,
+              actorId: session.user.id,
+              notes: `Koreksi harga PO ${label}`,
+            });
+            try {
+              await cascadeCostUpdate(
+                tx,
+                session.user.outletId,
+                ing.id,
+                session.user.id,
+              );
+            } catch {
+              // fail-soft — koreksi HPP turunan resep tidak boleh gagalkan edit
+            }
+          }
+
+          // Expense kas per GR (non-TOP saja; TOP baru keluar uang saat lunas).
+          let expenseId: string | null = gr.expenseId;
+          if (!isTop) {
+            const [existingExpense] = expenseId
+              ? await tx
+                  .select()
+                  .from(expenses)
+                  .where(
+                    and(eq(expenses.id, expenseId), isNull(expenses.deletedAt)),
+                  )
+                  .limit(1)
+              : [undefined];
+
+            if (existingExpense && grTotal > 0) {
+              await tx
+                .update(expenses)
+                .set({
+                  amount: grTotal,
+                  expenseDate: gr.receivedDate,
+                  updatedAt: new Date(),
+                  updatedBy: session.user.id,
+                })
+                .where(eq(expenses.id, existingExpense.id));
+              expensesTouched += 1;
+            } else if (existingExpense && grTotal <= 0) {
+              /* expenses.amount punya CHECK > 0 — nilai nol harus dihapus,
+               * bukan di-set 0. */
+              await tx
+                .update(expenses)
+                .set({
+                  deletedAt: new Date(),
+                  deletedBy: session.user.id,
+                  updatedAt: new Date(),
+                  updatedBy: session.user.id,
+                })
+                .where(eq(expenses.id, existingExpense.id));
+              expenseId = null;
+              expensesTouched += 1;
+            } else if (!existingExpense && grTotal > 0) {
+              const [defaultCat] = await tx
+                .select()
+                .from(expenseCategories)
+                .where(
+                  and(
+                    eq(expenseCategories.outletId, session.user.outletId),
+                    isNull(expenseCategories.deletedAt),
+                  ),
+                )
+                .orderBy(asc(expenseCategories.displayOrder))
+                .limit(1);
+              if (defaultCat) {
+                const [exp] = await tx
+                  .insert(expenses)
+                  .values({
+                    outletId: session.user.outletId,
+                    expenseDate: gr.receivedDate,
+                    categoryId: defaultCat.id,
+                    description: `Pembelanjaan ${paymentMethodLabel(
+                      po.paymentMethod,
+                    )} (GR)${po.invoiceNo ? ` · ${po.invoiceNo}` : ""}`,
+                    amount: grTotal,
+                    paymentMethod: expensePaymentMethod(po.paymentMethod),
+                    sourceType: "purchase",
+                    purchaseId: po.id,
+                    createdBy: session.user.id,
+                  })
+                  .returning({ id: expenses.id });
+                expenseId = exp.id;
+                expensesTouched += 1;
+              }
+            }
+          }
+
+          await tx
+            .update(goodsReceipts)
+            .set({ totalAmount: grTotal, expenseId })
+            .where(eq(goodsReceipts.id, gr.id));
+          if (expenseId) lastExpenseId = expenseId;
+          receiptsResynced += 1;
+
+          journalJobs.push({
+            goodsReceiptId: gr.id,
+            purchaseLabel: po.invoiceNo ?? `GR ${gr.receivedDate}`,
+            paymentMethod: po.paymentMethod,
+            total: grTotal,
+            entryDate: String(gr.receivedDate),
+            lines: Array.from(bySection.entries()).map(([key, amount]) => ({
+              section: (key === "null" ? null : key) as
+                | "kitchen"
+                | "bar"
+                | "supporting"
+                | "cleaning"
+                | null,
+              amount,
+            })),
+          });
+        }
+      }
+
+      // ---- Header ----
+      const isTop = v.paymentMethod === "top";
+      const dueDate = isTop
+        ? addDaysIso(v.purchaseDate, v.paymentTermDays)
+        : null;
+      const urls =
+        v.receiptImageUrls && v.receiptImageUrls.length > 0
+          ? v.receiptImageUrls
+          : null;
+      await tx
+        .update(purchases)
+        .set({
+          supplierId: v.supplierId,
+          purchaseDate: v.purchaseDate,
+          paymentMethod: v.paymentMethod,
+          paymentTermDays: v.paymentTermDays,
+          dueDate,
+          invoiceNo: v.invoiceNo ?? null,
+          notes: v.notes ?? null,
+          receiptImageUrl: urls ? urls[0] : null,
+          receiptImageUrls: urls,
+          totalAmount: total,
+          /* Backlink kas menunjuk expense GR terakhir yang masih hidup. */
+          expenseId: priceOnly ? lastExpenseId : po.expenseId,
+          updatedAt: new Date(),
+          updatedBy: session.user.id,
+        })
+        .where(eq(purchases.id, po.id));
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg === "NOT_FOUND") return fail("NOT_FOUND", "PO tidak ditemukan");
+    if (msg === "CANCELLED")
+      return fail("BAD_STATE", "PO sudah dibatalkan — tidak bisa diedit");
+    if (msg === "ALREADY_SETTLED")
+      return fail(
+        "BAD_STATE",
+        "Hutang TOP ini sudah ditandai lunas. Nilainya sudah dipakai jurnal pelunasan, jadi tidak bisa diedit lagi.",
+      );
+    if (msg === "LEGACY_INSTANT")
+      return fail(
+        "BAD_STATE",
+        "Ini pembelian langsung (bukan PO), bukan lewat alur Terima Barang. Batalkan lalu catat ulang kalau ada yang salah.",
+      );
+    if (msg === "METHOD_LOCKED")
+      return fail(
+        "BAD_STATE",
+        "Barang sudah diterima — metode pembayaran tidak bisa diubah lagi.",
+      );
+    if (msg === "SUPPLIER_LOCKED")
+      return fail(
+        "BAD_STATE",
+        "Barang sudah diterima — supplier tidak bisa diubah lagi.",
+      );
+    if (msg === "LINES_LOCKED")
+      return fail(
+        "BAD_STATE",
+        "Barang sudah diterima — daftar bahan tidak bisa ditambah/dihapus. Yang bisa diubah cuma harga.",
+      );
+    if (msg.startsWith("QTY_LOCKED:"))
+      return fail(
+        "BAD_STATE",
+        `Bahan "${msg.slice("QTY_LOCKED:".length)}": qty tidak bisa diubah karena barang sudah diterima. Yang bisa diubah cuma harga.`,
+      );
+    if (msg.startsWith("UNIT_LOCKED:"))
+      return fail(
+        "BAD_STATE",
+        `Bahan "${msg.slice("UNIT_LOCKED:".length)}": satuan tidak bisa diubah karena barang sudah diterima.`,
+      );
+    if (msg === "INGREDIENT_NOT_FOUND")
+      return fail("NOT_FOUND", "Salah satu bahan tidak ditemukan / non-aktif");
+    if (msg === "OUTLET_MISMATCH")
+      return fail("FORBIDDEN", "Bahan dari outlet lain — kontak admin");
+    if (msg === "PR_ITEM_NOT_FOUND")
+      return fail("NOT_FOUND", "Item Permintaan Belanja tidak ditemukan");
+    if (msg === "PR_NOT_FOUND")
+      return fail("NOT_FOUND", "Permintaan Belanja tidak ditemukan");
+    if (msg.startsWith("PR_CANCELLED:"))
+      return fail(
+        "CONFLICT",
+        `Bahan "${msg.slice("PR_CANCELLED:".length)}": Permintaan Belanja-nya sudah dibatalkan`,
+      );
+    if (msg.startsWith("PR_ITEM_REJECTED:"))
+      return fail(
+        "CONFLICT",
+        `Bahan "${msg.slice("PR_ITEM_REJECTED:".length)}": item PR sudah ditolak`,
+      );
+    if (msg.startsWith("PR_ITEM_ALREADY_BOUGHT:"))
+      return fail(
+        "CONFLICT",
+        `Bahan "${msg.slice("PR_ITEM_ALREADY_BOUGHT:".length)}": item PR ini sudah pernah dibeli`,
+      );
+    if (msg.startsWith("PR_ITEM_ALREADY_LINKED:"))
+      return fail(
+        "CONFLICT",
+        `Bahan "${msg.slice("PR_ITEM_ALREADY_LINKED:".length)}": item PR ini sudah ditarik ke PO lain`,
+      );
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "purchases.order_update", "Gagal menyimpan perubahan PO"),
+    );
+  }
+
+  await logAudit({
+    eventType: "purchase.order_update",
+    userId: session.user.id,
+    entityType: "purchase",
+    entityId: v.id,
+    payload: {
+      summary: `Edit PO — total ${oldTotalAmount} → ${newTotalAmount} (${v.items.length} item${
+        priceOnly ? ", mode harga-saja" : ""
+      })`,
+      context: {
+        priceOnly,
+        oldTotalAmount,
+        newTotalAmount,
+        receiptsResynced,
+        expensesTouched,
+      },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  if (journalJobs.length > 0) {
+    const { fireJournalHook, resyncJournalForGoodsReceipt } = await import(
+      "@/features/accounting/hooks"
+    );
+    for (const job of journalJobs) {
+      fireJournalHook(
+        () =>
+          resyncJournalForGoodsReceipt({
+            outletId: session.user.outletId,
+            purchaseId: v.id,
+            goodsReceiptId: job.goodsReceiptId,
+            purchaseLabel: job.purchaseLabel,
+            paymentMethod: job.paymentMethod,
+            total: job.total,
+            lines: job.lines,
+            entryDate: job.entryDate,
+            actorId: session.user.id,
+          }),
+        "purchase_create",
+        { sourceId: job.goodsReceiptId, outletId: session.user.outletId },
+      );
+    }
+  }
+
+  return ok({
+    id: v.id,
+    totalAmount: newTotalAmount,
+    receiptsResynced,
+    expensesTouched,
+    priceOnly,
+  });
 }
 
 /**

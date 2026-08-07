@@ -45,6 +45,36 @@ export interface CreatePurchaseInput {
   items: PurchaseItemInput[];
 }
 
+/** Sesi AE-188 — item saat EDIT PO. `id` = purchase_items.id yang sudah ada;
+ * null/undefined = baris baru. Baris lama yang tidak ikut dikirim dihapus. */
+export interface UpdatePurchaseItemInput extends PurchaseItemInput {
+  id?: string | null;
+}
+
+export interface UpdatePurchaseOrderInput {
+  id: string;
+  supplierId: string | null;
+  purchaseDate: string;
+  paymentMethod: PaymentMethod;
+  paymentTermDays?: number;
+  invoiceNo?: string | null;
+  notes?: string | null;
+  receiptImageUrls?: string[] | null;
+  items: UpdatePurchaseItemInput[];
+}
+
+/** Ringkasan efek samping edit PO — dipakai UI untuk toast yang jujur. */
+export interface UpdatePurchaseOrderResult {
+  id: string;
+  totalAmount: number;
+  /** Jumlah GR yang nilainya ikut disesuaikan. */
+  receiptsResynced: number;
+  /** Jumlah expense kas yang dibuat/di-update/di-soft-delete. */
+  expensesTouched: number;
+  /** Apakah PO sudah pernah di-GR (mode edit harga saja). */
+  priceOnly: boolean;
+}
+
 export interface CancelPurchaseInput {
   id: string;
   reason: string;
@@ -53,6 +83,8 @@ export interface CancelPurchaseInput {
 export interface MarkPaidInput {
   id: string;
   paymentMethod: PaymentMethod;
+  /** Sesi AE-188 — tanggal pembayaran (YYYY-MM-DD WIB). Kosong = hari ini. */
+  paymentDate?: string;
 }
 
 export type ApiResult<T> =

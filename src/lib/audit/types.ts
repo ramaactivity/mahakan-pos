@@ -129,6 +129,8 @@ export const AUDIT_EVENT_TYPES = [
   "purchase.unmark_paid",
   // Sesi AE-173 — alur PR→PO→GR.
   "purchase.order_create",
+  /* Sesi AE-188 — edit PO (harga menyusul nota) + sinkron turunannya. */
+  "purchase.order_update",
   "purchase.goods_receive",
   // Purchase Requests (Phase 6.5+6.6, sesi AC-3)
   "purchase_request.create",

@@ -167,6 +167,12 @@ export const journalEntries = pgTable(
         "pos_void",
         "pos_compliment",
         "purchase_create",
+        /* Sesi AE-188 — PO diedit setelah barang diterima (alur harga Rp 0
+         * dulu supaya PIC Operasional bisa GR, harga diisi saat nota datang).
+         * Jurnal GR lama dibalik dengan sourceType ini lalu diposting ulang
+         * memakai nilai baru. sourceId = goods_receipts.id (sama dengan
+         * sourceId jurnal aslinya sejak AE-177h). */
+        "purchase_create_void",
         "purchase_pay",
         "purchase_cancel",
         /* Audit AE-181 — cancel purchase yang SUDAH dibayar wajib membalik

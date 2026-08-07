@@ -8,6 +8,7 @@ import {
   Card,
   CardContent,
   CardHeader,
+  DatePicker,
   EmptyCard,
   Modal,
   Select,
@@ -54,6 +55,15 @@ const SETTLE_LABELS: Record<string, string> = {
   other: "Lainnya",
 };
 
+function todayJakartaIso(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
 function formatTanggal(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("id-ID", {
@@ -88,6 +98,9 @@ export function TopTrackerView() {
     null,
   );
   const [payMethod, setPayMethod] = useState<PaymentMethod>("cash");
+  /* Sesi AE-188 — tanggal pembayaran (owner request). Ikut ke paid_at,
+   * tanggal pengeluaran kas, DAN tanggal jurnal umum. Default hari ini. */
+  const [payDate, setPayDate] = useState<string>(() => todayJakartaIso());
   const [paySubmitting, setPaySubmitting] = useState(false);
 
   useEffect(() => {
@@ -128,10 +141,15 @@ export function TopTrackerView() {
 
   async function onConfirmPaid() {
     if (!payTarget || paySubmitting) return;
+    if (payDate > todayJakartaIso()) {
+      toast.error("Tanggal pembayaran tidak boleh di masa depan");
+      return;
+    }
     setPaySubmitting(true);
     const res = await markPurchasePaid({
       id: payTarget.id,
       paymentMethod: payMethod,
+      paymentDate: payDate,
     });
     setPaySubmitting(false);
     if (!isOk(res)) {
@@ -139,7 +157,7 @@ export function TopTrackerView() {
       return;
     }
     toast.success(
-      `Lunas dicatat${res.data.expenseId ? " + entry kas dibuat" : ""}`,
+      `Lunas dicatat per ${payDate}${res.data.expenseId ? " + entry kas dibuat" : ""}`,
     );
     setPayTarget(null);
     refresh();
@@ -385,6 +403,7 @@ export function TopTrackerView() {
                               onClick={() => {
                                 setPayTarget(p);
                                 setPayMethod("cash");
+                                setPayDate(todayJakartaIso());
                               }}
                             >
                               <CheckCircle2
@@ -439,6 +458,18 @@ export function TopTrackerView() {
         }
       >
         <div className="space-y-3">
+          {/* Sesi AE-188 — tanggal pembayaran (owner request). Bukan sekadar
+              catatan: tanggal ini yang dipakai jurnal umum, jadi pelunasan
+              yang baru sempat diinput hari ini tetap mendarat di periode
+              saat uangnya benar-benar keluar. */}
+          <DatePicker
+            label="Tanggal Pembayaran"
+            value={payDate}
+            onChange={(v) => setPayDate(v ?? todayJakartaIso())}
+            maxDate={todayJakartaIso()}
+            clearable={false}
+            hint="Tanggal uang benar-benar keluar. Dipakai juga sebagai tanggal jurnal umum & pengeluaran kas."
+          />
           <Select
             label="Cara Bayar"
             options={PAY_OPTIONS.map((o) => ({
@@ -450,7 +481,8 @@ export function TopTrackerView() {
           />
           <p className="rounded-md bg-mahakan-green-100/40 p-2 text-xs text-mahakan-green-900">
             Setelah tandai lunas, entry kas dengan jumlah ini otomatis
-            tercatat di Kas → Pengeluaran (jika ada kategori expense).
+            tercatat di Kas → Pengeluaran (jika ada kategori expense) —
+            memakai tanggal di atas, sama dengan tanggal jurnalnya.
           </p>
         </div>
       </Modal>

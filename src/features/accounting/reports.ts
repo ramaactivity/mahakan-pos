@@ -597,6 +597,11 @@ export function classifyCashFlowSourceType(
     case "opening_balance": // pre-period, baseline
     case "expense_void":
     case "income_void":
+    /* Sesi AE-188 — pembalik jurnal GR saat PO diedit. Selalu berakhir
+     * status 'reversed' (sepasang dengan entry aslinya) jadi tak pernah
+     * ikut laporan; disebut eksplisit supaya tidak jatuh ke default
+     * "operating" kalau suatu saat ada yang membacanya mentah. */
+    case "purchase_create_void":
       return "skip";
     case "manual":
       // Caller must sub-classify based on counter-account.

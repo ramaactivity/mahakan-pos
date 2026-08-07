@@ -5,6 +5,7 @@ import {
   ClipboardList,
   Eye,
   FileText,
+  Pencil,
   Plus,
   RefreshCw,
   ShoppingBag,
@@ -51,6 +52,7 @@ import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
 import { PurchaseFormModal } from "./PurchaseFormModal";
+import { PurchaseOrderEditModal } from "./PurchaseOrderEditModal";
 import { CreatePurchaseFromPrModal } from "./CreatePurchaseFromPrModal";
 
 const STATUS_LABELS: Record<PurchaseStatus, string> = {
@@ -132,6 +134,10 @@ export function PurchasesView({
   const canCancel = role
     ? hasPermission(role, "purchase.cancel")
     : false;
+  /* Sesi AE-188 — edit PO (owner request): harga boleh diisi Rp 0 dulu
+   * supaya GR bisa diproses PIC Operasional, lalu dikoreksi di sini saat
+   * notanya datang. */
+  const canEdit = role ? hasPermission(role, "purchase.update") : false;
   const canReceive = role
     ? hasPermission(role, "purchase.goods_receive")
     : false;
@@ -186,6 +192,7 @@ export function PurchasesView({
     null,
   );
   const [detailLoading, setDetailLoading] = useState(false);
+  const [editTargetId, setEditTargetId] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<PurchaseListItem | null>(
     null,
   );
@@ -510,6 +517,19 @@ export function PurchasesView({
                           >
                             <Eye className="size-4" aria-hidden />
                           </Button>
+                          {canEdit &&
+                          !isReceipts &&
+                          p.status !== "cancelled" ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setEditTargetId(p.id)}
+                              title="Edit PO (isi / koreksi harga)"
+                              aria-label="Edit PO"
+                            >
+                              <Pencil className="size-4" aria-hidden />
+                            </Button>
+                          ) : null}
                           {canCancel && p.status !== "cancelled" ? (
                             <Button
                               size="sm"
@@ -561,6 +581,16 @@ export function PurchasesView({
         onClose={() => setPullFromPrOpen(false)}
         onSaved={() => {
           setPullFromPrOpen(false);
+          refresh();
+        }}
+      />
+
+      <PurchaseOrderEditModal
+        open={editTargetId !== null}
+        purchaseId={editTargetId}
+        onClose={() => setEditTargetId(null)}
+        onSaved={() => {
+          setEditTargetId(null);
           refresh();
         }}
       />

@@ -15,6 +15,9 @@ export type {
   PurchaseItemInput,
   CancelPurchaseInput,
   MarkPaidInput,
+  UpdatePurchaseItemInput,
+  UpdatePurchaseOrderInput,
+  UpdatePurchaseOrderResult,
   ApiResult,
 } from "./types";
 
@@ -24,6 +27,7 @@ export {
   createPurchaseSchema,
   cancelPurchaseSchema,
   markPaidSchema,
+  updatePurchaseOrderSchema,
 } from "./schemas";
 
 export {
@@ -33,6 +37,8 @@ export {
   listTopHistory,
   createPurchase,
   createPurchaseOrder,
+  getPurchaseEditContext,
+  updatePurchaseOrder,
   confirmGoodsReceipt,
   receiveGoods,
   listPendingGoodsReceipts,

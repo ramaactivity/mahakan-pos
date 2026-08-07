@@ -35,6 +35,9 @@ export type JournalSourceType =
   | "pos_void"
   | "pos_compliment"
   | "purchase_create"
+  /* Sesi AE-188 — pembalik jurnal GR saat PO diedit (alur harga Rp 0 dulu
+   * supaya PIC Operasional bisa proses GR, harga diisi saat nota datang). */
+  | "purchase_create_void"
   | "purchase_pay"
   | "purchase_cancel"
   /* Audit AE-181 — reversal jurnal pembayaran saat cancel purchase paid. */
