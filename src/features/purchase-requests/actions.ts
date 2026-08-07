@@ -1,6 +1,16 @@
 "use server";
 
-import { and, desc, eq, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  ne,
+  sql,
+} from "drizzle-orm";
 import { db } from "@/db";
 import {
   ingredients,
@@ -15,7 +25,15 @@ import {
 } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
-import { displayUnit } from "@/lib/unit-conversion";
+import {
+  convertQtyWithIngredientPacks,
+  displayUnit,
+  mergePackConversions,
+} from "@/lib/unit-conversion";
+import {
+  indexMasterByName,
+  matchManualItemToMaster,
+} from "./manual-link-pure";
 import {
   fail,
   ok,
@@ -28,6 +46,7 @@ import {
   type PurchaseRequest,
   type PurchaseRequestStatus,
   type PurchaseRequestWithItems,
+  type RequestableIngredient,
 } from "./types";
 
 async function requireSession() {
@@ -171,17 +190,20 @@ function suggestQty(currentStock: number, reorderThreshold: number): number {
 }
 
 /**
- * List ingredients dengan currentStock <= reorderThreshold, untuk auto-prefill
- * form belanja saat tutup shift.
+ * Sesi AE-190 — satu query untuk SEMUA bahan aktif yang boleh diminta staff,
+ * dipakai bareng oleh `listRequestableIngredients` (pencarian penuh di modul
+ * PO staff) dan `listLowStockIngredients` (auto-prefill tutup shift).
+ *
+ * Urutan: low-stock dulu (biar saran otomatis nangkring di atas), lalu nama.
+ *
+ * `lowStockOnly` menyaring di SQL, bukan di JS. Penting: jalur tutup shift
+ * memanggil ini tiap kali kasir tutup — jangan tarik 182 baris cuma untuk
+ * dibuang 107-nya (invariant audit sumber daya AE-187).
  */
-export async function listLowStockIngredients(): Promise<
-  ApiResult<LowStockIngredient[]>
-> {
-  const session = await requireSession();
-  if (!hasPermission(session.user.role, "purchase_request.create")) {
-    return fail("FORBIDDEN", "Tidak punya hak akses");
-  }
-
+async function fetchRequestableIngredients(
+  outletId: string,
+  opts: { lowStockOnly?: boolean } = {},
+): Promise<RequestableIngredient[]> {
   const rows = await db
     .select({
       id: ingredients.id,
@@ -197,34 +219,131 @@ export async function listLowStockIngredients(): Promise<
     .from(ingredients)
     .where(
       and(
-        eq(ingredients.outletId, session.user.outletId),
+        eq(ingredients.outletId, outletId),
         eq(ingredients.isActive, true),
         isNull(ingredients.deletedAt),
-        isNotNull(ingredients.reorderThreshold),
-        lte(ingredients.currentStock, ingredients.reorderThreshold),
+        ...(opts.lowStockOnly
+          ? [
+              isNotNull(ingredients.reorderThreshold),
+              lte(ingredients.currentStock, ingredients.reorderThreshold),
+            ]
+          : []),
       ),
     )
-    .orderBy(ingredients.section, ingredients.name);
+    .orderBy(ingredients.name);
 
-  const result: LowStockIngredient[] = rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    unit: r.unit,
-    section: r.section,
-    currentStock: Number(r.currentStock),
-    reorderThreshold: Number(r.reorderThreshold ?? 0),
-    suggestedQty: suggestQty(
-      Number(r.currentStock),
-      Number(r.reorderThreshold ?? 0),
-    ),
-    packConversions: Array.isArray(r.packConversions)
-      ? (r.packConversions as Array<{ unitLabel: string; qtyPerBase: number }>)
-      : [],
-    unitBelanja: r.unitBelanja,
-    unitBelanjaPerCogs: r.unitBelanjaPerCogs,
-  }));
+  const result = rows.map((r) => {
+    const currentStock = Number(r.currentStock);
+    const threshold =
+      r.reorderThreshold === null ? null : Number(r.reorderThreshold);
+    const isLowStock = threshold !== null && currentStock <= threshold;
+    return {
+      id: r.id,
+      name: r.name,
+      unit: r.unit,
+      section: r.section,
+      currentStock,
+      reorderThreshold: threshold ?? 0,
+      isLowStock,
+      /* Bahan non-low-stock tidak punya "kekurangan" untuk dihitung — kasih
+       * 1 sebagai titik mulai, staff yang isi qty sebenarnya. */
+      suggestedQty: isLowStock ? suggestQty(currentStock, threshold) : 1,
+      packConversions: Array.isArray(r.packConversions)
+        ? (r.packConversions as Array<{ unitLabel: string; qtyPerBase: number }>)
+        : [],
+      unitBelanja: r.unitBelanja,
+      unitBelanjaPerCogs: r.unitBelanjaPerCogs,
+    } satisfies RequestableIngredient;
+  });
 
-  return ok(result);
+  result.sort((a, b) => {
+    if (a.isLowStock !== b.isLowStock) return a.isLowStock ? -1 : 1;
+    return a.name.localeCompare(b.name, "id-ID");
+  });
+  return result;
+}
+
+/**
+ * Sesi AE-190 — cocokkan item PR manual ke master lewat nama.
+ *
+ * Mengembalikan map `index item input` → master + qty yang SUDAH dikonversi ke
+ * satuan master. Item yang tidak punya kecocokan tunggal, atau yang qty-nya
+ * tidak bisa dikonversi ke satuan master, sengaja TIDAK dimasukkan — biar tetap
+ * tersimpan sebagai manual dan owner yang menautkan saat Tarik ke Pembelian.
+ */
+async function resolveManualItemLinks(
+  items: CreatePurchaseRequestInput["items"],
+  outletId: string,
+): Promise<
+  Map<number, { id: string; name: string; unit: string; qtyMaster: number }>
+> {
+  const out = new Map<
+    number,
+    { id: string; name: string; unit: string; qtyMaster: number }
+  >();
+  const manual = items
+    .map((item, index) => ({ item, index }))
+    .filter(
+      ({ item }) =>
+        !item.ingredientId && (item.ingredientNameSnapshot ?? "").trim(),
+    );
+  if (manual.length === 0) return out;
+
+  const byName = indexMasterByName(await fetchRequestableIngredients(outletId));
+  const deps = {
+    displayUnit,
+    convertQtyWithIngredientPacks,
+    mergePackConversions,
+  };
+
+  for (const { item, index } of manual) {
+    const matched = matchManualItemToMaster(
+      {
+        name: item.ingredientNameSnapshot ?? "",
+        unit: item.unitSnapshot ?? "",
+        qty: item.requestedQty,
+      },
+      byName,
+      deps,
+    );
+    if (matched) out.set(index, matched);
+  }
+  return out;
+}
+
+/**
+ * Sesi AE-190 — SEMUA bahan aktif master, dengan penanda `isLowStock`.
+ *
+ * Dipakai modul PO staff supaya kotak pencarian menjangkau seluruh master,
+ * bukan cuma bahan yang stoknya sudah menipis. Sebelum ini cuma 75 dari 182
+ * bahan aktif yang bisa ditemukan staff → sisanya terpaksa diketik manual.
+ */
+export async function listRequestableIngredients(): Promise<
+  ApiResult<RequestableIngredient[]>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase_request.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak akses");
+  }
+  return ok(await fetchRequestableIngredients(session.user.outletId));
+}
+
+/**
+ * List ingredients dengan currentStock <= reorderThreshold, untuk auto-prefill
+ * form belanja saat tutup shift.
+ */
+export async function listLowStockIngredients(): Promise<
+  ApiResult<LowStockIngredient[]>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase_request.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak akses");
+  }
+  return ok(
+    await fetchRequestableIngredients(session.user.outletId, {
+      lowStockOnly: true,
+    }),
+  );
 }
 
 export async function createPurchaseRequest(
@@ -284,6 +403,24 @@ export async function createPurchaseRequest(
     }
   }
 
+  /* Sesi AE-190 — jaring pengaman untuk item manual.
+   *
+   * Meski pencarian staff sekarang menjangkau seluruh master, item manual
+   * masih mungkin ditulis dengan ejaan/kapital beda ("bawang goreng" vs
+   * "Bawang Goreng"). Kalau namanya persis sama (abaikan besar-kecil huruf &
+   * spasi) dengan SATU bahan aktif, tautkan otomatis supaya PR-nya punya
+   * master → dapat saran supplier/harga di Tarik ke Pembelian dan stok ikut
+   * bergerak saat GR.
+   *
+   * Syarat aman: qty harus bisa dikonversi ke satuan master. Kalau staff tulis
+   * "Susu Omela 3 Karton" sementara master-nya ml dan konversi Karton belum
+   * di-set, TAUTAN DIBATALKAN — biarkan manual dan owner yang putuskan,
+   * daripada mencatat 3 ml. */
+  const autoLink = await resolveManualItemLinks(
+    input.items,
+    session.user.outletId,
+  );
+
   const result = await db.transaction(async (tx) => {
     const [request] = await tx
       .insert(purchaseRequests)
@@ -297,9 +434,12 @@ export async function createPurchaseRequest(
       .returning({ id: purchaseRequests.id });
 
     let order = 0;
-    for (const item of input.items) {
-      // Linked: pakai master snapshot. Manual: pakai input.
-      const ing = item.ingredientId ? byId.get(item.ingredientId) : null;
+    for (let idx = 0; idx < input.items.length; idx++) {
+      const item = input.items[idx];
+      // Linked: pakai master snapshot. Manual: pakai input (atau hasil
+      // auto-link nama, sesi AE-190).
+      const linked = autoLink.get(idx);
+      const ing = item.ingredientId ? byId.get(item.ingredientId) : linked;
       const nameSnapshot = ing
         ? ing.name
         : (item.ingredientNameSnapshot ?? "").trim();
@@ -309,8 +449,9 @@ export async function createPurchaseRequest(
         ing ? ing.unit : (item.unitSnapshot ?? "").trim(),
       );
       // Sesi AE-16 — qty decimal mirror.
-      const qtyBigint = Math.max(1, Math.floor(item.requestedQty));
-      const qtyDecimal = item.requestedQty.toFixed(4);
+      const requestedQty = linked ? linked.qtyMaster : item.requestedQty;
+      const qtyBigint = Math.max(1, Math.floor(requestedQty));
+      const qtyDecimal = requestedQty.toFixed(4);
       await tx.insert(purchaseRequestItems).values({
         requestId: request.id,
         ingredientId: ing ? ing.id : null,

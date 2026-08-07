@@ -16,13 +16,13 @@ import { Button, Input, Spinner, toast } from "@/components/ui";
 import { useSession } from "@/features/auth/SessionProvider";
 import {
   createPurchaseRequest,
-  listLowStockIngredients,
   listPurchaseRequests,
+  listRequestableIngredients,
 } from "@/features/purchase-requests/actions";
 import {
   isOk,
-  type LowStockIngredient,
   type PurchaseRequestWithItems,
+  type RequestableIngredient,
 } from "@/features/purchase-requests/types";
 import { formatIndonesianDate } from "@/lib/date";
 import { parseIndonesianNumber } from "@/lib/format";
@@ -36,6 +36,9 @@ import {
   type IngredientPackConversion,
 } from "@/lib/unit-conversion";
 
+/** Sesi AE-190 — batas baris hasil pencarian yang dirender di layar HP. */
+const MAX_VISIBLE_INGREDIENTS = 50;
+
 interface ItemDraft {
   id: string;
   ingredientName: string;
@@ -46,7 +49,9 @@ interface ItemDraft {
   masterUnit: string | null;
   qty: string; // user-typed string for flexible decimal entry
   notes: string;
-  fromLowStock: boolean;
+  /** Dipilih dari master bahan (bukan diketik manual). Sesi AE-190 — dulu
+   *  bernama `fromLowStock` karena daftar pilihannya memang cuma low-stock. */
+  fromMaster: boolean;
   ingredientId?: string; // null for custom items (added manually)
   /* Sesi AE-177d — pack conversions per-bahan + tier belanja → dipakai
    * client buat bangun dropdown satuan KANONIK (sama dgn Opname) +
@@ -61,9 +66,12 @@ interface ItemDraft {
  *
  * Flow:
  *   1. Auth check via NextAuth session.
- *   2. Fetch low-stock ingredients via listLowStockIngredients().
+ *   2. Fetch SELURUH bahan aktif via listRequestableIngredients() — sesi
+ *      AE-190. Dulu `listLowStockIngredients()`, yang bikin ~60% master bahan
+ *      tidak pernah bisa ditemukan staff.
  *   3. Karyawan can:
- *      - Toggle low-stock items on/off (auto-fill suggestedQty)
+ *      - Toggle bahan on/off (low-stock auto-fill suggestedQty)
+ *      - Cari bahan apa pun dari master lewat kotak pencarian
  *      - Adjust qty per item
  *      - Add custom item manually (text input + qty)
  *      - Add catatan global
@@ -100,7 +108,8 @@ export default function MobilePoPage() {
 function PoView() {
   const { session } = useSession();
   const [loading, setLoading] = useState(true);
-  const [lowStock, setLowStock] = useState<LowStockIngredient[]>([]);
+  /* Sesi AE-190 — SEMUA bahan aktif master, bukan cuma yang low-stock. */
+  const [catalog, setCatalog] = useState<RequestableIngredient[]>([]);
   const [items, setItems] = useState<ItemDraft[]>([]);
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -118,10 +127,10 @@ function PoView() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const res = await listLowStockIngredients();
+      const res = await listRequestableIngredients();
       if (cancelled) return;
       if (isOk(res)) {
-        setLowStock(res.data);
+        setCatalog(res.data);
       }
       setLoading(false);
     })();
@@ -146,17 +155,39 @@ function PoView() {
     };
   }, [historyKey]);
 
-  const filteredLowStock = useMemo(() => {
+  const lowStockCount = useMemo(
+    () => catalog.filter((i) => i.isLowStock).length,
+    [catalog],
+  );
+
+  /* Sesi AE-190 — pencarian menjangkau SELURUH master bahan.
+   *
+   * Sebelumnya daftar & pencarian cuma jalan di hasil low-stock, jadi bahan
+   * yang stoknya masih aman (Oreo, Regal, Nugget 500gr, …) atau yang belum
+   * punya Stok Minimum tidak pernah ketemu dan staff terpaksa ketik manual.
+   *
+   * Tanpa kata kunci: tampilkan saran low-stock saja supaya layar HP tidak
+   * kebanjiran 180+ baris. Begitu staff mengetik, cari ke semua bahan. */
+  const matchedIngredients = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return lowStock;
-    return lowStock.filter((i) => i.name.toLowerCase().includes(q));
-  }, [lowStock, search]);
+    if (!q) return catalog.filter((i) => i.isLowStock);
+    return catalog.filter((i) => i.name.toLowerCase().includes(q));
+  }, [catalog, search]);
+
+  /* Layar HP — batasi baris yang dirender biar kueri pendek (mis. "a") tidak
+   * memuntahkan 180 baris. Server sudah mengurutkan low-stock duluan, jadi
+   * yang terpotong adalah yang paling tidak mendesak. */
+  const visibleIngredients = useMemo(
+    () => matchedIngredients.slice(0, MAX_VISIBLE_INGREDIENTS),
+    [matchedIngredients],
+  );
+  const hiddenCount = matchedIngredients.length - visibleIngredients.length;
 
   function isSelected(ingredientId: string) {
     return items.some((it) => it.ingredientId === ingredientId);
   }
 
-  function toggleLowStockItem(ing: LowStockIngredient) {
+  function toggleIngredient(ing: RequestableIngredient) {
     setItems((prev) => {
       const existing = prev.find((it) => it.ingredientId === ing.id);
       if (existing) {
@@ -165,14 +196,14 @@ function PoView() {
       return [
         ...prev,
         {
-          id: `low-${ing.id}`,
+          id: `master-${ing.id}`,
           ingredientId: ing.id,
           ingredientName: ing.name,
           unit: displayUnit(ing.unit),
           masterUnit: displayUnit(ing.unit),
           qty: String(ing.suggestedQty),
           notes: "",
-          fromLowStock: true,
+          fromMaster: true,
           packConversions: ing.packConversions,
           unitBelanja: ing.unitBelanja,
           unitBelanjaPerCogs: ing.unitBelanjaPerCogs,
@@ -181,17 +212,17 @@ function PoView() {
     });
   }
 
-  function addCustomItem() {
+  function addCustomItem(prefillName = "") {
     setItems((prev) => [
       ...prev,
       {
         id: `custom-${Date.now()}`,
-        ingredientName: "",
+        ingredientName: prefillName,
         unit: "Pcs",
         masterUnit: null,
         qty: "",
         notes: "",
-        fromLowStock: false,
+        fromMaster: false,
       },
     ]);
   }
@@ -432,80 +463,120 @@ function PoView() {
 
       {tab !== "buat" ? null : (
       <>
-      {/* Low stock auto-suggestions */}
-      {lowStock.length > 0 ? (
-        <section>
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-600">
-              Low-stock — Auto-suggest
-            </h2>
-            <span className="text-[11px] text-neutral-600">
-              {items.filter((i) => i.fromLowStock).length} dipilih
-            </span>
-          </div>
-          <Input
-            type="text"
-            size="lg"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari bahan…"
-            leadingIcon={<Search className="size-4" aria-hidden />}
-            className="mb-2"
-          />
-          <ul className="space-y-2">
-            {filteredLowStock.length === 0 ? (
-              <li className="rounded-lg border border-dashed border-neutral-300 bg-white py-4 text-center text-xs text-neutral-600">
-                Tidak ada hasil untuk &ldquo;{search}&rdquo;.
-              </li>
-            ) : (
-              filteredLowStock.map((ing) => (
-                <li
-                  key={ing.id}
-                  className={cn(
-                    "rounded-lg border bg-white p-3 transition-colors",
-                    isSelected(ing.id)
-                      ? "border-mahakan-green-700 bg-mahakan-green-50"
-                      : "border-neutral-200",
-                  )}
+      {/* Sesi AE-190 — pemilih bahan dari SELURUH master. Section ini selalu
+       *  dirender: dulu digerbangi `lowStock.length > 0`, jadi saat tidak ada
+       *  bahan low-stock kotak pencariannya ikut hilang total. */}
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-600">
+            {search.trim() ? "Hasil Pencarian" : "Stok Menipis — Saran Otomatis"}
+          </h2>
+          <span className="text-[11px] text-neutral-600">
+            {items.filter((i) => i.fromMaster).length} dipilih
+          </span>
+        </div>
+        <Input
+          type="text"
+          size="lg"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={`Cari dari ${catalog.length} bahan…`}
+          leadingIcon={<Search className="size-4" aria-hidden />}
+          className="mb-2"
+        />
+        {!search.trim() ? (
+          <p className="mb-2 text-[11px] text-neutral-600">
+            {lowStockCount > 0
+              ? `${lowStockCount} bahan stoknya menipis. `
+              : "Belum ada bahan yang stoknya menipis. "}
+            Bahan lain tetap bisa diminta — ketik namanya di kotak pencarian.
+          </p>
+        ) : null}
+        <ul className="space-y-2">
+          {visibleIngredients.length === 0 ? (
+            <li className="rounded-lg border border-dashed border-neutral-300 bg-white p-4 text-center">
+              <p className="text-xs text-neutral-600">
+                {search.trim()
+                  ? `“${search.trim()}” tidak ada di daftar bahan.`
+                  : "Belum ada bahan yang stoknya menipis."}
+              </p>
+              {search.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    addCustomItem(search.trim());
+                    setSearch("");
+                  }}
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-mahakan-green-50 px-3 py-2 text-xs font-semibold text-mahakan-green-700"
                 >
-                  <button
-                    type="button"
-                    onClick={() => toggleLowStockItem(ing)}
-                    className="flex w-full items-start justify-between gap-3 text-left"
-                  >
-                    <div className="min-w-0 flex-1">
+                  <Plus className="size-3.5" aria-hidden /> Tambah &ldquo;
+                  {search.trim()}&rdquo; manual
+                </button>
+              ) : null}
+            </li>
+          ) : (
+            visibleIngredients.map((ing) => (
+              <li
+                key={ing.id}
+                className={cn(
+                  "rounded-lg border bg-white p-3 transition-colors",
+                  isSelected(ing.id)
+                    ? "border-mahakan-green-700 bg-mahakan-green-50"
+                    : "border-neutral-200",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleIngredient(ing)}
+                  className="flex w-full items-start justify-between gap-3 text-left"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <p className="text-sm font-semibold text-neutral-900">
                         {ing.name}
                       </p>
-                      <p className="text-[11px] text-neutral-600">
-                        Stok: {ing.currentStock} {ing.unit} · Threshold:{" "}
-                        {ing.reorderThreshold} {ing.unit}
-                        {ing.section ? (
-                          <span className="ml-1 text-neutral-500">
-                            · {ing.section}
-                          </span>
-                        ) : null}
-                      </p>
-                    </div>
-                    <div
-                      className={cn(
-                        "flex size-6 shrink-0 items-center justify-center rounded-md border-2",
-                        isSelected(ing.id)
-                          ? "border-mahakan-green-700 bg-mahakan-green-700 text-white"
-                          : "border-neutral-300",
-                      )}
-                    >
-                      {isSelected(ing.id) ? (
-                        <CheckCircle2 className="size-4" aria-hidden />
+                      {ing.isLowStock ? (
+                        <span className="rounded-full bg-warning-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning-700">
+                          Menipis
+                        </span>
                       ) : null}
                     </div>
-                  </button>
-                </li>
-              ))
-            )}
-          </ul>
-        </section>
-      ) : null}
+                    <p className="text-[11px] text-neutral-600">
+                      Stok: {ing.currentStock} {ing.unit}
+                      {ing.isLowStock
+                        ? ` · Stok Min: ${ing.reorderThreshold} ${ing.unit}`
+                        : ""}
+                      {ing.section ? (
+                        <span className="ml-1 text-neutral-500">
+                          · {ing.section}
+                        </span>
+                      ) : null}
+                    </p>
+                  </div>
+                  <div
+                    className={cn(
+                      "flex size-6 shrink-0 items-center justify-center rounded-md border-2",
+                      isSelected(ing.id)
+                        ? "border-mahakan-green-700 bg-mahakan-green-700 text-white"
+                        : "border-neutral-300",
+                    )}
+                  >
+                    {isSelected(ing.id) ? (
+                      <CheckCircle2 className="size-4" aria-hidden />
+                    ) : null}
+                  </div>
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+        {hiddenCount > 0 ? (
+          <p className="mt-2 text-center text-[11px] text-neutral-600">
+            +{hiddenCount} bahan lain cocok. Ketik lebih lengkap buat
+            mempersempit.
+          </p>
+        ) : null}
+      </section>
 
       {/* Custom items + selected items qty editor */}
       {items.length > 0 ? (
@@ -520,7 +591,7 @@ function PoView() {
                 className="rounded-lg border border-neutral-200 bg-white p-3"
               >
                 <div className="flex items-start justify-between gap-2">
-                  {it.fromLowStock ? (
+                  {it.fromMaster ? (
                     <p className="flex-1 text-sm font-semibold text-neutral-900">
                       {it.ingredientName}
                     </p>
@@ -566,7 +637,7 @@ function PoView() {
                   >
                     {buildUnitSelectOptions({
                       presets: CANONICAL_UNIT_PRESETS,
-                      packLabels: it.fromLowStock
+                      packLabels: it.fromMaster
                         ? [
                             it.masterUnit ?? "",
                             it.unitBelanja ?? "",
@@ -583,7 +654,7 @@ function PoView() {
                     ))}
                   </select>
                 </div>
-                {it.fromLowStock &&
+                {it.fromMaster &&
                 it.masterUnit &&
                 displayUnit(it.unit) !== it.masterUnit ? (
                   <p className="mt-1 text-[11px] text-neutral-500">
@@ -607,7 +678,7 @@ function PoView() {
 
       <button
         type="button"
-        onClick={addCustomItem}
+        onClick={() => addCustomItem()}
         className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-neutral-300 bg-white px-4 py-3 text-sm font-medium text-mahakan-green-700 transition-colors hover:border-mahakan-green-700 hover:bg-mahakan-green-50"
       >
         <Plus className="size-4" aria-hidden /> Tambah Item Manual

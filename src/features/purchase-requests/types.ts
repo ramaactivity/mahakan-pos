@@ -105,6 +105,23 @@ export interface LowStockIngredient {
   unitBelanjaPerCogs: string | null;
 }
 
+/**
+ * Sesi AE-190 — bahan yang BOLEH diminta staff lewat modul PO, yaitu SEMUA
+ * bahan aktif di master (bukan cuma yang low-stock).
+ *
+ * Latar: `listLowStockIngredients()` memfilter
+ * `reorderThreshold IS NOT NULL AND currentStock <= reorderThreshold`, jadi
+ * bahan yang stoknya masih di atas ambang (Oreo, Regal, Nugget 500gr, …) atau
+ * yang belum punya ambang sama sekali TIDAK PERNAH muncul di pencarian staff.
+ * Staff akhirnya mengetik nama manual → PR item lepas dari master (tanpa
+ * konversi satuan, tanpa saran supplier/harga) dan owner harus menautkan ulang
+ * satu per satu saat Tarik ke Pembelian.
+ */
+export interface RequestableIngredient extends LowStockIngredient {
+  /** true kalau `reorderThreshold` terisi DAN stok sudah <= ambang. */
+  isLowStock: boolean;
+}
+
 export type ApiResult<T> =
   | { success: true; data: T }
   | {
