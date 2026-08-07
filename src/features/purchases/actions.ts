@@ -1602,6 +1602,15 @@ export async function markPurchasePaid(
       if (paidIsTop && p.receiptStatus === "ordered") {
         throw new Error("NOT_RECEIVED");
       }
+      /* Sesi AE-188 — hutang tidak bisa dibayar sebelum hutangnya ada.
+       * Tanpa penjaga ini, jurnal pelunasan bisa mendarat lebih awal dari
+       * jurnal pengakuan hutangnya; Buku Besar dibaca urut tanggal jadi
+       * seolah hutangnya belum lunas sampai akhir periode. Persis yang
+       * terjadi saat staff memindah tanggal jurnal secara manual (laporan
+       * 2026-08-07: bayar 20 Jun untuk hutang yang baru muncul 28 Jun). */
+      if (payDate < String(p.purchaseDate)) {
+        throw new Error(`BEFORE_DEBT:${String(p.purchaseDate)}`);
+      }
       const [grSum] = await tx
         .select({
           total: sql<number>`coalesce(sum(${goodsReceipts.totalAmount}),0)::bigint`,
@@ -1680,6 +1689,11 @@ export async function markPurchasePaid(
       return fail(
         "NOT_RECEIVED",
         "Belum ada barang diterima — catat penerimaan (GR) dulu sebelum tandai lunas",
+      );
+    if (msg.startsWith("BEFORE_DEBT:"))
+      return fail(
+        "VALIDATION_ERROR",
+        `Tanggal pembayaran tidak boleh sebelum tanggal pembeliannya (${msg.slice("BEFORE_DEBT:".length)}) — hutangnya belum ada di tanggal itu.`,
       );
     return fail(
       "DB_ERROR",
@@ -1833,6 +1847,15 @@ export async function updatePurchasePaymentDate(input: {
     return fail(
       "BAD_STATE",
       "Hanya pembelian tempo (TOP) yang punya tanggal pelunasan tersendiri. Untuk pembelian tunai, uangnya keluar saat barang diterima — koreksi lewat tanggal penerimaan.",
+    );
+  }
+  /* Sama seperti di markPurchasePaid: pelunasan tidak boleh mendahului
+   * hutangnya. Justru koreksi manual yang tidak dijaga inilah yang bikin
+   * dua jurnal pelunasan mendarat sebelum hutangnya (laporan 2026-08-07). */
+  if (newDate < String(p.purchaseDate)) {
+    return fail(
+      "VALIDATION_ERROR",
+      `Tanggal pembayaran tidak boleh sebelum tanggal pembeliannya (${String(p.purchaseDate)}) — hutangnya belum ada di tanggal itu.`,
     );
   }
   const previousDate = p.paidAt
