@@ -132,6 +132,8 @@ export const AUDIT_EVENT_TYPES = [
   /* Sesi AE-188 — edit PO (harga menyusul nota) + sinkron turunannya. */
   "purchase.order_update",
   "purchase.goods_receive",
+  /* Sesi AE-188 — hapus GR (owner-only), membalik stok/kas/PR/jurnal. */
+  "purchase.goods_receipt_delete",
   // Purchase Requests (Phase 6.5+6.6, sesi AC-3)
   "purchase_request.create",
   "purchase_request.receive",

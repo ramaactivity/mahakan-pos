@@ -78,7 +78,11 @@ export function PurchasingSection() {
               <Plus className="size-4" aria-hidden /> Buat GR
             </Button>
           </div>
-          <GoodsReceiptsList refreshKey={grRefresh} />
+          {/* Hapus GR memundurkan status PO, jadi tab PO ikut di-refresh. */}
+          <GoodsReceiptsList
+            refreshKey={grRefresh}
+            onDeleted={() => setGrRefresh((k) => k + 1)}
+          />
         </div>
       </TabPanel>
       <TabPanel value="top">

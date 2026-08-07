@@ -1,17 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, PackageCheck } from "lucide-react";
+import { ChevronDown, PackageCheck, Trash2 } from "lucide-react";
 import {
   Badge,
+  Button,
   DateRangePicker,
+  Input,
+  Modal,
+  toast,
   type DateRangeValue,
 } from "@/components/ui";
 import {
+  deleteGoodsReceipt,
   fetchGoodsReceiptItems,
   isOk,
   listGoodsReceipts,
 } from "@/features/purchases";
+import { useSession } from "@/features/auth/SessionProvider";
+import { hasPermission } from "@/lib/auth/rbac";
 import { currentJakartaMonth, toJakartaDateOnly } from "@/lib/date";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -38,7 +45,23 @@ type GrItem = {
  * Sesi AE-173 — daftar record Goods Receipt (GR) di tab GR (gaya Little
  * Sindbad). Tiap baris = 1 penerimaan barang; expand untuk lihat item.
  */
-export function GoodsReceiptsList({ refreshKey }: { refreshKey?: number }) {
+export function GoodsReceiptsList({
+  refreshKey,
+  onDeleted,
+}: {
+  refreshKey?: number;
+  /** Dipanggil setelah GR dihapus — parent perlu refresh tab PO juga karena
+   * status PO ikut mundur (received → partial → ordered). */
+  onDeleted?: () => void;
+}) {
+  const { session } = useSession();
+  /* Sesi AE-188 — hapus GR percobaan. OWNER SAJA (lihat rbac.ts). */
+  const canDelete = session?.user.role
+    ? hasPermission(session.user.role, "purchase.goods_receipt_delete")
+    : false;
+  const [deleteTarget, setDeleteTarget] = useState<GrRecord | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
+  const [deleting, setDeleting] = useState(false);
   const [rows, setRows] = useState<GrRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -64,6 +87,38 @@ export function GoodsReceiptsList({ refreshKey }: { refreshKey?: number }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
   }, [refresh, refreshKey]);
+
+  async function onConfirmDelete() {
+    if (!deleteTarget || deleting) return;
+    if (deleteReason.trim().length < 3) {
+      toast.error("Alasan hapus minimal 3 karakter");
+      return;
+    }
+    setDeleting(true);
+    const res = await deleteGoodsReceipt({
+      id: deleteTarget.id,
+      reason: deleteReason.trim(),
+    });
+    setDeleting(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    const statusLabel =
+      res.data.receiptStatus === "ordered"
+        ? "PO kembali ke belum diterima"
+        : res.data.receiptStatus === "partial"
+          ? "PO jadi diterima sebagian"
+          : "PO tetap diterima penuh";
+    toast.success(
+      `GR dihapus — ${statusLabel}${res.data.stockReversed ? ", stok dikembalikan" : ""}`,
+    );
+    setDeleteTarget(null);
+    setDeleteReason("");
+    if (openId === deleteTarget.id) setOpenId(null);
+    void refresh();
+    onDeleted?.();
+  }
 
   async function toggle(gr: GrRecord) {
     if (openId === gr.id) {
@@ -139,6 +194,24 @@ export function GoodsReceiptsList({ refreshKey }: { refreshKey?: number }) {
               />
             </div>
           </button>
+          {/* Tombol hapus sengaja DI LUAR <button> pembuka — tombol di dalam
+              tombol tidak sah di HTML dan bikin klik saling rebutan. */}
+          {canDelete ? (
+            <div className="flex justify-end border-t border-neutral-100 px-4 py-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setDeleteTarget(gr);
+                  setDeleteReason("");
+                }}
+                className="text-danger-500 hover:bg-danger-100"
+                title="Hapus GR ini"
+              >
+                <Trash2 className="size-4" aria-hidden /> Hapus GR
+              </Button>
+            </div>
+          ) : null}
 
           {openId === gr.id ? (
             <div className="border-t border-neutral-100 px-4 py-3">
@@ -169,6 +242,67 @@ export function GoodsReceiptsList({ refreshKey }: { refreshKey?: number }) {
           ))}
         </ul>
       )}
+
+      <Modal
+        open={deleteTarget !== null}
+        onClose={() => {
+          setDeleteTarget(null);
+          setDeleteReason("");
+        }}
+        title="Hapus GR ini?"
+        description={
+          deleteTarget
+            ? `${deleteTarget.receivedDate} · ${deleteTarget.supplierName ?? "Pembelian langsung"} · ${formatRupiah(deleteTarget.totalAmount)}`
+            : ""
+        }
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteReason("");
+              }}
+              disabled={deleting}
+            >
+              Batal
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={onConfirmDelete}
+              loading={deleting}
+            >
+              Ya, hapus
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div className="rounded-md border border-warning-500/50 bg-warning-100/40 px-3 py-2.5 text-xs leading-relaxed text-neutral-800">
+            <p className="font-semibold text-warning-500">
+              Penerimaan ini akan hilang beserta seluruh efeknya
+            </p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+              <li>Stok bahan dikembalikan (kalau dulu memang ditambah)</li>
+              <li>Pengeluaran kas dari GR ini dihapus</li>
+              <li>Status PO mundur — bisa jadi sebagian / belum diterima</li>
+              <li>Permintaan Belanja (PR) yang tertaut ikut dibuka lagi</li>
+              <li>Jurnal penerimaannya dibalik</li>
+            </ul>
+            <p className="mt-1.5">
+              Tidak bisa di-undo. Kalau barangnya sudah terpakai untuk
+              penjualan, penghapusan akan ditolak supaya stok tidak negatif.
+            </p>
+          </div>
+          <Input
+            label="Alasan hapus"
+            placeholder="mis. GR percobaan, salah input"
+            value={deleteReason}
+            onChange={(e) => setDeleteReason(e.target.value)}
+          />
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -3431,6 +3431,423 @@ export async function listGoodsReceipts(opts?: {
   return ok(rows.map((r) => ({ ...r, receiptStatus: r.receiptStatus ?? "received" })));
 }
 
+// ============================================================================
+// Hapus GR (Sesi AE-188) — OWNER ONLY
+// ============================================================================
+
+/**
+ * Hapus satu catatan penerimaan barang (GR) berikut SEMUA efeknya.
+ *
+ * Diminta owner untuk membersihkan GR percobaan. Sengaja owner-only: satu
+ * klik di sini membalik stok, pengeluaran kas, receivedQty PR, status PO,
+ * dan jurnalnya sekaligus.
+ *
+ * Yang dibalik, urut:
+ *  1. Stok bahan — hanya untuk movement yang dulu memang menambah stok
+ *     (mode perpetual); mode periodic menandai `skipped_stock_update` jadi
+ *     tak ada yang perlu dikurangi. Stok jadi negatif → ditolak, karena
+ *     artinya barangnya sudah terpakai.
+ *  2. Baris `inventory_movements` milik GR ini DIHAPUS, bukan diberi
+ *     counter-movement. Alasannya bukan kerapian: `cancelPurchase` membalik
+ *     stok dengan menyapu semua movement `kind='purchase'` milik PO lewat
+ *     `referenceId`. Kalau baris asli dibiarkan, cancel sesudahnya akan
+ *     membalik untuk KEDUA kalinya → stok bocor.
+ *  3. `purchase_items.received_qty` dikurangi sebesar yang diterima di GR ini.
+ *  4. `purchase_request_items.received_qty` dikurangi (satuan master diambil
+ *     dari movement — eksak, tak perlu konversi ulang) + status PR dihitung
+ *     ulang.
+ *  5. Pengeluaran kas milik GR ini di-soft-delete.
+ *  6. Status PO dihitung ulang: ordered / partial / received. Untuk non-TOP
+ *     yang tadinya lunas otomatis, status balik ke belum lunas.
+ *  7. Jurnal GR dibalik (pair-void `purchase_create_void`).
+ *
+ * Ditolak: PO batal, hutang TOP yang sudah ditandai lunas (nilai GR sudah
+ * dipakai jurnal pelunasan), dan periode akuntansi yang sudah dikunci.
+ */
+export async function deleteGoodsReceipt(input: {
+  id: string;
+  reason: string;
+}): Promise<
+  ApiResult<{
+    id: string;
+    purchaseId: string;
+    receiptStatus: string;
+    stockReversed: boolean;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "purchase.goods_receipt_delete")) {
+    return fail("FORBIDDEN", "Hanya owner yang boleh menghapus GR");
+  }
+  const reason = (input?.reason ?? "").trim();
+  if (!input?.id) return fail("VALIDATION_ERROR", "ID GR tidak valid");
+  if (reason.length < 3) {
+    return fail("VALIDATION_ERROR", "Alasan hapus minimal 3 karakter");
+  }
+
+  let purchaseId = "";
+  let receiptStatus: "ordered" | "partial" | "received" = "ordered";
+  let stockReversed = false;
+  let journalLabel = "";
+  let journalDate = "";
+
+  try {
+    await db.transaction(async (tx) => {
+      const [gr] = await tx
+        .select()
+        .from(goodsReceipts)
+        .where(
+          and(
+            eq(goodsReceipts.id, input.id),
+            eq(goodsReceipts.outletId, session.user.outletId),
+          ),
+        )
+        .limit(1);
+      if (!gr) throw new Error("NOT_FOUND");
+      purchaseId = gr.purchaseId;
+      journalDate = String(gr.receivedDate);
+
+      /* Kunci PO lebih dulu — urutan yang sama dipakai receiveGoods dan
+       * updatePurchaseOrder, jadi hapus-vs-terima ter-serialisasi. */
+      const [po] = await tx
+        .select()
+        .from(purchases)
+        .where(eq(purchases.id, gr.purchaseId))
+        .for("update")
+        .limit(1);
+      if (!po) throw new Error("NOT_FOUND");
+      if (po.status === "cancelled") throw new Error("PURCHASE_CANCELLED");
+      if (po.paymentMethod === "top" && po.status === "paid") {
+        throw new Error("ALREADY_SETTLED");
+      }
+      journalLabel = po.invoiceNo ?? `GR ${journalDate}`;
+
+      /* Jurnal GR dibalik dengan entry_date = tanggal terima. Periode yang
+       * dikunci membuat pembalikan gagal SETELAH commit (hook fire-and-
+       * forget) → stok & kas sudah balik tapi GL tidak. Dicegat di depan. */
+      {
+        const [year, month] = journalDate.slice(0, 7).split("-").map(Number);
+        const [period] = await tx
+          .select({ status: accountingPeriods.status })
+          .from(accountingPeriods)
+          .where(
+            and(
+              eq(accountingPeriods.outletId, session.user.outletId),
+              eq(accountingPeriods.periodYear, year),
+              eq(accountingPeriods.periodMonth, month),
+            ),
+          )
+          .limit(1);
+        if (period?.status === "locked") {
+          throw new Error(`PERIOD_LOCKED:${journalDate.slice(0, 7)}`);
+        }
+      }
+
+      const grItems = await tx
+        .select()
+        .from(goodsReceiptItems)
+        .where(eq(goodsReceiptItems.goodsReceiptId, gr.id));
+
+      const poItems = await tx
+        .select()
+        .from(purchaseItems)
+        .where(eq(purchaseItems.purchaseId, po.id));
+      const poItemById = new Map(poItems.map((r) => [r.id, r] as const));
+
+      /* masterQty per baris GR, dipakai untuk un-bump PR. Diambil dari
+       * movement (sudah dalam satuan master) supaya tidak perlu mengulang
+       * konversi — dan tetap benar walau master satuan berubah setelahnya. */
+      const masterQtyByPoItem = new Map<string, number>();
+      const movementIdsToDrop: string[] = [];
+
+      for (const gi of grItems) {
+        const rawQty = Number(gi.receivedQtyDecimal ?? gi.receivedQty);
+        let masterQty = rawQty;
+
+        if (gi.movementId) {
+          const [mv] = await tx
+            .select()
+            .from(inventoryMovements)
+            .where(eq(inventoryMovements.id, gi.movementId))
+            .for("update")
+            .limit(1);
+          if (mv) {
+            const delta = Number(mv.qtyDeltaDecimal ?? mv.qtyDelta);
+            if (Number.isFinite(delta) && delta !== 0) masterQty = Math.abs(delta);
+
+            if (!mv.skippedStockUpdate) {
+              const [ing] = await tx
+                .select()
+                .from(ingredients)
+                .where(eq(ingredients.id, mv.ingredientId))
+                .for("update")
+                .limit(1);
+              if (ing) {
+                const newStock = computeNewStock({
+                  currentBigint: ing.currentStock,
+                  currentDecimal: ing.currentStockDecimal,
+                  delta: -Math.abs(delta),
+                });
+                if (newStock.bigint < 0) {
+                  throw new Error(`NEGATIVE_STOCK:${ing.name}`);
+                }
+                await tx
+                  .update(ingredients)
+                  .set({
+                    currentStock: newStock.bigint,
+                    currentStockDecimal: newStock.decimal,
+                    updatedAt: new Date(),
+                    updatedBy: session.user.id,
+                  })
+                  .where(eq(ingredients.id, ing.id));
+                stockReversed = true;
+              }
+            }
+            movementIdsToDrop.push(mv.id);
+          }
+        }
+
+        masterQtyByPoItem.set(
+          gi.purchaseItemId,
+          (masterQtyByPoItem.get(gi.purchaseItemId) ?? 0) + masterQty,
+        );
+
+        // Kurangi received_qty di baris PO.
+        const pi = poItemById.get(gi.purchaseItemId);
+        if (pi) {
+          const current = Number(pi.receivedQtyDecimal ?? pi.receivedQty);
+          const next = Math.max(0, current - rawQty);
+          await tx
+            .update(purchaseItems)
+            .set({
+              receivedQty: Math.round(next),
+              receivedQtyDecimal: next.toFixed(4),
+              /* Backlink movement ikut dilepas — barisnya sebentar lagi
+               * dihapus, dan FK-nya akan menolak kalau masih menunjuk. */
+              movementId: null,
+            })
+            .where(eq(purchaseItems.id, pi.id));
+          poItemById.set(pi.id, {
+            ...pi,
+            receivedQty: Math.round(next),
+            receivedQtyDecimal: next.toFixed(4),
+            movementId: null,
+          });
+        }
+      }
+
+      // ---- Un-bump receivedQty PR + hitung ulang status PR ----
+      const prLinked = poItems.filter((i) => i.purchaseRequestItemId);
+      if (prLinked.length > 0) {
+        const prItemIds = prLinked.map((i) => i.purchaseRequestItemId!);
+        const prItemRows = await tx
+          .select()
+          .from(purchaseRequestItems)
+          .where(inArray(purchaseRequestItems.id, prItemIds))
+          .for("update");
+        const prItemMap = new Map(prItemRows.map((r) => [r.id, r] as const));
+        const touchedRequestIds = new Set<string>();
+
+        for (const pi of prLinked) {
+          const masterQty = masterQtyByPoItem.get(pi.id);
+          if (!masterQty || masterQty <= 0) continue;
+          const prItem = prItemMap.get(pi.purchaseRequestItemId!);
+          if (!prItem) continue;
+          const currentDecimal = prItem.receivedQtyDecimal
+            ? Number(prItem.receivedQtyDecimal)
+            : Number(prItem.receivedQty);
+          const next = applyPrReceiveDelta({
+            currentDecimal,
+            delta: -masterQty,
+          });
+          await tx
+            .update(purchaseRequestItems)
+            .set({
+              receivedQty: next.receivedQty,
+              receivedQtyDecimal: next.receivedQtyDecimal,
+              updatedAt: new Date(),
+            })
+            .where(eq(purchaseRequestItems.id, prItem.id));
+          prItemMap.set(prItem.id, {
+            ...prItem,
+            receivedQty: next.receivedQty,
+            receivedQtyDecimal: next.receivedQtyDecimal,
+          });
+          touchedRequestIds.add(prItem.requestId);
+        }
+
+        for (const requestId of touchedRequestIds) {
+          const allItems = await tx
+            .select()
+            .from(purchaseRequestItems)
+            .where(eq(purchaseRequestItems.requestId, requestId));
+          const newStatus = computePrStatus(
+            allItems.map((r) => ({
+              requestedQty: Number(r.requestedQty),
+              receivedQty: Number(r.receivedQty),
+              rejectedAt: r.rejectedAt,
+            })),
+          );
+          const [pr] = await tx
+            .select()
+            .from(purchaseRequests)
+            .where(eq(purchaseRequests.id, requestId))
+            .limit(1);
+          if (pr && pr.status !== "cancelled" && newStatus !== pr.status) {
+            await tx
+              .update(purchaseRequests)
+              .set({
+                status: newStatus,
+                completedAt: newStatus === "completed" ? new Date() : null,
+                updatedAt: new Date(),
+              })
+              .where(eq(purchaseRequests.id, requestId));
+          }
+        }
+      }
+
+      // ---- Pengeluaran kas milik GR ini ----
+      if (gr.expenseId) {
+        await tx
+          .update(expenses)
+          .set({
+            deletedAt: new Date(),
+            deletedBy: session.user.id,
+            updatedAt: new Date(),
+            updatedBy: session.user.id,
+          })
+          .where(eq(expenses.id, gr.expenseId));
+      }
+
+      // ---- Hapus baris GR + movement-nya ----
+      await tx
+        .delete(goodsReceiptItems)
+        .where(eq(goodsReceiptItems.goodsReceiptId, gr.id));
+      await tx.delete(goodsReceipts).where(eq(goodsReceipts.id, gr.id));
+      if (movementIdsToDrop.length > 0) {
+        await tx
+          .delete(inventoryMovements)
+          .where(inArray(inventoryMovements.id, movementIdsToDrop));
+      }
+
+      // ---- Status PO dihitung ulang dari sisa penerimaan ----
+      const remaining = Array.from(poItemById.values());
+      const anyReceived = remaining.some(
+        (pi) => Number(pi.receivedQtyDecimal ?? pi.receivedQty) > 0,
+      );
+      const fully =
+        remaining.length > 0 &&
+        remaining.every((pi) => {
+          const received = Number(pi.receivedQtyDecimal ?? pi.receivedQty);
+          const ordered = parseFloat(pi.qtyDecimal ?? "") || pi.qty;
+          return received + 1e-6 >= ordered;
+        });
+      receiptStatus = fully ? "received" : anyReceived ? "partial" : "ordered";
+
+      /* Expense backlink header menunjuk expense GR terakhir yang masih
+       * hidup — kalau yang dihapus adalah itu, dilepas. */
+      const [survivingExpense] = await tx
+        .select({ id: goodsReceipts.expenseId })
+        .from(goodsReceipts)
+        .where(
+          and(
+            eq(goodsReceipts.purchaseId, po.id),
+            sql`${goodsReceipts.expenseId} is not null`,
+          ),
+        )
+        .orderBy(desc(goodsReceipts.receivedDate))
+        .limit(1);
+
+      const isTop = po.paymentMethod === "top";
+      await tx
+        .update(purchases)
+        .set({
+          receiptStatus,
+          receivedAt: fully ? po.receivedAt : null,
+          /* non-TOP jadi 'paid' otomatis saat diterima penuh — begitu tidak
+           * penuh lagi, statusnya harus balik ke belum lunas. */
+          status: isTop ? po.status : fully ? "paid" : "pending_payment",
+          paidAt: isTop ? po.paidAt : fully ? po.paidAt : null,
+          paidBy: isTop ? po.paidBy : fully ? po.paidBy : null,
+          expenseId: survivingExpense?.id ?? null,
+          updatedAt: new Date(),
+          updatedBy: session.user.id,
+        })
+        .where(eq(purchases.id, po.id));
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg === "NOT_FOUND") return fail("NOT_FOUND", "GR tidak ditemukan");
+    if (msg === "PURCHASE_CANCELLED")
+      return fail(
+        "BAD_STATE",
+        "PO-nya sudah dibatalkan — efek GR ini sudah ikut dibalik saat pembatalan.",
+      );
+    if (msg === "ALREADY_SETTLED")
+      return fail(
+        "BAD_STATE",
+        "Hutang TOP PO ini sudah ditandai lunas. Nilai GR-nya sudah dipakai jurnal pelunasan, jadi GR tidak bisa dihapus.",
+      );
+    if (msg.startsWith("PERIOD_LOCKED:"))
+      return fail(
+        "BAD_STATE",
+        `GR ini ada di periode ${msg.slice("PERIOD_LOCKED:".length)} yang sudah dikunci — jurnalnya tidak bisa dibalik. Buka periode itu dulu di menu Akuntansi.`,
+      );
+    if (msg.startsWith("NEGATIVE_STOCK:"))
+      return fail(
+        "VALIDATION_ERROR",
+        `Hapus GR akan bikin stok ${msg.slice("NEGATIVE_STOCK:".length)} negatif — barangnya sudah terpakai untuk penjualan/waste.`,
+      );
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "purchases.gr_delete", "Gagal menghapus GR"),
+    );
+  }
+
+  await logAudit({
+    eventType: "purchase.goods_receipt_delete",
+    userId: session.user.id,
+    entityType: "purchase",
+    entityId: purchaseId,
+    payload: {
+      summary: `Hapus GR ${input.id.slice(0, 8)} — ${reason}`,
+      context: {
+        goodsReceiptId: input.id,
+        reason,
+        receiptStatusAfter: receiptStatus,
+        stockReversed,
+      },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  /* Jurnal GR dibalik. `resyncJournalForGoodsReceipt` dengan total 0 memang
+   * berhenti setelah pair-void — persis yang dibutuhkan di sini. */
+  {
+    const { fireJournalHook, resyncJournalForGoodsReceipt } = await import(
+      "@/features/accounting/hooks"
+    );
+    fireJournalHook(
+      () =>
+        resyncJournalForGoodsReceipt({
+          outletId: session.user.outletId,
+          purchaseId,
+          goodsReceiptId: input.id,
+          purchaseLabel: journalLabel,
+          paymentMethod: "cash",
+          total: 0,
+          lines: [],
+          entryDate: journalDate,
+          actorId: session.user.id,
+        }),
+      "purchase_create",
+      { sourceId: input.id, outletId: session.user.outletId },
+    );
+  }
+
+  return ok({ id: input.id, purchaseId, receiptStatus, stockReversed });
+}
+
 /** Sesi AE-173 — item-item dari sebuah GR record. */
 /* Sesi AE-177 — cross-surface link arah-balik: PO/pembelian yang dibuat dari
  * sebuah PR (via from_purchase_request_id). Dipakai PR detail modal untuk

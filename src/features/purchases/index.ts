@@ -40,6 +40,7 @@ export {
   getPurchaseEditContext,
   updatePurchaseOrder,
   confirmGoodsReceipt,
+  deleteGoodsReceipt,
   receiveGoods,
   listPendingGoodsReceipts,
   fetchReceivablePurchase,

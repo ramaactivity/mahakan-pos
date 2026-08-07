@@ -325,6 +325,11 @@ export const permissions = {
   /* Sesi AE-173 — Goods Receive (terima barang dari PO). Owner/Manager di
    * Back Office + Staff dari aplikasi POS (mereka yang sering nerima kiriman). */
   "purchase.goods_receive": ["owner", "manager", "supervisor", "staff"],
+  /* Sesi AE-188 — hapus GR (permintaan owner: bersihkan GR percobaan).
+   * OWNER SAJA. Menghapus GR membalik stok, pengeluaran kas, receivedQty PR,
+   * status PO, dan jurnalnya sekaligus — terlalu berat untuk didelegasikan,
+   * dan sengaja tidak diberikan ke manager. */
+  "purchase.goods_receipt_delete": ["owner"],
 
   // Purchase Requests (Phase 6.5+6.6, sesi AC-3) — list belanja dari kasir
   // saat tutup shift; admin receive di "Permintaan Belanja" section.
