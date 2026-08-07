@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarClock,
+  CheckCircle2,
+  Clock,
+  RefreshCw,
+} from "lucide-react";
 import {
   Badge,
   Button,
@@ -10,6 +16,7 @@ import {
   CardHeader,
   DatePicker,
   EmptyCard,
+  Input,
   Modal,
   Select,
   Skeleton,
@@ -19,6 +26,7 @@ import {
   isOk,
   listTopHistory,
   markPurchasePaid,
+  updatePurchasePaymentDate,
   type PaymentMethod,
   type TopHistoryItem,
   type TopHistoryStatus,
@@ -86,6 +94,11 @@ export function TopTrackerView() {
   const canMarkPaid = role
     ? hasPermission(role, "purchase.mark_paid")
     : false;
+  /* Sesi AE-188 — koreksi tanggal pembayaran yang terlanjur salah. Owner saja:
+   * ikut memindahkan jurnal yang sudah diposting. */
+  const canFixPayDate = role
+    ? hasPermission(role, "accounting.journal.post")
+    : false;
 
   const [items, setItems] = useState<TopHistoryItem[]>([]);
   const [summary, setSummary] = useState<TopHistorySummary | null>(null);
@@ -102,6 +115,12 @@ export function TopTrackerView() {
    * tanggal pengeluaran kas, DAN tanggal jurnal umum. Default hari ini. */
   const [payDate, setPayDate] = useState<string>(() => todayJakartaIso());
   const [paySubmitting, setPaySubmitting] = useState(false);
+
+  /* Koreksi tanggal untuk hutang yang SUDAH lunas. */
+  const [fixTarget, setFixTarget] = useState<TopHistoryItem | null>(null);
+  const [fixDate, setFixDate] = useState<string>(() => todayJakartaIso());
+  const [fixReason, setFixReason] = useState("");
+  const [fixSubmitting, setFixSubmitting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -160,6 +179,32 @@ export function TopTrackerView() {
       `Lunas dicatat per ${payDate}${res.data.expenseId ? " + entry kas dibuat" : ""}`,
     );
     setPayTarget(null);
+    refresh();
+  }
+
+  async function onConfirmFixDate() {
+    if (!fixTarget || fixSubmitting) return;
+    if (fixReason.trim().length < 5) {
+      toast.error("Alasan koreksi minimal 5 karakter");
+      return;
+    }
+    setFixSubmitting(true);
+    const res = await updatePurchasePaymentDate({
+      id: fixTarget.id,
+      paymentDate: fixDate,
+      reason: fixReason.trim(),
+    });
+    setFixSubmitting(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(
+      `Tanggal pembayaran dipindah ${res.data.previousDate} → ${res.data.paymentDate}` +
+        (res.data.journalMoved ? " (jurnal ikut dipindah)" : ""),
+    );
+    setFixTarget(null);
+    setFixReason("");
     refresh();
   }
 
@@ -394,7 +439,29 @@ export function TopTrackerView() {
                           </td>
                         ) : null}
                         <td className="px-4 py-3 text-right">
-                          {p.status !== "pending_payment" ? (
+                          {p.status === "paid" ? (
+                            canFixPayDate ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setFixTarget(p);
+                                  setFixDate(
+                                    p.paidAt
+                                      ? p.paidAt.slice(0, 10)
+                                      : todayJakartaIso(),
+                                  );
+                                  setFixReason("");
+                                }}
+                                title="Koreksi tanggal pembayaran"
+                              >
+                                <CalendarClock className="size-4" aria-hidden />{" "}
+                                Ubah Tanggal
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-neutral-400">—</span>
+                            )
+                          ) : p.status !== "pending_payment" ? (
                             <span className="text-xs text-neutral-400">—</span>
                           ) : canMarkPaid ? (
                             <Button
@@ -427,6 +494,67 @@ export function TopTrackerView() {
           )}
         </CardContent>
       </Card>
+
+      {/* Sesi AE-188 — koreksi pelunasan yang terlanjur tercatat di tanggal
+          klik, bukan tanggal uang keluar (permintaan staff). */}
+      <Modal
+        open={fixTarget !== null}
+        onClose={() => {
+          setFixTarget(null);
+          setFixReason("");
+        }}
+        title="Ubah Tanggal Pembayaran"
+        description={
+          fixTarget
+            ? `${fixTarget.supplierName ?? "Supplier"} · ${formatRupiah(fixTarget.totalAmount)}${
+                fixTarget.paidAt
+                  ? ` · tercatat ${formatTanggal(fixTarget.paidAt)}`
+                  : ""
+              }`
+            : ""
+        }
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setFixTarget(null);
+                setFixReason("");
+              }}
+              disabled={fixSubmitting}
+            >
+              Batal
+            </Button>
+            <Button onClick={onConfirmFixDate} loading={fixSubmitting}>
+              Simpan
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <DatePicker
+            label="Tanggal pembayaran yang benar"
+            value={fixDate}
+            onChange={(v) => setFixDate(v ?? todayJakartaIso())}
+            maxDate={todayJakartaIso()}
+            clearable={false}
+            hint="Tanggal uang benar-benar keluar ke supplier."
+          />
+          <Input
+            label="Alasan koreksi"
+            placeholder="mis. dibayar Juli, baru sempat diinput Agustus"
+            value={fixReason}
+            onChange={(e) => setFixReason(e.target.value)}
+          />
+          <p className="rounded-md bg-mahakan-green-100/40 p-2 text-xs text-mahakan-green-900">
+            Tanggal lunas, pengeluaran kas, dan <strong>jurnal umum</strong>{" "}
+            ikut dipindah. Kalau pindah bulan, nomor jurnalnya diterbitkan
+            ulang mengikuti periode baru. Periode yang sudah dikunci akan
+            ditolak.
+          </p>
+        </div>
+      </Modal>
 
       <Modal
         open={payTarget !== null}

@@ -11,6 +11,7 @@ import {
   ingredientCostHistory,
   ingredients,
   inventoryMovements,
+  journalEntries,
   purchaseItems,
   purchaseRequestItems,
   purchaseRequests,
@@ -1741,6 +1742,205 @@ export async function markPurchasePaid(
   }
 
   return ok({ id: v.id, expenseId });
+}
+
+/**
+ * Koreksi tanggal pembayaran hutang yang SUDAH terlanjur tercatat.
+ *
+ * Sesi AE-188, permintaan staff: sebelum ada kolom tanggal bayar, pelunasan
+ * selalu memakai tanggal saat tombol diklik. Hutang yang dibayar Juli tapi
+ * baru sempat diklik Agustus jadi mendarat di jurnal Agustus. Kolom tanggal
+ * bayar memperbaiki pencatatan BARU; ini memperbaiki yang terlanjur.
+ *
+ * Tiga tempat digeser sekaligus supaya tidak ada yang tertinggal:
+ *   1. `purchases.paid_at` — tanggal lunas yang tampil di layar Hutang.
+ *   2. `expenses.expense_date` — pengeluaran kas pelunasannya.
+ *   3. `journal_entries.entry_date` jurnal `purchase_pay` — lewat
+ *      `updateJournalEntryDate`, jadi nomor jurnal ikut diterbitkan ulang
+ *      kalau pindah bulan dan periode terkunci tetap ditolak.
+ *
+ * Jurnal digeser DULUAN: kalau periodenya terkunci, langkah itu gagal dan
+ * tidak ada satu pun baris yang sempat berubah. Owner-only karena memindahkan
+ * jurnal yang sudah diposting (sama dengan `accounting.journal.post`).
+ *
+ * Hanya untuk pembelian TOP yang berstatus lunas — non-TOP tidak punya
+ * peristiwa pelunasan tersendiri (uangnya keluar saat barang diterima).
+ */
+export async function updatePurchasePaymentDate(input: {
+  id: string;
+  paymentDate: string;
+  reason: string;
+}): Promise<
+  ApiResult<{
+    id: string;
+    paymentDate: string;
+    previousDate: string;
+    journalMoved: boolean;
+    expenseMoved: boolean;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.journal.post")) {
+    return fail(
+      "FORBIDDEN",
+      "Hanya owner yang boleh mengoreksi tanggal pembayaran — perubahannya ikut memindahkan jurnal yang sudah diposting.",
+    );
+  }
+  const newDate = input?.paymentDate?.trim() ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+    return fail("VALIDATION_ERROR", "Tanggal harus format YYYY-MM-DD");
+  }
+  {
+    const [y, m, d] = newDate.split("-").map(Number);
+    const parsed = new Date(Date.UTC(y, m - 1, d));
+    if (
+      parsed.getUTCFullYear() !== y ||
+      parsed.getUTCMonth() !== m - 1 ||
+      parsed.getUTCDate() !== d
+    ) {
+      return fail("VALIDATION_ERROR", `Tanggal ${newDate} tidak ada di kalender.`);
+    }
+  }
+  if (newDate > todayJakartaIso()) {
+    return fail(
+      "VALIDATION_ERROR",
+      "Tanggal pembayaran tidak boleh di masa depan",
+    );
+  }
+  const reason = input?.reason?.trim() ?? "";
+  if (reason.length < 5) {
+    return fail("VALIDATION_ERROR", "Alasan koreksi minimal 5 karakter");
+  }
+
+  const [p] = await db
+    .select()
+    .from(purchases)
+    .where(
+      and(
+        eq(purchases.id, input.id),
+        eq(purchases.outletId, session.user.outletId),
+      ),
+    )
+    .limit(1);
+  if (!p) return fail("NOT_FOUND", "Pembelian tidak ditemukan");
+  if (p.status !== "paid") {
+    return fail(
+      "BAD_STATE",
+      "Pembelian ini belum ditandai lunas — tidak ada tanggal pembayaran yang bisa dikoreksi.",
+    );
+  }
+  if (p.paymentMethod !== "top") {
+    return fail(
+      "BAD_STATE",
+      "Hanya pembelian tempo (TOP) yang punya tanggal pelunasan tersendiri. Untuk pembelian tunai, uangnya keluar saat barang diterima — koreksi lewat tanggal penerimaan.",
+    );
+  }
+  const previousDate = p.paidAt
+    ? toJakartaDateOnly(p.paidAt)
+    : String(p.purchaseDate);
+  if (previousDate === newDate) {
+    return fail("NO_CHANGE", "Tanggal barunya sama dengan yang sekarang.");
+  }
+
+  /* 1) Jurnal duluan — penjaga paling ketat (periode terkunci / entry sudah
+   *    di-reverse). Kalau gagal di sini, tidak ada baris yang terlanjur
+   *    berubah. */
+  let journalMoved = false;
+  {
+    const [payEntry] = await db
+      .select({ id: journalEntries.id })
+      .from(journalEntries)
+      .where(
+        and(
+          eq(journalEntries.outletId, session.user.outletId),
+          eq(journalEntries.sourceType, "purchase_pay"),
+          eq(journalEntries.sourceId, p.id),
+          eq(journalEntries.status, "posted"),
+        ),
+      )
+      .limit(1);
+    if (payEntry) {
+      const { updateJournalEntryDate } = await import(
+        "@/features/accounting/actions"
+      );
+      const moved = await updateJournalEntryDate({
+        entryId: payEntry.id,
+        newDate,
+        reason: `Koreksi tanggal pembayaran hutang — ${reason}`,
+      });
+      /* Modul accounting memakai bentuk ApiResult sendiri ({ok}, bukan
+       * {success}) — jangan disamakan dengan milik modul purchases. */
+      if (!moved.ok) {
+        return fail(
+          moved.error.code === "VALIDATION"
+            ? "VALIDATION_ERROR"
+            : moved.error.code,
+          `Jurnal pelunasan tidak bisa dipindah: ${moved.error.message}`,
+        );
+      }
+      journalMoved = true;
+    }
+  }
+
+  // 2) Baris pembayaran + pengeluaran kasnya.
+  let expenseMoved = false;
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(purchases)
+        .set({
+          paidAt: new Date(`${newDate}T12:00:00+07:00`),
+          updatedAt: new Date(),
+          updatedBy: session.user.id,
+        })
+        .where(eq(purchases.id, p.id));
+
+      if (p.expenseId) {
+        const res = await tx
+          .update(expenses)
+          .set({
+            expenseDate: newDate,
+            updatedAt: new Date(),
+            updatedBy: session.user.id,
+          })
+          .where(and(eq(expenses.id, p.expenseId), isNull(expenses.deletedAt)))
+          .returning({ id: expenses.id });
+        expenseMoved = res.length > 0;
+      }
+    });
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(
+        e,
+        "purchases.payment_date_update",
+        "Gagal memperbarui tanggal pembayaran",
+      ),
+    );
+  }
+
+  await logAudit({
+    eventType: "purchase.payment_date_update",
+    userId: session.user.id,
+    entityType: "purchase",
+    entityId: p.id,
+    payload: {
+      summary: `Koreksi tanggal pembayaran ${previousDate} → ${newDate} — ${reason}`,
+      context: { previousDate, newDate, reason, journalMoved, expenseMoved },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  return {
+    success: true,
+    data: {
+      id: p.id,
+      paymentDate: newDate,
+      previousDate,
+      journalMoved,
+      expenseMoved,
+    },
+  };
 }
 
 /* Sesi AE-87 — sebelumnya ada `export type { Purchase }` di sini, tapi

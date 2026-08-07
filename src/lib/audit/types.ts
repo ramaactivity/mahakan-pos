@@ -134,6 +134,9 @@ export const AUDIT_EVENT_TYPES = [
   "purchase.goods_receive",
   /* Sesi AE-188 — hapus GR (owner-only), membalik stok/kas/PR/jurnal. */
   "purchase.goods_receipt_delete",
+  /* Sesi AE-188 — koreksi tanggal pembayaran hutang yang terlanjur salah
+   * (geser paid_at + tanggal expense + tanggal jurnal purchase_pay). */
+  "purchase.payment_date_update",
   // Purchase Requests (Phase 6.5+6.6, sesi AC-3)
   "purchase_request.create",
   "purchase_request.receive",
