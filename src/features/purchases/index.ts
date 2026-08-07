@@ -24,6 +24,15 @@ export type {
 export { isOk } from "./types";
 
 export {
+  PAYMENT_TERM_DEFAULT_DAYS,
+  PAYMENT_TERM_MAX_DAYS,
+  paymentTermOnSwitchToTop,
+  resolvePaymentTermDays,
+  resolveSupplierTermDays,
+  sanitizePaymentTermInput,
+} from "./payment-term";
+
+export {
   createPurchaseSchema,
   cancelPurchaseSchema,
   markPaidSchema,

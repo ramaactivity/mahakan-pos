@@ -16,6 +16,10 @@ import {
   createPurchase,
   createPurchaseOrder,
   isOk,
+  PAYMENT_TERM_MAX_DAYS,
+  paymentTermOnSwitchToTop,
+  resolvePaymentTermDays,
+  sanitizePaymentTermInput,
   type PaymentMethod,
 } from "@/features/purchases";
 import {
@@ -253,6 +257,12 @@ export function PurchaseFormModal({
   const [paymentMethod, setPaymentMethod] =
     useState<PaymentMethod>("cash");
   const [paymentTerm, setPaymentTerm] = useState("0");
+  /* Sesi AE-190 — true begitu tempo diisi manual (atau datang dari draft).
+   * Menahan saran default supplier supaya tidak menimpa angka milik user. */
+  const termTouchedRef = useRef(false);
+  /* Metode pembayaran render sebelumnya — dipakai effect di bawah untuk tahu
+   * kapan terjadi PERPINDAHAN metode (bukan sekadar tempo yang berubah). */
+  const prevPaymentMethodRef = useRef<PaymentMethod>("cash");
   const [invoiceNo, setInvoiceNo] = useState("");
   const [notes, setNotes] = useState("");
   // Receipt upload (sesi AA #2). PDF allowed in addition to image —
@@ -310,6 +320,8 @@ export function PurchaseFormModal({
     setPurchaseDate(todayJakartaIso());
     setPaymentMethod("cash");
     setPaymentTerm("0");
+    prevPaymentMethodRef.current = "cash";
+    termTouchedRef.current = false;
     setInvoiceNo("");
     setNotes("");
     setReceipts([]);
@@ -412,7 +424,10 @@ export function PurchaseFormModal({
     setDirectPlace(d.directPlace);
     setPurchaseDate(d.purchaseDate);
     setPaymentMethod(d.paymentMethod);
+    prevPaymentMethodRef.current = d.paymentMethod;
     setPaymentTerm(d.paymentTerm);
+    /* Tempo dari draft = pilihan user; jangan ditimpa saran supplier. */
+    termTouchedRef.current = true;
     setInvoiceNo(d.invoiceNo);
     setNotes(d.notes);
     setReceipts(d.receipts);
@@ -427,9 +442,15 @@ export function PurchaseFormModal({
     setPendingDraft(null);
   }
 
-  // When supplier changes, suggest default term + auto-switch payment method.
+  /* When supplier changes, suggest default term + auto-switch payment method.
+   *
+   * Sesi AE-190 — HANYA saran. Begitu user mengetik tempo sendiri
+   * (`termTouchedRef`) atau me-restore draft, saran supplier tidak boleh
+   * menimpanya lagi; kalau tidak, angka yang baru diketik hilang saat daftar
+   * supplier selesai di-fetch (pola form-reset wipe). */
   useEffect(() => {
     if (!supplierId) return;
+    if (termTouchedRef.current) return;
     const sup = supplierList.find((s) => s.id === supplierId);
     if (!sup) return;
     if (sup.defaultPaymentTermDays > 0) {
@@ -440,17 +461,23 @@ export function PurchaseFormModal({
     }
   }, [supplierId, supplierList]);
 
-  // Sync payment method ↔ term: TOP requires >0; non-TOP forces 0.
+  /* Sinkronisasi metode → tempo, HANYA saat metodenya berpindah.
+   *
+   * Sesi AE-190 — versi lama ikut bergantung pada `paymentTerm`, jadi menghapus
+   * isi field (NaN) langsung ditulis balik jadi "7" dan owner tidak bisa ganti
+   * ke angka lain. Sekarang 7 cuma disodorkan sekali saat pindah ke TOP;
+   * angka final divalidasi saat submit (`resolvePaymentTermDays`). */
   useEffect(() => {
+    if (prevPaymentMethodRef.current === paymentMethod) return;
+    prevPaymentMethodRef.current = paymentMethod;
     /* eslint-disable react-hooks/set-state-in-effect */
     if (paymentMethod === "top") {
-      const n = parseInt(paymentTerm, 10);
-      if (!Number.isFinite(n) || n <= 0) setPaymentTerm("7");
+      setPaymentTerm((cur) => paymentTermOnSwitchToTop(cur));
     } else {
-      if (paymentTerm !== "0") setPaymentTerm("0");
+      setPaymentTerm("0");
     }
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [paymentMethod, paymentTerm]);
+  }, [paymentMethod]);
 
   const ingredientById = useMemo(() => {
     const m = new Map<string, Ingredient>();
@@ -709,6 +736,8 @@ export function PurchaseFormModal({
   // Sesi AE-21 — re-lookup all rows saat supplier diganti (auto-fill ulang).
   function onSupplierChange(nextSupplierId: string | null) {
     setSupplierId(nextSupplierId);
+    /* Ganti supplier = boleh menyodorkan default TOP supplier itu lagi. */
+    termTouchedRef.current = false;
     if (!nextSupplierId) return;
     for (const r of items) {
       if (r.ingredientId) {
@@ -798,9 +827,12 @@ export function PurchaseFormModal({
       }
     }
 
-    const term = parseInt(paymentTerm, 10);
-    if (paymentMethod === "top" && (!Number.isFinite(term) || term <= 0)) {
-      fail("TOP wajib > 0 hari");
+    const termCheck = resolvePaymentTermDays(
+      paymentTerm,
+      paymentMethod === "top",
+    );
+    if (!termCheck.ok) {
+      fail(termCheck.message);
       return;
     }
 
@@ -824,7 +856,7 @@ export function PurchaseFormModal({
       supplierId: directMode ? null : supplierId,
       purchaseDate,
       paymentMethod,
-      paymentTermDays: paymentMethod === "top" ? term : 0,
+      paymentTermDays: termCheck.days,
       invoiceNo: invoiceNo.trim() || null,
       notes: composedNotes || null,
       receiptImageUrls: receipts.length > 0 ? receipts.map((r) => r.url) : null,
@@ -1124,12 +1156,16 @@ export function PurchaseFormModal({
               label="TOP (hari)"
               type="text"
               inputMode="numeric"
+              placeholder="mis. 14"
               value={paymentTerm}
-              onChange={(e) => setPaymentTerm(e.target.value)}
+              onChange={(e) => {
+                termTouchedRef.current = true;
+                setPaymentTerm(sanitizePaymentTermInput(e.target.value));
+              }}
               disabled={paymentMethod !== "top"}
               hint={
                 paymentMethod === "top"
-                  ? "Berapa hari setelah purchase_date jatuh tempo"
+                  ? `Bebas isi berapa pun, 1–${PAYMENT_TERM_MAX_DAYS} hari setelah tanggal pembelian`
                   : "Hanya aktif untuk TOP"
               }
             />

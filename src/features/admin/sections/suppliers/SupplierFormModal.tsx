@@ -8,6 +8,11 @@ import {
   updateSupplier,
   type Supplier,
 } from "@/features/suppliers";
+import {
+  PAYMENT_TERM_MAX_DAYS,
+  resolveSupplierTermDays,
+  sanitizePaymentTermInput,
+} from "@/features/purchases/payment-term";
 
 interface SupplierFormModalProps {
   open: boolean;
@@ -51,11 +56,12 @@ export function SupplierFormModal({
       setError("Nama wajib diisi");
       return;
     }
-    const term = parseInt(paymentTerm, 10);
-    if (!Number.isFinite(term) || term < 0) {
-      setError("Term harus angka >= 0");
+    const termCheck = resolveSupplierTermDays(paymentTerm);
+    if (!termCheck.ok) {
+      setError(termCheck.message);
       return;
     }
+    const term = termCheck.days;
 
     setSubmitting(true);
     const payload = {
@@ -117,8 +123,10 @@ export function SupplierFormModal({
             inputMode="numeric"
             placeholder="0 = cash"
             value={paymentTerm}
-            onChange={(e) => setPaymentTerm(e.target.value)}
-            hint="Term of Payment default. 0 = cash on delivery."
+            onChange={(e) =>
+              setPaymentTerm(sanitizePaymentTermInput(e.target.value))
+            }
+            hint={`Term of Payment default (0–${PAYMENT_TERM_MAX_DAYS}). 0 = cash on delivery.`}
           />
         </div>
         <Input

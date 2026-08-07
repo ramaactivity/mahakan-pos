@@ -23,6 +23,11 @@ import {
   createPurchase,
   createPurchaseOrder,
   isOk,
+  PAYMENT_TERM_DEFAULT_DAYS,
+  PAYMENT_TERM_MAX_DAYS,
+  paymentTermOnSwitchToTop,
+  resolvePaymentTermDays,
+  sanitizePaymentTermInput,
 } from "@/features/purchases";
 import type { PaymentMethod } from "@/features/purchases";
 import { listOpenPurchaseRequestsForPurchase } from "@/features/purchase-requests/actions";
@@ -139,6 +144,12 @@ export function CreatePurchaseFromPrModal({
   const [items, setItems] = useState<UiPurchaseRow[]>([]);
   const [purchaseDate, setPurchaseDate] = useState(todayJakartaIso());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  /* Sesi AE-190 — tempo TOP dulu di-hardcode 7 hari di payload, tanpa field
+   * sama sekali; PO/pembelian dari PR jadi tidak bisa pakai tempo supplier
+   * yang sebenarnya (14/30/45 hari). Sekarang bisa diisi bebas. */
+  const [paymentTerm, setPaymentTerm] = useState(
+    String(PAYMENT_TERM_DEFAULT_DAYS),
+  );
   const [submitting, setSubmitting] = useState(false);
   // Sesi AE-173 — false = Langsung Terima; true = Buat PO dulu (GR nanti).
   const [asPurchaseOrder, setAsPurchaseOrder] = useState(false);
@@ -169,6 +180,7 @@ export function CreatePurchaseFromPrModal({
     setItems([]);
     setPurchaseDate(todayJakartaIso());
     setPaymentMethod("cash");
+    setPaymentTerm(String(PAYMENT_TERM_DEFAULT_DAYS));
     setUpdateCost(true);
     setSortOrder("newest");
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -432,6 +444,14 @@ export function CreatePurchaseFromPrModal({
       toast.error("Semua item butuh supplier");
       return;
     }
+    const termCheck = resolvePaymentTermDays(
+      paymentTerm,
+      paymentMethod === "top",
+    );
+    if (!termCheck.ok) {
+      toast.error(termCheck.message);
+      return;
+    }
 
     setSubmitting(true);
     let successCount = 0;
@@ -441,7 +461,7 @@ export function CreatePurchaseFromPrModal({
         supplierId: group.supplierId,
         purchaseDate,
         paymentMethod,
-        paymentTermDays: paymentMethod === "top" ? 7 : 0,
+        paymentTermDays: termCheck.days,
         notes: `Tarik dari PR ${selectedPr.requestId.slice(0, 8)}`,
         fromPurchaseRequestId: selectedPr.requestId,
         updateCost,
@@ -593,6 +613,7 @@ export function CreatePurchaseFromPrModal({
           supplierComboGroups={supplierComboGroups}
           purchaseDate={purchaseDate}
           paymentMethod={paymentMethod}
+          paymentTerm={paymentTerm}
           updateCost={updateCost}
           onUpdateItem={updateItem}
           onSetRowQty={setRowQty}
@@ -600,7 +621,15 @@ export function CreatePurchaseFromPrModal({
           onSetRowTotal={setRowTotal}
           onSetRowUnit={setRowUnit}
           onPurchaseDate={setPurchaseDate}
-          onPaymentMethod={setPaymentMethod}
+          onPaymentMethod={(v) => {
+            setPaymentMethod(v);
+            /* Pindah ke TOP → sodorkan default sekali; keluar dari TOP →
+             * nolkan (aturan server: non-TOP wajib tempo 0). */
+            setPaymentTerm((cur) =>
+              v === "top" ? paymentTermOnSwitchToTop(cur) : "0",
+            );
+          }}
+          onPaymentTerm={setPaymentTerm}
           onUpdateCost={setUpdateCost}
         />
         </>
@@ -729,6 +758,7 @@ function Step2Wizard({
   supplierComboGroups,
   purchaseDate,
   paymentMethod,
+  paymentTerm,
   updateCost,
   onUpdateItem,
   onSetRowQty,
@@ -737,6 +767,7 @@ function Step2Wizard({
   onSetRowUnit,
   onPurchaseDate,
   onPaymentMethod,
+  onPaymentTerm,
   onUpdateCost,
 }: {
   pr: PrForPurchase;
@@ -748,6 +779,7 @@ function Step2Wizard({
   supplierComboGroups: ComboboxGroup[];
   purchaseDate: string;
   paymentMethod: PaymentMethod;
+  paymentTerm: string;
   updateCost: boolean;
   onUpdateItem: (idx: number, patch: Partial<UiPurchaseRow>) => void;
   onSetRowQty: (idx: number, value: string) => void;
@@ -756,6 +788,7 @@ function Step2Wizard({
   onSetRowUnit: (idx: number, value: string) => void;
   onPurchaseDate: (v: string) => void;
   onPaymentMethod: (v: PaymentMethod) => void;
+  onPaymentTerm: (v: string) => void;
   onUpdateCost: (v: boolean) => void;
 }) {
   const selectedCount = items.filter((i) => i.selected).length;
@@ -782,8 +815,8 @@ function Step2Wizard({
         ) : null}
       </div>
 
-      {/* Purchase date + payment method */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {/* Purchase date + payment method + tempo TOP */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <DatePicker
           label="Tanggal Pembelian"
           value={purchaseDate}
@@ -794,6 +827,20 @@ function Step2Wizard({
           value={paymentMethod}
           onValueChange={(v) => onPaymentMethod(v as PaymentMethod)}
           options={PAYMENT_OPTIONS}
+        />
+        <Input
+          label="TOP (hari)"
+          type="text"
+          inputMode="numeric"
+          placeholder="mis. 14"
+          value={paymentTerm}
+          onChange={(e) => onPaymentTerm(sanitizePaymentTermInput(e.target.value))}
+          disabled={paymentMethod !== "top"}
+          hint={
+            paymentMethod === "top"
+              ? `Berlaku untuk semua PO/pembelian yang dibuat batch ini (1–${PAYMENT_TERM_MAX_DAYS})`
+              : "Hanya aktif untuk TOP"
+          }
         />
       </div>
 

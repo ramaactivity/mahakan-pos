@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Lock, Plus, Trash2 } from "lucide-react";
 import {
   Button,
@@ -16,6 +16,10 @@ import {
 import {
   getPurchaseEditContext,
   isOk,
+  PAYMENT_TERM_MAX_DAYS,
+  paymentTermOnSwitchToTop,
+  resolvePaymentTermDays,
+  sanitizePaymentTermInput,
   updatePurchaseOrder,
   type PaymentMethod,
   type PurchaseDetail,
@@ -152,6 +156,8 @@ export function PurchaseOrderEditModal({
   const [purchaseDate, setPurchaseDate] = useState(todayJakartaIso());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [paymentTerm, setPaymentTerm] = useState("0");
+  /* Metode render sebelumnya — pembeda "metode berpindah" vs "tempo diketik". */
+  const prevPaymentMethodRef = useRef<PaymentMethod>("cash");
   const [invoiceNo, setInvoiceNo] = useState("");
   const [notes, setNotes] = useState("");
   const [receiptUrls, setReceiptUrls] = useState<string[]>([]);
@@ -187,6 +193,9 @@ export function PurchaseOrderEditModal({
       setSupplierId(detail.supplierId);
       setPurchaseDate(detail.purchaseDate);
       setPaymentMethod(detail.paymentMethod);
+      /* Sinkronkan ref supaya effect di bawah tidak menganggap load PO
+       * sebagai "user memindah metode" lalu menimpa tempo tersimpan. */
+      prevPaymentMethodRef.current = detail.paymentMethod;
       setPaymentTerm(String(detail.paymentTermDays ?? 0));
       setInvoiceNo(detail.invoiceNo ?? "");
       setNotes(detail.notes ?? "");
@@ -231,17 +240,23 @@ export function PurchaseOrderEditModal({
     [],
   );
 
-  /* TOP wajib tempo > 0; non-TOP dipaksa 0 (mirror aturan server). */
+  /* Non-TOP dipaksa tempo 0 (mirror aturan server); pindah ke TOP menyodorkan
+   * default sekali saja.
+   *
+   * Sesi AE-190 — dulu effect ini juga bergantung pada `paymentTerm`, jadi
+   * setiap kali field dikosongkan untuk diketik ulang ia langsung diisi balik
+   * "7" — tempo terasa terkunci. Validasi angka final pindah ke submit. */
   useEffect(() => {
+    if (prevPaymentMethodRef.current === paymentMethod) return;
+    prevPaymentMethodRef.current = paymentMethod;
     /* eslint-disable react-hooks/set-state-in-effect */
     if (paymentMethod === "top") {
-      const n = parseInt(paymentTerm, 10);
-      if (!Number.isFinite(n) || n <= 0) setPaymentTerm("7");
-    } else if (paymentTerm !== "0") {
+      setPaymentTerm((cur) => paymentTermOnSwitchToTop(cur));
+    } else {
       setPaymentTerm("0");
     }
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [paymentMethod, paymentTerm]);
+  }, [paymentMethod]);
 
   async function onSubmit() {
     if (submitting || !purchaseId) return;
@@ -308,9 +323,12 @@ export function PurchaseOrderEditModal({
       bail("Bahan duplikat dalam 1 PO — gabungkan jadi 1 baris");
       return;
     }
-    const term = parseInt(paymentTerm, 10);
-    if (paymentMethod === "top" && (!Number.isFinite(term) || term <= 0)) {
-      bail("TOP wajib > 0 hari");
+    const termCheck = resolvePaymentTermDays(
+      paymentTerm,
+      paymentMethod === "top",
+    );
+    if (!termCheck.ok) {
+      bail(termCheck.message);
       return;
     }
 
@@ -320,7 +338,7 @@ export function PurchaseOrderEditModal({
       supplierId,
       purchaseDate,
       paymentMethod,
-      paymentTermDays: paymentMethod === "top" ? term : 0,
+      paymentTermDays: termCheck.days,
       invoiceNo: invoiceNo.trim() || null,
       notes: notes.trim() || null,
       receiptImageUrls: receiptUrls.length > 0 ? receiptUrls : null,
@@ -448,12 +466,15 @@ export function PurchaseOrderEditModal({
               label="TOP (hari)"
               type="text"
               inputMode="numeric"
+              placeholder="mis. 14"
               value={paymentTerm}
-              onChange={(e) => setPaymentTerm(e.target.value)}
+              onChange={(e) =>
+                setPaymentTerm(sanitizePaymentTermInput(e.target.value))
+              }
               disabled={paymentMethod !== "top"}
               hint={
                 paymentMethod === "top"
-                  ? "Jatuh tempo = tanggal PO + sekian hari"
+                  ? `Jatuh tempo = tanggal PO + sekian hari (1–${PAYMENT_TERM_MAX_DAYS})`
                   : "Hanya aktif untuk TOP"
               }
             />
