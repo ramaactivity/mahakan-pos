@@ -80,6 +80,10 @@ interface EditRow {
   nameSnapshot: string;
   qty: string;
   unit: string;
+  /** Nilai `unit_override` apa adanya dari server. Dipakai saat mode
+   * harga-saja supaya satuan dikirim balik persis seperti tersimpan —
+   * lihat catatan di `onSubmit`. */
+  originalUnitOverride: string | null;
   unitCost: string;
   total: string;
   inputMode: "unit" | "total";
@@ -94,6 +98,7 @@ function newRow(): EditRow {
     nameSnapshot: "",
     qty: "",
     unit: "",
+    originalUnitOverride: null,
     unitCost: "",
     total: "",
     inputMode: "unit",
@@ -112,6 +117,7 @@ function rowsFromDetail(detail: PurchaseDetail): EditRow[] {
       nameSnapshot: it.ingredientNameSnapshot,
       qty: formatPurchaseQty(qty),
       unit: it.unitOverride ?? it.unitSnapshot,
+      originalUnitOverride: it.unitOverride ?? null,
       unitCost: String(it.unitCost),
       total: String(Math.round(qty * it.unitCost)),
       inputMode: "unit" as const,
@@ -272,6 +278,12 @@ export function PurchaseOrderEditModal({
       const ing = ingredientById.get(r.ingredientId);
       const masterUnit = ing?.unit ?? "";
       const chosen = r.unit?.trim() || masterUnit;
+      /* Mode harga-saja: satuan dikunci server, jadi kirim balik PERSIS
+       * seperti tersimpan. Menghitung ulang di sini berbahaya — kalau
+       * bahannya sudah dinonaktifkan ia tidak ada di daftar master
+       * (`activeOnly`), `masterUnit` jadi "" dan override null berubah jadi
+       * non-null → server menolak UNIT_LOCKED, memblokir justru alur
+       * isi-harga-belakangan yang jadi alasan fitur ini ada. */
       items.push({
         id: r.itemId,
         ingredientId: r.ingredientId,
@@ -279,7 +291,11 @@ export function PurchaseOrderEditModal({
         unitCost: cost,
         /* Simpan override hanya kalau beda dari master — sama dengan
          * Catat Pembelian, supaya tampilan jatuh ke unitSnapshot historis. */
-        unit: chosen && chosen !== masterUnit ? chosen : null,
+        unit: priceOnly
+          ? r.originalUnitOverride
+          : chosen && chosen !== masterUnit
+            ? chosen
+            : null,
         purchaseRequestItemId: r.purchaseRequestItemId,
       });
     }
@@ -564,8 +580,8 @@ export function PurchaseOrderEditModal({
                         onValueChange={(v) =>
                           patchRow(row.key, (r) => ({
                             ...r,
-                            unit: v,
                             ...applyUnitChange(r, r.unit, v),
+                            unit: v,
                           }))
                         }
                       />

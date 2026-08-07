@@ -43,6 +43,7 @@ import {
   type BackdateStatus,
   type PackInfo,
 } from "@/lib/unit-conversion";
+import { buildPurchaseLabel, labelMetodeBayar } from "./journal-label";
 import {
   cancelPurchaseSchema,
   createPurchaseSchema,
@@ -100,14 +101,55 @@ function expensePaymentMethod(m: PaymentMethod): "cash" | "transfer" | "other" {
   }
 }
 
+/** Satu sumber label metode bayar (dipakai audit log + deskripsi kas). */
 function paymentMethodLabel(m: PaymentMethod): string {
-  return {
-    cash: "Cash",
-    transfer_bca: "Transfer BCA",
-    transfer_bri: "Transfer BRI",
-    transfer_other: "Transfer lain",
-    top: "TOP (kredit)",
-  }[m];
+  return labelMetodeBayar(m);
+}
+
+/**
+ * Nama supplier untuk deskripsi entri kas. Query lepas dari transaksi —
+ * tabel suppliers tidak disentuh alur pembelian, jadi aman dibaca dari
+ * koneksi utama meski dipanggil di dalam `tx`.
+ */
+async function resolveSupplierName(
+  supplierId: string | null | undefined,
+): Promise<string | null> {
+  if (!supplierId) return null;
+  const [row] = await db
+    .select({ name: suppliers.name })
+    .from(suppliers)
+    .where(eq(suppliers.id, supplierId))
+    .limit(1);
+  return row?.name ?? null;
+}
+
+/**
+ * Label pembelian untuk deskripsi jurnal — dipakai SEMUA hook jurnal
+ * pembelian supaya Buku Besar menyebut nama supplier, bukan potongan UUID
+ * (dulu: "Bayar hutang purchase 376b5626"). Satu query kecil per posting
+ * jurnal (write-path saja, tidak menambah beban read).
+ */
+async function resolvePurchaseLabel(
+  purchaseId: string,
+  opts?: { receiptDate?: string | null },
+): Promise<string> {
+  const [row] = await db
+    .select({
+      invoiceNo: purchases.invoiceNo,
+      purchaseDate: purchases.purchaseDate,
+      supplierName: suppliers.name,
+    })
+    .from(purchases)
+    .leftJoin(suppliers, eq(suppliers.id, purchases.supplierId))
+    .where(eq(purchases.id, purchaseId))
+    .limit(1);
+
+  return buildPurchaseLabel({
+    supplierName: row?.supplierName ?? null,
+    invoiceNo: row?.invoiceNo ?? null,
+    purchaseDate: row?.purchaseDate ? String(row.purchaseDate) : null,
+    receiptDate: opts?.receiptDate ?? null,
+  });
 }
 
 function todayJakartaIso(): string {
@@ -814,9 +856,13 @@ export async function createPurchase(
               outletId: session.user.outletId,
               expenseDate: v.purchaseDate,
               categoryId: defaultCat.id,
-              description: `Pembelanjaan ${paymentMethodLabel(v.paymentMethod)}${
-                v.invoiceNo ? ` · ${v.invoiceNo}` : ""
-              }${v.notes ? ` · ${v.notes}` : ""}`,
+              description: `Belanja ${paymentMethodLabel(v.paymentMethod)} — ${buildPurchaseLabel(
+                {
+                  supplierName: await resolveSupplierName(v.supplierId),
+                  invoiceNo: v.invoiceNo,
+                  purchaseDate: v.purchaseDate,
+                },
+              )}${v.notes ? ` · ${v.notes}` : ""}`,
               amount: total,
               paymentMethod: expensePaymentMethod(v.paymentMethod),
               /* Sesi AE-79 — sourceType='purchase' (default 'manual') supaya:
@@ -1003,12 +1049,11 @@ export async function createPurchase(
       "@/features/accounting/hooks"
     );
     fireJournalHook(
-      () =>
+      async () =>
         postJournalForPurchaseCreate({
           outletId: session.user.outletId,
           purchaseId: resultId,
-          purchaseLabel:
-            v.invoiceNo ?? `${v.paymentMethod} ${v.purchaseDate}`,
+          purchaseLabel: await resolvePurchaseLabel(resultId),
           paymentMethod: v.paymentMethod,
           total: totalAmount,
           lines: sectionLines,
@@ -1419,13 +1464,11 @@ export async function cancelPurchase(
         "@/features/accounting/hooks"
       );
       fireJournalHook(
-        () =>
+        async () =>
           postJournalForPurchaseCancel({
             outletId: session.user.outletId,
             purchaseId: v.id,
-            purchaseLabel:
-              purchaseRow.invoiceNo ??
-              `${purchaseRow.paymentMethod} ${purchaseRow.purchaseDate}`,
+            purchaseLabel: await resolvePurchaseLabel(v.id),
             paymentMethod: purchaseRow.paymentMethod as
               | "cash"
               | "transfer_bca"
@@ -1451,13 +1494,11 @@ export async function cancelPurchase(
         const { fireJournalHook, postJournalForPurchasePayReversal } =
           await import("@/features/accounting/hooks");
         fireJournalHook(
-          () =>
+          async () =>
             postJournalForPurchasePayReversal({
               outletId: session.user.outletId,
               purchaseId: v.id,
-              purchaseLabel:
-                purchaseRow.invoiceNo ??
-                `purchase ${purchaseRow.id.slice(0, 8)}`,
+              purchaseLabel: await resolvePurchaseLabel(v.id),
               actorId: session.user.id,
             }),
           "purchase_pay_reversal",
@@ -1594,9 +1635,13 @@ export async function markPurchasePaid(
             outletId: session.user.outletId,
             expenseDate: payDate,
             categoryId: defaultCat.id,
-            description: `Lunas TOP — ${paymentMethodLabel(v.paymentMethod)}${
-              p.invoiceNo ? ` · ${p.invoiceNo}` : ""
-            } (purchase ${p.id.slice(0, 8)})`,
+            description: `Pelunasan hutang, ${paymentMethodLabel(v.paymentMethod)} — ${buildPurchaseLabel(
+              {
+                supplierName: await resolveSupplierName(p.supplierId),
+                invoiceNo: p.invoiceNo,
+                purchaseDate: String(p.purchaseDate),
+              },
+            )}`,
             amount: paidBase,
             paymentMethod: expensePaymentMethod(v.paymentMethod),
             /* Sesi AE-79 — tag sebagai purchase (lihat catatan sama di
@@ -1676,13 +1721,11 @@ export async function markPurchasePaid(
         "@/features/accounting/hooks"
       );
       fireJournalHook(
-        () =>
+        async () =>
           postJournalForPurchasePay({
             outletId: session.user.outletId,
             purchaseId: v.id,
-            purchaseLabel:
-              purchaseRow.invoiceNo ??
-              `purchase ${purchaseRow.id.slice(0, 8)}`,
+            purchaseLabel: await resolvePurchaseLabel(v.id),
             paymentMethod: v.paymentMethod as
               | "cash"
               | "transfer_bca"
@@ -2057,7 +2100,6 @@ export async function updatePurchaseOrder(
    * (pola sama dengan receiveGoods — hook tidak boleh ikut transaksi). */
   const journalJobs: Array<{
     goodsReceiptId: string;
-    purchaseLabel: string;
     paymentMethod: PaymentMethod;
     total: number;
     entryDate: string;
@@ -2106,6 +2148,35 @@ export async function updatePurchaseOrder(
         throw new Error("LEGACY_INSTANT");
       }
 
+      /* Jurnal GR diposting ulang dengan entry_date = tanggal terima. Kalau
+       * periode bulan itu sudah dikunci, recordJournal akan throw — tapi itu
+       * terjadi SETELAH commit (hook fire-and-forget), sehingga nilai GR,
+       * kas, dan HPP sudah berubah sementara GL tetap memegang angka lama.
+       * Persis kelas drift yang direkonsiliasi manual di audit AE-181, jadi
+       * dicegat di depan seperti di markPurchasePaid. */
+      if (priceOnly) {
+        const months = Array.from(
+          new Set(grRows.map((gr) => String(gr.receivedDate).slice(0, 7))),
+        );
+        for (const ym of months) {
+          const [year, month] = ym.split("-").map(Number);
+          const [period] = await tx
+            .select({ status: accountingPeriods.status })
+            .from(accountingPeriods)
+            .where(
+              and(
+                eq(accountingPeriods.outletId, session.user.outletId),
+                eq(accountingPeriods.periodYear, year),
+                eq(accountingPeriods.periodMonth, month),
+              ),
+            )
+            .limit(1);
+          if (period?.status === "locked") {
+            throw new Error(`PERIOD_LOCKED:${ym}`);
+          }
+        }
+      }
+
       const existingItems = await tx
         .select()
         .from(purchaseItems)
@@ -2115,18 +2186,24 @@ export async function updatePurchaseOrder(
       const ingIds = Array.from(
         new Set(v.items.map((i) => i.ingredientId)),
       );
+      /* Bahan yang sudah di-soft-delete tetap boleh dibaca di mode
+       * harga-saja: barisnya sudah terlanjur ada di PO dan terkunci ke bahan
+       * yang sama, jadi menolaknya cuma memblokir koreksi harga PO lama.
+       * Untuk edit bebas (baris masih bisa diganti) bahan mati tetap ditolak,
+       * sama seperti createPurchaseOrder. */
       const ingRows = await tx
         .select()
         .from(ingredients)
-        .where(
-          and(inArray(ingredients.id, ingIds), isNull(ingredients.deletedAt)),
-        );
+        .where(inArray(ingredients.id, ingIds));
       const ingById = new Map(ingRows.map((r) => [r.id, r] as const));
       for (const item of v.items) {
         const row = ingById.get(item.ingredientId);
         if (!row) throw new Error("INGREDIENT_NOT_FOUND");
         if (row.outletId !== session.user.outletId) {
           throw new Error("OUTLET_MISMATCH");
+        }
+        if (!priceOnly && row.deletedAt) {
+          throw new Error("INGREDIENT_NOT_FOUND");
         }
       }
 
@@ -2160,11 +2237,21 @@ export async function updatePurchaseOrder(
         }
       }
 
-      // ---- Validasi link PR untuk baris yang BARU ditautkan ----
+      /* ---- Validasi link PR untuk baris yang BARU ditautkan ----
+       *
+       * "Baru" mencakup dua hal: tautan yang memang berubah, DAN baris yang
+       * bahannya diganti tapi tautan PR-nya dibiarkan. Kasus kedua tidak
+       * kelihatan sebagai perubahan tautan, padahal artinya item PR "Gula"
+       * kini menempel di baris "Kopi" — saat GR, receivedQty PR yang salah
+       * yang di-bump dan PR ikut ter-tandai selesai. */
       const newlyLinked = v.items.filter((i) => {
         if (!i.purchaseRequestItemId) return false;
         const prev = i.id ? existingById.get(i.id) : undefined;
-        return prev?.purchaseRequestItemId !== i.purchaseRequestItemId;
+        if (!prev) return true;
+        return (
+          prev.purchaseRequestItemId !== i.purchaseRequestItemId ||
+          prev.ingredientId !== i.ingredientId
+        );
       });
       if (newlyLinked.length > 0) {
         const linkIds = newlyLinked.map((i) => i.purchaseRequestItemId!);
@@ -2215,6 +2302,15 @@ export async function updatePurchaseOrder(
           if (alreadyLinked.has(item.purchaseRequestItemId!)) {
             throw new Error(`PR_ITEM_ALREADY_LINKED:${ingName}`);
           }
+          /* Tautan hanya sah kalau bahannya memang sama. Tanpa ini, ganti
+           * bahan sambil membiarkan tautan lama bikin PR bahan lain yang
+           * ter-bump saat barang diterima. */
+          if (
+            prItem.ingredientId &&
+            prItem.ingredientId !== item.ingredientId
+          ) {
+            throw new Error(`PR_ITEM_MISMATCH:${ingName}`);
+          }
         }
       }
 
@@ -2240,6 +2336,14 @@ export async function updatePurchaseOrder(
         total += lineTotal;
         const ing = ingById.get(item.ingredientId)!;
         if (item.id && existingById.has(item.id)) {
+          const prev = existingById.get(item.id)!;
+          /* Snapshot (nama / satuan master / section) hanya di-refresh kalau
+           * bahannya memang diganti. Section snapshot menentukan akun
+           * Persediaan mana yang di-debit saat GR — kalau ikut bahan lama,
+           * jurnalnya mendarat di akun yang salah. Untuk baris yang bahannya
+           * tetap, snapshot lama sengaja dibiarkan: itu memang potret saat PO
+           * dibuat. */
+          const ingredientChanged = prev.ingredientId !== item.ingredientId;
           await tx
             .update(purchaseItems)
             .set({
@@ -2250,6 +2354,13 @@ export async function updatePurchaseOrder(
               totalCost: lineTotal,
               unitOverride: item.unit?.trim() || null,
               purchaseRequestItemId: item.purchaseRequestItemId ?? null,
+              ...(ingredientChanged
+                ? {
+                    ingredientNameSnapshot: ing.name,
+                    unitSnapshot: ing.unit,
+                    sectionSnapshot: ing.section,
+                  }
+                : {}),
             })
             .where(eq(purchaseItems.id, item.id));
         } else {
@@ -2442,9 +2553,13 @@ export async function updatePurchaseOrder(
                     outletId: session.user.outletId,
                     expenseDate: gr.receivedDate,
                     categoryId: defaultCat.id,
-                    description: `Pembelanjaan ${paymentMethodLabel(
+                    description: `Belanja ${paymentMethodLabel(
                       po.paymentMethod,
-                    )} (GR)${po.invoiceNo ? ` · ${po.invoiceNo}` : ""}`,
+                    )} — ${buildPurchaseLabel({
+                      supplierName: await resolveSupplierName(po.supplierId),
+                      invoiceNo: po.invoiceNo,
+                      receiptDate: String(gr.receivedDate),
+                    })}`,
                     amount: grTotal,
                     paymentMethod: expensePaymentMethod(po.paymentMethod),
                     sourceType: "purchase",
@@ -2467,7 +2582,6 @@ export async function updatePurchaseOrder(
 
           journalJobs.push({
             goodsReceiptId: gr.id,
-            purchaseLabel: po.invoiceNo ?? `GR ${gr.receivedDate}`,
             paymentMethod: po.paymentMethod,
             total: grTotal,
             entryDate: String(gr.receivedDate),
@@ -2522,6 +2636,11 @@ export async function updatePurchaseOrder(
       return fail(
         "BAD_STATE",
         "Hutang TOP ini sudah ditandai lunas. Nilainya sudah dipakai jurnal pelunasan, jadi tidak bisa diedit lagi.",
+      );
+    if (msg.startsWith("PERIOD_LOCKED:"))
+      return fail(
+        "BAD_STATE",
+        `Barang PO ini diterima di periode ${msg.slice("PERIOD_LOCKED:".length)} yang sudah dikunci — jurnalnya tidak bisa diperbarui. Buka periode itu dulu di menu Akuntansi kalau harganya memang harus dikoreksi.`,
       );
     if (msg === "LEGACY_INSTANT")
       return fail(
@@ -2581,6 +2700,11 @@ export async function updatePurchaseOrder(
         "CONFLICT",
         `Bahan "${msg.slice("PR_ITEM_ALREADY_LINKED:".length)}": item PR ini sudah ditarik ke PO lain`,
       );
+    if (msg.startsWith("PR_ITEM_MISMATCH:"))
+      return fail(
+        "CONFLICT",
+        `Bahan "${msg.slice("PR_ITEM_MISMATCH:".length)}": tautan Permintaan Belanja-nya untuk bahan lain. Hapus baris ini lalu tambah baris baru kalau memang mau ganti bahan.`,
+      );
     return fail(
       "DB_ERROR",
       logAndSanitize(e, "purchases.order_update", "Gagal menyimpan perubahan PO"),
@@ -2613,12 +2737,14 @@ export async function updatePurchaseOrder(
     );
     for (const job of journalJobs) {
       fireJournalHook(
-        () =>
+        async () =>
           resyncJournalForGoodsReceipt({
             outletId: session.user.outletId,
             purchaseId: v.id,
             goodsReceiptId: job.goodsReceiptId,
-            purchaseLabel: job.purchaseLabel,
+            purchaseLabel: await resolvePurchaseLabel(v.id, {
+              receiptDate: job.entryDate,
+            }),
             paymentMethod: job.paymentMethod,
             total: job.total,
             lines: job.lines,
@@ -2990,9 +3116,13 @@ export async function confirmGoodsReceipt(input: {
               outletId: session.user.outletId,
               expenseDate: grDate,
               categoryId: defaultCat.id,
-              description: `Pembelanjaan ${paymentMethodLabel(po.paymentMethod)} (GR)${
-                po.invoiceNo ? ` · ${po.invoiceNo}` : ""
-              }`,
+              description: `Belanja ${paymentMethodLabel(po.paymentMethod)} — ${buildPurchaseLabel(
+                {
+                  supplierName: await resolveSupplierName(po.supplierId),
+                  invoiceNo: po.invoiceNo,
+                  receiptDate: grDate,
+                },
+              )}`,
               amount: po.totalAmount,
               paymentMethod: expensePaymentMethod(po.paymentMethod),
               sourceType: "purchase",
@@ -3110,11 +3240,13 @@ export async function confirmGoodsReceipt(input: {
         "@/features/accounting/hooks"
       );
       fireJournalHook(
-        () =>
+        async () =>
           postJournalForPurchaseCreate({
             outletId: session.user.outletId,
             purchaseId: input.id,
-            purchaseLabel: poRow.invoiceNo ?? `GR ${grDate}`,
+            purchaseLabel: await resolvePurchaseLabel(input.id, {
+              receiptDate: grDate,
+            }),
             paymentMethod: poRow.paymentMethod,
             total: poRow.totalAmount,
             lines: sectionLines,
@@ -3757,9 +3889,13 @@ export async function receiveGoods(input: {
               outletId: session.user.outletId,
               expenseDate: grDate,
               categoryId: defaultCat.id,
-              description: `Pembelanjaan ${paymentMethodLabel(po.paymentMethod)} (GR)${
-                po.invoiceNo ? ` · ${po.invoiceNo}` : ""
-              }`,
+              description: `Belanja ${paymentMethodLabel(po.paymentMethod)} — ${buildPurchaseLabel(
+                {
+                  supplierName: await resolveSupplierName(po.supplierId),
+                  invoiceNo: po.invoiceNo,
+                  receiptDate: grDate,
+                },
+              )}`,
               amount: grTotal,
               paymentMethod: expensePaymentMethod(po.paymentMethod),
               sourceType: "purchase",
@@ -3863,11 +3999,13 @@ export async function receiveGoods(input: {
           "@/features/accounting/hooks"
         );
         fireJournalHook(
-          () =>
+          async () =>
             postJournalForPurchaseCreate({
               outletId: session.user.outletId,
               purchaseId: input.purchaseId,
-              purchaseLabel: poRow.invoiceNo ?? `GR ${grDate}`,
+              purchaseLabel: await resolvePurchaseLabel(input.purchaseId, {
+                receiptDate: grDate,
+              }),
               paymentMethod: poRow.paymentMethod,
               total,
               lines: sectionLines,

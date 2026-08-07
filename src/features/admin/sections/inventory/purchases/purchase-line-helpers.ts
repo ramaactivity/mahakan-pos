@@ -196,6 +196,26 @@ export interface SmartMathRow {
   inputMode: SmartMathInputMode;
 }
 
+/**
+ * Ambil HANYA empat bidang smart-math dari input.
+ *
+ * Sesi AE-188 — dulu tiap helper mengembalikan `{...row, ...}`. Pemanggil
+ * lazim mengoper baris form utuh (yang punya id, satuan, dsb), lalu menulis
+ * `{...r, unit: baru, ...hasilHelper}` — dan salinan `unit` LAMA di dalam
+ * hasil helper menimpa yang baru. Efeknya diam-diam fatal: ganti Kg→gr
+ * mengonversi qty 5→5000 dan harga 50.000→50 tapi satuannya tersimpan Kg,
+ * alias salah 1000×. Dengan mengembalikan bidang yang dipetakan eksplisit,
+ * seluruh kelas bug itu mustahil untuk semua pemanggil.
+ */
+function pick(row: SmartMathRow): SmartMathRow {
+  return {
+    qty: row.qty,
+    unitCost: row.unitCost,
+    total: row.total,
+    inputMode: row.inputMode,
+  };
+}
+
 /** Recompute row saat user ganti unitCost (mode = unit). */
 export function applyUnitCostChange(
   row: SmartMathRow,
@@ -208,7 +228,7 @@ export function applyUnitCostChange(
       ? String(Math.round(qtyN * costN))
       : row.total;
   return {
-    ...row,
+    qty: row.qty,
     unitCost: newCost,
     total: newTotal,
     inputMode: "unit",
@@ -227,7 +247,7 @@ export function applyTotalChange(
       ? String(Math.round(totalN / qtyN))
       : row.unitCost;
   return {
-    ...row,
+    qty: row.qty,
     total: newTotal,
     unitCost: newCost,
     inputMode: "total",
@@ -241,24 +261,24 @@ export function applyQtyChange(
 ): SmartMathRow {
   const qtyN = parsePurchaseQty(newQty);
   if (!Number.isFinite(qtyN) || qtyN <= 0) {
-    return { ...row, qty: newQty };
+    return { ...pick(row), qty: newQty };
   }
   if (row.inputMode === "total" && row.total) {
     const totalN = parseTotalRupiah(row.total);
     const newCost =
       totalN >= 0 ? String(Math.round(totalN / qtyN)) : row.unitCost;
-    return { ...row, qty: newQty, unitCost: newCost };
+    return { ...pick(row), qty: newQty, unitCost: newCost };
   }
   // default mode "unit" — recompute total kalau cost ada
   const costN = parseRupiahSafe(row.unitCost);
   if (costN >= 0) {
     return {
-      ...row,
+      ...pick(row),
       qty: newQty,
       total: String(Math.round(qtyN * costN)),
     };
   }
-  return { ...row, qty: newQty };
+  return { ...pick(row), qty: newQty };
 }
 
 /**
@@ -294,7 +314,7 @@ export function applyUnitChange(
       Number.isFinite(qtyForCalc) && qtyForCalc > 0 && totalN >= 0
         ? String(Math.round(totalN / qtyForCalc))
         : row.unitCost;
-    return { ...row, qty: newQty, unitCost: newCost };
+    return { ...pick(row), qty: newQty, unitCost: newCost };
   }
 
   const scaled = scaleCostOnUnitChange({
@@ -308,5 +328,5 @@ export function applyUnitChange(
     Number.isFinite(qtyForCalc) && qtyForCalc > 0 && costForCalc >= 0
       ? String(Math.round(qtyForCalc * costForCalc))
       : row.total;
-  return { ...row, qty: newQty, unitCost: newCost, total: newTotal };
+  return { ...pick(row), qty: newQty, unitCost: newCost, total: newTotal };
 }

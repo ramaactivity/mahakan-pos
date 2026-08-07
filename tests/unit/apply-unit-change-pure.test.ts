@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyQtyChange,
+  applyTotalChange,
   applyUnitChange,
+  applyUnitCostChange,
   type SmartMathRow,
 } from "@/features/admin/sections/inventory/purchases/purchase-line-helpers";
 
@@ -74,5 +77,54 @@ describe("applyUnitChange", () => {
   it("qty kosong/invalid: tak crash, label tetap ganti", () => {
     const r = applyUnitChange(row({ qty: "" }), "Kg", "gr");
     expect(r.qty).toBe("");
+  });
+});
+
+/**
+ * Sesi AE-188 — regresi: helper smart-math TIDAK boleh menyalin balik field
+ * asing dari objek yang dioper.
+ *
+ * Bug yang dicegah: pemanggil lazim mengoper baris form utuh lalu menulis
+ * `{...r, unit: baru, ...hasilHelper}`. Kalau helper mengembalikan `{...row}`,
+ * `unit` LAMA ikut terbawa dan menimpa yang baru — ganti Kg→gr mengonversi
+ * qty 5→5000 dan harga 50.000→50 tapi satuannya tersimpan Kg. Salah 1000×,
+ * tanpa gejala di layar. Kontraknya: hanya 4 bidang smart-math yang keluar.
+ */
+describe("kontrak helper smart-math (anti field bocor)", () => {
+  const KEYS = ["qty", "unitCost", "total", "inputMode"].sort();
+  const kotor = {
+    ...row({}),
+    unit: "Kg",
+    id: "baris-1",
+    ingredientId: "bahan-1",
+  } as unknown as SmartMathRow;
+
+  it("applyUnitChange hanya mengembalikan 4 bidang", () => {
+    expect(Object.keys(applyUnitChange(kotor, "Kg", "gr")).sort()).toEqual(KEYS);
+  });
+
+  it("applyQtyChange hanya mengembalikan 4 bidang", () => {
+    expect(Object.keys(applyQtyChange(kotor, "2")).sort()).toEqual(KEYS);
+    /* Cabang qty tidak valid punya jalur return sendiri — ikut dijaga. */
+    expect(Object.keys(applyQtyChange(kotor, "")).sort()).toEqual(KEYS);
+  });
+
+  it("applyUnitCostChange hanya mengembalikan 4 bidang", () => {
+    expect(Object.keys(applyUnitCostChange(kotor, "1000")).sort()).toEqual(KEYS);
+  });
+
+  it("applyTotalChange hanya mengembalikan 4 bidang", () => {
+    expect(Object.keys(applyTotalChange(kotor, "10000")).sort()).toEqual(KEYS);
+  });
+
+  it("pola pemakaian di modal: satuan baru tidak tertimpa yang lama", () => {
+    const baris = { ...kotor, unit: "Kg" };
+    const hasil = {
+      ...baris,
+      ...applyUnitChange(baris, baris.unit as string, "gr"),
+      unit: "gr",
+    };
+    expect(hasil.unit).toBe("gr");
+    expect(hasil.qty).toBe("5726");
   });
 });
