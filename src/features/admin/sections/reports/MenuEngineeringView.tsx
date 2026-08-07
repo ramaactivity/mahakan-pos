@@ -19,6 +19,7 @@ import {
 } from "@/features/reports";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 import {
   buildRowsCsv,
   buildSummaryCsv,
@@ -69,7 +70,7 @@ const QUADRANT_META: Record<
 const QUADRANT_ORDER: MenuQuadrant[] = ["puzzle", "star", "dog", "plowhorse"];
 
 export function MenuEngineeringView() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayJakarta();
   const monthStart = today.slice(0, 7) + "-01";
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(today);

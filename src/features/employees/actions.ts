@@ -6,6 +6,7 @@ import { employees, employeeCareerHistory, employeeDocuments } from "@/db/schema
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { todayJakarta } from "@/lib/tz";
 import {
   fetchEmployeeById,
   fetchEmployeeCareerHistory,
@@ -194,7 +195,7 @@ export async function createEmployee(
     // Sesi L — seed initial career history entry on hire date so the
     // timeline starts populated. Uses hireDate if provided, else today.
     const initialEffective =
-      row.hireDate ?? new Date().toISOString().slice(0, 10);
+      row.hireDate ?? todayJakarta();
     await db.insert(employeeCareerHistory).values({
       employeeId: row.id,
       effectiveDate: initialEffective,
@@ -316,7 +317,7 @@ export async function updateEmployee(
 
     // Sesi L — auto-record career history when role-relevant fields change.
     if (careerChanged) {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayJakarta();
       await db.insert(employeeCareerHistory).values({
         employeeId: row.id,
         effectiveDate: today,
@@ -801,7 +802,7 @@ export async function exportEmployeesCsv(): Promise<
 
   // UTF-8 BOM so Excel detects encoding correctly (Indonesian chars).
   const csv = "﻿" + lines.join("\n");
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = todayJakarta();
   const filename = `karyawan-${stamp}.csv`;
 
   logAudit({

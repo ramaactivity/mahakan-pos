@@ -47,6 +47,7 @@ import { formatRupiah } from "@/lib/format";
 import { computeGrossMarginPct } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { useLiveRefresh } from "@/lib/use-live-refresh";
+import { todayJakarta } from "@/lib/tz";
 
 /** Sesi AE-173 — harga representatif untuk margin (fixed→fixed, variant→max). */
 function representativePrice(i: MenuItem): number {
@@ -276,7 +277,7 @@ export function ItemsList() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `mahakan-menu-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `mahakan-menu-${todayJakarta()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success("Menu di-export ke CSV");

@@ -31,6 +31,7 @@ import { listEmployees } from "@/features/employees";
 import { isOk as employeesIsOk } from "@/features/employees";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 
 type StatusFilter = EmployeeAdvanceStatus | "all";
 
@@ -314,7 +315,7 @@ function CreateAdvanceModal({
   const [amountInput, setAmountInput] = useState("");
   const [reason, setReason] = useState("");
   const [issuedDate, setIssuedDate] = useState(
-    new Date().toISOString().slice(0, 10),
+    todayJakarta(),
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);

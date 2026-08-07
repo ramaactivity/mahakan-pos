@@ -58,6 +58,7 @@ function formatRupiahShort(n: number): string {
 }
 import { AggregatorSettlementDetailModal } from "./aggregator-online/AggregatorSettlementDetailModal";
 import { AggregatorImportWizardModal } from "./aggregator-online/AggregatorImportWizardModal";
+import { addDaysJakarta, jakartaDateOf, todayJakarta } from "@/lib/tz";
 
 /**
  * Sesi AE-77 — Laporan Online Order (GoFood / GrabFood / ShopeeFood / QRIS / EDC).
@@ -134,14 +135,10 @@ const TABS: Array<{ key: TabKey; label: string; Icon: typeof Bike }> = [
   { key: "edc_bca", label: "EDC BCA", Icon: CreditCard },
 ];
 
+/* Sesi AE-191 — rentang default ikut kalender WIB, bukan UTC. */
 function defaultRange(): { from: string; to: string } {
-  const today = new Date();
-  const from = new Date(today);
-  from.setDate(today.getDate() - 30);
-  return {
-    from: from.toISOString().slice(0, 10),
-    to: today.toISOString().slice(0, 10),
-  };
+  const today = todayJakarta();
+  return { from: addDaysJakarta(today, -30), to: today };
 }
 
 export function AggregatorOnlineSection() {
@@ -581,9 +578,7 @@ export function AggregatorOnlineSection() {
                           {r.bankCreditedAt ? (
                             <div className="text-[10px] text-neutral-500">
                               Bank credited{" "}
-                              {new Date(r.bankCreditedAt)
-                                .toISOString()
-                                .slice(0, 10)}
+                              {jakartaDateOf(new Date(r.bankCreditedAt))}
                             </div>
                           ) : null}
                         </td>

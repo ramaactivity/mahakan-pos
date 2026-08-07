@@ -17,9 +17,10 @@ import {
 } from "@/features/cash";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 
 export function DailySummary() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayJakarta();
   const [date, setDate] = useState(today);
   const [summary, setSummary] = useState<DailyCashSummaryData | null>(null);
   const [loading, setLoading] = useState(true);

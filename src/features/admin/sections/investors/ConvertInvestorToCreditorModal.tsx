@@ -20,6 +20,7 @@ import {
   isOk,
 } from "@/features/creditors";
 import { formatRupiah, parseRupiah } from "@/lib/format";
+import { todayJakarta } from "@/lib/tz";
 
 /**
  * Sesi AE-80 follow-up — Convert investor existing → kreditur.
@@ -44,7 +45,7 @@ interface ConvertInvestorToCreditorModalProps {
   initialInvestorId?: string | null;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayJakarta();
 
 export function ConvertInvestorToCreditorModal({
   open,

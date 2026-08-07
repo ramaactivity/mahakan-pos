@@ -26,6 +26,7 @@ import {
 } from "@/features/historical";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -253,7 +254,7 @@ function Step1Upload({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `template-historis-mahakan-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `template-historis-mahakan-${todayJakarta()}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

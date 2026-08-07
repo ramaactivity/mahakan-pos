@@ -31,6 +31,7 @@ import { formatRupiah } from "@/lib/format";
 import { formatStockQty, resolveStockDecimal } from "@/lib/stock-decimal";
 import { formatIndonesianDateTime } from "@/lib/date";
 import { downloadCsv } from "../reports/menu-engineering-csv";
+import { todayJakarta } from "@/lib/tz";
 
 const EXPORT_CAP = 5000;
 
@@ -83,7 +84,7 @@ export function MovementsList() {
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayJakarta();
   const monthStart = today.slice(0, 7) + "-01";
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(today);

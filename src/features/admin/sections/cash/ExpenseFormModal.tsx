@@ -26,6 +26,7 @@ import {
 } from "@/features/bank-accounts";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 
 interface ExpenseFormModalProps {
   open: boolean;
@@ -45,7 +46,7 @@ export function ExpenseFormModal({
   onClose,
   onSaved,
 }: ExpenseFormModalProps) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayJakarta();
   const [date, setDate] = useState(today);
   const [categoryId, setCategoryId] = useState("");
   const [description, setDescription] = useState("");

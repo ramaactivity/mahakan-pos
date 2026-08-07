@@ -26,6 +26,7 @@ import { formatRupiah } from "@/lib/format";
 import { paymentMethodLabel } from "@/lib/payment-method";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "./menu-engineering-csv";
+import { todayJakarta } from "@/lib/tz";
 
 function isoDaysAgo(days: number): string {
   const d = new Date();
@@ -33,7 +34,7 @@ function isoDaysAgo(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 function isoToday(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayJakarta();
 }
 
 type PaymentFilter = PaymentMethod | "all";

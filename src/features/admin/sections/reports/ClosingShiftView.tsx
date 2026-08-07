@@ -20,6 +20,7 @@ import {
 } from "@/features/reports";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 
 function isoDaysAgo(days: number): string {
   const d = new Date();
@@ -27,7 +28,7 @@ function isoDaysAgo(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 function isoToday(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayJakarta();
 }
 
 type SortKey = "date" | "variance" | "actualCash" | "kasir";

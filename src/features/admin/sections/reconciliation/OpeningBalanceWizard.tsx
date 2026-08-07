@@ -47,6 +47,7 @@ import {
 } from "@/features/outlets";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 
 /**
  * Sesi AE-75 — Wizard rewrite of OpeningBalanceChecklist.
@@ -668,7 +669,7 @@ function KasbonInlineBody({
   hint: string;
   onChanged: () => Promise<void>;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayJakarta();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [employeeId, setEmployeeId] = useState<string>("");
@@ -812,7 +813,7 @@ function BankBalanceInlineBody({
   defaultDate: string;
   onChanged: () => Promise<void>;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayJakarta();
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [rows, setRows] = useState<BankRowDraft[]>([

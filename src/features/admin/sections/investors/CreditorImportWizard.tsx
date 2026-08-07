@@ -17,6 +17,7 @@ import {
   type InterestPeriod,
 } from "@/features/creditors";
 import { formatRupiah } from "@/lib/format";
+import { todayJakarta } from "@/lib/tz";
 import {
   detectFractionScale,
   downloadCsv,
@@ -76,7 +77,7 @@ function parsePeriod(s: string): InterestPeriod | undefined {
   return undefined;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayJakarta();
 
 function mapRow(
   row: string[],

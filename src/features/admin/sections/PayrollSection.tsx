@@ -51,6 +51,7 @@ import {
   parseRupiah,
 } from "@/lib/format";
 import { formatIndonesianDateTime } from "@/lib/date";
+import { jakartaDateOf, monthEndJakarta, monthStartJakarta } from "@/lib/tz";
 import { cn } from "@/lib/utils";
 
 const STATUS_LABELS: Record<PayrollStatus, { variant: "warning" | "info" | "success"; label: string }> =
@@ -763,10 +764,10 @@ function CreatePeriodDialog({
       year: "numeric",
     });
     setLabel(monthLabel);
-    const first = new Date(now.getFullYear(), now.getMonth(), 1);
-    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    setPeriodStart(first.toISOString().slice(0, 10));
-    setPeriodEnd(last.toISOString().slice(0, 10));
+    /* Sesi AE-191 — periode gaji ikut kalender WIB, bukan UTC. */
+    const iso = jakartaDateOf(now);
+    setPeriodStart(monthStartJakarta(iso));
+    setPeriodEnd(monthEndJakarta(iso));
     setNotes("");
     setError(null);
     setSubmitting(false);

@@ -43,6 +43,7 @@ import {
 } from "@/features/outlets";
 import { hasPermission, type Role } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/money";
+import { addDaysJakarta, monthStartJakarta, todayJakarta } from "@/lib/tz";
 import { cn } from "@/lib/utils";
 import { JournalEntryModal } from "./JournalEntryModal";
 
@@ -192,19 +193,21 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
     setFilterRange({ from: null, to: null });
   }
 
-  /* Sesi AE-72 — Quick date filter helpers (preset chips). */
+  /* Sesi AE-72 — Quick date filter helpers (preset chips).
+   *
+   * Sesi AE-191 — batas rentang WAJIB kalender WIB. Versi lama memakai
+   * `toISOString()` (UTC) atas Date waktu-lokal, dua-duanya meleset:
+   *   - `to` = hari ini UTC → antara 00:00–06:59 WIB masih tanggal kemarin,
+   *     jadi jurnal yang baru dibuat hari itu TIDAK MUNCUL sama sekali;
+   *   - "Bulan ini" → `new Date(y, m, 1)` = tengah malam lokal = 17:00 UTC
+   *     tanggal 31 bulan sebelumnya, jadi `from` mundur satu hari. */
   function setQuickDateRange(days: number) {
-    const today = new Date();
-    const from = new Date(today);
-    from.setDate(from.getDate() - days + 1);
-    const isoDate = (d: Date) => d.toISOString().slice(0, 10);
-    setFilterRange({ from: isoDate(from), to: isoDate(today) });
+    const today = todayJakarta();
+    setFilterRange({ from: addDaysJakarta(today, -(days - 1)), to: today });
   }
   function setThisMonth() {
-    const today = new Date();
-    const first = new Date(today.getFullYear(), today.getMonth(), 1);
-    const isoDate = (d: Date) => d.toISOString().slice(0, 10);
-    setFilterRange({ from: isoDate(first), to: isoDate(today) });
+    const today = todayJakarta();
+    setFilterRange({ from: monthStartJakarta(today), to: today });
   }
 
   /* Sesi AE-72 — Client-side search filter (deskripsi / entry number). */

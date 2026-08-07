@@ -34,6 +34,7 @@ import { createAggregatorSettlement } from "@/features/finance/actions";
 import type { AggregatorLineItem } from "@/features/finance/types";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 
 /**
  * Sesi AE-77 — 4-step wizard untuk import CSV settlement aggregator/cashless.
@@ -326,7 +327,7 @@ export function AggregatorImportWizardModal({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `template-${channel}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `template-${channel}-${todayJakarta()}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

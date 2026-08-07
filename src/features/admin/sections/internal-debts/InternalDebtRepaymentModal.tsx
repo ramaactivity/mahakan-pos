@@ -21,6 +21,7 @@ import {
   type InternalDebtPartyListRow,
 } from "@/features/internal-debts";
 import { formatRupiah, parseRupiah } from "@/lib/format";
+import { todayJakarta } from "@/lib/tz";
 
 /**
  * Sesi AE-180 — Modal cicilan hutang internal (mirror CreditorRepaymentModal
@@ -34,7 +35,7 @@ interface InternalDebtRepaymentModalProps {
   onSaved: () => void;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayJakarta();
 
 export function InternalDebtRepaymentModal({
   open,

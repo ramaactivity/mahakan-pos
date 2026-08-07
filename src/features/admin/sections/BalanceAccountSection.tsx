@@ -42,6 +42,7 @@ import {
 } from "@/features/outlets";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 
 /**
  * Sesi AE-62a — Saldo Akun (Balance Account) section.
@@ -88,7 +89,7 @@ function signedNormal(
 
 export function BalanceAccountSection() {
   const [asOf, setAsOf] = useState<string>(() =>
-    new Date().toISOString().slice(0, 10),
+    todayJakarta(),
   );
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [search, setSearch] = useState("");
@@ -240,7 +241,7 @@ export function BalanceAccountSection() {
             label="Saldo per tanggal"
             value={asOf}
             onChange={(v) =>
-              setAsOf(v ?? new Date().toISOString().slice(0, 10))
+              setAsOf(v ?? todayJakarta())
             }
             clearable={false}
           />

@@ -18,6 +18,7 @@ import {
 } from "@/components/ui";
 import { fetchAggregatorSettlementDetail } from "@/features/finance/actions";
 import { formatRupiah } from "@/lib/format";
+import { jakartaDateOf } from "@/lib/tz";
 import { cn } from "@/lib/utils";
 
 /**
@@ -186,9 +187,7 @@ export function AggregatorSettlementDetailModal({
               ) : null}
               {data.bankCreditedAt ? (
                 <Row label="Bank Credited">
-                  {new Date(data.bankCreditedAt)
-                    .toISOString()
-                    .slice(0, 10)}
+                  {jakartaDateOf(new Date(data.bankCreditedAt))}
                 </Row>
               ) : null}
               <Row label="Fee %">

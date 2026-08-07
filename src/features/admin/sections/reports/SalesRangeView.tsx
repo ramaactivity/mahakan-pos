@@ -35,6 +35,7 @@ import {
 } from "@/features/outlets";
 import { exportSalesRangePdf } from "@/lib/pdf-export";
 import { formatRupiah } from "@/lib/format";
+import { todayJakarta } from "@/lib/tz";
 
 function isoDaysAgo(days: number): string {
   const d = new Date();
@@ -42,7 +43,7 @@ function isoDaysAgo(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 function isoToday(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayJakarta();
 }
 
 // Sesi AE-62m — payment method filter (consistent dengan DailySalesView).

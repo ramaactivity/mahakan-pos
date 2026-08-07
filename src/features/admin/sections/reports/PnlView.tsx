@@ -23,13 +23,14 @@ import { exportPnlPdf } from "@/lib/pdf-export";
 import { formatRupiah } from "@/lib/format";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 
 interface PnlViewProps {
   viewerRole: Role;
 }
 
 export function PnlView({ viewerRole }: PnlViewProps) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayJakarta();
   const monthStart = today.slice(0, 7) + "-01";
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(today);

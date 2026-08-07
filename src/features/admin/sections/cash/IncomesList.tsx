@@ -24,6 +24,7 @@ import {
 } from "@/features/cash";
 import { useSession } from "@/features/auth/SessionProvider";
 import { formatRupiah } from "@/lib/format";
+import { todayJakarta } from "@/lib/tz";
 
 interface IncomesListProps {
   createdBy: string;
@@ -46,7 +47,7 @@ export function IncomesList({ createdBy }: IncomesListProps) {
   const [editTarget, setEditTarget] = useState<Income | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Income | null>(null);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayJakarta();
   const monthStart = today.slice(0, 7) + "-01";
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(today);

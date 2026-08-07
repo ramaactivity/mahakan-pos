@@ -36,6 +36,7 @@ import {
 import { exportDailySalesPdf } from "@/lib/pdf-export";
 import { formatRupiah } from "@/lib/format";
 import { paymentMethodLabel } from "@/lib/payment-method";
+import { todayJakarta } from "@/lib/tz";
 
 // Sesi AE-62m — payment method filter (owner request: lihat omset per method).
 type PaymentFilter = PaymentMethod | "all";
@@ -53,7 +54,7 @@ const PAYMENT_OPTIONS: Array<{ value: PaymentFilter; label: string }> = [
 ];
 
 export function DailySalesView() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayJakarta();
   const [date, setDate] = useState(today);
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>("all");
   const [report, setReport] = useState<DailySalesReport | null>(null);

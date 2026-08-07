@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { downloadCsv } from "./menu-engineering-csv";
 import { buildRvcCsv } from "./refund-void-compliment-csv";
 import { RefundVoidComplimentDetailModal } from "./RefundVoidComplimentDetailModal";
+import { todayJakarta } from "@/lib/tz";
 
 const KIND_LABEL: Record<RefundVoidComplimentKind, string> = {
   refund_full: "Refund Full",
@@ -58,7 +59,7 @@ function isoDaysAgo(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 function isoToday(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayJakarta();
 }
 
 function defaultRange(): DateRangeValue {

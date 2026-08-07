@@ -21,6 +21,7 @@ import type { BulkImportInvestorRow } from "@/features/investors";
 import type { BulkImportPengelolaRow } from "@/features/pengelola";
 import type { BulkImportCreditorRow } from "@/features/creditors";
 import type { HistoricalWithdrawalRow } from "@/features/withdrawals";
+import { todayJakarta } from "@/lib/tz";
 import {
   detectFractionScale,
   parseDateCell,
@@ -507,7 +508,7 @@ export function parseMasterTemplate(buffer: ArrayBuffer): ParseMasterResult {
     }
     const startDate =
       parseDateCell(r["Tanggal Mulai"] ?? "") ??
-      new Date().toISOString().slice(0, 10);
+      todayJakarta();
     const sisa = parseRupiahCell(r["Sisa Hutang"] ?? "");
     creditorCandidates.push({
       rowNum,
@@ -577,7 +578,7 @@ export function parseMasterTemplate(buffer: ArrayBuffer): ParseMasterResult {
     }
     const occurredAt =
       parseDateCell(r["Tanggal"] ?? "") ??
-      new Date().toISOString().slice(0, 10);
+      todayJakarta();
     const bankName = r["Bank Sumber"]?.trim() ?? "";
     if (bankName.length === 0) {
       warnings.push(

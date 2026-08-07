@@ -16,6 +16,7 @@ import {
   type CreateFixedAssetInput,
 } from "@/features/accounting/fixed-assets-actions";
 import { formatRupiah } from "@/lib/money";
+import { todayJakarta } from "@/lib/tz";
 
 interface Props {
   open: boolean;
@@ -54,7 +55,7 @@ export function AssetFormModal({ open, onClose, onSaved }: Props) {
   const [salvage, setSalvage] = useState("0");
   const [usefulLife, setUsefulLife] = useState("60");
   const [acquiredDate, setAcquiredDate] = useState<string | null>(
-    new Date().toISOString().slice(0, 10),
+    todayJakarta(),
   );
   const [accountPair, setAccountPair] = useState("1202|6502");
   const [capitalize, setCapitalize] = useState(true);
@@ -72,7 +73,7 @@ export function AssetFormModal({ open, onClose, onSaved }: Props) {
     setCost("0");
     setSalvage("0");
     setUsefulLife("60");
-    setAcquiredDate(new Date().toISOString().slice(0, 10));
+    setAcquiredDate(todayJakarta());
     setAccountPair("1202|6502");
     setCapitalize(true);
     setPaymentMethod("transfer_bca");

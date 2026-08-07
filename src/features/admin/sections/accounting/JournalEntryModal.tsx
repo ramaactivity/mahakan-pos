@@ -32,6 +32,7 @@ import type {
 } from "@/features/accounting/types";
 import { formatRupiah } from "@/lib/money";
 import { cn } from "@/lib/utils";
+import { jakartaDateOf, todayJakarta } from "@/lib/tz";
 
 /* Sesi AE-72 — UX helper: format akun type untuk badge label. */
 function formatAccountTypeLabel(type: AccountType): string {
@@ -129,7 +130,7 @@ export function JournalEntryModal({
       const dateStr =
         typeof editEntry.entryDate === "string"
           ? editEntry.entryDate
-          : new Date(editEntry.entryDate).toISOString().slice(0, 10);
+          : jakartaDateOf(new Date(editEntry.entryDate));
       setEntryDate(dateStr);
       setDescription(editEntry.description);
       setLines(
@@ -144,7 +145,7 @@ export function JournalEntryModal({
           : [blankLine(), blankLine()],
       );
     } else {
-      setEntryDate(new Date().toISOString().slice(0, 10));
+      setEntryDate(todayJakarta());
       setDescription("");
       setLines([blankLine(), blankLine()]);
     }
@@ -412,14 +413,27 @@ export function JournalEntryModal({
     setSubmitting(false);
 
     if (res.ok) {
+      /* Sesi AE-191 — sebut TANGGAL jurnalnya, bukan cuma nomor.
+       *
+       * Daftar jurnal diurutkan per tanggal, jadi entry bertanggal mundur
+       * mendarat di bawah entry hari ini — bukan di baris teratas tempat mata
+       * mencari. Owner sempat mengira jurnalnya hilang karena itu. */
+      const tanggal = entryDate
+        ? new Intl.DateTimeFormat("id-ID", {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          }).format(new Date(`${entryDate}T00:00:00Z`))
+        : "";
+      const suffix = tanggal ? ` — tanggal ${tanggal}` : "";
       toast.success(
         isEdit
           ? status === "posted"
-            ? `Entry ${res.data.entryNumber} ter-edit + ter-post`
-            : `Draft ${res.data.entryNumber} ter-update`
+            ? `Entry ${res.data.entryNumber} ter-edit + ter-post${suffix}`
+            : `Draft ${res.data.entryNumber} ter-update${suffix}`
           : status === "draft"
-            ? `Draft ${res.data.entryNumber} disimpan`
-            : `Entry ${res.data.entryNumber} terposting`,
+            ? `Draft ${res.data.entryNumber} disimpan${suffix}`
+            : `Entry ${res.data.entryNumber} terposting${suffix}`,
       );
       onSaved();
     } else {

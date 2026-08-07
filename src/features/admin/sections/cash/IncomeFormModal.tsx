@@ -26,6 +26,7 @@ import { fetchAccounts } from "@/features/accounting/actions";
 import type { AccountListRow } from "@/features/accounting";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 
 interface IncomeFormModalProps {
   open: boolean;
@@ -44,7 +45,7 @@ export function IncomeFormModal({
   onSaved,
 }: IncomeFormModalProps) {
   const isEdit = edit != null;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayJakarta();
   const [date, setDate] = useState(today);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");

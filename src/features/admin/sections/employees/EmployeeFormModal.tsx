@@ -39,6 +39,7 @@ import { listUsers, type PublicUser } from "@/features/users";
 import { isOk as usersIsOk } from "@/features/users";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 
 interface EmployeeFormModalProps {
   open: boolean;
@@ -369,7 +370,7 @@ export function EmployeeFormModal({
           id: initial.id,
           ...payload,
           status,
-          resignedAt: isResigned ? (resignedAt || new Date().toISOString().slice(0, 10)) : null,
+          resignedAt: isResigned ? (resignedAt || todayJakarta()) : null,
           resignReason: isResigned ? resignReason.trim() || null : null,
         })
       : await createEmployee(payload);

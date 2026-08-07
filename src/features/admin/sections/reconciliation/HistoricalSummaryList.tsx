@@ -25,6 +25,7 @@ import {
 import type { Role } from "@/lib/auth";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { todayJakarta } from "@/lib/tz";
 
 interface HistoricalSummaryListProps {
   viewerRole: Role;
@@ -36,7 +37,7 @@ const DEFAULT_FROM = () => {
   d.setMonth(d.getMonth() - 6);
   return d.toISOString().slice(0, 10);
 };
-const DEFAULT_TO = () => new Date().toISOString().slice(0, 10);
+const DEFAULT_TO = () => todayJakarta();
 
 export function HistoricalSummaryList({
   viewerRole,

@@ -26,6 +26,7 @@ import {
   type BankAccount,
 } from "@/features/bank-accounts";
 import { formatRupiah, parseRupiah } from "@/lib/format";
+import { todayJakarta } from "@/lib/tz";
 
 /**
  * Sesi AE-80 — Form create/edit kreditur.
@@ -39,7 +40,7 @@ interface CreditorFormModalProps {
   onSaved: () => void;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayJakarta();
 
 export function CreditorFormModal({
   open,

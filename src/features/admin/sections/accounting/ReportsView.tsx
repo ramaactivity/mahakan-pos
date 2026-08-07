@@ -65,6 +65,12 @@ import type {
 } from "@/features/accounting/reports";
 import { formatRupiah } from "@/lib/money";
 import { cn } from "@/lib/utils";
+import {
+  jakartaDateOf,
+  monthEndJakarta,
+  monthStartJakarta,
+  todayJakarta,
+} from "@/lib/tz";
 
 type ReportTab = "validate" | "tb" | "is" | "bs" | "cf" | "gl";
 
@@ -142,7 +148,7 @@ function ValidationTab({
   onDrilldown: (accountCode: string) => void;
 }) {
   const [asOfDate, setAsOfDate] = useState<string>(
-    new Date().toISOString().slice(0, 10),
+    todayJakarta(),
   );
   const [report, setReport] = useState<ValidationReport | null>(null);
   const [loading, setLoading] = useState(false);
@@ -662,7 +668,7 @@ function IncomeStatementTab() {
 
 function BalanceSheetTab() {
   const [asOfDate, setAsOfDate] = useState<string>(
-    new Date().toISOString().slice(0, 10),
+    todayJakarta(),
   );
   const [report, setReport] = useState<BalanceSheetReport | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1419,12 +1425,12 @@ function LedgerAccountSummaryTable({
 // Helpers
 // ============================================================
 
+/* Sesi AE-191 — batas bulan lewat kalender WIB. `new Date(y, m, 1)` itu tengah
+ * malam waktu lokal; di WIB sama dengan 17:00 UTC tanggal 31 bulan sebelumnya,
+ * jadi `toISOString()` bikin rentang laporan mundur satu hari. */
 function monthRangeFor(d: Date): { from: string; to: string } {
-  const y = d.getFullYear();
-  const m = d.getMonth();
-  const first = new Date(y, m, 1).toISOString().slice(0, 10);
-  const last = new Date(y, m + 1, 0).toISOString().slice(0, 10);
-  return { from: first, to: last };
+  const iso = jakartaDateOf(d);
+  return { from: monthStartJakarta(iso), to: monthEndJakarta(iso) };
 }
 
 /**

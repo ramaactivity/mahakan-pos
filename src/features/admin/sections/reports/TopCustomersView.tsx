@@ -21,6 +21,7 @@ import {
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "./menu-engineering-csv";
+import { todayJakarta } from "@/lib/tz";
 
 type SortKey = "spend" | "points" | "updated";
 
@@ -81,7 +82,7 @@ export function TopCustomersView() {
       "Diupdate": new Date(c.updatedAt).toISOString().slice(0, 10),
     }));
     const csv = Papa.unparse(data, { newline: "\n" });
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayJakarta();
     downloadCsv(`top-member-${today}.csv`, csv);
   }
 

@@ -29,6 +29,7 @@ import {
 } from "@/features/cash";
 import { useSession } from "@/features/auth/SessionProvider";
 import { formatRupiah } from "@/lib/format";
+import { todayJakarta } from "@/lib/tz";
 
 interface ExpensesListProps {
   createdBy: string;
@@ -55,7 +56,7 @@ export function ExpensesList({ createdBy }: ExpensesListProps) {
   const [duplicateSubmitting, setDuplicateSubmitting] = useState(false);
 
   // Default: this month
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayJakarta();
   const monthStart = today.slice(0, 7) + "-01";
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(today);
