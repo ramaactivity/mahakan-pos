@@ -29,6 +29,18 @@ export type IncomeCreateInput = {
   revenueAccountCodeOverride?: string | null;
 };
 
+/** Nama metode terima uang buat deskripsi jurnal — jangan tulis enum mentah. */
+export function incomePaymentLabel(method: IncomePaymentMethod): string {
+  switch (method) {
+    case "cash":
+      return "tunai";
+    case "transfer":
+      return "transfer bank";
+    case "other":
+      return "bank lain";
+  }
+}
+
 export function incomeCashBankCode(method: IncomePaymentMethod): string {
   switch (method) {
     case "cash":
@@ -53,7 +65,7 @@ export function mapIncomeCreate(input: IncomeCreateInput): JournalLineInput[] {
     {
       accountCode: cashBankCode,
       debit: input.amount,
-      description: `Pemasukan ${input.paymentMethod}: ${input.description}`,
+      description: `Uang masuk ${incomePaymentLabel(input.paymentMethod)} — ${input.description}`,
     },
     {
       accountCode: revenueCode,

@@ -11,6 +11,7 @@
  *          Cr 5101/5102/5103 HPP             per bucket
  */
 
+import { paymentMethodLabel } from "@/lib/payment-method";
 import type { JournalLineInput } from "../posting";
 import { aggregateByCategory, type AggregatedItem } from "./categoryMapper";
 
@@ -96,14 +97,14 @@ export function mapPosRefund(input: PosRefundInput): JournalLineInput[] {
       lines.push({
         accountCode: PAYMENT_METHOD_TO_ACCOUNT[sp.paymentMethod],
         credit: sp.amount,
-        description: `Refund split ${sp.paymentMethod}`,
+        description: `Uang keluar ${paymentMethodLabel(sp.paymentMethod)} (refund split)`,
       });
     }
   } else {
     lines.push({
       accountCode: PAYMENT_METHOD_TO_ACCOUNT[input.originalPaymentMethod],
       credit: input.refundedAmount,
-      description: `Refund ${input.originalPaymentMethod}`,
+      description: `Uang keluar ${paymentMethodLabel(input.originalPaymentMethod)} (refund)`,
     });
   }
 

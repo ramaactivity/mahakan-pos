@@ -20,6 +20,7 @@
  *   top              → 2101 Hutang Dagang (until mark paid)
  */
 
+import { labelMetodeBayar } from "@/features/purchases/journal-label";
 import type { JournalLineInput } from "../posting";
 
 export type PurchasePaymentMethod =
@@ -107,6 +108,13 @@ function cashBankCode(
   return CASH_BANK_BY_METHOD[method];
 }
 
+/** Nama seksi persediaan yang dibaca manusia (bukan slug internal). */
+const SECTION_LABELS: Record<string, string> = {
+  "1140": "Dapur",
+  "1141": "Bar",
+  "1142": "Pendukung",
+};
+
 /**
  * Aggregate per-section amounts → 1 line per persediaan account
  * (multiple sections → multiple Dr lines, but kitchen+bar+other separate).
@@ -114,6 +122,7 @@ function cashBankCode(
 function aggregatePersediaanLines(
   lines: PurchaseLineAggregate[],
   descriptionPrefix: string,
+  purchaseLabel: string,
 ): JournalLineInput[] {
   const bySection: Record<string, number> = {};
   for (const l of lines) {
@@ -122,16 +131,10 @@ function aggregatePersediaanLines(
     bySection[code] = (bySection[code] ?? 0) + l.amount;
   }
 
-  const labels: Record<string, string> = {
-    "1140": "kitchen",
-    "1141": "bar",
-    "1142": "pendukung",
-  };
-
   return Object.entries(bySection).map(([code, amount]) => ({
     accountCode: code,
     debit: amount,
-    description: `${descriptionPrefix} ${labels[code] ?? "persediaan"}`,
+    description: `${descriptionPrefix} ${SECTION_LABELS[code] ?? "persediaan"} — ${purchaseLabel}`,
   }));
 }
 
@@ -149,7 +152,7 @@ export function mapPurchaseCreate(
   }
 
   const result: JournalLineInput[] = [
-    ...aggregatePersediaanLines(input.lines, "Persediaan"),
+    ...aggregatePersediaanLines(input.lines, "Persediaan", input.purchaseLabel),
   ];
 
   // Cr side: cash/bank atau Hutang Dagang
@@ -157,13 +160,13 @@ export function mapPurchaseCreate(
     result.push({
       accountCode: "2101",
       credit: input.total,
-      description: `Hutang dagang ${input.purchaseLabel}`,
+      description: `Hutang dagang (belum dibayar) — ${input.purchaseLabel}`,
     });
   } else {
     result.push({
       accountCode: cashBankCode(input.paymentMethod),
       credit: input.total,
-      description: `Pembayaran ${input.paymentMethod} ${input.purchaseLabel}`,
+      description: `Bayar pembelian, ${labelMetodeBayar(input.paymentMethod)} — ${input.purchaseLabel}`,
     });
   }
 
@@ -179,12 +182,12 @@ export function mapPurchasePay(input: PurchasePayInput): JournalLineInput[] {
     {
       accountCode: "2101",
       debit: input.total,
-      description: `Bayar hutang ${input.purchaseLabel}`,
+      description: `Pelunasan hutang dagang — ${input.purchaseLabel}`,
     },
     {
       accountCode: cashBankCode(input.paymentMethod),
       credit: input.total,
-      description: `${input.paymentMethod} ${input.purchaseLabel}`,
+      description: `Uang keluar untuk bayar hutang, ${labelMetodeBayar(input.paymentMethod)} — ${input.purchaseLabel}`,
     },
   ];
 }
@@ -214,7 +217,7 @@ export function mapPurchaseCancel(
     result.push({
       accountCode: code,
       credit: amount,
-      description: `Reverse persediaan (cancel) ${input.purchaseLabel}`,
+      description: `Pembelian dibatalkan, persediaan ${SECTION_LABELS[code] ?? "pendukung"} dikeluarkan lagi — ${input.purchaseLabel}`,
     });
   }
 
@@ -223,13 +226,13 @@ export function mapPurchaseCancel(
     result.push({
       accountCode: "2101",
       debit: input.total,
-      description: `Reverse hutang dagang (cancel) ${input.purchaseLabel}`,
+      description: `Pembelian dibatalkan, hutang dagang dihapus — ${input.purchaseLabel}`,
     });
   } else {
     result.push({
       accountCode: cashBankCode(input.paymentMethod),
       debit: input.total,
-      description: `Reverse pembayaran (cancel) ${input.purchaseLabel}`,
+      description: `Pembelian dibatalkan, uang kembali via ${labelMetodeBayar(input.paymentMethod)} — ${input.purchaseLabel}`,
     });
   }
 

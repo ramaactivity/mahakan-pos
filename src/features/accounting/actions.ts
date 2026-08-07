@@ -871,13 +871,13 @@ export async function reopenAccountingPeriod(
         accountId: l.accountId,
         debit: Number(l.credit),
         credit: Number(l.debit),
-        description: `Reverse: ${l.description ?? ""}`,
+        description: `Dibatalkan: ${l.description ?? ""}`,
       }));
       try {
         const reverseResult = await recordJournal({
           outletId: session.user.outletId,
           entryDate: String(closingEntry.entryDate),
-          description: `Reverse closing entry ${closingEntry.entryNumber} — ${reason}`,
+          description: `Pembatalan jurnal tutup buku ${closingEntry.entryNumber} — ${reason}`,
           sourceType: "period_reopen",
           sourceId: closingEntry.id,
           lines: counterLines,
@@ -1142,7 +1142,7 @@ export async function reverseJournalEntry(
     accountId: l.accountId,
     debit: Number(l.credit),
     credit: Number(l.debit),
-    description: `Reverse: ${l.description ?? ""}`,
+    description: `Dibatalkan: ${l.description ?? ""}`,
   }));
 
   /* Audit AE-186 — reverse harus IDEMPOTEN. Counter dibuat dengan
@@ -1185,7 +1185,7 @@ export async function reverseJournalEntry(
          * tetap nol di mana pun ditaruh — jadi menaruhnya sekandang dengan yang
          * dibalik jelas lebih rapi. */
         entryDate: String(original.entryDate),
-        description: `Reverse ${original.entryNumber} — ${reason}`,
+        description: `Pembatalan jurnal ${original.entryNumber} — ${reason}`,
         sourceType: original.sourceType,
         /* sourceId asli masih dipegang entry aslinya (unique active index) —
          * identitas counter disimpan di metadata.reversesEntryId dan dipakai

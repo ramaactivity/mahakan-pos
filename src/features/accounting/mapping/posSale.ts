@@ -19,6 +19,7 @@
  * gunakan mapPosCompliment (kontra journal: only COGS movement, no revenue).
  */
 
+import { paymentMethodLabel } from "@/lib/payment-method";
 import type { JournalLineInput } from "../posting";
 import { aggregateByCategory, type AggregatedItem } from "./categoryMapper";
 
@@ -106,14 +107,14 @@ export function mapPosSale(input: PosSaleInput): JournalLineInput[] {
       lines.push({
         accountCode: PAYMENT_METHOD_TO_ACCOUNT[sp.paymentMethod],
         debit: sp.amount,
-        description: `Split ${sp.paymentMethod}`,
+        description: `Uang masuk ${paymentMethodLabel(sp.paymentMethod)} (bayar split)`,
       });
     }
   } else {
     lines.push({
       accountCode: PAYMENT_METHOD_TO_ACCOUNT[input.paymentMethod],
       debit: input.total,
-      description: `${input.paymentMethod}`,
+      description: `Uang masuk ${paymentMethodLabel(input.paymentMethod)}`,
     });
   }
 

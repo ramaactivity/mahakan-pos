@@ -37,6 +37,18 @@ export type ExpenseCreateInput = {
   cashBankCodeOverride?: string | null;
 };
 
+/** Nama metode bayar buat deskripsi jurnal — jangan tulis enum mentah. */
+export function expensePaymentLabel(method: ExpensePaymentMethod): string {
+  switch (method) {
+    case "cash":
+      return "tunai";
+    case "transfer":
+      return "transfer bank";
+    case "other":
+      return "bank lain";
+  }
+}
+
 export function expenseCashBankCode(method: ExpensePaymentMethod): string {
   switch (method) {
     case "cash":
@@ -67,7 +79,7 @@ export function mapExpenseCreate(
     {
       accountCode: cashBankCode,
       credit: input.amount,
-      description: `Bayar ${input.paymentMethod}: ${input.description}`,
+      description: `Uang keluar ${expensePaymentLabel(input.paymentMethod)} — ${input.description}`,
     },
   ];
 }

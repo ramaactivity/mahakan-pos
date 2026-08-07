@@ -11,6 +11,7 @@
  *      rounding (last month catches any cumulative rounding leftover).
  */
 
+import { labelMetodeBayar } from "@/features/purchases/journal-label";
 import type { JournalLineInput } from "../posting";
 
 // ============================================================
@@ -56,7 +57,7 @@ export function mapCapitalizeAsset(
     {
       accountCode: CASH_BANK_CODE[input.paymentMethod],
       credit: input.cost,
-      description: `Pembayaran ${input.paymentMethod}: ${input.assetName}`,
+      description: `Uang keluar ${labelMetodeBayar(input.paymentMethod)} — beli ${input.assetName}`,
     },
   ];
 }

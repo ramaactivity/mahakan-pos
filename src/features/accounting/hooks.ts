@@ -1243,7 +1243,7 @@ export async function postJournalForPurchaseCreate(args: {
   await recordJournal({
     outletId: args.outletId,
     entryDate: args.entryDate,
-    description: `Pembelian ${args.purchaseLabel}`,
+    description: `Pembelian — ${args.purchaseLabel}`,
     sourceType: "purchase_create",
     sourceId: args.sourceId ?? args.purchaseId,
     lines,
@@ -1274,7 +1274,7 @@ export async function postJournalForPurchasePay(args: {
   await recordJournal({
     outletId: args.outletId,
     entryDate: args.entryDate,
-    description: `Bayar hutang ${args.purchaseLabel}`,
+    description: `Pelunasan hutang dagang — ${args.purchaseLabel}`,
     sourceType: "purchase_pay",
     sourceId: args.purchaseId,
     lines,
@@ -1307,7 +1307,7 @@ export async function postJournalForPurchaseCancel(args: {
   await recordJournal({
     outletId: args.outletId,
     entryDate: args.entryDate,
-    description: `Cancel pembelian ${args.purchaseLabel}`,
+    description: `Pembelian dibatalkan — ${args.purchaseLabel}`,
     sourceType: "purchase_cancel",
     sourceId: args.purchaseId,
     lines,
@@ -1372,14 +1372,14 @@ export async function postJournalForPurchasePayReversal(args: {
     entryDate: new Date(new Date().getTime() + 7 * 60 * 60 * 1000)
       .toISOString()
       .slice(0, 10),
-    description: `Reverse pembayaran (cancel) ${args.purchaseLabel} — balik ${payEntry.entryNumber}`,
+    description: `Pembayaran dibatalkan, hutang dagang hidup lagi — ${args.purchaseLabel} (membalik ${payEntry.entryNumber})`,
     sourceType: "purchase_pay_reversal",
     sourceId: args.purchaseId,
     lines: lines.map((l) => ({
       accountId: l.accountId,
       debit: Number(l.credit),
       credit: Number(l.debit),
-      description: `Reverse bayar (cancel): ${l.description ?? ""}`,
+      description: `Pembayaran dibatalkan: ${l.description ?? ""}`,
     })),
     actorId: args.actorId,
     metadata: { reversesEntryId: payEntry.id, purchaseId: args.purchaseId },
@@ -1624,14 +1624,14 @@ async function pairVoidJournalForSource(args: {
   const counter = await recordJournal({
     outletId: args.outletId,
     entryDate: String(entry.entryDate),
-    description: `Reverse ${entry.entryNumber} — ${args.reason}`,
+    description: `Pembatalan jurnal ${entry.entryNumber} — ${args.reason}`,
     sourceType: args.voidSourceType,
     sourceId: args.sourceId,
     lines: lines.map((l) => ({
       accountId: l.accountId,
       debit: Number(l.credit),
       credit: Number(l.debit),
-      description: `Reverse: ${l.description ?? ""}`,
+      description: `Dibatalkan: ${l.description ?? ""}`,
     })),
     actorId: args.actorId,
     metadata: { reversesEntryId: entry.id, reason: args.reason },
