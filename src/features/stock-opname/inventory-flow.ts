@@ -84,8 +84,12 @@ export async function fetchOpnameInventoryFlow(
   const sessionStartIso = jakartaIsoDate(sess.startedAt);
   const prior = await fetchLatestOpnameBefore(outletId, sessionStartIso);
 
-  const windowFrom = prior?.finalizedAt
-    ? jakartaIsoDatePlusOne(prior.finalizedAt)
+  /* Sesi AE-194 — jendela pembelian dihitung dari TANGGAL HITUNG opname
+   * sebelumnya, bukan tanggal persetujuannya. Dengan `finalizedAt`, opname
+   * Juni yang dihitung 30 Juni tapi baru disetujui 14 Juli membuat jendela
+   * mulai 15 Juli — seluruh belanja 1–14 Juli hilang dari layar opname. */
+  const windowFrom = prior?.countedAt
+    ? jakartaIsoDatePlusOne(prior.countedAt)
     : jakartaFirstOfMonth(sess.startedAt);
   const windowTo = sessionStartIso;
 

@@ -28,6 +28,12 @@ function sectionLabel(s: IngredientSection | null): string {
 export interface OpnameSnapshot {
   sessionId: string;
   finalizedAt: Date;
+  /**
+   * Sesi AE-194 — kapan stok FISIK dihitung (`started_at`), bukan kapan
+   * opname-nya disetujui. Ini yang menentukan periode sebuah hitungan.
+   */
+  countedAt: Date;
+  periodLabel: string;
   /** Map ingredientId → actualQty (only counted lines). */
   qtyByIngredient: Map<string, number>;
   /** Map ingredientId → unitCostAtSnapshot. */
@@ -46,21 +52,25 @@ async function fetchOpnameSnapshotByPredicate(
   type Row = {
     session_id: string;
     finalized_at: Date | null;
+    started_at: Date | null;
+    period_label: string | null;
     ingredient_id: string | null;
     actual_qty: number | null;
     unit_cost_at_snapshot: number | null;
   };
   const result = await db.execute(sql`
     WITH latest_session AS (
-      SELECT id, finalized_at
+      SELECT id, finalized_at, started_at, period_label
       FROM stock_opname_sessions
       WHERE ${sessionPredicate}
-      ORDER BY finalized_at DESC
+      ORDER BY started_at DESC
       LIMIT 1
     )
     SELECT
       ls.id AS session_id,
       ls.finalized_at,
+      ls.started_at,
+      ls.period_label,
       l.ingredient_id,
       l.actual_qty,
       l.unit_cost_at_snapshot
@@ -74,6 +84,10 @@ async function fetchOpnameSnapshotByPredicate(
   }
   const sessionId = rows[0].session_id;
   const finalizedAt = new Date(rows[0].finalized_at);
+  const countedAt = rows[0].started_at
+    ? new Date(rows[0].started_at)
+    : finalizedAt;
+  const periodLabel = rows[0].period_label ?? "";
   const qtyByIngredient = new Map<string, number>();
   const costByIngredient = new Map<string, number>();
   for (const r of rows) {
@@ -85,9 +99,31 @@ async function fetchOpnameSnapshotByPredicate(
       costByIngredient.set(r.ingredient_id, Number(r.unit_cost_at_snapshot));
     }
   }
-  return { sessionId, finalizedAt, qtyByIngredient, costByIngredient };
+  return {
+    sessionId,
+    finalizedAt,
+    countedAt,
+    periodLabel,
+    qtyByIngredient,
+    costByIngredient,
+  };
 }
 
+/**
+ * Sesi AE-194 — pemilihan opname memakai `started_at` (TANGGAL HITUNG FISIK),
+ * bukan `finalized_at` (tanggal disetujui).
+ *
+ * Kenapa: persetujuan sering menyusul berhari-hari setelah stok dihitung, dan
+ * sekali saja lewat batas bulan seluruh laporan bulan itu jadi salah pasangan.
+ * Kejadian nyata (Juli 2026): opname "Juli 2026" dihitung 31 Juli tapi baru
+ * disetujui 1 Agustus pukul 09:02 — meleset 9 jam. Akibatnya laporan Juli
+ * memakai opname MEI sebagai stok awal dan opname JUNI sebagai stok akhir,
+ * sementara kolom pembeliannya belanja Juli. Rumus awal+beli−akhir pun
+ * menghasilkan pemakaian minus.
+ *
+ * `started_at` = saat sesi opname dibuka untuk menghitung fisik, jadi selalu
+ * jatuh di periode yang dimaksud tanpa perlu menebak dari teks label.
+ */
 export async function fetchLatestOpnameBefore(
   outletId: string,
   beforeDate: string,
@@ -95,7 +131,7 @@ export async function fetchLatestOpnameBefore(
   return fetchOpnameSnapshotByPredicate(sql`
     outlet_id = ${outletId}::uuid
     AND status = 'completed'
-    AND finalized_at < (${beforeDate}::date AT TIME ZONE 'Asia/Jakarta')
+    AND started_at < (${beforeDate}::date AT TIME ZONE 'Asia/Jakarta')
   `);
 }
 
@@ -107,19 +143,19 @@ async function fetchLatestOpnameWithin(
   return fetchOpnameSnapshotByPredicate(sql`
     outlet_id = ${outletId}::uuid
     AND status = 'completed'
-    AND finalized_at >= (${fromDate}::date AT TIME ZONE 'Asia/Jakarta')
-    AND finalized_at < ((${toDate}::date + interval '1 day') AT TIME ZONE 'Asia/Jakarta')
+    AND started_at >= (${fromDate}::date AT TIME ZONE 'Asia/Jakarta')
+    AND started_at < ((${toDate}::date + interval '1 day') AT TIME ZONE 'Asia/Jakarta')
   `);
 }
 
 /**
  * HPP / COGS Period Report. Replaces Owner's COGS spreadsheet.
  *
- * Stock Awal = qty di opname terakhir SEBELUM period.from
+ * Stock Awal = qty di opname terakhir yang DIHITUNG sebelum period.from
  *              fallback: 0 + partial=true
  * Pembelian  = sum(purchase_items.qty/cost) untuk status non-cancelled
  *              dengan purchase_date IN [from, to]
- * Stock Akhir = qty di opname terakhir DALAM period [from, to]
+ * Stock Akhir = qty di opname terakhir yang DIHITUNG dalam period [from, to]
  *               fallback: ingredients.current_stock (NOW) + partial=true
  *
  * HPP Cost = stockAwalCost + pembelianCost − stockAkhirCost (accounting).
@@ -186,7 +222,13 @@ export async function fetchHppReport(
     const stockAkhirQty = akhirQty ?? ing.currentStock;
     const stockAkhirCost = stockAkhirQty * akhirCostPerUnit;
 
-    const partial = awalQty === undefined || akhirQty === undefined;
+    /* Sesi AE-194 — baris yang satuan belinya tidak bisa dikonversi ikut
+     * ditandai "perlu dicek". Qty-nya memang dipakai apa adanya sebagai
+     * jaring terakhir, tapi JANGAN tampil seolah-olah akurat. */
+    const partial =
+      awalQty === undefined ||
+      akhirQty === undefined ||
+      (purch?.hasUnconvertedLines ?? false);
     if (partial) hasPartialRows = true;
 
     const hppQty = stockAwalQty + pembelianQty - stockAkhirQty;

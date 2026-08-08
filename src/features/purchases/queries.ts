@@ -9,6 +9,10 @@ import {
   suppliers,
   users,
 } from "@/db/schema";
+import {
+  resolveQtyToMaster,
+  type IngredientPackConversion,
+} from "@/lib/unit-conversion";
 import type {
   ListPurchasesOptions,
   PaymentMethod,
@@ -237,22 +241,52 @@ export async function fetchPurchaseById(
   return row ?? null;
 }
 
-/** Total purchase amount per ingredient in a date range. Used by HPP report. */
+export interface PurchaseQtyByIngredient {
+  /** Qty dalam SATUAN DASAR bahan (gr/ml/Pcs), sudah dikonversi. */
+  qty: number;
+  cost: number;
+  /** Ada baris yang satuannya tidak bisa dikonversi → qty di bawah perkiraan. */
+  hasUnconvertedLines: boolean;
+}
+
+/**
+ * Total pembelian per bahan dalam rentang tanggal. Dipakai laporan HPP
+ * (Persediaan Bahan Baku) dan layar Opname.
+ *
+ * Sesi AE-194 — qty WAJIB dikonversi ke satuan dasar bahan dulu.
+ *
+ * Sebelumnya fungsi ini menjumlah `purchase_items.qty` MENTAH, padahal qty itu
+ * tersimpan dalam satuan BELI (lihat `unit_override`), sedangkan stok opname
+ * dihitung dalam satuan DASAR. Contoh nyata (Juli 2026): Ayam Fillet dibeli
+ * "2 Kg" tersimpan sebagai qty=2, lalu dibandingkan dengan stok 2.300 **gram**
+ * — pembelian jadi terbaca 2 gram, bukan 2.000 gram. Akibatnya rumus
+ * `awal + beli − akhir` menghasilkan pemakaian MINUS di 67 dari 162 bahan.
+ * Kolom rupiah tidak pernah kena karena `total_cost` memang uang.
+ *
+ * Konversi memakai `resolveQtyToMaster` — sumber kebenaran tunggal yang sama
+ * dengan Market List, Opname, dan Pembelian, jadi tidak ada aturan satuan baru.
+ */
 export async function fetchPurchasesByIngredient(
   outletId: string,
   dateFrom: string,
   dateTo: string,
-): Promise<
-  Map<string, { qty: number; cost: number }>
-> {
-  const rows = await db
+): Promise<Map<string, PurchaseQtyByIngredient>> {
+  const lines = await db
     .select({
       ingredientId: purchaseItems.ingredientId,
-      qty: sql<number>`coalesce(sum(${purchaseItems.qty}), 0)::bigint`,
-      cost: sql<number>`coalesce(sum(${purchaseItems.totalCost}), 0)::bigint`,
+      qty: purchaseItems.qty,
+      qtyDecimal: purchaseItems.qtyDecimal,
+      unitSnapshot: purchaseItems.unitSnapshot,
+      unitOverride: purchaseItems.unitOverride,
+      totalCost: purchaseItems.totalCost,
+      masterUnit: ingredients.unit,
+      packConversions: ingredients.packConversions,
+      unitBelanja: ingredients.unitBelanja,
+      unitBelanjaPerCogs: ingredients.unitBelanjaPerCogs,
     })
     .from(purchaseItems)
     .innerJoin(purchases, eq(purchases.id, purchaseItems.purchaseId))
+    .innerJoin(ingredients, eq(ingredients.id, purchaseItems.ingredientId))
     .where(
       and(
         eq(purchases.outletId, outletId),
@@ -260,15 +294,41 @@ export async function fetchPurchasesByIngredient(
         gte(purchases.purchaseDate, dateFrom),
         lte(purchases.purchaseDate, dateTo),
       ),
-    )
-    .groupBy(purchaseItems.ingredientId);
+    );
 
-  const map = new Map<string, { qty: number; cost: number }>();
-  for (const r of rows) {
-    map.set(r.ingredientId, {
-      qty: Number(r.qty),
-      cost: Number(r.cost),
+  const map = new Map<string, PurchaseQtyByIngredient>();
+  for (const line of lines) {
+    const entry = map.get(line.ingredientId) ?? {
+      qty: 0,
+      cost: 0,
+      hasUnconvertedLines: false,
+    };
+    entry.cost += Number(line.totalCost);
+
+    /* Decimal mirror adalah qty sebenarnya (0,5 Kg dst); bigint cuma snapshot. */
+    const rawQty =
+      line.qtyDecimal !== null ? Number(line.qtyDecimal) : Number(line.qty);
+    const resolved = resolveQtyToMaster({
+      qty: rawQty,
+      fromUnit: line.unitOverride ?? line.unitSnapshot,
+      masterUnit: line.masterUnit,
+      ingredientPacks:
+        (line.packConversions as IngredientPackConversion[] | null) ?? null,
+      unitBelanja: line.unitBelanja,
+      unitBelanjaPerCogs: line.unitBelanjaPerCogs,
     });
+
+    if (resolved.ok && resolved.qtyMaster !== null) {
+      entry.qty += resolved.qtyMaster;
+    } else {
+      /* Tidak bisa dikonversi (satuan beli tanpa data pack). Pakai qty mentah
+       * supaya angkanya tidak hilang sama sekali, TAPI tandai barisnya supaya
+       * laporan bisa memberi status "perlu dicek" — jangan diam-diam salah. */
+      entry.qty += rawQty;
+      entry.hasUnconvertedLines = true;
+    }
+
+    map.set(line.ingredientId, entry);
   }
   return map;
 }
