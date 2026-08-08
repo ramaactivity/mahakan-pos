@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Calculator } from "lucide-react";
 import { Button, Tab, TabList, TabPanel, Tabs } from "@/components/ui";
 import { CogsCalculatorWidget } from "./inventory/CogsCalculatorWidget";
+import { IngredientIntakeView } from "./inventory/IngredientIntakeView";
 import { IngredientsList } from "./inventory/IngredientsList";
 import { MarketListView } from "./inventory/market-list/MarketListView";
 import { MovementsList } from "./inventory/MovementsList";
@@ -11,11 +12,18 @@ import type { AdminSection } from "../components/AdminLeftNav";
 
 // Sesi AE-173 — tab "Pembelian"/"Hutang Dagang" → Purchasing; "Opname" →
 // Persediaan Bahan Baku (halaman COGS).
-type InventoryTab = "ingredients" | "market_list" | "movements";
+// Sesi AE-192 — tab "Masuk Bahan": riwayat penerimaan + cek nota yang belum
+// diinput. Beda dari "Pergerakan" yang menampilkan mutasi stok mentah.
+type InventoryTab =
+  | "ingredients"
+  | "market_list"
+  | "intake"
+  | "movements";
 
 const TABS: Array<{ key: InventoryTab; label: string; soon?: boolean }> = [
   { key: "ingredients", label: "Bahan" },
   { key: "market_list", label: "Market List" },
+  { key: "intake", label: "Masuk Bahan" },
   { key: "movements", label: "Pergerakan" },
 ];
 
@@ -66,6 +74,9 @@ export function InventorySection({ onNavigate }: InventorySectionProps = {}) {
       </TabPanel>
       <TabPanel value="market_list">
         <MarketListView />
+      </TabPanel>
+      <TabPanel value="intake">
+        <IngredientIntakeView />
       </TabPanel>
       <TabPanel value="movements">
         <MovementsList />

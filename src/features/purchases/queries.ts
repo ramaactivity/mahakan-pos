@@ -46,9 +46,13 @@ export async function fetchPurchases(
     .select({
       purchase: purchases,
       supplierName: suppliers.name,
+      /* Sesi AE-192 — kolom outer WAJIB literal ber-prefix tabel. Versi lama
+       * memakai `${purchases.id}` yang di posisi SELECT di-render `"id"` polos
+       * lalu ke-tangkap `purchase_items.id`, jadi kolom "Item" di daftar
+       * Pembelian selalu 0 (diam, tanpa error). */
       itemCount: sql<number>`(
-        select count(*)::int from ${purchaseItems}
-        where ${purchaseItems.purchaseId} = ${purchases.id}
+        select count(*)::int from purchase_items pi
+        where pi.purchase_id = purchases.id
       )`,
     })
     .from(purchases)

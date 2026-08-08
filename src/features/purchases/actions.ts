@@ -3511,9 +3511,11 @@ export async function listPendingGoodsReceipts(): Promise<
       supplierName: suppliers.name,
       paymentMethod: purchases.paymentMethod,
       totalAmount: purchases.totalAmount,
+      /* Sesi AE-192 — literal ber-prefix tabel; `${purchases.id}` di posisi
+       * SELECT di-render `"id"` polos → ke-tangkap purchase_items.id → 0. */
       itemCount: sql<number>`(
-        select count(*)::int from ${purchaseItems}
-        where ${purchaseItems.purchaseId} = ${purchases.id}
+        select count(*)::int from purchase_items pi
+        where pi.purchase_id = purchases.id
       )`,
     })
     .from(purchases)
@@ -3641,9 +3643,11 @@ export async function listGoodsReceipts(opts?: {
       poId: goodsReceipts.purchaseId,
       receiptStatus: purchases.receiptStatus,
       totalAmount: goodsReceipts.totalAmount,
+      /* Sesi AE-192 — sda: `${goodsReceipts.id}` polos ke-tangkap
+       * goods_receipt_items.id sehingga hitungan bahan selalu 0. */
       itemCount: sql<number>`(
-        select count(*)::int from ${goodsReceiptItems}
-        where ${goodsReceiptItems.goodsReceiptId} = ${goodsReceipts.id}
+        select count(*)::int from goods_receipt_items gri
+        where gri.goods_receipt_id = goods_receipts.id
       )`,
     })
     .from(goodsReceipts)
