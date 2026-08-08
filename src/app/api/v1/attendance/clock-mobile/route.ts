@@ -26,16 +26,20 @@ import {
  * attendance PIN dari karyawan (terpisah dari users.pin).
  *
  * Multipart fields:
- *   pin          — 4-6 digit attendance PIN
- *   selfie       — JPEG file dari kamera depan (capture="user")
- *   gpsLat       — string number, latitude karyawan saat ini
- *   gpsLng       — string number, longitude
- *   mode         — "in" | "out"
- *   clientRefId  — UUID untuk idempotency dedup (optional but recommended)
+ *   pin           — 4-6 digit attendance PIN
+ *   selfie        — JPEG file dari kamera depan
+ *   captureMethod — "live" (frame kamera getUserMedia) | "file" (kamera
+ *                   bawaan HP lewat input capture). Sesi AE-194. Default
+ *                   "file" supaya klien lama tetap kena aturan EXIF ketat.
+ *   gpsLat        — string number, latitude karyawan saat ini
+ *   gpsLng        — string number, longitude
+ *   mode          — "in" | "out"
+ *   clientRefId   — UUID untuk idempotency dedup (optional but recommended)
  *
  * Validation order:
  *   1. PIN → resolve employee + outlet
- *   2. JPEG sig + EXIF DateTimeOriginal (capture < 5 menit lalu)
+ *   2. JPEG sig + EXIF DateTimeOriginal (capture < 10 menit lalu). Khusus
+ *      captureMethod="live", EXIF tidak diwajibkan — lihat lib/exif-check.
  *   3. GPS distance ≤ outlet.attendance.gpsCenter.radiusMeters (default 50m)
  *   4. Idempotency: existing record with same clientRefId in last 60s?
  *   5. For "in": no existing open record (block double-in same day)
@@ -117,6 +121,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   const gpsLatRaw = (form.get("gpsLat") ?? "").toString();
   const gpsLngRaw = (form.get("gpsLng") ?? "").toString();
   const mode = (form.get("mode") ?? "").toString();
+  /* Sesi AE-194 — asal foto. Hanya "live" yang membebaskan syarat EXIF;
+   * apa pun selain itu (termasuk field kosong dari klien versi lama)
+   * jatuh ke "file" dengan aturan EXIF ketat seperti sebelumnya. */
+  const captureMethod =
+    (form.get("captureMethod") ?? "").toString() === "live" ? "live" : "file";
   const clientRefId =
     typeof form.get("clientRefId") === "string"
       ? (form.get("clientRefId") as string)
@@ -226,7 +235,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   // EXIF check
   const buffer = Buffer.from(await file.arrayBuffer());
   const now = new Date();
-  const exifResult = await validateSelfieEXIF(buffer, now);
+  const exifResult = await validateSelfieEXIF(buffer, now, {
+    requireExif: captureMethod !== "live",
+  });
   if (!exifResult.ok) {
     await logAudit({
       eventType: "attendance.mobile_rejected",
@@ -235,7 +246,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       entityId: matched.id,
       payload: {
         summary: `${matched.fullName} ditolak — selfie EXIF tidak valid: ${exifResult.reason}`,
-        context: { mode, reason: exifResult.reason },
+        context: { mode, reason: exifResult.reason, captureMethod },
       },
       metadata: { outletId: matched.outletId, actorRole: "system" },
     }).catch((e) => console.error("[audit attendance reject exif]", e));
@@ -329,7 +340,15 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   /* Catatan: kalau exifGpsCheckFlag === "absent", audit di clock-in/out
    * log di-tag supaya owner bisa filter pattern (mis. karyawan tertentu
-   * konsisten upload selfie tanpa GPS → kemungkinan strip EXIF). */
+   * konsisten upload selfie tanpa GPS → kemungkinan strip EXIF).
+   *
+   * Sesi AE-194 — foto kamera live memang tidak pernah punya EXIF, jadi
+   * "absent" di jalur itu normal dan bukan sinyal apa-apa. Tanda ⚠ cuma
+   * dipasang untuk jalur file input, biar tidak jadi noise. */
+  const noExifGpsWarning =
+    captureMethod === "file" && exifGpsCheckFlag === "absent"
+      ? " · ⚠ no-exif-gps"
+      : "";
 
   // Idempotency dedup — kalau ada record dalam 60s dengan clientRefId sama, return existing
   if (clientRefId) {
@@ -548,7 +567,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       entityType: "attendance",
       entityId: row.id,
       payload: {
-        summary: `Mobile clock-in: ${matched.fullName}${isLate === "yes" ? ` (telat ${lateMinutes} mnt)` : ""}${exifGpsCheckFlag === "absent" ? " · ⚠ no-exif-gps" : ""}`,
+        summary: `Mobile clock-in: ${matched.fullName}${isLate === "yes" ? ` (telat ${lateMinutes} mnt)` : ""}${noExifGpsWarning}`,
         context: {
           distance,
           isLate,
@@ -557,6 +576,7 @@ export async function POST(request: Request): Promise<NextResponse> {
            * cari karyawan yang konsisten absent EXIF GPS (suspect strip). */
           exifGpsCheck: exifGpsCheckFlag,
           exifGpsDistance,
+          captureMethod,
         },
       },
       metadata: { outletId: matched.outletId, actorRole: "system" },
@@ -636,13 +656,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     entityType: "attendance",
     entityId: updated.id,
     payload: {
-      summary: `Mobile clock-out: ${matched.fullName} (${workMinutes} mnt kerja${overtimeMinutes && overtimeMinutes > 0 ? `, OT ${overtimeMinutes} mnt` : ""})${exifGpsCheckFlag === "absent" ? " · ⚠ no-exif-gps" : ""}`,
+      summary: `Mobile clock-out: ${matched.fullName} (${workMinutes} mnt kerja${overtimeMinutes && overtimeMinutes > 0 ? `, OT ${overtimeMinutes} mnt` : ""})${noExifGpsWarning}`,
       context: {
         distance,
         workMinutes,
         overtimeMinutes,
         exifGpsCheck: exifGpsCheckFlag,
         exifGpsDistance,
+        captureMethod,
       },
     },
     metadata: { outletId: matched.outletId, actorRole: "system" },

@@ -29,6 +29,16 @@ import { formatDuration } from "@/lib/duration";
  * actual UTC moment. Asumsi: semua karyawan Mahakan operate di WIB
  * (Cisarua). Kalau ke depan ada outlet TZ lain, harus extract dari
  * EXIF OffsetTimeOriginal tag (kalau phone provide).
+ *
+ * SESI AE-194 — `requireExif: false` untuk foto kamera live:
+ * Sejumlah HP/browser mengirim JPEG TANPA EXIF sama sekali (contoh nyata:
+ * iPhone motret HEIC, Safari convert ke JPEG saat upload, metadata hilang).
+ * Karyawan jujur jadi ke-blok "DateTimeOriginal tidak ada". Jalur baru
+ * `getUserMedia` → canvas juga tidak punya EXIF secara desain. Di jalur itu
+ * jaminan "foto diambil sekarang" datang dari mekanisme capture (browser
+ * tidak pernah membuka file picker), bukan dari metadata — jadi EXIF
+ * dilonggarkan. Kalau EXIF-nya kebetulan ADA, semua check lama (umur foto,
+ * GPS) tetap dijalankan.
  */
 
 export interface ExifCheckResult {
@@ -43,6 +53,52 @@ export interface ExifCheckResult {
   exifGps?: { lat: number; lng: number } | null;
 }
 
+export interface ValidateSelfieOptions {
+  /** Default true = tolak foto tanpa EXIF DateTimeOriginal (jalur file
+   *  input dari kamera bawaan HP). Set false untuk foto hasil kamera live
+   *  (getUserMedia → canvas) yang secara desain tidak punya EXIF. */
+  requireExif?: boolean;
+}
+
+interface ParsedExif {
+  DateTimeOriginal?: Date | string;
+  OffsetTimeOriginal?: string;
+  /* Sesi AE-62aa — extract GPS untuk cross-check anti-spoofing. */
+  latitude?: number;
+  longitude?: number;
+}
+
+/* Sesi AE-62aa — extract GPS lat/lng kalau phone embed di EXIF. exifr
+ * dengan opsi gps:true return `latitude`+`longitude` sebagai decimal.
+ *
+ * Sesi AE-121 fix — banyak Android (Xiaomi MIUI, Samsung OneUI) embed
+ * GPS tag dengan value (0, 0) saat permission lokasi OFF untuk camera
+ * (tapi browser geolocation tetap jalan via system service). "Null
+ * Island" (0°, 0°) di laut lepas Gulf of Guinea = sentinel for "GPS
+ * tag exists but unset". Treat as null (= "no GPS embedded") supaya
+ * tidak hard-fail karyawan legit yang phone-nya quirky. Real photos
+ * tidak pernah persis di Null Island (radius 1km off-shore Africa). */
+function extractExifGps(
+  parsed: ParsedExif | null,
+): { lat: number; lng: number } | null {
+  const lat = parsed?.latitude;
+  const lng = parsed?.longitude;
+  const hasValidExifGps =
+    typeof lat === "number" &&
+    typeof lng === "number" &&
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    /* Reject Null Island sentinel — exact (0,0) atau within ~1km. */
+    !(Math.abs(lat) < 0.01 && Math.abs(lng) < 0.01) &&
+    /* Sanity: real coords must be in valid range. exifr should already
+     * clamp but be defensive in case GPSLatitudeRef parsing miss. */
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180;
+  return hasValidExifGps ? { lat: lat as number, lng: lng as number } : null;
+}
+
 /** Max age (in milliseconds) untuk EXIF DateTimeOriginal sebelum dianggap stale.
  *  10 menit (diperpanjang dari 5 menit setelah sesi AD-9) untuk handle
  *  network upload latency + slow phone shutter di hp lama. */
@@ -54,7 +110,10 @@ const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
 export async function validateSelfieEXIF(
   buffer: Buffer,
   now: Date = new Date(),
+  options: ValidateSelfieOptions = {},
 ): Promise<ExifCheckResult> {
+  const requireExif = options.requireExif !== false;
+
   if (buffer.length < 3) {
     return { ok: false, reason: "File terlalu kecil (bukan gambar)" };
   }
@@ -67,15 +126,8 @@ export async function validateSelfieEXIF(
     return { ok: false, reason: "File bukan JPEG (kamera kasih JPEG)" };
   }
 
-  let parsed:
-    | {
-        DateTimeOriginal?: Date | string;
-        OffsetTimeOriginal?: string;
-        /* Sesi AE-62aa — extract GPS untuk cross-check anti-spoofing. */
-        latitude?: number;
-        longitude?: number;
-      }
-    | null = null;
+  let parsed: ParsedExif | null = null;
+  let parseFailed = false;
   try {
     parsed = await exifr.parse(buffer, {
       pick: [
@@ -89,17 +141,22 @@ export async function validateSelfieEXIF(
       gps: true,
     });
   } catch {
-    return {
-      ok: false,
-      reason: "Gagal baca EXIF — pastikan foto dari kamera, bukan upload galeri",
-    };
+    parsed = null;
+    parseFailed = true;
   }
 
   if (!parsed || !parsed.DateTimeOriginal) {
+    if (!requireExif) {
+      /* Foto kamera live: tanpa EXIF itu normal, bukan indikasi curang.
+       * capturedAt sengaja undefined — waktu absen dipakai dari jam
+       * server, bukan dari metadata. */
+      return { ok: true, exifGps: extractExifGps(parsed) };
+    }
     return {
       ok: false,
-      reason:
-        "EXIF DateTimeOriginal tidak ada — foto bukan dari kamera saat ini (kemungkinan upload galeri)",
+      reason: parseFailed
+        ? "Gagal baca EXIF — pastikan foto dari kamera, bukan upload galeri"
+        : "EXIF DateTimeOriginal tidak ada — foto bukan dari kamera saat ini (kemungkinan upload galeri)",
     };
   }
 
@@ -140,34 +197,5 @@ export async function validateSelfieEXIF(
     };
   }
 
-  /* Sesi AE-62aa — extract GPS lat/lng kalau phone embed di EXIF. exifr
-   * dengan opsi gps:true return `latitude`+`longitude` sebagai decimal.
-   *
-   * Sesi AE-121 fix — banyak Android (Xiaomi MIUI, Samsung OneUI) embed
-   * GPS tag dengan value (0, 0) saat permission lokasi OFF untuk camera
-   * (tapi browser geolocation tetap jalan via system service). "Null
-   * Island" (0°, 0°) di laut lepas Gulf of Guinea = sentinel for "GPS
-   * tag exists but unset". Treat as null (= "no GPS embedded") supaya
-   * tidak hard-fail karyawan legit yang phone-nya quirky. Real photos
-   * tidak pernah persis di Null Island (radius 1km off-shore Africa). */
-  const lat = parsed.latitude;
-  const lng = parsed.longitude;
-  const hasValidExifGps =
-    typeof lat === "number" &&
-    typeof lng === "number" &&
-    Number.isFinite(lat) &&
-    Number.isFinite(lng) &&
-    /* Reject Null Island sentinel — exact (0,0) atau within ~1km. */
-    !(Math.abs(lat) < 0.01 && Math.abs(lng) < 0.01) &&
-    /* Sanity: real coords must be in valid range. exifr should already
-     * clamp but be defensive in case GPSLatitudeRef parsing miss. */
-    lat >= -90 &&
-    lat <= 90 &&
-    lng >= -180 &&
-    lng <= 180;
-  const exifGps = hasValidExifGps
-    ? { lat: lat as number, lng: lng as number }
-    : null;
-
-  return { ok: true, capturedAt: captured, exifGps };
+  return { ok: true, capturedAt: captured, exifGps: extractExifGps(parsed) };
 }

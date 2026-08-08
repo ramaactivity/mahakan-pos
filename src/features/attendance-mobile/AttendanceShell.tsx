@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import {
   AlertTriangle,
-  Camera,
   CheckCircle2,
   Clock,
   KeyRound,
@@ -16,7 +15,7 @@ import {
 } from "lucide-react";
 import { Button, PinPad } from "@/components/ui";
 import { verifyAttendancePin, type VerifiedKaryawan } from "./actions";
-import { compressSelfieJpeg } from "./compress-selfie";
+import { SelfieCapture, type CaptureMethod } from "./SelfieCapture";
 import { formatIndonesianDateTime } from "@/lib/date";
 import {
   formatClockTimeWib,
@@ -329,27 +328,40 @@ function ActStep({
   onDone: (result: SubmitOk) => void;
 }) {
   const [gps, setGps] = useState<GpsState>({ status: "idle" });
-  const [selfie, setSelfie] = useState<File | null>(null);
-  const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
+  /* Sesi AE-194 — selfie sekarang bawa asal-usulnya. "live" = frame dari
+   * kamera getUserMedia (tidak punya EXIF secara desain, dan memang tidak
+   * dibutuhkan); "file" = kamera bawaan HP lewat file input (server tetap
+   * wajib lihat EXIF DateTimeOriginal di jalur ini). */
+  const [selfie, setSelfie] = useState<{
+    file: File;
+    method: CaptureMethod;
+  } | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  /* Sesi AE-42 — status compression supaya staff lihat progress
+  /* Sesi AE-42 — status proses foto supaya staff lihat progress
    * (kalau file gede, compress bisa 1-2s). */
-  const [compressing, setCompressing] = useState(false);
-  const [compressInfo, setCompressInfo] = useState<string | null>(null);
+  const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /* Sesi AE-41 — track error code separately supaya UI bisa render
    * variant khusus untuk Drive auth issue (yg butuh action owner). */
   const [errorCode, setErrorCode] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const clientRefIdRef = useRef<string>(crypto.randomUUID());
 
   // Auto-fetch GPS on mount
   useEffect(() => {
     fetchGps();
-    return () => {
-      if (selfiePreview) URL.revokeObjectURL(selfiePreview);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleCaptured = useCallback((file: File, method: CaptureMethod) => {
+    setSelfie({ file, method });
+    setError(null);
+    setErrorCode(null);
+  }, []);
+
+  const handleCleared = useCallback(() => {
+    setSelfie(null);
+    setError(null);
+    setErrorCode(null);
   }, []);
 
   function fetchGps() {
@@ -392,53 +404,12 @@ function ActStep({
     );
   }
 
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    if (selfiePreview) URL.revokeObjectURL(selfiePreview);
-    setError(null);
-    setErrorCode(null);
-    setCompressInfo(null);
-
-    /* Sesi AE-42 — compress JPEG di client sebelum upload. Vercel
-     * Hobby plan reject body > 4.5 MB di edge dengan HTML 413; HP
-     * modern selfie 12MP bisa 3-8 MB. Compress preserve EXIF supaya
-     * server anti-fraud check (DateTimeOriginal) tetap lulus. */
-    setCompressing(true);
-    try {
-      const result = await compressSelfieJpeg(f, {
-        maxBytes: 1.5 * 1024 * 1024,
-        maxDimension: 1280,
-      });
-      setSelfie(result.file);
-      setSelfiePreview(URL.createObjectURL(result.file));
-      if (result.compressedSize < result.originalSize) {
-        const pct = Math.round(
-          (1 - result.compressedSize / result.originalSize) * 100,
-        );
-        setCompressInfo(
-          `Foto ter-kompres ${pct}% (${formatBytes(result.originalSize)} → ${formatBytes(result.compressedSize)})${
-            result.exifPreserved ? "" : " ⚠️ EXIF strip"
-          }`,
-        );
-      }
-    } catch {
-      // Defensive: kalau compression gagal, kirim original — server
-      // tetap reject kalau > limit, dengan pesan error yang lebih jelas.
-      setSelfie(f);
-      setSelfiePreview(URL.createObjectURL(f));
-    } finally {
-      setCompressing(false);
-    }
-  }
-
   const inRadius =
     gps.status === "ok" &&
     typeof gps.distanceMeters === "number" &&
     gps.distanceMeters <= karyawan.outletGpsCenter.radiusMeters;
 
-  const canSubmit =
-    inRadius && selfie !== null && !submitting && !compressing;
+  const canSubmit = inRadius && selfie !== null && !submitting && !capturing;
 
   async function handleSubmit() {
     if (!canSubmit || !selfie || gps.status !== "ok") return;
@@ -448,7 +419,8 @@ function ActStep({
     try {
       const formData = new FormData();
       formData.append("pin", pin);
-      formData.append("selfie", selfie);
+      formData.append("selfie", selfie.file);
+      formData.append("captureMethod", selfie.method);
       formData.append("gpsLat", String(gps.lat ?? ""));
       formData.append("gpsLng", String(gps.lng ?? ""));
       formData.append("mode", mode);
@@ -596,79 +568,13 @@ function ActStep({
         </div>
       </div>
 
-      {/* Selfie capture */}
-      <div className="rounded-xl border-2 border-neutral-200 bg-white p-4">
-        <p className="mb-2 text-sm font-semibold text-neutral-900">
-          Selfie wajib dari kamera depan
-        </p>
-        {selfiePreview ? (
-          <div className="space-y-2">
-            <div className="relative overflow-hidden rounded-lg">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={selfiePreview}
-                alt="Selfie preview"
-                className="aspect-square w-full object-cover"
-              />
-              {compressing ? (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-white">
-                  <div className="flex items-center gap-2 rounded-lg bg-black/60 px-3 py-2 text-sm">
-                    <Loader2 className="size-4 animate-spin" /> Memproses
-                    foto…
-                  </div>
-                </div>
-              ) : null}
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              fullWidth
-              onClick={() => fileInputRef.current?.click()}
-              disabled={submitting || compressing}
-            >
-              <Camera className="size-4" /> Foto Ulang
-            </Button>
-          </div>
-        ) : (
-          <Button
-            variant="outline"
-            fullWidth
-            onClick={() => fileInputRef.current?.click()}
-            disabled={submitting || compressing}
-            className="!h-16 !flex-col !gap-1"
-          >
-            {compressing ? (
-              <>
-                <Loader2 className="size-6 animate-spin" />
-                <span className="text-sm">Memproses foto…</span>
-              </>
-            ) : (
-              <>
-                <Camera className="size-6" />
-                <span className="text-sm">Buka Kamera</span>
-              </>
-            )}
-          </Button>
-        )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          capture="user"
-          className="hidden"
-          onChange={handleFileChange}
-          disabled={submitting || compressing}
-        />
-        <p className="mt-2 text-[11px] text-neutral-500">
-          Foto harus diambil sekarang dari kamera depan. Upload galeri akan
-          ditolak.
-        </p>
-        {compressInfo ? (
-          <p className="mt-1 text-[11px] text-mahakan-green-900">
-            ✓ {compressInfo}
-          </p>
-        ) : null}
-      </div>
+      {/* Selfie capture — sesi AE-194: kamera live, fallback file input */}
+      <SelfieCapture
+        disabled={submitting}
+        onCaptured={handleCaptured}
+        onCleared={handleCleared}
+        onBusyChange={setCapturing}
+      />
 
       {error ? (
         errorCode === "DRIVE_AUTH_EXPIRED" ||
@@ -803,8 +709,3 @@ function DoneStep({
   );
 }
 
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
