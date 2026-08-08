@@ -25,6 +25,7 @@ export * from "./purchase_requests";
 export * from "./cash_deposits";
 export * from "./aggregator_settlements";
 export * from "./settlement_logs";
+export * from "./pos_daily_journals";
 export * from "./accounting";
 export * from "./journal_retry_queue";
 export * from "./fixed_assets";

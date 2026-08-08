@@ -51,6 +51,9 @@ import {
   isRetryableHookLabel,
   type RetryQueueHookLabel,
 } from "./retry-queue-types";
+import { postJournalForPosDailySales } from "./daily-sales";
+import { fetchDatesWithSales } from "./daily-sales-queries";
+import { getDailyJournalSince } from "./flag";
 
 export interface JournalSweepResult {
   /** Baris antrian yang dicoba ulang otomatis. */
@@ -61,6 +64,8 @@ export interface JournalSweepResult {
   queueStillFailing: number;
   /** Transaksi lunas tanpa jurnal yang berhasil di-posting. */
   salesPosted: number;
+  /** Sesi AE-193 — batch jurnal HARIAN yang diposting / dihitung ulang. */
+  dailyBatchesPosted: number;
   /** Jurnal void yang berhasil di-posting. */
   voidsPosted: number;
   /** Pengeluaran tanpa jurnal yang berhasil di-posting. */
@@ -104,6 +109,7 @@ function emptyResult(): JournalSweepResult {
     queueResolved: 0,
     queueStillFailing: 0,
     salesPosted: 0,
+    dailyBatchesPosted: 0,
     voidsPosted: 0,
     expensesPosted: 0,
     settlementsPosted: 0,
@@ -193,6 +199,12 @@ async function executeQueuedHook(
       return postJournalForOpnameAdjustment(
         args as unknown as Parameters<typeof postJournalForOpnameAdjustment>[0],
       );
+    /* Sesi AE-193 — batch penjualan harian. Sengaja TANPA `force`: saat
+     * dicoba ulang, penundaan "shift masih terbuka" harus tetap berlaku. */
+    case "pos_daily_sales":
+      return postJournalForPosDailySales(
+        args as unknown as Parameters<typeof postJournalForPosDailySales>[0],
+      ).then(() => undefined);
   }
 }
 
@@ -379,6 +391,78 @@ async function indexJournaledSources(
   return index;
 }
 
+/**
+ * Sesi AE-193 — sapu batch jurnal HARIAN yang belum terposting / kedaluwarsa.
+ *
+ * Ini jaring pengaman utama sejak jurnal dibuat per hari: kalau hook saat
+ * tutup shift gagal, yang hilang bukan satu transaksi melainkan penjualan satu
+ * hari penuh. `postJournalForPosDailySales` sendiri idempoten dan tahu kapan
+ * harus menunda (masih ada shift terbuka) atau menghitung ulang (ada void /
+ * koreksi menyusul), jadi di sini cukup dipanggil untuk tiap tanggal yang
+ * punya transaksi.
+ */
+/** Outlet yang ikut disapu: satu kalau difilter, kalau tidak semua yang punya
+ * transaksi. Dibaca dari `users` supaya tidak perlu impor tabel outlets. */
+async function outletIdsInScope(
+  opts: JournalSweepOptions,
+): Promise<string[]> {
+  if (opts.outletId) return [opts.outletId];
+  const rows = await db
+    .selectDistinct({ outletId: transactions.outletId })
+    .from(transactions);
+  return rows.map((r) => r.outletId);
+}
+
+async function sweepDailySalesBatches(
+  opts: JournalSweepOptions,
+  result: JournalSweepResult,
+): Promise<void> {
+  const outletIds = await outletIdsInScope(opts);
+  const since = startDateOf(opts);
+  const fromDate = jakartaDateOf(since);
+  const toDate = jakartaDateOf(new Date());
+
+  for (const outletId of outletIds) {
+    const cutover = await getDailyJournalSince(outletId);
+    if (!cutover) continue; // outlet masih pakai jurnal per-transaksi
+
+    const dates = (
+      await fetchDatesWithSales(outletId, fromDate, toDate)
+    ).filter((d) => d >= cutover);
+
+    for (const entryDate of dates) {
+      if (opts.dryRun) {
+        result.scanned += 1;
+        continue;
+      }
+      try {
+        /* Sapuan jalan tanpa sesi manusia — atribusikan ke owner outlet,
+         * sama seperti sapuan settlement. */
+        const actorId = await resolveSweepActor(outletId, null);
+        if (!actorId) {
+          result.failed += 1;
+          result.errors.push(
+            `jurnal harian ${entryDate}: tidak ada actor untuk jurnal`,
+          );
+          continue;
+        }
+        const outcome = await postJournalForPosDailySales({
+          outletId,
+          entryDate,
+          actorId,
+        });
+        result.scanned += 1;
+        if (outcome === "posted" || outcome === "recomputed") {
+          result.dailyBatchesPosted += 1;
+        }
+      } catch (e) {
+        result.failed += 1;
+        result.errors.push(`jurnal harian ${entryDate}: ${errMsg(e)}`);
+      }
+    }
+  }
+}
+
 async function sweepMissingSales(
   opts: JournalSweepOptions,
   result: JournalSweepResult,
@@ -396,6 +480,7 @@ async function sweepMissingSales(
       outletId: transactions.outletId,
       cashierId: transactions.cashierId,
       transactionNumber: transactions.transactionNumber,
+      createdAt: transactions.createdAt,
     })
     .from(transactions)
     .where(and(...conds));
@@ -404,7 +489,23 @@ async function sweepMissingSales(
   if (rows.length === 0) return;
 
   const index = await indexJournaledSources(rows.map((r) => r.id));
-  const missing = rows.filter((r) => !index.any.has(r.id));
+
+  /* Sesi AE-193 — transaksi sejak tanggal cutover TIDAK punya (dan tidak
+   * boleh punya) jurnal per-transaksi; jurnalnya berupa batch harian. Tanpa
+   * filter ini mereka selamanya terlihat "belum dijurnal", sapuan mencobanya
+   * tiap jam, dan laporan sapuan mengklaim memulihkan jurnal yang sebenarnya
+   * tidak pernah dibuat — persis pola menyesatkan yang sudah pernah kena di
+   * sapuan expense. */
+  const cutoverByOutlet = new Map<string, string | null>();
+  for (const outletId of new Set(rows.map((r) => r.outletId))) {
+    cutoverByOutlet.set(outletId, await getDailyJournalSince(outletId));
+  }
+  const isAggregated = (r: (typeof rows)[number]) => {
+    const cutover = cutoverByOutlet.get(r.outletId) ?? null;
+    return cutover !== null && jakartaDateOf(r.createdAt) >= cutover;
+  };
+
+  const missing = rows.filter((r) => !index.any.has(r.id) && !isAggregated(r));
   const budget = opts.limit ?? 200;
 
   for (const trx of missing.slice(0, budget)) {
@@ -695,6 +796,7 @@ export async function sweepJournalGaps(
 
   const steps: Array<[string, () => Promise<void>]> = [
     ["antrian", () => retryPendingQueue(opts, result)],
+    ["jurnal harian", () => sweepDailySalesBatches(opts, result)],
     ["penjualan", () => sweepMissingSales(opts, result)],
     ["void", () => sweepMissingVoids(opts, result)],
     ["pengeluaran", () => sweepMissingExpenses(opts, result)],
@@ -712,6 +814,7 @@ export async function sweepJournalGaps(
   const fixed =
     result.queueResolved +
     result.salesPosted +
+    result.dailyBatchesPosted +
     result.voidsPosted +
     result.expensesPosted +
     result.settlementsPosted;
@@ -723,7 +826,7 @@ export async function sweepJournalGaps(
       entityType: "journal_entry",
       entityId: null,
       payload: {
-        summary: `🧹 Sapu jurnal kosong: ${fixed} jurnal dipulihkan (${result.salesPosted} penjualan, ${result.voidsPosted} void, ${result.expensesPosted} pengeluaran, ${result.settlementsPosted} settlement, ${result.queueResolved} dari antrian)${result.failed > 0 ? `, ${result.failed} masih gagal` : ""}`,
+        summary: `🧹 Sapu jurnal kosong: ${fixed} jurnal dipulihkan (${result.salesPosted} penjualan, ${result.dailyBatchesPosted} jurnal harian, ${result.voidsPosted} void, ${result.expensesPosted} pengeluaran, ${result.settlementsPosted} settlement, ${result.queueResolved} dari antrian)${result.failed > 0 ? `, ${result.failed} masih gagal` : ""}`,
         context: { ...result, errors: result.errors.slice(0, 10) },
       },
       metadata: opts.outletId

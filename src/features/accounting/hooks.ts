@@ -16,8 +16,10 @@ import {
   transactions,
   splitPayments,
 } from "@/db/schema";
-import { isAutoJournalEnabled } from "./flag";
+import { getDailyJournalSince, isAutoJournalEnabled } from "./flag";
+import { isDailyJournalDate } from "./daily-sales-pure";
 import { recordJournal } from "./posting";
+import { pairVoidJournalForSource } from "./journal-void";
 import {
   findInvalidSplitMethods,
   formatInvalidSplitMethodsError,
@@ -78,6 +80,29 @@ function jakartaDateOf(d: Date): string {
   return j.toISOString().slice(0, 10);
 }
 
+/**
+ * Sesi AE-193 — minta batch jurnal harian dihitung ulang untuk tanggal sebuah
+ * transaksi. Dipakai saat void/koreksi menyentuh hari yang jurnalnya sudah
+ * diringkas. `force: true` karena perubahannya sudah pasti dan harus segera
+ * tercermin, bukan menunggu shift ditutup.
+ *
+ * Impor dinamis: hooks.ts dimuat di jalur pembayaran POS, sementara modul
+ * jurnal harian hanya dibutuhkan pada kejadian langka ini.
+ */
+async function recomputeDailyBatchForTransaction(args: {
+  outletId: string;
+  createdAt: Date | string;
+  actorId: string;
+}): Promise<void> {
+  const { postJournalForPosDailySales } = await import("./daily-sales");
+  await postJournalForPosDailySales({
+    outletId: args.outletId,
+    entryDate: jakartaDateOf(new Date(args.createdAt)),
+    actorId: args.actorId,
+    force: true,
+  });
+}
+
 // ============================================================
 // POS Sale (incl. Compliment branch)
 // ============================================================
@@ -117,6 +142,17 @@ export async function postJournalForPosSale(args: {
    * tetap full amount — refund punya jurnal terpisah (pos_refund). */
   if (trx.status !== "paid" && trx.status !== "partially_refunded") return;
 
+  const entryDateWib = jakartaDateOf(new Date(trx.createdAt));
+  /* Sesi AE-193 — sejak tanggal cutover, penjualan diringkas jadi satu jurnal
+   * per hari (dipicu saat tutup shift). Hook per-transaksi WAJIB diam di sini,
+   * kalau tidak hari itu terjurnal dua kali: sekali per transaksi, sekali
+   * lewat batch harian. Transaksi sebelum cutover tetap jalur lama. */
+  if (
+    isDailyJournalDate(entryDateWib, await getDailyJournalSince(args.outletId))
+  ) {
+    return;
+  }
+
   const items = await db
     .select({
       itemCategoryName: transactionItems.itemCategoryName,
@@ -133,7 +169,7 @@ export async function postJournalForPosSale(args: {
   }));
 
   const isCompliment = (trx.discountReason ?? "").startsWith("Compliment:");
-  const entryDate = jakartaDateOf(new Date(trx.createdAt));
+  const entryDate = entryDateWib;
 
   if (isCompliment) {
     const lines = mapPosCompliment({
@@ -378,6 +414,24 @@ export async function postJournalForPosVoid(args: {
     .where(eq(transactions.id, args.transactionId))
     .limit(1);
   if (!trx) return;
+
+  /* Sesi AE-193 — di rezim jurnal harian, transaksi yang di-void otomatis
+   * keluar dari agregat hari itu (filter status), lalu batch-nya dihitung
+   * ulang. Kalau jurnal pembalik per-transaksi ini TETAP diposting, nilainya
+   * terhapus DUA KALI dari buku besar. Jadi di sini cukup picu hitung ulang. */
+  if (
+    isDailyJournalDate(
+      jakartaDateOf(new Date(trx.createdAt)),
+      await getDailyJournalSince(args.outletId),
+    )
+  ) {
+    await recomputeDailyBatchForTransaction({
+      outletId: args.outletId,
+      createdAt: trx.createdAt,
+      actorId: args.actorId,
+    });
+    return;
+  }
 
   let splitsInput;
   if (trx.paymentMethod === "split") {
@@ -1015,6 +1069,31 @@ export async function postJournalForTransactionCorrection(args: {
     };
   }
 
+  /* Sesi AE-193 — di rezim jurnal harian tidak ada entry `pos_sale` per
+   * transaksi yang bisa dibalik: nilainya sudah melebur ke batch harian.
+   * Koreksi cukup mengubah baris transaksinya, lalu batch hari itu dihitung
+   * ulang dari data terkini. Memaksakan alur reversal lama di sini akan
+   * memposting pembalik untuk entry yang tidak ada → buku besar timpang. */
+  if (
+    isDailyJournalDate(
+      args.entryDate,
+      await getDailyJournalSince(args.outletId),
+    )
+  ) {
+    const { postJournalForPosDailySales } = await import("./daily-sales");
+    await postJournalForPosDailySales({
+      outletId: args.outletId,
+      entryDate: args.entryDate,
+      actorId: args.actorId,
+      force: true,
+    });
+    return {
+      reverseEntryId: null,
+      correctedEntryId: null,
+      originalEntryId: null,
+    };
+  }
+
   // 1. Fetch items snapshot — pakai untuk bucket aggregation (revenue per
   //    kategori). Items TIDAK berubah saat correction; sama untuk reversal
   //    & repost.
@@ -1584,84 +1663,6 @@ export async function postJournalForIncomeCreate(args: {
 // index hanya menghitung entry aktif).
 // ============================================================
 
-async function pairVoidJournalForSource(args: {
-  outletId: string;
-  sourceType: "expense_create" | "income_create" | "purchase_create";
-  voidSourceType: "expense_void" | "income_void" | "purchase_create_void";
-  sourceId: string;
-  actorId: string;
-  reason: string;
-}): Promise<void> {
-  const [entry] = await db
-    .select({
-      id: journalEntries.id,
-      entryNumber: journalEntries.entryNumber,
-      entryDate: journalEntries.entryDate,
-    })
-    .from(journalEntries)
-    .where(
-      and(
-        eq(journalEntries.outletId, args.outletId),
-        eq(journalEntries.sourceType, args.sourceType),
-        eq(journalEntries.sourceId, args.sourceId),
-        eq(journalEntries.status, "posted"),
-      ),
-    )
-    .limit(1);
-  if (!entry) return; // belum pernah dijurnal — tidak ada yang dibalik
-
-  const lines = await db
-    .select({
-      accountId: journalLines.accountId,
-      debit: journalLines.debit,
-      credit: journalLines.credit,
-      description: journalLines.description,
-    })
-    .from(journalLines)
-    .where(eq(journalLines.entryId, entry.id))
-    .orderBy(asc(journalLines.lineNumber));
-
-  const counter = await recordJournal({
-    outletId: args.outletId,
-    entryDate: String(entry.entryDate),
-    description: `Pembatalan jurnal ${entry.entryNumber} — ${args.reason}`,
-    sourceType: args.voidSourceType,
-    sourceId: args.sourceId,
-    lines: lines.map((l) => ({
-      accountId: l.accountId,
-      debit: Number(l.credit),
-      credit: Number(l.debit),
-      description: `Dibatalkan: ${l.description ?? ""}`,
-    })),
-    actorId: args.actorId,
-    metadata: { reversesEntryId: entry.id, reason: args.reason },
-  });
-
-  await db.transaction(async (tx) => {
-    await tx
-      .update(journalEntries)
-      .set({
-        status: "reversed",
-        reversedByEntryId: counter.entryId,
-        reverseReason: args.reason,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(journalEntries.id, entry.id),
-          eq(journalEntries.status, "posted"),
-        ),
-      );
-    await tx
-      .update(journalEntries)
-      .set({
-        status: "reversed",
-        reversesEntryId: entry.id,
-        updatedAt: new Date(),
-      })
-      .where(eq(journalEntries.id, counter.entryId));
-  });
-}
 
 export async function postJournalForExpenseDelete(args: {
   outletId: string;

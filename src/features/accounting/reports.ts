@@ -560,6 +560,8 @@ export type CashFlowEntryAggregate = {
 
 export const SOURCE_TYPE_LABELS_CF: Record<string, string> = {
   pos_sale: "POS Cash Sales",
+  /* Sesi AE-193 — ringkasan penjualan harian (pengganti pos_sale). */
+  pos_daily_sales: "POS Cash Sales (harian)",
   pos_refund: "Refund Payouts",
   purchase_create: "Purchase Payments (cash)",
   purchase_pay: "Purchase Payments (TOP paid)",
@@ -579,6 +581,9 @@ export function classifyCashFlowSourceType(
 ): "operating" | "investing" | "financing" | "skip" {
   switch (sourceType) {
     case "pos_sale":
+    /* Sesi AE-193 — batch harian punya dampak kas yang sama persis dengan
+     * pos_sale per transaksi, jadi masuk bucket operating yang sama. */
+    case "pos_daily_sales":
     case "pos_refund":
     case "purchase_create":
     case "purchase_pay":
@@ -591,6 +596,10 @@ export function classifyCashFlowSourceType(
       return "operating";
     case "cash_deposit_verified": // intra-cash transfer (kas → bank), no net cash change
     case "pos_compliment": // no cash movement
+    case "pos_daily_compliment": // sda, versi harian — tidak ada kas bergerak
+    /* Sesi AE-193 — pembalik batch harian saat dihitung ulang. Selalu
+     * berakhir status 'reversed' berpasangan, jadi tak pernah ikut laporan. */
+    case "pos_daily_sales_void":
     case "opname_adjustment": // no cash movement
     case "period_close":
     case "period_reopen":

@@ -166,6 +166,15 @@ export const journalEntries = pgTable(
         "pos_refund",
         "pos_void",
         "pos_compliment",
+        /* Sesi AE-193 — jurnal penjualan HARIAN (pengganti pos_sale
+         * per-transaksi sejak tanggal cutover `dailyJournalSince`).
+         * sourceId = pos_daily_journals.id, satu per (outlet, tanggal WIB).
+         * Baris lama pos_sale sengaja TIDAK diubah — riwayat tetap utuh.
+         * pos_daily_sales_void = pembalik saat batch dihitung ulang karena
+         * ada void/koreksi menyusul; sourceId sama dengan batch-nya. */
+        "pos_daily_sales",
+        "pos_daily_compliment",
+        "pos_daily_sales_void",
         "purchase_create",
         /* Sesi AE-188 — PO diedit setelah barang diterima (alur harga Rp 0
          * dulu supaya PIC Operasional bisa GR, harga diisi saat nota datang).

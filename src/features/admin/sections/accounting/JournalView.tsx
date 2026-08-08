@@ -67,6 +67,9 @@ const SOURCE_TYPE_OPTIONS = [
   { value: "manual", label: "Manual" },
   { value: "opening_balance", label: "Jurnal Pembukaan" },
   { value: "pos_sale", label: "POS Sale" },
+  /* Sesi AE-193 — ringkasan penjualan harian. */
+  { value: "pos_daily_sales", label: "POS Sale (harian)" },
+  { value: "pos_daily_compliment", label: "POS Compliment (harian)" },
   { value: "pos_refund", label: "POS Refund" },
   { value: "pos_compliment", label: "POS Compliment" },
   { value: "purchase_create", label: "Purchase Create" },

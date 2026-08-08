@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Input, Modal, toast } from "@/components/ui";
+import { Button, DatePicker, Input, Modal, toast } from "@/components/ui";
 import {
   isOk,
   updateApproval,
@@ -55,6 +55,8 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     // hanya catatan pengeluaran (stok hanya dari Opname).
     addStockOnPurchase:
       outlet.settings?.features?.perpetualStockPurchases !== false,
+    /* Sesi AE-193 — tanggal mulai jurnal penjualan harian. "" = belum aktif. */
+    dailyJournalSince: outlet.settings?.features?.dailyJournalSince ?? "",
     defaultMarkupPct: outlet.settings?.features?.defaultMarkupPct ?? 250,
     lateGraceMinutes: outlet.settings?.attendance?.lateGraceMinutes ?? 5,
     gpsLat: existingGps?.lat ?? DEFAULT_GPS.lat,
@@ -79,6 +81,9 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
   );
   const [defaultMarkupPct, setDefaultMarkupPct] = useState(
     String(initial.defaultMarkupPct),
+  );
+  const [dailyJournalSince, setDailyJournalSince] = useState(
+    initial.dailyJournalSince,
   );
   const [lateGraceMinutes, setLateGraceMinutes] = useState(
     String(initial.lateGraceMinutes),
@@ -106,6 +111,7 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setDeductStockOnSale(initial.deductStockOnSale);
     setAddStockOnPurchase(initial.addStockOnPurchase);
     setDefaultMarkupPct(String(initial.defaultMarkupPct));
+    setDailyJournalSince(initial.dailyJournalSince);
     setLateGraceMinutes(String(initial.lateGraceMinutes));
     setGpsLat(String(initial.gpsLat));
     setGpsLng(String(initial.gpsLng));
@@ -232,6 +238,17 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
         return;
       }
       last = r3p.data;
+    }
+    if (dailyJournalSince !== initial.dailyJournalSince) {
+      const rDaily = await updateFeatures({
+        dailyJournalSince: dailyJournalSince === "" ? null : dailyJournalSince,
+      });
+      if (!isOk(rDaily)) {
+        setError(rDaily.error.message);
+        setSubmitting(false);
+        return;
+      }
+      last = rDaily.data;
     }
     const parsedMarkup = parseInt(defaultMarkupPct, 10);
     if (
@@ -429,6 +446,16 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
             }
             checked={addStockOnPurchase}
             onChange={setAddStockOnPurchase}
+          />
+          <DatePicker
+            label="Jurnal penjualan digabung per hari — mulai tanggal"
+            value={dailyJournalSince === "" ? null : dailyJournalSince}
+            onChange={(v) => setDailyJournalSince(v ?? "")}
+            hint={
+              dailyJournalSince === ""
+                ? "Kosong = tiap transaksi POS punya jurnal sendiri (perilaku lama)."
+                : `Sejak ${dailyJournalSince}, penjualan dirangkum jadi SATU jurnal per hari saat shift ditutup — jauh lebih ringan. Transaksi sebelum tanggal ini tidak diubah. Kosongkan untuk kembali ke jurnal per transaksi.`
+            }
           />
           <Input
             label="Default Markup % (BOM-based pricing)"

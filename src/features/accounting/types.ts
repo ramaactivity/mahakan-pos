@@ -34,6 +34,11 @@ export type JournalSourceType =
   | "pos_refund"
   | "pos_void"
   | "pos_compliment"
+  /* Sesi AE-193 — ringkasan penjualan HARIAN (satu entry per tanggal WIB),
+   * menggantikan pos_sale per transaksi sejak tanggal cutover. */
+  | "pos_daily_sales"
+  | "pos_daily_compliment"
+  | "pos_daily_sales_void"
   | "purchase_create"
   /* Sesi AE-188 — pembalik jurnal GR saat PO diedit (alur harga Rp 0 dulu
    * supaya PIC Operasional bisa proses GR, harga diisi saat nota datang). */

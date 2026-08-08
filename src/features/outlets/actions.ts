@@ -240,6 +240,21 @@ const featuresSchema = z.object({
    * false → stok hanya dari Opname (penjualan/pembelian tak menggerakkan stok). */
   perpetualStockSales: z.boolean().optional(),
   perpetualStockPurchases: z.boolean().optional(),
+  /**
+   * Sesi AE-193 — tanggal mulai jurnal penjualan HARIAN (YYYY-MM-DD).
+   *
+   * Sengaja tanggal, bukan sakelar: transaksi SEBELUM tanggal ini tetap punya
+   * jurnal per-transaksi (riwayat tidak disentuh), sejak tanggal ini penjualan
+   * diringkas jadi satu jurnal per hari. Dengan begitu cutover tidak pernah
+   * menghasilkan hari yang terjurnal dua kali maupun yang bolong.
+   *
+   * null = matikan lagi (kembali ke jurnal per transaksi).
+   */
+  dailyJournalSince: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Format tanggal harus YYYY-MM-DD")
+    .nullable()
+    .optional(),
 });
 
 const attendanceSettingsSchema = z.object({

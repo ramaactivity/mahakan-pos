@@ -609,6 +609,48 @@ export async function closeShift(
     );
   }
 
+  /* Sesi AE-193 — jurnal penjualan HARIAN. Shift di sini biasa buka pagi dan
+   * tutup lewat tengah malam, jadi satu shift bisa menyentuh dua tanggal
+   * kalender WIB dan masing-masing punya batch sendiri (kalau dipukul rata ke
+   * tanggal tutup, 632 dari 1.752 transaksi mendarat di hari yang salah dan
+   * sebagian lompat bulan).
+   *
+   * `force: true` karena shift ini sedang ditutup — penundaan "masih ada shift
+   * terbuka" tidak berlaku untuk dirinya sendiri. Tetap fire-and-forget: jurnal
+   * yang gagal TIDAK boleh menggagalkan penutupan shift kasir; sapuan berkala
+   * yang menambalnya. */
+  {
+    const { datesTouchedByShift } = await import(
+      "@/features/accounting/daily-sales-pure"
+    );
+    const { postJournalForPosDailySales } = await import(
+      "@/features/accounting/daily-sales"
+    );
+    const { fireJournalHook } = await import("@/features/accounting/hooks");
+    const dates = datesTouchedByShift(
+      current.openedAt,
+      updated.closedAt,
+      new Date(),
+    );
+    for (const entryDate of dates) {
+      const dailyArgs = {
+        outletId: session.user.outletId,
+        entryDate,
+        actorId: session.user.id,
+        force: true,
+      };
+      fireJournalHook(
+        () => postJournalForPosDailySales(dailyArgs).then(() => undefined),
+        "pos_daily_sales",
+        {
+          outletId: session.user.outletId,
+          actorId: session.user.id,
+        },
+        { label: "pos_daily_sales", args: dailyArgs },
+      );
+    }
+  }
+
   // Phase 2.4 (sesi AB) — auto-create pending cash_deposit kalau kasir
   // input setoran ke owner. Owner verify nanti di Admin → Setoran Tunai.
   // Sesi AE-62h — kalau gagal, surface error ke kasir supaya tidak silent.

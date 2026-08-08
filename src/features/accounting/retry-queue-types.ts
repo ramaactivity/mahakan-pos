@@ -18,6 +18,10 @@ export const RETRY_QUEUE_HOOK_LABELS = [
   "income_void",
   "income_resync",
   "opname_adjustment",
+  /* Sesi AE-193 — jurnal penjualan harian. Wajib retryable: kalau gagal saat
+   * tutup shift, SATU HARI penuh penjualan hilang dari buku besar sekaligus
+   * (bukan satu transaksi seperti dulu), jadi jaring pengamannya harus ada. */
+  "pos_daily_sales",
 ] as const;
 
 export type RetryQueueHookLabel = (typeof RETRY_QUEUE_HOOK_LABELS)[number];

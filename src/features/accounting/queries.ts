@@ -637,6 +637,8 @@ export async function getCashFlowEntries(args: {
 // Local copy untuk avoid circular import dengan reports.ts (server-only).
 const SOURCE_LABELS_CF: Record<string, string> = {
   pos_sale: "POS Cash Sales",
+  /* Sesi AE-193 — ringkasan penjualan harian (pengganti pos_sale). */
+  pos_daily_sales: "POS Cash Sales (harian)",
   pos_refund: "Refund Payouts",
   purchase_create: "Purchase Payments (cash)",
   purchase_pay: "Purchase Payments (TOP paid)",
@@ -653,6 +655,9 @@ function classifyCashFlowSourceTypeImpl(
 ): "operating" | "investing" | "financing" | "skip" {
   switch (sourceType) {
     case "pos_sale":
+    /* Sesi AE-193 — batch harian punya dampak kas yang sama persis dengan
+     * pos_sale per transaksi, jadi masuk bucket operating yang sama. */
+    case "pos_daily_sales":
     case "pos_refund":
     case "purchase_create":
     case "purchase_pay":
@@ -665,6 +670,8 @@ function classifyCashFlowSourceTypeImpl(
       return "operating";
     case "cash_deposit_verified":
     case "pos_compliment":
+    case "pos_daily_compliment":
+    case "pos_daily_sales_void":
     case "opname_adjustment":
     case "period_close":
     case "period_reopen":

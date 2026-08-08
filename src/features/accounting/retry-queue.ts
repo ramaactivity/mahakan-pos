@@ -30,6 +30,7 @@ import {
   postJournalForPosSale,
   postJournalForPosVoid,
 } from "./hooks";
+import { postJournalForPosDailySales } from "./daily-sales";
 import type { ApiResult } from "./types";
 import { ok, fail } from "./types";
 import {
@@ -145,6 +146,14 @@ const opnameAdjustmentArgsSchema = z.object({
   actorId: z.uuid(),
 });
 
+/* Sesi AE-193 — argumen jurnal harian. `force` sengaja tidak ikut di-snapshot:
+ * saat retry, penundaan "shift masih terbuka" justru HARUS berlaku lagi. */
+const posDailySalesArgsSchema = z.object({
+  outletId: z.uuid(),
+  entryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  actorId: z.uuid(),
+});
+
 interface HookRegistryEntry<TArgs> {
   schema: z.ZodType<TArgs>;
   execute: (args: TArgs) => Promise<void>;
@@ -204,6 +213,11 @@ const HOOK_REGISTRY: Record<RetryQueueHookLabel, HookRegistryEntry<any>> = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     execute: postJournalForOpnameAdjustment as (args: any) => Promise<void>,
     displayName: "Penyesuaian Opname",
+  },
+  pos_daily_sales: {
+    schema: posDailySalesArgsSchema,
+    execute: (args) => postJournalForPosDailySales(args).then(() => undefined),
+    displayName: "Penjualan Harian POS",
   },
 };
 

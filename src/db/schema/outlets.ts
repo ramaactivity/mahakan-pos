@@ -38,6 +38,16 @@ export type OutletSettings = {
      * Reversibel: nyalakan lagi kapan saja tanpa nulis ulang kode. */
     perpetualStockSales?: boolean;
     perpetualStockPurchases?: boolean;
+    /**
+     * Sesi AE-193 — tanggal mulai (YYYY-MM-DD) jurnal penjualan HARIAN.
+     *
+     * Sejak tanggal ini, penjualan POS diringkas jadi SATU journal entry per
+     * hari kalender WIB (diposting saat shift ditutup) alih-alih satu entry
+     * per transaksi. Berupa tanggal — bukan boolean — supaya jurnal lama tetap
+     * utuh dan cutover tidak menghasilkan hari yang dobel atau bolong.
+     * undefined/null = perilaku lama (satu jurnal per transaksi).
+     */
+    dailyJournalSince?: string | null;
   };
   receipt?: {
     /** Existing: short text below "Terima kasih" line. */
