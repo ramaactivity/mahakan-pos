@@ -58,6 +58,11 @@ export interface Draft {
   /** For Staff-initiated discount: approver who PIN-verified. */
   discountApproverId: string | null;
   discountApproverToken: string | null;
+  /**
+   * Sesi AE-195 — id kode approval compliment yang SUDAH dikonsumsi kasir.
+   * null untuk diskon biasa / compliment yang dijalankan owner sendiri.
+   */
+  complimentApprovalCodeId: string | null;
   /** Sesi K — pre-configured promo applied to this draft (FK to promos).
    * Set in tandem with `discount` when staff picks a promo from POS picker.
    * Cleared when discount cleared or when redemption replaces it.

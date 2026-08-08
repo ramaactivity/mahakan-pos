@@ -10,9 +10,12 @@ export interface ApprovalCodeEmailInput {
   actionType: string;
   /** 6-digit code (plaintext for email body — only the hash is stored). */
   code: string;
-  /** Display ID for the transaction (e.g. "20260429-0042"). */
-  transactionNumber: string;
-  /** Total rupiah for the transaction (display only). */
+  /** Display ID for the transaction (e.g. "20260429-0042").
+   * Sesi AE-195 — null untuk `pos.compliment`: kodenya diminta saat
+   * keranjang masih di layar, transaksinya belum ada. */
+  transactionNumber: string | null;
+  /** Total rupiah (display only). Untuk compliment = subtotal keranjang
+   * yang akan digratiskan. */
   transactionTotal: number;
   /** Reason staff entered when requesting. */
   reason: string;
@@ -28,6 +31,7 @@ export interface ApprovalCodeEmailInput {
 const ACTION_LABEL: Record<string, string> = {
   "pos.transaction.void": "Void Transaksi",
   "pos.transaction.refund": "Refund Transaksi",
+  "pos.compliment": "Compliment (100% Gratis)",
 };
 
 function fmtRupiah(n: number): string {
@@ -53,13 +57,18 @@ export function buildApprovalCodeEmail(
   input: ApprovalCodeEmailInput,
 ): EmailMessage {
   const actionLabel = ACTION_LABEL[input.actionType] ?? input.actionType;
-  const subject = `[Mahakan POS] Kode Approval ${actionLabel} — TRX ${input.transactionNumber}`;
+  /* Compliment belum punya nomor transaksi — pakai nilai keranjangnya
+   * sebagai penanda supaya owner tetap tahu ini approval untuk apa. */
+  const targetLabel = input.transactionNumber
+    ? `TRX ${input.transactionNumber}`
+    : `Rp ${fmtRupiah(input.transactionTotal)}`;
+  const subject = `[Mahakan POS] Kode Approval ${actionLabel} — ${targetLabel}`;
 
   const text = [
     `Halo ${input.ownerName},`,
     "",
     `${input.requestedByName} (${input.requestedByRole}) di ${input.outletName} minta approval untuk:`,
-    `  ${actionLabel} TRX ${input.transactionNumber} (Rp ${fmtRupiah(input.transactionTotal)})`,
+    `  ${actionLabel} ${targetLabel}${input.transactionNumber ? ` (Rp ${fmtRupiah(input.transactionTotal)})` : ""}`,
     `  Alasan: ${input.reason}`,
     "",
     `KODE: ${input.code}`,
@@ -84,8 +93,8 @@ export function buildApprovalCodeEmail(
     ${input.outletName} minta approval untuk:
   </p>
   <p style="background: #f4f4f0; padding: 12px; border-radius: 8px; font-size: 14px;">
-    ${actionLabel} TRX <code style="font-family:monospace">${input.transactionNumber}</code>
-    (Rp ${fmtRupiah(input.transactionTotal)})<br/>
+    ${actionLabel} <code style="font-family:monospace">${targetLabel}</code>
+    ${input.transactionNumber ? `(Rp ${fmtRupiah(input.transactionTotal)})` : ""}<br/>
     <em>Alasan:</em> ${input.reason}
   </p>
   <div style="text-align: center; margin: 32px 0;">

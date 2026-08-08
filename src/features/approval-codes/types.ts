@@ -11,7 +11,10 @@ export type ApprovalActionType =
   | "shift.rebalance"
   /* Sesi AE-62r — per-transaction correction (paymentMethod/total swap).
    * Target = transaction_corrections.id (kolom targetTransactionCorrectionId). */
-  | "pos.transaction.correction";
+  | "pos.transaction.correction"
+  /* Sesi AE-195 — compliment (transaksi 100% gratis). Tanpa target entity:
+   * kode diminta saat keranjang masih di layar, transaksi belum dibuat. */
+  | "pos.compliment";
 
 export interface RequestApprovalCodeInput {
   /** Untuk pos.transaction.* — transactionId. Untuk shift.rebalance —

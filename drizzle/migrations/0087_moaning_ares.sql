@@ -1,0 +1,2 @@
+ALTER TABLE "approval_codes" ADD COLUMN "used_for_transaction_id" uuid;--> statement-breakpoint
+ALTER TABLE "approval_codes" ADD CONSTRAINT "approval_codes_used_for_transaction_id_transactions_id_fk" FOREIGN KEY ("used_for_transaction_id") REFERENCES "public"."transactions"("id") ON DELETE no action ON UPDATE no action;

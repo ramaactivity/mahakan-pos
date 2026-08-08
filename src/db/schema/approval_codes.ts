@@ -55,6 +55,12 @@ export const approvalCodes = pgTable(
         /* Sesi AE-67 — pengeluaran / pemasukan entry change (edit/delete).
          * Target = pending_entry_changes.id. Pattern mirror shift.rebalance. */
         "entry_change",
+        /* Sesi AE-195 — compliment (transaksi 100% gratis) wajib approval
+         * owner. SATU-SATUNYA action type TANPA target entity: compliment
+         * diminta saat keranjang masih di layar, transaksinya belum ada.
+         * Pengaman penggantinya: scope outlet + sekali pakai + TTL, dan kode
+         * hanya berlaku untuk actionType ini. */
+        "pos.compliment",
       ],
     }).notNull(),
 
@@ -101,6 +107,18 @@ export const approvalCodes = pgTable(
     /** Brute-force counter. Lockout enforced at 3 failures within 60s
      * (logic in action layer; this column is the source of truth). */
     failedAttempts: integer("failed_attempts").notNull().default(0),
+
+    /**
+     * Sesi AE-195 — transaksi yang akhirnya memakai kode ini.
+     *
+     * Khusus `pos.compliment`: kodenya dikonsumsi di modal (biar kasir tahu
+     * salah/benar saat itu juga), lalu ditautkan ke transaksinya saat bayar.
+     * Tautan ini yang mencegah SATU kode dipakai untuk beberapa compliment,
+     * sekaligus jadi jejak audit "compliment ini disetujui lewat kode mana".
+     */
+    usedForTransactionId: uuid("used_for_transaction_id").references(
+      () => transactions.id,
+    ),
 
     /** Owner can revoke a code before consumption. */
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
@@ -165,7 +183,14 @@ export const approvalCodes = pgTable(
             AND ${t.targetEntryChangeId} IS NOT NULL
             AND ${t.targetTransactionId} IS NULL
             AND ${t.targetShiftRebalanceId} IS NULL
-            AND ${t.targetTransactionCorrectionId} IS NULL)`,
+            AND ${t.targetTransactionCorrectionId} IS NULL)
+       /* Sesi AE-195 — compliment: SEMUA target NULL. Transaksinya belum
+        * ada saat kode diminta, jadi tidak ada baris yang bisa ditunjuk. */
+       OR (${t.actionType} = 'pos.compliment'
+            AND ${t.targetTransactionId} IS NULL
+            AND ${t.targetShiftRebalanceId} IS NULL
+            AND ${t.targetTransactionCorrectionId} IS NULL
+            AND ${t.targetEntryChangeId} IS NULL)`,
     ),
     /** Sesi AE-62r — fast lookup of active correction codes. */
     index("idx_approval_codes_correction_lookup").on(

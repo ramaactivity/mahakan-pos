@@ -806,19 +806,30 @@ export function PosShell() {
     }
   }
 
-  function handleComplimentSubmit(reason: string) {
+  /* Sesi AE-195 — compliment sekarang disetujui lewat KODE OWNER, bukan PIN
+   * approver. ComplimentModal yang mengurus minta + verifikasi kode; di sini
+   * tinggal menerapkan diskonnya. Owner tanpa kode → approvalCodeId null,
+   * server mengizinkan karena dialah yang berwenang menyetujui. */
+  function handleComplimentApproved(
+    reason: string,
+    approvalCodeId: string | null,
+  ) {
     if (!activeDraftId || !session) return;
-    // Compliment = 100% gratis seluruh transaksi. Stored as fixed-discount
-    // with full subtotal. ALWAYS requires PIN approver regardless of role
-    // (Owner self-approves with own PIN). Reason already prefixed
-    // "Compliment: " by ComplimentModal so the audit logger can branch.
     setComplimentModalOpen(false);
-    setPendingDiscount({
-      discount: { type: "fixed", value: subtotal },
+    setDiscount(
+      activeDraftId,
+      { type: "fixed", value: subtotal },
       reason,
-      promoId: null, // compliment is ad-hoc, not a master promo
-    });
-    setApproverOpen(true);
+      undefined,
+      undefined,
+      null, // compliment ad-hoc, bukan promo master
+      approvalCodeId,
+    );
+    toast.success(
+      approvalCodeId
+        ? "Compliment disetujui Owner via kode"
+        : "Compliment diterapkan (Owner)",
+    );
   }
 
   function handleApproverVerified(result: { approverId: string; token: string }) {
@@ -949,6 +960,8 @@ export function PosShell() {
           total,
           discountApproverToken:
             activeDraft.discountApproverToken ?? undefined,
+          complimentApprovalCodeId:
+            activeDraft.complimentApprovalCodeId ?? undefined,
           promoId: activeDraft.promoId,
         });
         if (!res.success) {
@@ -990,6 +1003,8 @@ export function PosShell() {
         discountReason: activeDraft.discountReason,
         total,
         discountApproverToken: activeDraft.discountApproverToken ?? undefined,
+        complimentApprovalCodeId:
+          activeDraft.complimentApprovalCodeId ?? undefined,
         promoId: activeDraft.promoId,
       };
       const res = await saveAsOpenBill(payload);
@@ -1061,6 +1076,8 @@ export function PosShell() {
         cashReceived: null,
         cashChange: null,
         discountApproverToken: activeDraft.discountApproverToken ?? undefined,
+        complimentApprovalCodeId:
+          activeDraft.complimentApprovalCodeId ?? undefined,
         loyaltyPointsRedeemed: activeDraft.loyaltyPointsRedeemed,
         promoId: activeDraft.promoId,
         splits,
@@ -1127,6 +1144,8 @@ export function PosShell() {
         cashReceived: paymentMethod === "cash" ? cashReceived : null,
         cashChange: paymentMethod === "cash" ? cashChange : null,
         discountApproverToken: activeDraft.discountApproverToken ?? undefined,
+        complimentApprovalCodeId:
+          activeDraft.complimentApprovalCodeId ?? undefined,
         loyaltyPointsRedeemed: activeDraft.loyaltyPointsRedeemed,
         promoId: activeDraft.promoId,
       };
@@ -1622,8 +1641,9 @@ export function PosShell() {
       <ComplimentModal
         open={complimentModalOpen}
         subtotal={subtotal}
+        isOwner={session?.user.role === "owner"}
         onClose={() => setComplimentModalOpen(false)}
-        onSubmit={handleComplimentSubmit}
+        onApproved={handleComplimentApproved}
       />
       <ApproverOverrideModal
         open={approverOpen}

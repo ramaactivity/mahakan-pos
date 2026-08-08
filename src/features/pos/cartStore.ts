@@ -101,6 +101,8 @@ interface CartStore {
      * server can insert promo_usages + increment currentUses. Pass null
      * for ad-hoc discount paths (compliment, redeem). */
     promoId?: string | null,
+    /** Sesi AE-195 — kode approval compliment yang sudah dikonsumsi kasir. */
+    complimentApprovalCodeId?: string | null,
   ) => void;
 
   /** Loyalty redemption — sets discount + reason atomically and tracks the
@@ -140,6 +142,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
       discountReason: null,
       discountApproverId: null,
       discountApproverToken: null,
+      complimentApprovalCodeId: null,
       promoId: null,
       editingBillId: null,
       loyaltyPointsRedeemed: null,
@@ -196,6 +199,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
       discountReason: trx.discountReason,
       discountApproverId: trx.discountApprover ?? null,
       discountApproverToken: null, // approver token is single-use; re-approve on save if discount changes
+      complimentApprovalCodeId: null,
       promoId: trx.promoId ?? null,
       editingBillId: trx.id,
       loyaltyPointsRedeemed: null, // redemption is paid-flow only — edit-bill resets it
@@ -365,7 +369,15 @@ export const useCartStore = create<CartStore>((set, get) => ({
       };
     }),
 
-  setDiscount: (draftId, discount, reason, approverId, approverToken, promoId) =>
+  setDiscount: (
+    draftId,
+    discount,
+    reason,
+    approverId,
+    approverToken,
+    promoId,
+    complimentApprovalCodeId,
+  ) =>
     set((state) => {
       const draft = state.drafts[draftId];
       if (!draft) return state;
@@ -379,6 +391,10 @@ export const useCartStore = create<CartStore>((set, get) => ({
             discountReason: reason,
             discountApproverId: approverId ?? null,
             discountApproverToken: approverToken ?? null,
+            /* Sesi AE-195 — id kode approval compliment yang sudah dikonsumsi.
+             * Ikut dikirim saat checkout; server menautkannya ke transaksi
+             * supaya satu kode tidak bisa dipakai dua kali. */
+            complimentApprovalCodeId: complimentApprovalCodeId ?? null,
             promoId: promoId ?? null,
             loyaltyPointsRedeemed: isRedemption
               ? draft.loyaltyPointsRedeemed
@@ -402,6 +418,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
               discountReason: null,
               discountApproverId: null,
               discountApproverToken: null,
+            complimentApprovalCodeId: null,
               promoId: null,
               loyaltyPointsRedeemed: null,
             },
@@ -418,6 +435,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
             discountReason: `Tukar Poin: ${points} poin`,
             discountApproverId: null,
             discountApproverToken: null,
+            complimentApprovalCodeId: null,
             promoId: null,
             loyaltyPointsRedeemed: points,
           },

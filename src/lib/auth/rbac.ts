@@ -364,6 +364,10 @@ export const permissions = {
   "pos.transaction.void.code": ["owner"],
   /** Code-mode refund authorization. Owner-only when flag is "code". */
   "pos.transaction.refund.code": ["owner"],
+  /* Sesi AE-195 — compliment (transaksi 100% gratis) wajib kode approval
+   * owner. Semua role kasir boleh MEMINTA; yang menyetujui tetap owner
+   * karena hanya owner yang menerima kodenya (email + push). */
+  "pos.compliment.request": ["owner", "manager", "supervisor", "staff"],
   /** View + revoke active approval codes (admin panel). */
   "approval_code.view": ["owner"],
   "approval_code.revoke": ["owner"],

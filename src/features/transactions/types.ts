@@ -186,6 +186,8 @@ export interface CreateTransactionInput {
   cashChange: number | null;
   /** For Staff-initiated discount: token from /api/v1/auth/verify-approver. */
   discountApproverToken?: string;
+  /** Sesi AE-195 — kode approval compliment yang sudah dikonsumsi. */
+  complimentApprovalCodeId?: string;
   /** Loyalty redemption: number of points the member tukar on this sale.
    * When >0, server validates customerId is set + balance ≥ N + the
    * provided discountAmount equals N * RUPIAH_PER_POINT_REDEEMED + the
@@ -286,6 +288,8 @@ export interface SaveOpenBillInput {
   discountReason: string | null;
   total: number;
   discountApproverToken?: string;
+  /** Sesi AE-195 — kode approval compliment yang sudah dikonsumsi. */
+  complimentApprovalCodeId?: string;
   /** Sesi K — same semantics as CreateTransactionInput.promoId. */
   promoId?: string | null;
 }
@@ -320,6 +324,8 @@ export interface EditOpenBillInput {
   discountReason: string | null;
   total: number;
   discountApproverToken?: string;
+  /** Sesi AE-195 — kode approval compliment yang sudah dikonsumsi kasir. */
+  complimentApprovalCodeId?: string;
   /** Sesi K — same semantics as CreateTransactionInput.promoId. */
   promoId?: string | null;
 }

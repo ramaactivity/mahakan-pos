@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, getTableColumns, gte, inArray, lt, ne, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, gte, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   approvalCodes,
@@ -526,6 +526,65 @@ export async function createTransaction(
     }
   }
 
+  /* Sesi AE-195 — COMPLIMENT wajib kode approval owner.
+   *
+   * Ditegakkan di SERVER, bukan cuma di layar POS: sebelumnya compliment
+   * hanya dijaga modal PIN di klien, jadi siapa pun yang bisa memanggil
+   * action ini bisa menggratiskan transaksi tanpa jejak persetujuan.
+   *
+   * Owner dikecualikan — dialah yang seharusnya menyetujui, jadi meminta
+   * dirinya sendiri mengetik kode dari emailnya sendiri tidak menambah
+   * kontrol apa pun (pola sama dengan direct-approve di Pusat Persetujuan).
+   */
+  const isComplimentTrx = (v.discountReason ?? "").startsWith("Compliment:");
+  let complimentCodeRow: { id: string; reason: string } | null = null;
+  if (isComplimentTrx && session.user.role !== "owner") {
+    if (!v.complimentApprovalCodeId) {
+      return fail(
+        "COMPLIMENT_APPROVAL_REQUIRED",
+        "Compliment butuh kode approval dari Owner",
+      );
+    }
+    const [row] = await db
+      .select({
+        id: approvalCodes.id,
+        reason: approvalCodes.reason,
+        outletId: approvalCodes.outletId,
+        consumedByUserId: approvalCodes.consumedByUserId,
+        usedForTransactionId: approvalCodes.usedForTransactionId,
+      })
+      .from(approvalCodes)
+      .where(
+        and(
+          eq(approvalCodes.id, v.complimentApprovalCodeId),
+          eq(approvalCodes.actionType, "pos.compliment"),
+        ),
+      )
+      .limit(1);
+
+    if (
+      !row ||
+      row.outletId !== session.user.outletId ||
+      row.consumedByUserId !== session.user.id ||
+      row.usedForTransactionId !== null
+    ) {
+      return fail(
+        "COMPLIMENT_APPROVAL_INVALID",
+        "Kode approval compliment tidak sah atau sudah terpakai. Minta kode baru.",
+      );
+    }
+    complimentCodeRow = { id: row.id, reason: row.reason };
+
+    /* Alasan yang dipakai HARUS yang disetujui owner. Tanpa ini, kasir bisa
+     * minta approval "tamu owner" lalu memakai kodenya untuk alasan lain. */
+    if (complimentCodeRow.reason !== v.discountReason) {
+      return fail(
+        "COMPLIMENT_REASON_MISMATCH",
+        "Alasan compliment berbeda dengan yang disetujui Owner. Minta kode baru.",
+      );
+    }
+  }
+
   // Menu existence check
   if (menuRowsWithCat.length !== menuItemIds.length) {
     return fail("MENU_ITEM_NOT_FOUND", "Beberapa item tidak ditemukan");
@@ -743,6 +802,26 @@ export async function createTransaction(
           promoId: v.promoId ?? null,
         })
         .returning();
+
+      /* Sesi AE-195 — tautkan kode compliment ke transaksinya. CAS pada
+       * `used_for_transaction_id IS NULL`: dua checkout paralel yang membawa
+       * id kode sama hanya boleh diloloskan satu. Di dalam tx supaya kalau
+       * transaksinya batal, kodenya kembali bisa dipakai. */
+      if (complimentCodeRow) {
+        const linked = await tx
+          .update(approvalCodes)
+          .set({ usedForTransactionId: insertedTrx.id })
+          .where(
+            and(
+              eq(approvalCodes.id, complimentCodeRow.id),
+              isNull(approvalCodes.usedForTransactionId),
+            ),
+          )
+          .returning({ id: approvalCodes.id });
+        if (linked.length === 0) {
+          throw new Error("COMPLIMENT_APPROVAL_ALREADY_USED");
+        }
+      }
 
       // Sesi K — when discount sourced from a master promo, record the
       // usage + bump currentUses. Both inside the same DB tx so a rollback
@@ -2228,6 +2307,57 @@ export async function editOpenBill(
   const shiftCheck = await assertShiftOpen(current.shiftId);
   if (!shiftCheck.ok) return fail(shiftCheck.code, shiftCheck.message);
 
+  /* Sesi AE-195 — compliment di OPEN BILL ikut wajib kode approval owner.
+   * Tanpa ini ada celah: kasir menyimpan bill biasa, lalu meng-edit-nya jadi
+   * compliment 100% — createTransaction sudah dijaga, jalur edit belum. */
+  const editIsCompliment = (v.discountReason ?? "").startsWith("Compliment:");
+  let editComplimentCodeId: string | null = null;
+  if (editIsCompliment && session.user.role !== "owner") {
+    if (!v.complimentApprovalCodeId) {
+      return fail(
+        "COMPLIMENT_APPROVAL_REQUIRED",
+        "Compliment butuh kode approval dari Owner",
+      );
+    }
+    const [row] = await db
+      .select({
+        id: approvalCodes.id,
+        reason: approvalCodes.reason,
+        outletId: approvalCodes.outletId,
+        consumedByUserId: approvalCodes.consumedByUserId,
+        usedForTransactionId: approvalCodes.usedForTransactionId,
+      })
+      .from(approvalCodes)
+      .where(
+        and(
+          eq(approvalCodes.id, v.complimentApprovalCodeId),
+          eq(approvalCodes.actionType, "pos.compliment"),
+        ),
+      )
+      .limit(1);
+    const alreadyLinkedElsewhere =
+      row?.usedForTransactionId !== null &&
+      row?.usedForTransactionId !== v.transactionId;
+    if (
+      !row ||
+      row.outletId !== session.user.outletId ||
+      row.consumedByUserId !== session.user.id ||
+      alreadyLinkedElsewhere
+    ) {
+      return fail(
+        "COMPLIMENT_APPROVAL_INVALID",
+        "Kode approval compliment tidak sah atau sudah terpakai. Minta kode baru.",
+      );
+    }
+    if (row.reason !== v.discountReason) {
+      return fail(
+        "COMPLIMENT_REASON_MISMATCH",
+        "Alasan compliment berbeda dengan yang disetujui Owner. Minta kode baru.",
+      );
+    }
+    editComplimentCodeId = row.id;
+  }
+
   // Sesi AE-62k — defer approver token consumption sampai sebelum tx.
   // Sebelumnya: token di-consume sebelum validasi & lock check → kalau
   // edit gagal di tx (mis. stock error, race), approver token sudah burnt
@@ -2464,6 +2594,28 @@ export async function editOpenBill(
           updatedAt: new Date(),
         })
         .where(eq(transactions.id, v.transactionId));
+
+      /* Sesi AE-195 — tautkan kode compliment ke bill-nya. CAS pada
+       * "belum tertaut ATAU sudah tertaut ke bill ini" supaya edit berulang
+       * pada bill yang sama tidak menolak kodenya sendiri. */
+      if (editComplimentCodeId) {
+        const linked = await tx
+          .update(approvalCodes)
+          .set({ usedForTransactionId: v.transactionId })
+          .where(
+            and(
+              eq(approvalCodes.id, editComplimentCodeId),
+              or(
+                isNull(approvalCodes.usedForTransactionId),
+                eq(approvalCodes.usedForTransactionId, v.transactionId),
+              ),
+            ),
+          )
+          .returning({ id: approvalCodes.id });
+        if (linked.length === 0) {
+          throw new Error("COMPLIMENT_APPROVAL_ALREADY_USED");
+        }
+      }
 
       // Sesi K — promo usage tracking on edit. If the bill previously had
       // a promo, we DO NOT decrement the previous promo's currentUses
