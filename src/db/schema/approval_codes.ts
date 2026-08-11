@@ -62,6 +62,10 @@ export const approvalCodes = pgTable(
          * Pengaman penggantinya: scope outlet + sekali pakai + TTL, dan kode
          * hanya berlaku untuk actionType ini. */
         "pos.compliment",
+        /* Sesi AE-196 — pengeluaran kas di atas batas yang Owner tetapkan.
+         * Sama seperti compliment: TANPA target entity, karena pengeluarannya
+         * belum tercatat saat kode diminta. */
+        "expense.create",
       ],
     }).notNull(),
 
@@ -199,6 +203,12 @@ export const approvalCodes = pgTable(
        /* Sesi AE-195 — compliment: SEMUA target NULL. Transaksinya belum
         * ada saat kode diminta, jadi tidak ada baris yang bisa ditunjuk. */
        OR (${t.actionType} = 'pos.compliment'
+            AND ${t.targetTransactionId} IS NULL
+            AND ${t.targetShiftRebalanceId} IS NULL
+            AND ${t.targetTransactionCorrectionId} IS NULL
+            AND ${t.targetEntryChangeId} IS NULL)
+       /* Sesi AE-196 — pengeluaran kas: sama, pengeluarannya belum ada. */
+       OR (${t.actionType} = 'expense.create'
             AND ${t.targetTransactionId} IS NULL
             AND ${t.targetShiftRebalanceId} IS NULL
             AND ${t.targetTransactionCorrectionId} IS NULL

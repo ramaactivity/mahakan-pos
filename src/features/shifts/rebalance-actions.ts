@@ -474,7 +474,22 @@ export async function approveShiftRebalance(input: {
   code: string;
 }): Promise<ApiResult<{ rebalanceId: string; appliedAt: Date }>> {
   const session = await requireSession();
-  if (!hasPermission(session.user.role, "shift.rebalance.approve")) {
+  /* Sesi AE-196 — pemegang kode boleh menerapkannya, termasuk kasir yang
+   * mengajukan rebalance-nya sendiri. Kodenya dibuat di server, disimpan
+   * sebagai hash, dan hanya dikirim ke Owner — jadi mengetik kode DI SINI
+   * tetap berarti Owner sudah menyetujui. Sebelumnya kasir buntu: bisa minta
+   * kode dari POS tapi tidak punya layar untuk memasukkannya.
+   *
+   * Pembatasnya ada di bawah: yang bukan approver hanya boleh menerapkan
+   * rebalance YANG DIA AJUKAN SENDIRI. */
+  const isApprover = hasPermission(
+    session.user.role,
+    "shift.rebalance.approve",
+  );
+  if (
+    !isApprover &&
+    !hasPermission(session.user.role, "shift.rebalance.request")
+  ) {
     return fail(
       "FORBIDDEN",
       "Tidak punya akses apply kode approval. Hubungi Owner.",
@@ -498,6 +513,13 @@ export async function approveShiftRebalance(input: {
   if (!rebalance) return fail("NOT_FOUND", "Rebalance tidak ditemukan");
   if (rebalance.outletId !== session.user.outletId) {
     return fail("FORBIDDEN", "Rebalance dari outlet lain");
+  }
+  /* Sesi AE-196 — non-approver hanya boleh menerapkan ajuannya sendiri. */
+  if (!isApprover && rebalance.requestedBy !== session.user.id) {
+    return fail(
+      "FORBIDDEN",
+      "Kode ini untuk rebalance yang diajukan orang lain. Minta Owner yang menerapkannya.",
+    );
   }
   if (rebalance.status !== "pending_approval") {
     return fail(

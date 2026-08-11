@@ -32,6 +32,7 @@ const ACTION_LABEL: Record<string, string> = {
   "pos.transaction.void": "Void Transaksi",
   "pos.transaction.refund": "Refund Transaksi",
   "pos.compliment": "Compliment (100% Gratis)",
+  "expense.create": "Pengeluaran Kas",
 };
 
 function fmtRupiah(n: number): string {

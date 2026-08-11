@@ -62,6 +62,10 @@ import {
   type Income,
   type PendingEntryChangeWithMeta,
 } from "@/features/cash";
+import {
+  getExpenseApprovalThreshold,
+  requestExpenseApprovalCode,
+} from "@/features/approval-codes/expense-actions";
 import { ProposeEntryChangeModal } from "@/features/cash/components/ProposeEntryChangeModal";
 import { formatRupiah } from "@/lib/format";
 import { todayWibIso } from "@/features/cash/helpers";
@@ -205,6 +209,12 @@ export function PettyCashCard() {
   const [activeChipLabel, setActiveChipLabel] = useState<string | null>(null);
 
   // Receipt upload (expense only — endpoint exists, income belum)
+  /* Sesi AE-196 — batas nominal yang wajib kode Owner. 0 = fitur mati (atau
+   * pemakainya Owner sendiri), jadi tidak ada kolom kode yang muncul. */
+  const [approvalThreshold, setApprovalThreshold] = useState(0);
+  const [approvalCode, setApprovalCode] = useState("");
+  const [requestingCode, setRequestingCode] = useState(false);
+  const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -243,6 +253,20 @@ export function PettyCashCard() {
           setCategoryId((cur) => (cur === "" ? (lainHit?.id ?? visible[0]!.id) : cur));
         }
       }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* Sesi AE-196 — batas persetujuan pengeluaran. Dibaca sekali; server
+   * mengembalikan 0 kalau fiturnya mati ATAU yang login Owner sendiri. */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await getExpenseApprovalThreshold();
+      if (cancelled) return;
+      if (isOk(res)) setApprovalThreshold(res.data.threshold);
     })();
     return () => {
       cancelled = true;
@@ -316,6 +340,32 @@ export function PettyCashCard() {
   }, [refreshKey, entryDate]);
 
   const parsedAmount = amountDigits.length === 0 ? 0 : Number(amountDigits);
+  /* Sesi AE-196 — pengeluaran sebesar batas Owner (atau lebih) wajib kode. */
+  const needsApproval =
+    mode === "expense" &&
+    approvalThreshold > 0 &&
+    parsedAmount >= approvalThreshold;
+
+  async function onRequestApprovalCode() {
+    if (description.trim().length < 3) {
+      setError("Isi keterangan dulu supaya Owner tahu ini untuk apa");
+      return;
+    }
+    setError(null);
+    setRequestingCode(true);
+    const res = await requestExpenseApprovalCode({
+      amount: parsedAmount,
+      description: description.trim(),
+    });
+    setRequestingCode(false);
+    if (!isOk(res)) {
+      setError(res.error.message);
+      return;
+    }
+    setCodeSentTo(res.data.ownerEmailMasked);
+    toast.success(`Kode dikirim ke Owner (${res.data.ownerEmailMasked})`);
+  }
+
 
   const dashboard = useMemo(() => {
     let outSum = 0;
@@ -441,6 +491,10 @@ export function PettyCashCard() {
     setAmountDigits("");
     setActiveChipLabel(null);
     setReceiptUrl(null);
+    /* Sesi AE-196 — kode sekali pakai; jangan tertinggal di layar untuk
+     * pengeluaran berikutnya. */
+    setApprovalCode("");
+    setCodeSentTo(null);
     // Re-pick default category (Lain-lain or first)
     const defId = pickCategoryId(undefined);
     if (defId) setCategoryId(defId);
@@ -478,6 +532,7 @@ export function PettyCashCard() {
         amount: parsedAmount,
         paymentMethod: "cash",
         receiptImageUrl: receiptUrl,
+        approvalCode: needsApproval ? approvalCode : undefined,
       });
       setSubmitting(false);
       if (!isOk(res)) {
@@ -958,6 +1013,55 @@ export function PettyCashCard() {
           </p>
         ) : null}
 
+        {/* Sesi AE-196 — gerbang persetujuan pengeluaran besar. */}
+        {needsApproval ? (
+          <section className="space-y-2 rounded-lg border border-warning-500/50 bg-warning-100/40 p-3">
+            <p className="text-sm font-medium text-warning-500">
+              Pengeluaran {formatRupiah(parsedAmount)} butuh persetujuan Owner
+              (batas {formatRupiah(approvalThreshold)}).
+            </p>
+            {codeSentTo ? (
+              <>
+                <label
+                  htmlFor="expense-approval-code"
+                  className="block text-xs font-medium text-neutral-700"
+                >
+                  Kode 6 digit dari Owner
+                </label>
+                <input
+                  id="expense-approval-code"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  maxLength={6}
+                  placeholder="······"
+                  value={approvalCode}
+                  onChange={(e) => {
+                    setApprovalCode(
+                      e.target.value.replace(/\D/g, "").slice(0, 6),
+                    );
+                    setError(null);
+                  }}
+                  className="h-12 w-full rounded-md border border-neutral-300 bg-white px-3 text-center font-mono text-2xl tracking-[0.4em] tabular-nums shadow-sm focus:border-mahakan-green-700 focus:outline-none focus:ring-2 focus:ring-mahakan-green-700/40"
+                />
+                <p className="text-xs text-neutral-600">
+                  Kode dikirim ke {codeSentTo} dan notifikasi HP Owner.
+                </p>
+              </>
+            ) : null}
+            <Button
+              type="button"
+              onClick={onRequestApprovalCode}
+              loading={requestingCode}
+              disabled={requestingCode || parsedAmount <= 0}
+              fullWidth
+              variant={codeSentTo ? "secondary" : "primary"}
+              className="h-11"
+            >
+              {codeSentTo ? "Kirim ulang kode" : "Minta kode Owner"}
+            </Button>
+          </section>
+        ) : null}
+
         {/* Submit button (full width) */}
         <Button
           type="button"
@@ -965,7 +1069,8 @@ export function PettyCashCard() {
           loading={submitting}
           disabled={
             submitting ||
-            (mode === "expense" && visibleCategories.length === 0)
+            (mode === "expense" && visibleCategories.length === 0) ||
+            (needsApproval && approvalCode.length !== 6)
           }
           fullWidth
           className={cn(

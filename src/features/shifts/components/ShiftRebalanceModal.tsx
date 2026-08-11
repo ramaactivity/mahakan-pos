@@ -10,11 +10,15 @@ import {
 } from "lucide-react";
 import {
   Button,
+  Input,
   Modal,
   NumericInput,
   toast,
 } from "@/components/ui";
-import { requestShiftRebalance } from "@/features/shifts/rebalance-actions";
+import {
+  approveShiftRebalance,
+  requestShiftRebalance,
+} from "@/features/shifts/rebalance-actions";
 import { isOk, type Shift } from "@/features/shifts/types";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -70,10 +74,16 @@ export function ShiftRebalanceModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{
+    rebalanceId: string;
     codeFirstTwo: string;
     ownerEmailMasked: string;
     emailMode: "sent" | "logged" | "failed";
   } | null>(null);
+  /* Sesi AE-196 — kode diketik DI SINI. Sebelumnya kasir hanya bisa meminta
+   * kode dan menunggu Owner membuka Back Office. */
+  const [code, setCode] = useState("");
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
 
   if (!shift) return null;
 
@@ -85,6 +95,9 @@ export function ShiftRebalanceModal({
     setReason("");
     setError(null);
     setSuccess(null);
+    setCode("");
+    setApplying(false);
+    setApplyError(null);
   }
 
   function tryParse(s: string): number | null {
@@ -129,6 +142,7 @@ export function ShiftRebalanceModal({
       return;
     }
     setSuccess({
+      rebalanceId: res.data.rebalanceId,
       codeFirstTwo: res.data.codeFirstTwo,
       ownerEmailMasked: res.data.ownerEmailMasked,
       emailMode: res.data.emailMode,
@@ -141,6 +155,25 @@ export function ShiftRebalanceModal({
           : `Email gagal — minta Owner cek pengaturan`,
     );
     onSubmitted();
+  }
+
+  async function onApplyCode() {
+    if (!success || code.length !== 6) return;
+    setApplyError(null);
+    setApplying(true);
+    const res = await approveShiftRebalance({
+      rebalanceId: success.rebalanceId,
+      code,
+    });
+    setApplying(false);
+    if (!isOk(res)) {
+      setApplyError(res.error.message);
+      return;
+    }
+    toast.success("Koreksi shift diterapkan");
+    onSubmitted();
+    resetForm();
+    onClose();
   }
 
   // Live selisih displays (corrected - original)
@@ -226,13 +259,47 @@ export function ShiftRebalanceModal({
           {success.emailMode === "failed" ? (
             <div className="rounded-md border border-danger-300 bg-danger-100 p-3 text-xs text-danger-700">
               <strong>Email gagal kirim.</strong> Minta Owner cek Pengaturan →
-              Email Approval, atau forward kode lewat WhatsApp via Owner.
+              Email Approval. Kode juga masuk ke notifikasi HP Owner.
             </div>
           ) : null}
-          <p className="text-xs text-neutral-600">
-            Owner buka backoffice → Shifts → Rebalancing → input kode untuk
-            approve. Setelah approve, shift fields + journal akan ter-update.
-          </p>
+
+          <div className="space-y-2 rounded-lg border border-neutral-200 bg-white p-3">
+            <label
+              htmlFor="rebalance-code"
+              className="block text-sm font-medium text-neutral-800"
+            >
+              Kode 6 digit dari Owner
+            </label>
+            <Input
+              id="rebalance-code"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={6}
+              placeholder="······"
+              value={code}
+              onChange={(e) => {
+                setCode(e.target.value.replace(/\D/g, "").slice(0, 6));
+                setApplyError(null);
+              }}
+              className="h-12 text-center font-mono text-2xl tracking-[0.4em]"
+            />
+            {applyError ? (
+              <p className="text-xs font-medium text-danger-500">{applyError}</p>
+            ) : null}
+            <Button
+              onClick={onApplyCode}
+              loading={applying}
+              disabled={code.length !== 6 || applying}
+              size="lg"
+              className="!h-12 w-full"
+            >
+              Terapkan koreksi
+            </Button>
+            <p className="text-xs text-neutral-600">
+              Minta Owner menyebutkan kodenya, lalu ketik di sini. Owner juga
+              bisa menerapkannya sendiri lewat Back Office → Pusat Persetujuan.
+            </p>
+          </div>
         </div>
       ) : (
         <div className="space-y-4">

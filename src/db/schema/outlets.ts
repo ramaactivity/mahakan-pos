@@ -78,6 +78,14 @@ export type OutletSettings = {
      * Owner/Manager available can forward to staff. Empty = fallback to
      * first active Owner's user.email. */
     notifyEmails?: string[];
+    /**
+     * Sesi AE-196 — pengeluaran kas sebesar ini atau lebih wajib kode Owner.
+     *
+     * Tidak diset / 0 = MATI: kasir mencatat pengeluaran seperti biasa tanpa
+     * persetujuan (perilaku sejak awal). Owner yang menentukan angkanya,
+     * karena batas yang terlalu rendah akan menghentikan belanja harian.
+     */
+    expenseApprovalThreshold?: number;
   };
   /** HR attendance config (Sesi D + Phase 4 sesi AB). */
   attendance?: {
