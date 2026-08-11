@@ -14,10 +14,7 @@ export type ApprovalActionType =
   | "pos.transaction.correction"
   /* Sesi AE-195 — compliment (transaksi 100% gratis). Tanpa target entity:
    * kode diminta saat keranjang masih di layar, transaksi belum dibuat. */
-  | "pos.compliment"
-  /* Sesi AE-196 — pengeluaran kas di atas batas Owner. Tanpa target entity,
-   * sama seperti compliment: pengeluarannya belum tercatat saat kode diminta. */
-  | "expense.create";
+  | "pos.compliment";
 
 export interface RequestApprovalCodeInput {
   /** Untuk pos.transaction.* — transactionId. Untuk shift.rebalance —

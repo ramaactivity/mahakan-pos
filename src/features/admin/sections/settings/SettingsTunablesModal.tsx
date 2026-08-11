@@ -65,9 +65,6 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     voidMode: outlet.settings?.approval?.voidMode === "code" ? "code" : "pin",
     refundMode: outlet.settings?.approval?.refundMode === "code" ? "code" : "pin",
     notifyEmails: initialEmails,
-    expenseThreshold: String(
-      outlet.settings?.approval?.expenseApprovalThreshold ?? 0,
-    ),
   } as const;
   const [footer, setFooter] = useState(initial.footerText);
   const [showQr, setShowQr] = useState(initial.showQrRating);
@@ -99,10 +96,6 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     initial.refundMode === "code",
   );
   const [notifyEmails, setNotifyEmails] = useState<string[]>(initial.notifyEmails);
-  /* Sesi AE-196 — batas pengeluaran yang wajib kode Owner. "0" = mati. */
-  const [expenseThreshold, setExpenseThreshold] = useState(
-    initial.expenseThreshold,
-  );
   const [pendingEmail, setPendingEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,7 +119,6 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setVoidCodeMode(initial.voidMode === "code");
     setRefundCodeMode(initial.refundMode === "code");
     setNotifyEmails(initial.notifyEmails);
-    setExpenseThreshold(initial.expenseThreshold);
     setPendingEmail("");
     setError(null);
     setSubmitting(false);
@@ -327,20 +319,14 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     const emailsChanged =
       notifyEmails.length !== initial.notifyEmails.length ||
       notifyEmails.some((e, i) => e !== initial.notifyEmails[i]);
-    const wantExpenseThreshold = Math.max(
-      0,
-      Math.round(Number(expenseThreshold.replace(/[^\d]/g, "")) || 0),
-    );
     if (
       wantVoidMode !== initial.voidMode ||
       wantRefundMode !== initial.refundMode ||
-      emailsChanged ||
-      String(wantExpenseThreshold) !== initial.expenseThreshold
+      emailsChanged
     ) {
       const r4 = await updateApproval({
         voidMode: wantVoidMode,
         refundMode: wantRefundMode,
-        expenseApprovalThreshold: wantExpenseThreshold,
         // Always send the array (even empty — treats as "use Owner default").
         // Drop legacy single notifyEmail by sending empty string (server
         // ignores undefined at the merge layer).
@@ -575,29 +561,6 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
               checked={refundCodeMode}
               onChange={setRefundCodeMode}
             />
-            <div>
-              <label
-                htmlFor="expense-approval-threshold"
-                className="block text-xs font-medium text-neutral-700"
-              >
-                Pengeluaran wajib kode Owner mulai dari (Rp)
-              </label>
-              <p className="mt-0.5 text-[11px] text-neutral-500">
-                Kasir yang mencatat pengeluaran sebesar angka ini atau lebih
-                harus minta kode 6 digit ke Owner dulu. Isi <strong>0</strong>{" "}
-                untuk mematikan — kasir bebas mencatat berapa pun (perilaku
-                lama). Owner sendiri tidak pernah diminta kode.
-              </p>
-              <input
-                id="expense-approval-threshold"
-                inputMode="numeric"
-                value={expenseThreshold}
-                onChange={(ev) =>
-                  setExpenseThreshold(ev.target.value.replace(/[^\d]/g, ""))
-                }
-                className="mt-2 h-10 w-full rounded-md border border-neutral-300 px-3 text-right font-mono tabular-nums focus:border-mahakan-green-700 focus:outline-none focus:ring-2 focus:ring-mahakan-green-700/40"
-              />
-            </div>
             <div>
               <label className="block text-xs font-medium text-neutral-700">
                 Email Tujuan Approval (max 10)

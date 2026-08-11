@@ -33,7 +33,6 @@ import {
   type Income,
   type Paginated,
 } from "./types";
-import { checkExpenseApprovalGate } from "./expense-approval-gate";
 
 const isoDateSchema = z
   .string()
@@ -62,12 +61,6 @@ const createExpenseSchema = z.object({
   receiptImageUrl: z.string().url().nullable().optional(),
   /* Sesi AE-69 — optional bank account FK. */
   bankAccountId: z.uuid().nullable().optional(),
-  /* Sesi AE-196 — kode 6 digit dari Owner, wajib kalau nominalnya mencapai
-   * batas yang Owner tetapkan di Pengaturan. */
-  approvalCode: z
-    .string()
-    .regex(/^\d{6}$/, "Kode 6 digit angka")
-    .optional(),
 });
 
 const createIncomeSchema = z.object({
@@ -235,22 +228,6 @@ export async function createExpense(
       "Kategori tidak ditemukan atau bukan milik outlet kamu",
     );
   }
-
-  /* Sesi AE-196 — pengeluaran besar wajib kode Owner.
-   *
-   * MATI kalau Owner belum menetapkan batas — jangan sampai belanja harian
-   * berhenti gara-gara angka yang bukan pilihan Owner. Owner sendiri
-   * dikecualikan: dialah yang menyetujui, jadi menyuruhnya mengetik kode dari
-   * emailnya sendiri tidak menambah kontrol apa pun (pola yang sama dengan
-   * compliment dan direct-approve di Pusat Persetujuan). */
-  const gate = await checkExpenseApprovalGate({
-    outletId: session.user.outletId,
-    userId: session.user.id,
-    role: session.user.role,
-    amount: v.amount,
-    code: v.approvalCode ?? null,
-  });
-  if (!gate.ok) return fail(gate.code, gate.message);
 
   const [row] = await db
     .insert(expenses)

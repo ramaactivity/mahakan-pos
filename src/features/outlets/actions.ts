@@ -335,13 +335,6 @@ const approvalSchema = z.object({
     )
     .max(10, "Maksimal 10 email tujuan")
     .optional(),
-  /* Sesi AE-196 — 0 (atau tidak diisi) = fitur mati. */
-  expenseApprovalThreshold: z
-    .number()
-    .int()
-    .min(0)
-    .max(999_999_999)
-    .optional(),
 });
 
 async function updateSettingsSection(

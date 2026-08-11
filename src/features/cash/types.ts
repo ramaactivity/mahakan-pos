@@ -49,9 +49,6 @@ export interface CreateExpenseInput {
   /** Sesi AE-69 — optional bank account FK (untuk transfer/other). NULL
    * = fallback ke hardcoded mapping (transfer→1110, other→1112). */
   bankAccountId?: string | null;
-  /** Sesi AE-196 — kode 6 digit Owner, wajib kalau nominalnya mencapai
-   * batas yang Owner tetapkan. */
-  approvalCode?: string;
 }
 
 export interface CreateIncomeInput {
