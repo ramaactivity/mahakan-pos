@@ -72,7 +72,11 @@ async function fetchOpnameSnapshotByPredicate(
       ls.started_at,
       ls.period_label,
       l.ingredient_id,
-      l.actual_qty,
+      /* Sesi AE-196 — mirror desimal adalah kebenaran; kolom bigint hanya
+       * snapshot yang sudah dibulatkan + di-clamp ke 0 (invariant AE-62e).
+       * Membaca bigint membuat hitungan 0,293 gr tampil 0 dan 1,381 tampil 1
+       * di kolom Stok Awal/Akhir, lalu pemakaiannya ikut salah. */
+      COALESCE(l.actual_qty_decimal, l.actual_qty::numeric) AS actual_qty,
       l.unit_cost_at_snapshot
     FROM latest_session ls
     LEFT JOIN stock_opname_lines l ON l.session_id = ls.id
