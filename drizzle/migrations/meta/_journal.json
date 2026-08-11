@@ -617,6 +617,13 @@
       "when": 1786206475787,
       "tag": "0087_moaning_ares",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1786420802068,
+      "tag": "0088_smooth_iron_monger",
+      "breakpoints": true
     }
   ]
 }

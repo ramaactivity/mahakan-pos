@@ -1,0 +1,1 @@
+ALTER TABLE "approval_codes" ADD COLUMN "approved_amount" bigint;

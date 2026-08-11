@@ -5,6 +5,7 @@ import {
   text,
   timestamp,
   integer,
+  bigint,
   index,
   check,
 } from "drizzle-orm/pg-core";
@@ -119,6 +120,17 @@ export const approvalCodes = pgTable(
     usedForTransactionId: uuid("used_for_transaction_id").references(
       () => transactions.id,
     ),
+
+    /**
+     * Sesi AE-196 — nilai keranjang yang disetujui owner (rupiah).
+     *
+     * Khusus `pos.compliment`: kode diminta saat transaksinya belum ada, jadi
+     * satu-satunya cara mengikat kode ke besaran yang benar-benar disetujui
+     * adalah menyimpan subtotal saat permintaan dikirim. Tanpa ini kode yang
+     * disetujui untuk keranjang Rp 20rb bisa dipakai menggratiskan Rp 2 juta.
+     * NULL = kode lama (sebelum AE-196) atau action type lain → tidak dicek.
+     */
+    approvedAmount: bigint("approved_amount", { mode: "number" }),
 
     /** Owner can revoke a code before consumption. */
     revokedAt: timestamp("revoked_at", { withTimezone: true }),

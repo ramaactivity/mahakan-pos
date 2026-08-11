@@ -51,6 +51,7 @@ import {
   type IngredientPackConversion,
   type OpnameUnitContext,
 } from "@/lib/unit-conversion";
+import { countInputWarning } from "@/features/stock-opname/count-input-warning";
 
 interface OpnameCountViewProps {
   detail: OpnameSessionDetail;
@@ -1054,6 +1055,14 @@ function CountRow({
     });
   }
 
+  /* Sesi AE-196 — cegat ketikan yang salah skala (titik ribuan / angka
+   * kilogram di kolom gram) selagi staff masih memegang barangnya. */
+  const scaleWarning = countInputWarning({
+    raw: state.primaryInput,
+    totalQty: totalPreview,
+    recipeUnit: displayUnit(ctx.recipeUnit),
+  });
+
   /* Sesi AE-148 — Polish: info chips dengan warna + icon untuk hierarchy
    * visual yang lebih jelas. Resep = neutral, Belanja = green pill, Pack
    * alt = blue pill. */
@@ -1328,6 +1337,18 @@ function CountRow({
             </span>
             <span className="w-5 flex-none" aria-hidden />
           </div>
+        ) : null}
+
+        {/* Sesi AE-196 — peringatan skala. Tidak memblokir: staff yang yakin
+            tetap bisa menyimpan, tapi angka aneh tidak lagi lolos diam-diam. */}
+        {scaleWarning ? (
+          <p
+            role="alert"
+            className="flex items-start gap-1.5 rounded-md border border-warning-500/40 bg-warning-100/60 px-2 py-1.5 text-[11px] leading-snug text-warning-500"
+          >
+            <AlertCircle className="mt-px size-3.5 flex-none" />
+            <span>{scaleWarning}</span>
+          </p>
         ) : null}
 
         {/* Total preview — kalau split input atau unit beda dari recipe. */}

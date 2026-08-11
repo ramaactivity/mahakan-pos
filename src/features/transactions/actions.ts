@@ -15,6 +15,7 @@ import {
   transactionItems,
   transactions,
 } from "@/db/schema";
+import { checkComplimentApproval } from "@/features/approval-codes/compliment-guard";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { consumeApproverToken } from "@/lib/auth/approver";
@@ -552,6 +553,7 @@ export async function createTransaction(
         outletId: approvalCodes.outletId,
         consumedByUserId: approvalCodes.consumedByUserId,
         usedForTransactionId: approvalCodes.usedForTransactionId,
+        approvedAmount: approvalCodes.approvedAmount,
       })
       .from(approvalCodes)
       .where(
@@ -562,27 +564,15 @@ export async function createTransaction(
       )
       .limit(1);
 
-    if (
-      !row ||
-      row.outletId !== session.user.outletId ||
-      row.consumedByUserId !== session.user.id ||
-      row.usedForTransactionId !== null
-    ) {
-      return fail(
-        "COMPLIMENT_APPROVAL_INVALID",
-        "Kode approval compliment tidak sah atau sudah terpakai. Minta kode baru.",
-      );
-    }
-    complimentCodeRow = { id: row.id, reason: row.reason };
-
-    /* Alasan yang dipakai HARUS yang disetujui owner. Tanpa ini, kasir bisa
-     * minta approval "tamu owner" lalu memakai kodenya untuk alasan lain. */
-    if (complimentCodeRow.reason !== v.discountReason) {
-      return fail(
-        "COMPLIMENT_REASON_MISMATCH",
-        "Alasan compliment berbeda dengan yang disetujui Owner. Minta kode baru.",
-      );
-    }
+    const verdict = checkComplimentApproval({
+      row: row ?? null,
+      outletId: session.user.outletId,
+      userId: session.user.id,
+      discountReason: v.discountReason ?? "",
+      subtotal: v.subtotal,
+    });
+    if (!verdict.ok) return fail(verdict.code, verdict.message);
+    complimentCodeRow = { id: row!.id, reason: row!.reason };
   }
 
   // Menu existence check
@@ -2326,6 +2316,7 @@ export async function editOpenBill(
         outletId: approvalCodes.outletId,
         consumedByUserId: approvalCodes.consumedByUserId,
         usedForTransactionId: approvalCodes.usedForTransactionId,
+        approvedAmount: approvalCodes.approvedAmount,
       })
       .from(approvalCodes)
       .where(
@@ -2335,27 +2326,17 @@ export async function editOpenBill(
         ),
       )
       .limit(1);
-    const alreadyLinkedElsewhere =
-      row?.usedForTransactionId !== null &&
-      row?.usedForTransactionId !== v.transactionId;
-    if (
-      !row ||
-      row.outletId !== session.user.outletId ||
-      row.consumedByUserId !== session.user.id ||
-      alreadyLinkedElsewhere
-    ) {
-      return fail(
-        "COMPLIMENT_APPROVAL_INVALID",
-        "Kode approval compliment tidak sah atau sudah terpakai. Minta kode baru.",
-      );
-    }
-    if (row.reason !== v.discountReason) {
-      return fail(
-        "COMPLIMENT_REASON_MISMATCH",
-        "Alasan compliment berbeda dengan yang disetujui Owner. Minta kode baru.",
-      );
-    }
-    editComplimentCodeId = row.id;
+    const verdict = checkComplimentApproval({
+      row: row ?? null,
+      outletId: session.user.outletId,
+      userId: session.user.id,
+      discountReason: v.discountReason ?? "",
+      subtotal: v.subtotal,
+      /* Bill yang sama boleh diedit berkali-kali dengan kode yang sama. */
+      allowLinkedTransactionId: v.transactionId,
+    });
+    if (!verdict.ok) return fail(verdict.code, verdict.message);
+    editComplimentCodeId = row!.id;
   }
 
   // Sesi AE-62k — defer approver token consumption sampai sebelum tx.
@@ -2855,6 +2836,11 @@ export async function saveAsOpenBill(
     cashReceived: input.total,
     cashChange: 0,
     discountApproverToken: input.discountApproverToken,
+    /* Sesi AE-196 — kode approval compliment WAJIB ikut diteruskan. Tanpa
+     * baris ini kasir yang menyimpan compliment sebagai open bill selalu
+     * ditolak COMPLIMENT_APPROVAL_REQUIRED, padahal Owner sudah mengirim
+     * kodenya — dan kodenya terlanjur hangus karena sudah dipakai di layar. */
+    complimentApprovalCodeId: input.complimentApprovalCodeId,
     promoId: input.promoId ?? null,
   };
   // Skip earn here — bill not yet paid. closeOpenBill fires earn when the

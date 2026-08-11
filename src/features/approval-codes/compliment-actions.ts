@@ -40,6 +40,8 @@ import {
 const BCRYPT_COST = 10;
 const REASON_MIN = 3;
 const REASON_MAX = 200;
+/* Sesi AE-196 — jeda minimum antar permintaan kode compliment per kasir. */
+const RESEND_COOLDOWN_MS = 45_000;
 
 async function requireSession() {
   const session = await auth();
@@ -79,6 +81,32 @@ export async function requestComplimentApprovalCode(
   const subtotal = Number(input.subtotal);
   if (!Number.isFinite(subtotal) || subtotal <= 0) {
     return fail("INVALID_SUBTOTAL", "Keranjang masih kosong");
+  }
+
+  /* Sesi AE-196 — rem tombol "Kirim ulang kode". Tanpa ini satu ketukan
+   * berulang membanjiri email + HP owner, dan tiap permintaan mencabut kode
+   * sebelumnya sehingga kode yang sedang dibaca owner keburu mati. */
+  const [recent] = await db
+    .select({ createdAt: approvalCodes.createdAt })
+    .from(approvalCodes)
+    .where(
+      and(
+        eq(approvalCodes.outletId, session.user.outletId),
+        eq(approvalCodes.actionType, "pos.compliment"),
+        eq(approvalCodes.requestedByUserId, session.user.id),
+      ),
+    )
+    .orderBy(desc(approvalCodes.createdAt))
+    .limit(1);
+  if (recent) {
+    const elapsedMs = Date.now() - recent.createdAt.getTime();
+    if (elapsedMs < RESEND_COOLDOWN_MS) {
+      const waitSec = Math.ceil((RESEND_COOLDOWN_MS - elapsedMs) / 1000);
+      return fail(
+        "TOO_SOON",
+        `Kode baru saja dikirim. Tunggu ${waitSec} detik lagi sebelum minta kode baru.`,
+      );
+    }
   }
 
   const recipients = await resolveOwnerEmailRecipients(session.user.outletId);
@@ -124,6 +152,9 @@ export async function requestComplimentApprovalCode(
           requestedByUserId: session.user.id,
           reason,
           expiresAt,
+          /* Sesi AE-196 — owner menyetujui SEBESAR ini. Dicek ulang saat
+           * bayar supaya kode tidak bisa dipindah ke keranjang lebih besar. */
+          approvedAmount: Math.round(subtotal),
         })
         .returning();
       return row;
