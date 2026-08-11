@@ -38,6 +38,8 @@ import {
 } from "@/features/approval-codes/types";
 import { resolveOwnerEmailRecipients } from "@/features/approval-codes/recipients";
 import { fail, ok, type ApiResult } from "./types";
+import { approvalResendWaitSeconds } from "@/features/approval-codes/resend-cooldown-db";
+import { resendCooldownMessage } from "@/features/approval-codes/resend-cooldown";
 
 const BCRYPT_COST = 10;
 // PEC wrapper TTL — kasih buffer 24 jam supaya PEC row tidak expire sebelum
@@ -244,6 +246,17 @@ export async function proposeEntryChange(input: ProposeEntryChangeInput): Promis
   }
 
   // 5. Create row + approval code (transactional)
+  /* Sesi AE-196 — rem "kirim ulang kode". Di sini rem ikut mencegah
+   * usulan perubahan kembar: tiap permintaan membuat baris pending baru. */
+  const waitSec = await approvalResendWaitSeconds(
+    "entry_change",
+    and(
+      eq(approvalCodes.outletId, session.user.outletId),
+      eq(approvalCodes.requestedByUserId, session.user.id),
+    ),
+  );
+  if (waitSec > 0) return fail("TOO_SOON", resendCooldownMessage(waitSec));
+
   const code = generateNumericCode6();
   const codeHash = await bcrypt.hash(code, BCRYPT_COST);
   const codeFirstTwo = code.slice(0, 2);
@@ -468,7 +481,22 @@ export async function approveEntryChange(input: {
   code: string;
 }): Promise<ApiResult<{ changeId: string; appliedAt: Date }>> {
   const session = await requireSession();
-  if (!hasPermission(session.user.role, "entry_change.approve")) {
+  /* Sesi AE-196 — pemegang kode boleh menerapkannya, termasuk kasir yang
+   * mengajukan koreksinya sendiri.
+   *
+   * Ini BUKAN self-approve: kodenya dibuat di server, disimpan sebagai hash,
+   * dan hanya dikirim ke email/HP Owner — kasir tidak punya cara mendapatkannya
+   * selain Owner menyebutkannya. Persis model yang sudah dipakai void/refund
+   * dan compliment, di mana kasir memang mengetik sendiri kode dari Owner.
+   *
+   * Sebelum ini kasir buntu: ada tombol minta kode, tapi tidak ada satu pun
+   * layar di POS untuk mengetiknya — koreksi kas hanya bisa diterapkan dari
+   * Back Office yang tidak bisa dibuka role staff.
+   *
+   * Yang tetap dijaga: yang bukan approver hanya boleh menerapkan koreksi
+   * YANG DIA AJUKAN SENDIRI (dicek setelah baris koreksinya dimuat). */
+  const isApprover = hasPermission(session.user.role, "entry_change.approve");
+  if (!isApprover && !hasPermission(session.user.role, "entry_change.propose")) {
     return fail(
       "FORBIDDEN",
       "Tidak punya akses apply kode approval. Hubungi Owner.",
@@ -489,6 +517,15 @@ export async function approveEntryChange(input: {
   if (!pec) return fail("NOT_FOUND", "Koreksi entry tidak ditemukan");
   if (pec.outletId !== session.user.outletId) {
     return fail("FORBIDDEN", "Koreksi dari outlet lain");
+  }
+  /* Sesi AE-196 — non-approver hanya boleh menerapkan koreksi ajuannya
+   * sendiri, supaya kode yang terlanjur terbaca orang lain tidak bisa dipakai
+   * menerapkan koreksi milik kasir lain. */
+  if (!isApprover && pec.requestedBy !== session.user.id) {
+    return fail(
+      "FORBIDDEN",
+      "Kode ini untuk koreksi yang diajukan orang lain. Minta Owner yang menerapkannya.",
+    );
   }
   if (pec.status !== "pending_approval") {
     return fail("INVALID_STATE", `Koreksi sudah ${pec.status} — tidak bisa approve lagi.`);

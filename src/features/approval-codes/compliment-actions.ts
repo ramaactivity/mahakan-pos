@@ -26,6 +26,8 @@ import { sendEmail } from "@/lib/email/send";
 import { buildApprovalCodeEmail } from "@/lib/email/templates/approval-code";
 import { sendPushToOutletVerifiers } from "@/features/push-notifications/server";
 import { resolveOwnerEmailRecipients } from "./recipients";
+import { approvalResendWaitSeconds } from "./resend-cooldown-db";
+import { resendCooldownMessage } from "./resend-cooldown";
 import {
   fail,
   ok,
@@ -40,8 +42,6 @@ import {
 const BCRYPT_COST = 10;
 const REASON_MIN = 3;
 const REASON_MAX = 200;
-/* Sesi AE-196 — jeda minimum antar permintaan kode compliment per kasir. */
-const RESEND_COOLDOWN_MS = 45_000;
 
 async function requireSession() {
   const session = await auth();
@@ -86,28 +86,14 @@ export async function requestComplimentApprovalCode(
   /* Sesi AE-196 — rem tombol "Kirim ulang kode". Tanpa ini satu ketukan
    * berulang membanjiri email + HP owner, dan tiap permintaan mencabut kode
    * sebelumnya sehingga kode yang sedang dibaca owner keburu mati. */
-  const [recent] = await db
-    .select({ createdAt: approvalCodes.createdAt })
-    .from(approvalCodes)
-    .where(
-      and(
-        eq(approvalCodes.outletId, session.user.outletId),
-        eq(approvalCodes.actionType, "pos.compliment"),
-        eq(approvalCodes.requestedByUserId, session.user.id),
-      ),
-    )
-    .orderBy(desc(approvalCodes.createdAt))
-    .limit(1);
-  if (recent) {
-    const elapsedMs = Date.now() - recent.createdAt.getTime();
-    if (elapsedMs < RESEND_COOLDOWN_MS) {
-      const waitSec = Math.ceil((RESEND_COOLDOWN_MS - elapsedMs) / 1000);
-      return fail(
-        "TOO_SOON",
-        `Kode baru saja dikirim. Tunggu ${waitSec} detik lagi sebelum minta kode baru.`,
-      );
-    }
-  }
+  const waitSec = await approvalResendWaitSeconds(
+    "pos.compliment",
+    and(
+      eq(approvalCodes.outletId, session.user.outletId),
+      eq(approvalCodes.requestedByUserId, session.user.id),
+    ),
+  );
+  if (waitSec > 0) return fail("TOO_SOON", resendCooldownMessage(waitSec));
 
   const recipients = await resolveOwnerEmailRecipients(session.user.outletId);
   if (!recipients || recipients.emails.length === 0) {

@@ -39,6 +39,8 @@ import {
 import { computeShiftCashSummary, computeExpectedCash } from "./close-pure";
 import { transactions, expenses, incomes } from "@/db/schema";
 import { toJakartaDateOnly } from "@/lib/date";
+import { approvalResendWaitSeconds } from "@/features/approval-codes/resend-cooldown-db";
+import { resendCooldownMessage } from "@/features/approval-codes/resend-cooldown";
 
 const BCRYPT_COST = 10;
 
@@ -290,6 +292,17 @@ export async function requestShiftRebalance(input: {
   }
 
   // 4. Create rebalance row + approval code (transactional)
+  /* Sesi AE-196 — rem "kirim ulang kode". Ikut mencegah usulan rebalance
+   * kembar: tiap permintaan membuat baris shift_rebalances baru. */
+  const waitSec = await approvalResendWaitSeconds(
+    "shift.rebalance",
+    and(
+      eq(approvalCodes.outletId, shift.outletId),
+      eq(approvalCodes.requestedByUserId, session.user.id),
+    ),
+  );
+  if (waitSec > 0) return fail("TOO_SOON", resendCooldownMessage(waitSec));
+
   const code = generateNumericCode6();
   const codeHash = await bcrypt.hash(code, BCRYPT_COST);
   const codeFirstTwo = code.slice(0, 2);

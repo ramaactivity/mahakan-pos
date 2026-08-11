@@ -11,6 +11,7 @@ import {
   toast,
 } from "@/components/ui";
 import {
+  approveEntryChange,
   isOk,
   listExpenseCategories,
   proposeEntryChange,
@@ -71,10 +72,18 @@ export function ProposeEntryChangeModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{
+    changeId: string;
     codeFirstTwo: string;
     ownerEmailMasked: string;
     emailMode: "sent" | "logged" | "failed";
   } | null>(null);
+  /* Sesi AE-196 — kode diketik DI SINI. Sebelumnya layar ini cuma bisa
+   * meminta kode; kasir yang sudah dibacakan kodenya oleh Owner tidak punya
+   * tempat memasukkannya, jadi koreksi kas mentok kecuali Owner sendiri yang
+   * membuka Back Office. */
+  const [code, setCode] = useState("");
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
 
   // Edit form fields (pre-filled from entity)
   const [dateValue, setDateValue] = useState("");
@@ -124,6 +133,9 @@ export function ProposeEntryChangeModal({
     setError(null);
     setSuccess(null);
     setSubmitting(false);
+    setCode("");
+    setApplying(false);
+    setApplyError(null);
   }
 
   if (!entity) return null;
@@ -234,6 +246,7 @@ export function ProposeEntryChangeModal({
       return;
     }
     setSuccess({
+      changeId: res.data.changeId,
       codeFirstTwo: res.data.codeFirstTwo,
       ownerEmailMasked: res.data.ownerEmailMasked,
       emailMode: res.data.emailMode,
@@ -246,6 +259,27 @@ export function ProposeEntryChangeModal({
           : "Email gagal — Owner perlu cek pengaturan",
     );
     onSubmitted();
+  }
+
+  async function onApplyCode() {
+    if (!success || code.length !== 6) return;
+    setApplyError(null);
+    setApplying(true);
+    const res = await approveEntryChange({
+      changeId: success.changeId,
+      code,
+    });
+    setApplying(false);
+    if (!isOk(res)) {
+      setApplyError(res.error.message);
+      return;
+    }
+    toast.success(
+      mode === "edit" ? "Koreksi diterapkan" : "Entry dihapus",
+    );
+    onSubmitted();
+    resetAll();
+    onClose();
   }
 
   const operationLabel = mode === "edit" ? "Edit" : "Hapus";
@@ -316,13 +350,47 @@ export function ProposeEntryChangeModal({
           {success.emailMode === "failed" ? (
             <div className="rounded-md border border-danger-300 bg-danger-100 p-3 text-xs text-danger-700">
               <strong>Email gagal kirim.</strong> Minta Owner cek Pengaturan →
-              Email Approval, atau forward kode lewat WhatsApp.
+              Email Approval. Kode juga masuk ke notifikasi HP Owner.
             </div>
           ) : null}
-          <p className="text-xs text-neutral-600">
-            Owner buka backoffice → Shifts → Pending Approvals → input kode
-            untuk approve. Setelah approve, entry akan ter-update.
-          </p>
+
+          <div className="space-y-2 rounded-lg border border-neutral-200 bg-white p-3">
+            <label
+              htmlFor="entry-change-code"
+              className="block text-sm font-medium text-neutral-800"
+            >
+              Kode 6 digit dari Owner
+            </label>
+            <Input
+              id="entry-change-code"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={6}
+              placeholder="······"
+              value={code}
+              onChange={(e) => {
+                setCode(e.target.value.replace(/\D/g, "").slice(0, 6));
+                setApplyError(null);
+              }}
+              className="h-12 text-center font-mono text-2xl tracking-[0.4em]"
+            />
+            {applyError ? (
+              <p className="text-xs font-medium text-danger-500">{applyError}</p>
+            ) : null}
+            <Button
+              onClick={onApplyCode}
+              loading={applying}
+              disabled={code.length !== 6 || applying}
+              size="lg"
+              className="!h-12 w-full"
+            >
+              Terapkan koreksi
+            </Button>
+            <p className="text-xs text-neutral-600">
+              Minta Owner menyebutkan kodenya, lalu ketik di sini. Owner juga
+              bisa menerapkannya sendiri lewat Back Office → Pusat Persetujuan.
+            </p>
+          </div>
         </div>
       ) : (
         <div className="space-y-4">

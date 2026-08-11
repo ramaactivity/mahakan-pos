@@ -41,6 +41,8 @@ import {
   type CorrectionWindowSource,
 } from "./correction-window";
 import { fail, ok, type ApiResult } from "./types";
+import { approvalResendWaitSeconds } from "@/features/approval-codes/resend-cooldown-db";
+import { resendCooldownMessage } from "@/features/approval-codes/resend-cooldown";
 
 const BCRYPT_COST = 10;
 
@@ -400,6 +402,17 @@ export async function requestTransactionCorrection(input: {
   }
 
   // 9. Create correction row + approval code (atomic)
+  /* Sesi AE-196 — rem "kirim ulang kode". Ikut mencegah usulan koreksi
+   * kembar: tiap permintaan membuat baris transaction_corrections baru. */
+  const waitSec = await approvalResendWaitSeconds(
+    "pos.transaction.correction",
+    and(
+      eq(approvalCodes.outletId, trx.outletId),
+      eq(approvalCodes.requestedByUserId, session.user.id),
+    ),
+  );
+  if (waitSec > 0) return fail("TOO_SOON", resendCooldownMessage(waitSec));
+
   const code = generateNumericCode6();
   const codeHash = await bcrypt.hash(code, BCRYPT_COST);
   const codeFirstTwo = code.slice(0, 2);

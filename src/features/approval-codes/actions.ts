@@ -22,6 +22,8 @@ import {
   generateNumericCode6,
   maskEmail,
 } from "./types";
+import { approvalResendWaitSeconds } from "@/features/approval-codes/resend-cooldown-db";
+import { resendCooldownMessage } from "@/features/approval-codes/resend-cooldown";
 
 const BCRYPT_COST = 10;
 
@@ -164,6 +166,13 @@ export async function requestApprovalCode(
   /* Sesi AE-160c — Atomic revoke + insert dalam 1 tx supaya tidak ada
    * window di mana 2 request paralel jadi 2 kode aktif untuk trx yang sama.
    * Sebelumnya revoke + insert dilakukan terpisah → race condition. */
+  /* Sesi AE-196 — rem "kirim ulang kode" (lihat resend-cooldown.ts). */
+  const waitSec = await approvalResendWaitSeconds(
+    input.actionType,
+    eq(approvalCodes.targetTransactionId, transactionId),
+  );
+  if (waitSec > 0) return fail("TOO_SOON", resendCooldownMessage(waitSec));
+
   const code = generateNumericCode6();
   const codeHash = await bcrypt.hash(code, BCRYPT_COST);
   const codeFirstTwo = code.slice(0, 2);
