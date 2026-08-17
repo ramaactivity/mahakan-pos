@@ -240,6 +240,16 @@ export interface HppReport {
    * menampilkan "—", bukan Rp 0.
    */
   stockAkhirUnknown: boolean;
+  /**
+   * Sesi AE-207 — periode ini ada SEBELUM batas buku (`booksCutoff`).
+   *
+   * Angka laporan sengaja TIDAK di-floor: rumus `awal + beli − akhir` memakai
+   * stok dari opname, yang tidak bisa di-floor di tanggal yang sama. Kalau cuma
+   * sisi pembelian yang di-floor, pemakaian jadi MELAMBUNG (failure mode
+   * AE-202/AE-194). Jadi angkanya benar secara internal, tapi TIDAK nyambung
+   * dengan Neraca & Laba Rugi yang berlaku → UI wajib memberi peringatan.
+   */
+  beforeCutoff: boolean;
   /** Opname references actually used for stockAwal / stockAkhir. */
   opnameRefs: {
     stockAwalSessionId: string | null;

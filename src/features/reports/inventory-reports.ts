@@ -3,6 +3,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ingredients } from "@/db/schema";
 import { getStockMode } from "@/features/inventory/flag";
+import { getCutoffDate } from "@/features/cutoff/cutoff";
 import {
   fetchPurchaseRollup,
   fetchPurchasesByIngredient,
@@ -175,6 +176,7 @@ export async function fetchHppReport(
   dateFrom: string,
   dateTo: string,
 ): Promise<HppReport> {
+  const cutoff = await getCutoffDate(outletId);
   const [stockMode, activeIngredients, stockAwal, stockAkhir, purchasesByIng] =
     await Promise.all([
       getStockMode(outletId),
@@ -337,6 +339,12 @@ export async function fetchHppReport(
     },
     bySection,
     hasPartialRows,
+    /* Sesi AE-207 — periode ini ada sebelum batas buku. Angkanya SENGAJA
+     * dihitung dari data asli (bukan di-floor) supaya rumus
+     * `awal + beli − akhir` tetap benar; yang di-floor cuma sebagian akan
+     * membuat pemakaian melambung. Tapi owner wajib diberi tahu bahwa
+     * angka ini tidak nyambung dengan Neraca/Laba Rugi yang berlaku. */
+    beforeCutoff: cutoff !== null && dateFrom < cutoff,
     stockAkhirUnknown: stockAkhir === null && periodicMode,
     opnameRefs: {
       stockAwalSessionId: stockAwal?.sessionId ?? null,

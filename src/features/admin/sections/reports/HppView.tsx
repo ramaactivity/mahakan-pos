@@ -209,6 +209,26 @@ export function HppView() {
             </p>
           ) : (
             <>
+              {/* AE-207 — periode sebelum batas buku. Angkanya benar secara
+                  internal (dihitung dari data asli yang masih utuh), tapi tidak
+                  nyambung dengan Neraca & Laba Rugi yang berlaku sekarang. */}
+              {report.beforeCutoff ? (
+                <div className="flex items-start gap-2 rounded-md border border-warning-500/40 bg-warning-100/30 p-3 text-xs text-warning-500">
+                  <AlertTriangle className="mt-0.5 size-4" aria-hidden />
+                  <div>
+                    <p className="font-medium">
+                      Periode ini sebelum Batas Buku
+                    </p>
+                    <p className="text-neutral-700">
+                      Angka di bawah dihitung dari data lama yang sudah
+                      disembunyikan dari halaman lain, jadi TIDAK nyambung
+                      dengan Neraca &amp; Laba Rugi yang berlaku sekarang.
+                      Pakai hanya untuk menelusuri riwayat.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
               {/* AE-202 — mode periodic + belum opname di periode: stok akhir
                   (dan HPP) belum bisa dihitung. Ditampilkan "—", bukan Rp 0. */}
               {report.stockAkhirUnknown ? (

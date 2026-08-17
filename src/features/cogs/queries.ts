@@ -24,6 +24,7 @@ import {
   purchases,
 } from "@/db/schema";
 import { getStockMode } from "@/features/inventory/flag";
+import { getCutoffDate } from "@/features/cutoff/cutoff";
 import {
   fetchLatestOpnameBefore,
   fetchLatestOpnameWithin,
@@ -96,6 +97,23 @@ export async function getCogsReport(args: {
 }): Promise<CogsReport> {
   const period = parseMonthlyPeriod(args.ym);
   const banners: string[] = [];
+
+  /* Sesi AE-207 — laporan HPP untuk periode SEBELUM batas buku sengaja TIDAK
+   * di-klem sebagian, tapi diberi peringatan jujur.
+   *
+   * Kenapa bukan di-floor saja: pembelian periode lama akan jadi 0 sementara
+   * stok awal & stok akhir tetap terbaca dari opname → rumus
+   * `awal + beli − akhir` menghasilkan PEMAKAIAN MELAMBUNG. Angka salah lebih
+   * berbahaya daripada laporan kosong (ini failure mode AE-202/AE-194).
+   * Jadi laporan tetap dihitung dari data asli yang masih utuh di database,
+   * dan owner diberi tahu bahwa periode ini di luar buku yang berlaku. */
+  const cutoff = await getCutoffDate(args.outletId);
+  if (cutoff && period.fromDate < cutoff) {
+    banners.push(
+      `Periode ${period.label} ada SEBELUM batas buku (${cutoff}). Angka di bawah dihitung dari data lama yang sudah disembunyikan dari halaman lain, jadi tidak nyambung dengan Neraca & Laba Rugi yang berlaku sekarang. Pakai hanya untuk penelusuran riwayat.`,
+    );
+  }
+
   const stockMode = await getStockMode(args.outletId);
   /** Mode periodic penuh: `current_stock` hanya bergerak lewat opname. */
   const periodicMode = !stockMode.deductOnSale && !stockMode.addOnPurchase;

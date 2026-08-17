@@ -306,13 +306,18 @@ export async function fetchPurchasesByIngredient(
       and(
         eq(purchases.outletId, outletId),
         sql`${purchases.status} != 'cancelled'`,
-        /* Sesi AE-207 — laporan HPP & layar Opname ikut batas buku, supaya
-         * "pembelian" periode baru tidak ketarik nota lama yang sudah
-         * disembunyikan (kalau ketarik, pemakaian jadi minus — bug AE-194). */
-        gte(
-          purchases.purchaseDate,
-          clampFromDate(dateFrom, await getCutoffDate(outletId)) as string,
-        ),
+        /* ⚠️ Sesi AE-207 — SENGAJA TIDAK ikut batas buku. Fungsi ini dipakai
+         * laporan HPP dan layar Opname, yang rumusnya `awal + beli − akhir`
+         * dengan stok awal/akhir dari OPNAME — dan opname tidak bisa di-floor
+         * di tanggal yang sama (sesi stok-awal wajib tetap terbaca).
+         *
+         * Kalau cuma sisi PEMBELIAN yang di-floor, jendela periode lama dapat
+         * stok awal & akhir yang benar tapi pembelian 0 → pemakaian MELAMBUNG.
+         * Angka salah lebih berbahaya daripada laporan kosong (failure mode
+         * AE-202/AE-194). Jadi laporan tetap dihitung dari data asli yang
+         * masih utuh, dan periode di luar batas buku DIBERI PERINGATAN di
+         * pemanggilnya (lihat banner di cogs/queries.ts getCogsReport). */
+        gte(purchases.purchaseDate, dateFrom),
         lte(purchases.purchaseDate, dateTo),
       ),
     );
