@@ -32,6 +32,8 @@ export const companyBuybackSchema = z.object({
   bankAccountId: z.string().uuid(),
   description: z.string().trim().max(500).nullish(),
   occurredAt: isoDateOptional,
+  /** Sesi AE-208 — bukti transfer (URL Drive). Disaring lagi server-side. */
+  receiptImageUrl: z.string().trim().max(2000).nullish(),
 });
 
 export const reverseShareTransactionSchema = z.object({

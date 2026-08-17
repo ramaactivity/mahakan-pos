@@ -18,6 +18,7 @@ import {
   lockOutletDividenAdvisory,
 } from "@/lib/db/locking";
 import { recordJournal } from "@/features/accounting/posting";
+import { normalizeReceiptUrl } from "@/features/accounting/receipt-url";
 import { resolveBankCodeFromBankName } from "@/features/accounting/mapping/dividendWithdrawal";
 import {
   mapShareBuyback,
@@ -362,6 +363,10 @@ export async function companyBuyback(
   const occurredAt = v.occurredAt ? new Date(v.occurredAt) : new Date();
   const entryDate = jakartaDateOf(occurredAt);
   const deltaStr = v.sharePctDelta.toFixed(4);
+  /* Sesi AE-208 — bukti transfer disaring: hanya http/https yang boleh masuk
+   * DB, karena nanti dirender jadi tautan yang bisa diklik di Riwayat Mutasi
+   * Saham + halaman Jurnal. */
+  const receiptImageUrl = normalizeReceiptUrl(v.receiptImageUrl);
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -394,6 +399,7 @@ export async function companyBuyback(
           bankAccountId: v.bankAccountId,
           occurredAt,
           description: v.description ?? null,
+          receiptImageUrl,
           status: "posted",
           createdBy: session.user.id,
         })
@@ -416,6 +422,9 @@ export async function companyBuyback(
         lines,
         status: "posted",
         actorId: session.user.id,
+        /* Bukti transfer ikut nempel di jurnalnya, jadi bisa dibuka lewat
+         * tombol "Lihat bukti" di halaman Jurnal juga (sesi AE-206). */
+        receiptImageUrl,
         metadata: {
           shareTransactionId: stRow.id,
           fromInvestorId: v.fromInvestorId,

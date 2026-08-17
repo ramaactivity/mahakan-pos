@@ -1,0 +1,1 @@
+ALTER TABLE "share_transactions" ADD COLUMN "receipt_image_url" text;

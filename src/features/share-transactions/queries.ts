@@ -87,6 +87,7 @@ export async function listShareTransactions(opts: {
         bankLabel,
         occurredAt: row.st.occurredAt,
         description: row.st.description,
+        receiptImageUrl: row.st.receiptImageUrl,
         status: row.st.status,
         journalEntryId: row.st.journalEntryId,
         reversedAt: row.st.reversedAt,

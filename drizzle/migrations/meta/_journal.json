@@ -652,6 +652,13 @@
       "when": 1786978821655,
       "tag": "0092_steep_joseph",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1786980523218,
+      "tag": "0093_natural_franklin_richards",
+      "breakpoints": true
     }
   ]
 }

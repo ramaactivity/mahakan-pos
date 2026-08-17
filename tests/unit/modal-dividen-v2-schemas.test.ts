@@ -243,4 +243,32 @@ describe("Share transaction schema validation", () => {
       }).success,
     ).toBe(false);
   });
+
+  /* Sesi AE-208 — bukti transfer buyback: opsional, dan URL-nya masih
+   * disaring `normalizeReceiptUrl` di server (schema cuma batasi panjang). */
+  it("buyback: receiptImageUrl opsional & diterima", () => {
+    const base = {
+      fromInvestorId: UUID_1,
+      sharePctDelta: 5,
+      amountIdr: 1_000_000,
+      bankAccountId: UUID_3,
+    };
+    expect(companyBuybackSchema.safeParse(base).success).toBe(true);
+    const withReceipt = companyBuybackSchema.safeParse({
+      ...base,
+      receiptImageUrl: "https://drive.google.com/file/d/abc/view",
+    });
+    expect(withReceipt.success).toBe(true);
+    if (withReceipt.success) {
+      expect(withReceipt.data.receiptImageUrl).toBe(
+        "https://drive.google.com/file/d/abc/view",
+      );
+    }
+    expect(
+      companyBuybackSchema.safeParse({
+        ...base,
+        receiptImageUrl: "x".repeat(2001),
+      }).success,
+    ).toBe(false);
+  });
 });

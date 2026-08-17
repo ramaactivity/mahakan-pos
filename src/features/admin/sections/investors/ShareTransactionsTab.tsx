@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRightLeft,
   Building2,
+  Paperclip,
   PieChart,
   RefreshCw,
   RotateCcw,
@@ -291,6 +292,8 @@ export function ShareTransactionsTab({ canManage }: ShareTransactionsTabProps) {
                     <th className="px-3 py-2 text-left">Dari → Ke</th>
                     <th className="px-3 py-2 text-right">Share %</th>
                     <th className="px-3 py-2 text-right">Nominal</th>
+                    {/* Sesi AE-208 — bukti transfer buyback. */}
+                    <th className="px-3 py-2 text-left">Bukti</th>
                     <th className="px-3 py-2 text-left">Status</th>
                     {canManage ? (
                       <th className="px-3 py-2 text-right">Aksi</th>
@@ -316,6 +319,21 @@ export function ShareTransactionsTab({ canManage }: ShareTransactionsTabProps) {
                       </td>
                       <td className="px-3 py-2 text-right font-mono text-xs">
                         {t.amountIdr > 0 ? formatRupiah(t.amountIdr) : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {t.receiptImageUrl ? (
+                          <a
+                            href={t.receiptImageUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-mahakan-green-700 hover:underline"
+                          >
+                            <Paperclip className="size-3 shrink-0" aria-hidden />
+                            Lihat bukti
+                          </a>
+                        ) : (
+                          <span className="text-neutral-400">—</span>
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <Badge

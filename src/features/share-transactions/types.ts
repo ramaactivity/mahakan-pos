@@ -47,6 +47,8 @@ export interface CompanyBuybackInput {
   bankAccountId: string;
   description?: string | null;
   occurredAt?: string | null;
+  /** Sesi AE-208 — bukti transfer (URL Google Drive). */
+  receiptImageUrl?: string | null;
 }
 
 export interface ReverseShareTransactionInput {
@@ -67,6 +69,8 @@ export interface ShareTransactionListRow {
   bankLabel: string | null;
   occurredAt: Date;
   description: string | null;
+  /** Sesi AE-208 — bukti transfer, ditampilkan sebagai tautan "Lihat bukti". */
+  receiptImageUrl: string | null;
   status: "posted" | "reversed";
   journalEntryId: string | null;
   reversedAt: Date | null;

@@ -73,6 +73,12 @@ export const shareTransactions = pgTable(
 
     description: text("description"),
 
+    /** Sesi AE-208 — bukti transfer (URL Google Drive, folder BUKTI JURNAL).
+     *  Dipakai company_buyback (kas keluar ke investor); p2p_transfer tidak
+     *  ada transfer dari kas perusahaan jadi biasanya null. Disaring
+     *  `normalizeReceiptUrl` sebelum masuk DB. */
+    receiptImageUrl: text("receipt_image_url"),
+
     /** Link ke jurnal. Null untuk p2p_transfer (no journal). */
     journalEntryId: uuid("journal_entry_id").references(
       () => journalEntries.id,

@@ -1,7 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  ExternalLink,
+  Loader2,
+  Paperclip,
+  UploadCloud,
+  X,
+} from "lucide-react";
 import {
   Button,
   Combobox,
@@ -25,6 +32,7 @@ import {
   isOk as shareIsOk,
 } from "@/features/share-transactions";
 import { formatRupiah, parseRupiah } from "@/lib/format";
+import { todayJakarta } from "@/lib/tz";
 
 /**
  * Sesi AE-80 — Company buyback modal.
@@ -32,6 +40,10 @@ import { formatRupiah, parseRupiah } from "@/lib/format";
  * Outlet beli kembali share investor. Journal Dr 3401 Treasury Stock /
  * Cr Bank. Sisa share (100 - sum) jadi "company hold" — compute v2
  * alokasi sisa% ke pengelola_pool.
+ *
+ * Sesi AE-208 — bukti transfer: kas keluar ke investor, jadi filenya
+ * diunggah ke Google Drive (folder BUKTI JURNAL, pola sesi AE-206) dan
+ * URL-nya nempel di mutasi sahamnya + jurnalnya.
  */
 
 interface CompanyBuybackModalProps {
@@ -53,7 +65,11 @@ export function CompanyBuybackModal({
   const [amountIdr, setAmountIdr] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
   const [description, setDescription] = useState("");
+  const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -63,6 +79,9 @@ export function CompanyBuybackModal({
     setAmountIdr("");
     setBankAccountId("");
     setDescription("");
+    setReceiptUrl(null);
+    setUploadError(null);
+    setUploadingReceipt(false);
     setSubmitting(false);
     setLoadingList(true);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -108,6 +127,39 @@ export function CompanyBuybackModal({
     return { ok: true, message: "" };
   }, [fromId, delta, fromCurrent, parsedAmount, bankAccountId]);
 
+  /* Sesi AE-208 — bukti transfer naik ke Drive lewat endpoint bukti jurnal.
+   * Buyback tidak punya field tanggal (selalu dicatat hari ini), jadi
+   * subfolder tahun/bulan-nya ikut tanggal WIB hari ini. */
+  async function handleReceiptUpload(file: File) {
+    if (uploadingReceipt) return;
+    setUploadError(null);
+    if (file.size > 5 * 1024 * 1024) {
+      setUploadError("Bukti transfer maksimal 5 MB");
+      return;
+    }
+    setUploadingReceipt(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("entryDate", todayJakarta());
+      const res = await fetch("/api/v1/journal-receipts/upload", {
+        method: "POST",
+        body: fd,
+      });
+      const json = (await res.json()) as
+        | { success: true; data: { url: string; folderPath: string } }
+        | { success: false; error: { code: string; message: string } };
+      if (!json.success) throw new Error(json.error.message);
+      setReceiptUrl(json.data.url);
+      toast.success(`Bukti tersimpan di Drive · ${json.data.folderPath}`);
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "Upload bukti gagal");
+    } finally {
+      setUploadingReceipt(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
   async function handleSubmit() {
     if (submitting || !validation.ok || !fromId) return;
     const selectedBank = bankList.find((b) => b.id === bankAccountId);
@@ -125,6 +177,7 @@ export function CompanyBuybackModal({
       amountIdr: parsedAmount,
       bankAccountId,
       description: description.trim() || null,
+      receiptImageUrl: receiptUrl,
     });
     setSubmitting(false);
     if (!shareIsOk(res)) {
@@ -150,7 +203,9 @@ export function CompanyBuybackModal({
           <Button
             onClick={handleSubmit}
             loading={submitting}
-            disabled={!validation.ok}
+            /* Dikunci selagi bukti masih naik supaya buyback tidak tersimpan
+             * duluan tanpa lampiran (pola sesi AE-206). */
+            disabled={!validation.ok || uploadingReceipt}
           >
             Buyback {formatRupiah(parsedAmount)}
           </Button>
@@ -239,6 +294,90 @@ export function CompanyBuybackModal({
               onChange={(e) => setDescription(e.target.value)}
               maxLength={500}
             />
+
+            {/* Sesi AE-208 — bukti transfer. Filenya naik ke Google Drive
+             * (folder BUKTI JURNAL/{tahun}/{bulan}) dan URL-nya nempel di
+             * mutasi sahamnya + jurnalnya, jadi bisa dibuka lagi dari
+             * Riwayat Mutasi Saham maupun halaman Jurnal. */}
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-neutral-900">
+                Bukti Transfer{" "}
+                <span className="font-normal text-neutral-500">(opsional)</span>
+              </label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleReceiptUpload(file);
+                }}
+              />
+              {receiptUrl ? (
+                <div className="flex items-center justify-between gap-2 rounded-md border border-mahakan-green-700/30 bg-mahakan-green-50 px-3 py-2">
+                  <a
+                    href={receiptUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium text-mahakan-green-900 hover:underline"
+                  >
+                    <Paperclip className="size-4 shrink-0" aria-hidden />
+                    <span className="truncate">
+                      Bukti tersimpan di Drive — klik untuk lihat
+                    </span>
+                    <ExternalLink className="size-3.5 shrink-0" aria-hidden />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setReceiptUrl(null)}
+                    disabled={submitting || uploadingReceipt}
+                    className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-neutral-500 hover:bg-danger-100 hover:text-danger-500"
+                    aria-label="Lepas bukti dari buyback ini (file tetap ada di Drive)"
+                    title="Lepas bukti dari buyback ini (file tetap ada di Drive)"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) void handleReceiptUpload(file);
+                  }}
+                  className="flex flex-col items-center gap-1.5 rounded-md border border-dashed border-neutral-300 bg-neutral-50/60 px-3 py-4 text-center"
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadingReceipt || submitting}
+                  >
+                    {uploadingReceipt ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" /> Mengunggah…
+                      </>
+                    ) : (
+                      <>
+                        <UploadCloud className="size-4" /> Lampirkan Bukti
+                        Transfer
+                      </>
+                    )}
+                  </Button>
+                  <p className="text-[11px] text-neutral-500">
+                    Tarik file ke sini atau klik tombol · JPG / PNG / WebP /
+                    PDF, maks 5 MB · disimpan ke Google Drive folder{" "}
+                    <em>BUKTI JURNAL</em>
+                  </p>
+                </div>
+              )}
+              {uploadError ? (
+                <p className="text-xs text-danger-600">{uploadError}</p>
+              ) : null}
+            </div>
 
             {validation.ok ? (
               <div className="rounded-md border border-mahakan-green-200 bg-mahakan-green-50/40 p-3 text-xs">
