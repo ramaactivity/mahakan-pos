@@ -15,7 +15,10 @@ import {
   transactionItems,
   transactions,
 } from "@/db/schema";
-import { checkComplimentApproval } from "@/features/approval-codes/compliment-guard";
+import {
+  checkComplimentApproval,
+  requiresPinApprover,
+} from "@/features/approval-codes/compliment-guard";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { consumeApproverToken } from "@/lib/auth/approver";
@@ -510,8 +513,25 @@ export async function createTransaction(
   // Sesi AE-62v — validate token presence early, DEFER consume ke INSIDE tx.
   // Sebelumnya consume di sini → kalau menu check / DB insert later gagal,
   // token jadi orphan (staff harus minta PIN baru tanpa transaksi terjadi).
+  /* Sesi AE-208 — compliment TIDAK lewat PIN approver.
+   *
+   * Sejak AE-195 compliment disetujui lewat KODE 6 digit dari Owner, bukan
+   * PIN approver. Tapi gerbang diskon di bawah masih menuntut PIN untuk
+   * SEMUA diskon staff, jadi kasir yang sudah memegang kode owner tetap
+   * ditolak APPROVER_REQUIRED — compliment mustahil diselesaikan kasir.
+   * Compliment dijaga oleh checkComplimentApproval beberapa baris di bawah
+   * (kode, outlet, kasir, alasan, dan nilai keranjang), jadi PIN di sini
+   * bukan kontrol tambahan, cuma jalan buntu. */
+  const isComplimentTrx = (v.discountReason ?? "").startsWith("Compliment:");
+
+  const needsPinApprover = requiresPinApprover({
+    discountAmount: v.discountAmount,
+    role: session.user.role,
+    isCompliment: isComplimentTrx,
+  });
+
   let discountApproverId: string | null = null;
-  if (v.discountAmount > 0 && session.user.role === "staff") {
+  if (needsPinApprover) {
     if (!v.discountApproverToken) {
       return fail(
         "APPROVER_REQUIRED",
@@ -521,7 +541,11 @@ export async function createTransaction(
   }
 
   // Authorize discount apply for non-staff (Owner/Manager use their own session)
-  if (v.discountAmount > 0 && session.user.role !== "staff") {
+  if (
+    v.discountAmount > 0 &&
+    session.user.role !== "staff" &&
+    !isComplimentTrx
+  ) {
     if (!hasPermission(session.user.role, "pos.discount.apply")) {
       return fail("FORBIDDEN", "Tidak punya hak apply discount");
     }
@@ -537,7 +561,6 @@ export async function createTransaction(
    * dirinya sendiri mengetik kode dari emailnya sendiri tidak menambah
    * kontrol apa pun (pola sama dengan direct-approve di Pusat Persetujuan).
    */
-  const isComplimentTrx = (v.discountReason ?? "").startsWith("Compliment:");
   let complimentCodeRow: { id: string; reason: string } | null = null;
   if (isComplimentTrx && session.user.role !== "owner") {
     if (!v.complimentApprovalCodeId) {
@@ -723,7 +746,9 @@ export async function createTransaction(
     const result = await db.transaction(async (tx) => {
       // Sesi AE-62v — consume discount approver token INSIDE tx (atomic
       // rollback bila tx fail). Token presence sudah di-validate di luar.
-      if (v.discountAmount > 0 && session.user.role === "staff") {
+      // AE-208: compliment tidak pakai PIN (kode owner), jadi tidak ada
+      // token untuk dikonsumsi — jangan paksa `!` pada nilai null.
+      if (needsPinApprover) {
         try {
           const consumed = await consumeApproverToken(
             v.discountApproverToken!,
@@ -2346,7 +2371,15 @@ export async function editOpenBill(
   // audit log shows token consumed without effect.
   //
   // Permission check tetap di sini (cheap), token consumption deferred.
-  if (v.discountAmount > 0 && session.user.role === "staff") {
+  // AE-208 — compliment lewat kode Owner, bukan PIN approver (lihat catatan
+  // di createTransaction). Tanpa pengecualian ini kasir tidak pernah bisa
+  // menutup/menyimpan open bill yang di-compliment.
+  const editNeedsPinApprover = requiresPinApprover({
+    discountAmount: v.discountAmount,
+    role: session.user.role,
+    isCompliment: editIsCompliment,
+  });
+  if (editNeedsPinApprover) {
     if (!v.discountApproverToken) {
       return fail(
         "APPROVER_REQUIRED",
@@ -2354,7 +2387,11 @@ export async function editOpenBill(
       );
     }
   }
-  if (v.discountAmount > 0 && session.user.role !== "staff") {
+  if (
+    v.discountAmount > 0 &&
+    session.user.role !== "staff" &&
+    !editIsCompliment
+  ) {
     if (!hasPermission(session.user.role, "pos.discount.apply")) {
       return fail("FORBIDDEN", "Tidak punya hak apply discount");
     }
@@ -2455,7 +2492,7 @@ export async function editOpenBill(
       // yang berbeda — consume tetap auto-committed di luar outer tx →
       // orphan kalau outer rollback. AE-62v: pass `tx` ke consumeApproverToken
       // supaya insert atomic dengan outer tx.
-      if (v.discountAmount > 0 && session.user.role === "staff") {
+      if (editNeedsPinApprover) {
         try {
           const consumed = await consumeApproverToken(
             v.discountApproverToken!,

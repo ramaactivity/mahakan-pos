@@ -8,6 +8,28 @@
  * atau tidak. Sekarang kedua jalur memanggil fungsi yang sama.
  */
 
+/**
+ * Sesi AE-208 — apakah diskon ini masih perlu PIN approver?
+ *
+ * Compliment TIDAK. Sejak AE-195 compliment disetujui lewat kode 6 digit
+ * Owner (checkComplimentApproval di bawah), sementara gerbang diskon lama
+ * menuntut PIN approver untuk semua diskon staff. Dua gerbang itu bertabrakan:
+ * kasir yang sudah memegang kode Owner tetap ditolak APPROVER_REQUIRED, jadi
+ * compliment mustahil diselesaikan kasir — tombol "Konfirmasi Bayar Rp 0"
+ * seolah mati.
+ */
+export function requiresPinApprover({
+  discountAmount,
+  role,
+  isCompliment,
+}: {
+  discountAmount: number;
+  role: string;
+  isCompliment: boolean;
+}): boolean {
+  return discountAmount > 0 && role === "staff" && !isCompliment;
+}
+
 export interface ComplimentCodeRow {
   outletId: string;
   /** Kasir yang memasukkan kode di modal. */

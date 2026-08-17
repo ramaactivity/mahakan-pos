@@ -195,22 +195,34 @@ export function CloseOpenBillModal({
       bodyPadding="none"
       disableEscClose={submitting}
       footer={
-        <Button
-          size="xl"
-          onClick={handleConfirm}
-          loading={submitting}
-          disabled={!cashSufficient || submitting}
-          fullWidth
-          className="!h-14 !text-base touch:!h-12"
-        >
-          {submitting
-            ? "Memproses…"
-            : isCash
-              ? cashSufficient
-                ? `Konfirmasi Bayar ${formatRupiah(effectivePayable)}`
-                : `Kurang ${formatRupiah(effectivePayable - cashReceived)}`
-              : `Sudah Lunas ${cardLabel}`}
-        </Button>
+        <>
+          {/* Sesi AE-208 — sama seperti PaymentModal: pesan gagal nempel di
+           * tombol, bukan di dasar kolom kanan yang di luar layar tablet. */}
+          {error ? (
+            <p
+              role="alert"
+              className="w-full rounded-md border border-danger-300 bg-danger-100 px-3 py-2 text-sm font-medium text-danger-700"
+            >
+              {error}
+            </p>
+          ) : null}
+          <Button
+            size="xl"
+            onClick={handleConfirm}
+            loading={submitting}
+            disabled={!cashSufficient || submitting}
+            fullWidth
+            className="!h-14 !text-base touch:!h-12"
+          >
+            {submitting
+              ? "Memproses…"
+              : isCash
+                ? cashSufficient
+                  ? `Konfirmasi Bayar ${formatRupiah(effectivePayable)}`
+                  : `Kurang ${formatRupiah(effectivePayable - cashReceived)}`
+                : `Sudah Lunas ${cardLabel}`}
+          </Button>
+        </>
       }
     >
       {/* Sesi AE-62l — min-h-0 wajib di parent flex/grid container supaya
@@ -401,14 +413,7 @@ export function CloseOpenBillModal({
             />
           )}
 
-          {error ? (
-            <div
-              role="alert"
-              className="rounded-md border border-danger-300 bg-danger-100 px-3 py-2 text-sm font-medium text-danger-700"
-            >
-              {error}
-            </div>
-          ) : null}
+          {/* Error tampil di footer sticky (AE-208), tidak diduplikasi di sini. */}
         </div>
       </div>
     </Modal>

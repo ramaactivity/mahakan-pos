@@ -134,22 +134,38 @@ export function PaymentModal({
       bodyPadding="none"
       disableEscClose={submitting}
       footer={
-        <Button
-          size="xl"
-          onClick={onSubmit}
-          loading={submitting}
-          disabled={!cashSufficient || submitting}
-          fullWidth
-          className="!h-14 !text-base touch:!h-12"
-        >
-          {submitting
-            ? "Memvalidasi stok & mencatat transaksi…"
-            : isCash
-              ? cashSufficient
-                ? `Konfirmasi Bayar ${formatRupiah(total)}`
-                : `Kurang ${formatRupiah(total - cashReceived)}`
-              : `Sudah Lunas ${cardLabel}`}
-        </Button>
+        <>
+          {/* Sesi AE-208 — pesan gagal WAJIB nempel di tombol.
+           * Sebelumnya error hanya dirender di dasar kolom kanan, di bawah
+           * numpad; di layar tablet posisinya di luar layar, jadi kasir yang
+           * transaksinya ditolak server melihat "tombol Konfirmasi Bayar
+           * tidak bereaksi" — padahal ada alasan penolakan yang tidak
+           * terlihat. Footer sticky, jadi di sini selalu kebaca. */}
+          {error ? (
+            <p
+              role="alert"
+              className="w-full rounded-md border border-danger-300 bg-danger-100 px-3 py-2 text-sm font-medium text-danger-700"
+            >
+              {error}
+            </p>
+          ) : null}
+          <Button
+            size="xl"
+            onClick={onSubmit}
+            loading={submitting}
+            disabled={!cashSufficient || submitting}
+            fullWidth
+            className="!h-14 !text-base touch:!h-12"
+          >
+            {submitting
+              ? "Memvalidasi stok & mencatat transaksi…"
+              : isCash
+                ? cashSufficient
+                  ? `Konfirmasi Bayar ${formatRupiah(total)}`
+                  : `Kurang ${formatRupiah(total - cashReceived)}`
+                : `Sudah Lunas ${cardLabel}`}
+          </Button>
+        </>
       }
     >
       <div className="grid h-full divide-y divide-neutral-200 lg:grid-cols-[2fr_3fr] lg:divide-x lg:divide-y-0 touch:grid-cols-[5fr_7fr] touch:divide-x touch:divide-y-0">
@@ -313,14 +329,9 @@ export function PaymentModal({
             />
           )}
 
-          {error ? (
-            <div
-              role="alert"
-              className="rounded-md border border-danger-300 bg-danger-100 px-3 py-2 text-sm font-medium text-danger-700"
-            >
-              {error}
-            </div>
-          ) : null}
+          {/* Error-nya sekarang tampil di footer (sticky) — lihat catatan
+           * AE-208 di atas. Tidak diduplikasi di sini supaya kasir tidak
+           * bingung melihat dua kotak merah yang sama. */}
         </div>
       </div>
     </Modal>

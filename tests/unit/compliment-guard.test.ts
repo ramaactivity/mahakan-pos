@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   checkComplimentApproval,
+  requiresPinApprover,
   type ComplimentCodeRow,
 } from "@/features/approval-codes/compliment-guard";
 
@@ -90,5 +91,50 @@ describe("checkComplimentApproval", () => {
     expect(
       check({ row: row({ approvedAmount: null }), subtotal: 2_000_000 }),
     ).toEqual({ ok: true });
+  });
+});
+
+/* Sesi AE-208 — compliment dulu ikut menabrak gerbang PIN approver, jadi
+ * kasir yang sudah memegang kode Owner tetap ditolak APPROVER_REQUIRED dan
+ * tombol "Konfirmasi Bayar Rp 0" seperti mati. */
+describe("requiresPinApprover", () => {
+  it("compliment kasir TIDAK butuh PIN approver (cukup kode Owner)", () => {
+    expect(
+      requiresPinApprover({
+        discountAmount: 41000,
+        role: "staff",
+        isCompliment: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("diskon biasa kasir tetap butuh PIN approver", () => {
+    expect(
+      requiresPinApprover({
+        discountAmount: 41000,
+        role: "staff",
+        isCompliment: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("tanpa diskon tidak pernah butuh PIN", () => {
+    expect(
+      requiresPinApprover({
+        discountAmount: 0,
+        role: "staff",
+        isCompliment: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("non-staff tidak lewat jalur PIN", () => {
+    expect(
+      requiresPinApprover({
+        discountAmount: 41000,
+        role: "manager",
+        isCompliment: false,
+      }),
+    ).toBe(false);
   });
 });
