@@ -14,6 +14,7 @@ import {
   CardFooter,
   Input,
   Modal,
+  NumericInput,
   PinPad,
   QuantityStepper,
   Spinner,
@@ -27,6 +28,8 @@ export default function DesignSystemShowcase() {
   const [qty, setQty] = useState(1);
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState("");
+  const [amount, setAmount] = useState("");
+  const [qtyDecimal, setQtyDecimal] = useState("");
 
   return (
     <main className="mx-auto max-w-6xl space-y-12 p-6 md:p-10">
@@ -188,6 +191,28 @@ export default function DesignSystemShowcase() {
           />
           <Input label="Nominal kas awal" placeholder="100.000" inputMode="numeric" />
           <Input label="Nama barista" disabled placeholder="Disabled" />
+        </div>
+        {/* Sesi AE-203 — NumericInput adaptif: di laptop/PC (pointer: fine)
+         *  jadi field ketik biasa tanpa keypad; di tablet/HP tetap popup
+         *  keypad. Buka halaman ini di tablet untuk lihat bedanya. */}
+        <div className="grid max-w-2xl gap-4 md:grid-cols-2">
+          <NumericInput
+            label="Nominal (NumericInput)"
+            prefix="Rp"
+            placeholder="0"
+            value={amount}
+            onChange={setAmount}
+            hint="Laptop: ketik pakai keyboard. Tablet/HP: tap → keypad."
+          />
+          <NumericInput
+            label="Qty desimal (NumericInput)"
+            placeholder="0"
+            allowDecimal
+            formatThousands={false}
+            value={qtyDecimal}
+            onChange={setQtyDecimal}
+            trailingSlot="Kg"
+          />
         </div>
       </Section>
 

@@ -10,6 +10,8 @@ import {
 } from "react";
 import { Calculator, Delete } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useFinePointer } from "@/lib/use-fine-pointer";
+import { formatDisplay, sanitizeTyped } from "@/lib/numeric-format";
 
 interface NumericInputProps {
   label?: string;
@@ -44,11 +46,16 @@ interface NumericInputProps {
  * Sesi P (origin): button display + popup numpad untuk POS tablet, bypass
  * native keyboard yang nutup layar di Android.
  *
- * Sesi AE-13 (this rev): tambah keyboard support untuk desktop + polish
- * popup. Trigger button menerima onKeyDown — digits, Backspace, Delete,
- * decimal separator, Escape (close popup). Desktop user yang tab/click ke
- * field bisa langsung ngetik tanpa harus klik tombol numpad. Tablet user
- * tetap bisa tap → popup numpad untuk big-button input.
+ * Sesi AE-13: tambah keyboard support untuk desktop + polish popup.
+ * Trigger button menerima onKeyDown — digits, Backspace, Delete, decimal
+ * separator, Escape (close popup).
+ *
+ * Sesi AE-203 (this rev): di perangkat ber-mouse (`pointer: fine` — laptop,
+ * MacBook, PC) keypad on-screen TIDAK dirender sama sekali; field jadi
+ * `<input>` biasa yang diketik pakai numpad fisik (caret, select-all, paste
+ * semua jalan). Di tablet/HP (`pointer: coarse`) perilaku lama utuh: tombol
+ * display + popup keypad, karena keyboard Android nutup separuh layar.
+ * Nilai yang disimpan tetap string angka mentah di kedua mode.
  */
 export const NumericInput = forwardRef<HTMLDivElement, NumericInputProps>(
   function NumericInput(
@@ -75,13 +82,19 @@ export const NumericInput = forwardRef<HTMLDivElement, NumericInputProps>(
     const [open, setOpen] = useState(false);
     const wrapperRef = useRef<HTMLDivElement | null>(null);
     const triggerRef = useRef<HTMLButtonElement | null>(null);
+    /** Laptop/PC (mouse atau trackpad) → keypad on-screen dimatikan. */
+    const finePointer = useFinePointer();
+    /** Saat diketik, tampilkan angka mentah (tanpa titik ribuan) supaya
+     *  caret tidak lompat; format ribuan balik lagi begitu blur. */
+    const [focused, setFocused] = useState(false);
 
-    // Close keypad when disabled toggled on.
+    // Close keypad when disabled toggled on, atau saat mouse ke-colok
+    // di tengah sesi (mode berubah coarse → fine).
     useEffect(() => {
       /* eslint-disable react-hooks/set-state-in-effect */
-      if (disabled && open) setOpen(false);
+      if ((disabled || finePointer) && open) setOpen(false);
       /* eslint-enable react-hooks/set-state-in-effect */
-    }, [disabled, open]);
+    }, [disabled, finePointer, open]);
 
     // Click outside closes popup. Wrapper covers both input button + popup
     // jadi clicks di dalam keypad tetap hit (digit append, etc).
@@ -178,7 +191,22 @@ export const NumericInput = forwardRef<HTMLDivElement, NumericInputProps>(
       }
     }
 
+    /** Desktop — ketikan keyboard fisik dibersihkan jadi angka mentah. */
+    function handleTyped(e: React.ChangeEvent<HTMLInputElement>) {
+      if (disabled) return;
+      onChange(sanitizeTyped(e.target.value, allowDecimal, maxLength));
+    }
+
     const display = formatDisplay(value, formatThousands);
+
+    /** Kerangka field — dipakai bareng tombol (touch) & input (desktop). */
+    const shellClass = cn(
+      "flex h-12 w-full items-center justify-between gap-2 rounded-md border bg-white px-3 text-right text-base font-mono tabular-nums text-neutral-900 shadow-sm transition-colors",
+      error ? "border-danger-500" : "border-neutral-300",
+      disabled
+        ? "cursor-not-allowed bg-neutral-100 text-neutral-500"
+        : "hover:border-neutral-400",
+    );
 
     function setRefs(el: HTMLDivElement | null) {
       wrapperRef.current = el;
@@ -201,50 +229,94 @@ export const NumericInput = forwardRef<HTMLDivElement, NumericInputProps>(
             ) : null}
           </label>
         ) : null}
-        <button
-          ref={triggerRef}
-          type="button"
-          id={reactId}
-          aria-label={ariaLabel ?? label}
-          aria-expanded={open}
-          aria-haspopup="dialog"
-          disabled={disabled}
-          onClick={() => setOpen((v) => !v)}
-          onKeyDown={handleKeyDown}
-          className={cn(
-            "flex h-12 w-full items-center justify-between gap-2 rounded-md border bg-white px-3 text-right text-base font-mono tabular-nums text-neutral-900 shadow-sm transition-colors",
-            "focus-visible:outline-none focus-visible:ring-2",
-            error
-              ? "border-danger-500 focus-visible:ring-danger-500/40"
-              : "border-neutral-300 focus-visible:ring-mahakan-green-700/40 focus-visible:border-mahakan-green-700",
-            disabled
-              ? "cursor-not-allowed bg-neutral-100 text-neutral-500"
-              : "hover:border-neutral-400",
-            open && "border-mahakan-green-700 ring-2 ring-mahakan-green-700/40",
-          )}
-        >
-          <span className="flex items-center gap-2 text-neutral-400">
-            <Calculator className="size-4" aria-hidden />
+        {finePointer ? (
+          /* Laptop/PC — field ketik biasa, tanpa keypad on-screen. */
+          <div
+            className={cn(
+              shellClass,
+              error
+                ? "focus-within:ring-2 focus-within:ring-danger-500/40"
+                : "focus-within:border-mahakan-green-700 focus-within:ring-2 focus-within:ring-mahakan-green-700/40",
+            )}
+          >
             {prefix ? (
               <span className="text-sm font-medium text-neutral-500">
                 {prefix}
               </span>
             ) : null}
-          </span>
-          <span
+            <input
+              id={reactId}
+              type="text"
+              autoComplete="off"
+              inputMode={allowDecimal ? "decimal" : "numeric"}
+              aria-label={ariaLabel ?? label}
+              disabled={disabled}
+              required={required}
+              placeholder={placeholder}
+              /* Fokus → angka mentah (caret stabil). Blur → format ribuan. */
+              value={focused ? value : display}
+              onChange={handleTyped}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              onKeyDown={(e) => {
+                /* Enter JANGAN submit form — perilaku lama (tombol
+                 * type="button") tidak pernah submit, dan field ini sering
+                 * dipakai di form keuangan yang tak boleh ke-post nyasar. */
+                if (e.key === "Enter") e.preventDefault();
+              }}
+              className={cn(
+                "min-w-0 flex-1 bg-transparent text-right font-mono tabular-nums outline-none placeholder:text-neutral-400",
+                disabled && "cursor-not-allowed",
+              )}
+            />
+            {trailingSlot ? (
+              <span className="text-xs text-neutral-500">{trailingSlot}</span>
+            ) : null}
+          </div>
+        ) : (
+          <button
+            ref={triggerRef}
+            type="button"
+            id={reactId}
+            aria-label={ariaLabel ?? label}
+            aria-expanded={open}
+            aria-haspopup="dialog"
+            disabled={disabled}
+            onClick={() => setOpen((v) => !v)}
+            onKeyDown={handleKeyDown}
             className={cn(
-              "flex-1 truncate",
-              value === "" ? "text-neutral-400" : "text-neutral-900",
+              shellClass,
+              "focus-visible:outline-none focus-visible:ring-2",
+              error
+                ? "focus-visible:ring-danger-500/40"
+                : "focus-visible:border-mahakan-green-700 focus-visible:ring-mahakan-green-700/40",
+              open &&
+                "border-mahakan-green-700 ring-2 ring-mahakan-green-700/40",
             )}
           >
-            {value === "" ? placeholder : display}
-          </span>
-          {trailingSlot ? (
-            <span className="text-xs text-neutral-500">{trailingSlot}</span>
-          ) : null}
-        </button>
+            <span className="flex items-center gap-2 text-neutral-400">
+              <Calculator className="size-4" aria-hidden />
+              {prefix ? (
+                <span className="text-sm font-medium text-neutral-500">
+                  {prefix}
+                </span>
+              ) : null}
+            </span>
+            <span
+              className={cn(
+                "flex-1 truncate",
+                value === "" ? "text-neutral-400" : "text-neutral-900",
+              )}
+            >
+              {value === "" ? placeholder : display}
+            </span>
+            {trailingSlot ? (
+              <span className="text-xs text-neutral-500">{trailingSlot}</span>
+            ) : null}
+          </button>
+        )}
 
-        {open && !disabled ? (
+        {open && !disabled && !finePointer ? (
           <div
             role="dialog"
             aria-label="Keypad numerik"
@@ -274,9 +346,6 @@ export const NumericInput = forwardRef<HTMLDivElement, NumericInputProps>(
               </Key>
             </div>
             <div className="flex items-center justify-between gap-2 pt-0.5">
-              <p className="hidden text-[10px] text-neutral-500 pointer:inline">
-                Desktop: ketik langsung pakai keyboard
-              </p>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -305,16 +374,6 @@ function haptic() {
   if (typeof navigator !== "undefined" && "vibrate" in navigator) {
     navigator.vibrate?.(8);
   }
-}
-
-function formatDisplay(value: string, withThousands: boolean): string {
-  if (value === "") return "";
-  if (!withThousands) return value;
-  const [intPart, decPart] = value.split(".");
-  const intFormatted = intPart
-    ? intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".")
-    : "0";
-  return decPart !== undefined ? `${intFormatted},${decPart}` : intFormatted;
 }
 
 interface KeyProps {
