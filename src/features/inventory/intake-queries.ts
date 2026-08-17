@@ -10,6 +10,7 @@ import {
   users,
 } from "@/db/schema";
 import type { IntakeLine, IntakeResult, PendingOrder } from "./intake-pure";
+import { clampFromDate, getCutoffDate } from "@/features/cutoff/cutoff";
 
 export type { IntakeResult };
 
@@ -53,7 +54,12 @@ export async function fetchIngredientIntake(
   outletId: string,
   opts: ListIntakeOptions,
 ): Promise<IntakeResult> {
-  const { dateFrom, dateTo } = opts;
+  // Sesi AE-207 — tab "Masuk Bahan" ikut batas buku.
+  const dateFrom = clampFromDate(
+    opts.dateFrom,
+    await getCutoffDate(outletId),
+  ) as string;
+  const { dateTo } = opts;
 
   const notCancelled = sql`${purchases.status} <> 'cancelled' and ${purchases.receiptStatus} <> 'cancelled'`;
 

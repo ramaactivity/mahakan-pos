@@ -30,6 +30,7 @@ import { ReceiptEditorModal } from "./settings/ReceiptEditorModal";
 import { SettingsTunablesModal } from "./settings/SettingsTunablesModal";
 import { ApprovalCodesPanel } from "./settings/ApprovalCodesPanel";
 import { BankAccountsCard } from "./settings/BankAccountsCard";
+import { BooksCutoffCard } from "./settings/BooksCutoffCard";
 import { ResetMockupDataCard } from "./settings/ResetMockupDataCard";
 import { PushNotificationToggle } from "@/features/push-notifications/PushNotificationToggle";
 import { NotificationPreferencesPanel } from "@/features/push-notifications/NotificationPreferencesPanel";
@@ -414,6 +415,11 @@ export function SettingsSection() {
       />
 
       {isOwner ? <ApprovalCodesPanel /> : null}
+
+      {/* Sesi AE-207 — batas buku (sembunyikan data lama, bukan hapus). */}
+      {isOwner ? (
+        <BooksCutoffCard outlet={outlet} onSaved={refreshOutlet} />
+      ) : null}
 
       {/* Sesi AE-32 — nuclear reset untuk transition mockup → trial. */}
       {isOwner ? <ResetMockupDataCard /> : null}

@@ -31,6 +31,7 @@ import type {
   AccountBalanceRow,
   CashFlowEntryAggregate,
 } from "./reports";
+import { clampFromDate, getCutoffDate } from "@/features/cutoff/cutoff";
 
 // ---------- Chart of Accounts ----------
 
@@ -112,7 +113,7 @@ export async function listPeriods(outletId: string): Promise<PeriodSummary[]> {
         sql`${journalEntries.status} <> 'reversed'`,
       ),
     )
-    .where(eq(accountingPeriods.outletId, outletId))
+    .where(and(eq(accountingPeriods.outletId, outletId), await periodFloor(outletId)))
     .groupBy(accountingPeriods.id)
     .orderBy(
       desc(accountingPeriods.periodYear),
@@ -222,8 +223,13 @@ export async function listJournalEntries(
       ),
     );
   }
-  if (filters?.fromDate) {
-    conditions.push(gte(journalEntries.entryDate, filters.fromDate));
+  // Sesi AE-207 — halaman Jurnal ikut batas buku.
+  const fromDate = clampFromDate(
+    filters?.fromDate,
+    await getCutoffDate(outletId),
+  );
+  if (fromDate) {
+    conditions.push(gte(journalEntries.entryDate, fromDate));
   }
   if (filters?.toDate) {
     conditions.push(lte(journalEntries.entryDate, filters.toDate));
@@ -348,11 +354,26 @@ export async function listPeriodStatuses(
       status: accountingPeriods.status,
     })
     .from(accountingPeriods)
-    .where(eq(accountingPeriods.outletId, outletId))
+    .where(and(eq(accountingPeriods.outletId, outletId), await periodFloor(outletId)))
     .orderBy(
       desc(accountingPeriods.periodYear),
       desc(accountingPeriods.periodMonth),
     );
+}
+
+/**
+ * Sesi AE-207 — syarat "periode ini >= batas buku", untuk daftar periode.
+ * Bulan-bulan sebelum cutoff tidak lagi ditawarkan di pemilih periode supaya
+ * owner tidak bisa membuka Laba Rugi bulan yang jurnalnya sudah disembunyikan
+ * (yang hasilnya pasti kosong dan bikin bingung).
+ * Mengembalikan `undefined` kalau cutoff mati — aman dipakai di `and(...)`.
+ */
+async function periodFloor(outletId: string) {
+  const cutoff = await getCutoffDate(outletId);
+  if (!cutoff) return undefined;
+  const floorKey =
+    Number(cutoff.slice(0, 4)) * 100 + Number(cutoff.slice(5, 7));
+  return sql`(${accountingPeriods.periodYear} * 100 + ${accountingPeriods.periodMonth}) >= ${floorKey}`;
 }
 
 // ============================================================
@@ -405,8 +426,12 @@ export async function getAccountBalances(args: {
     eq(journalEntries.status, "posted"),
     lte(journalEntries.entryDate, args.toDate),
   ];
-  if (args.fromDate) {
-    conditions.push(gte(journalEntries.entryDate, args.fromDate));
+  /* Sesi AE-207 — batas buku. Untuk Neraca (`fromDate=null`, kumulatif sejak
+   * awal waktu) inilah yang bikin "saldo bersih Juli": penjumlahan mulai dari
+   * jurnal Saldo Awal, bukan dari transaksi Maret. */
+  const fromDate = clampFromDate(args.fromDate, await getCutoffDate(args.outletId));
+  if (fromDate) {
+    conditions.push(gte(journalEntries.entryDate, fromDate));
   }
   if (args.excludeClosingEntries) {
     conditions.push(
@@ -476,6 +501,11 @@ export async function getAccountLedgerEntries(args: {
     credit: number;
   }>
 > {
+  // Sesi AE-207 — Buku Besar tidak boleh menampilkan baris sebelum batas buku.
+  const fromDate = clampFromDate(
+    args.fromDate,
+    await getCutoffDate(args.outletId),
+  ) as string;
   const rows = await db
     .select({
       entryNumber: journalEntries.entryNumber,
@@ -492,7 +522,7 @@ export async function getAccountLedgerEntries(args: {
         eq(journalEntries.id, journalLines.entryId),
         eq(journalEntries.outletId, args.outletId),
         eq(journalEntries.status, "posted"),
-        gte(journalEntries.entryDate, args.fromDate),
+        gte(journalEntries.entryDate, fromDate),
         lte(journalEntries.entryDate, args.toDate),
       ),
     )
@@ -535,6 +565,11 @@ export async function getCashFlowEntries(args: {
   fromDate: string;
   toDate: string;
 }): Promise<CashFlowEntryAggregate[]> {
+  // Sesi AE-207 — Arus Kas ikut batas buku.
+  const fromDate = clampFromDate(
+    args.fromDate,
+    await getCutoffDate(args.outletId),
+  ) as string;
   // Step 1 — entries dengan cash impact, plus aggregated cash net per entry.
   // Use raw SQL untuk klausul kompleks (nested aggregation + LEFT JOIN).
   const rows = await db.execute<{
@@ -554,7 +589,7 @@ export async function getCashFlowEntries(args: {
       INNER JOIN chart_of_accounts coa ON coa.id = jl.account_id
       WHERE je.outlet_id = ${args.outletId}
         AND je.status = 'posted'
-        AND je.entry_date >= ${args.fromDate}
+        AND je.entry_date >= ${fromDate}
         AND je.entry_date <= ${args.toDate}
         AND coa.code IN ('1101','1102','1110','1111','1112')
       GROUP BY je.id, je.source_type
@@ -699,21 +734,27 @@ export async function getAccountOpeningBalance(args: {
   accountId: string;
   beforeDate: string;
 }): Promise<number> {
+  /* Sesi AE-207 — saldo awal Buku Besar dihitung dari batas buku saja. Tanpa
+   * ini kolom "Saldo Awal" masih menjumlah jurnal Maret–Juni yang sudah
+   * disembunyikan, jadi Buku Besar Juli mulai dari angka yang tak ada
+   * penjelasannya di layar. */
+  const cutoff = await getCutoffDate(args.outletId);
+  const conds = [
+    eq(journalEntries.id, journalLines.entryId),
+    eq(journalEntries.outletId, args.outletId),
+    eq(journalEntries.status, "posted"),
+    sql`${journalEntries.entryDate} < ${args.beforeDate}`,
+  ];
+  if (cutoff) {
+    conds.push(gte(journalEntries.entryDate, cutoff));
+  }
   const [r] = await db
     .select({
       debitTotal: sql<string>`COALESCE(SUM(${journalLines.debit}), 0)`,
       creditTotal: sql<string>`COALESCE(SUM(${journalLines.credit}), 0)`,
     })
     .from(journalLines)
-    .innerJoin(
-      journalEntries,
-      and(
-        eq(journalEntries.id, journalLines.entryId),
-        eq(journalEntries.outletId, args.outletId),
-        eq(journalEntries.status, "posted"),
-        sql`${journalEntries.entryDate} < ${args.beforeDate}`,
-      ),
-    )
+    .innerJoin(journalEntries, and(...conds))
     .where(eq(journalLines.accountId, args.accountId));
 
   return Number(r?.debitTotal ?? 0) - Number(r?.creditTotal ?? 0);

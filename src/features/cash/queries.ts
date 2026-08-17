@@ -8,6 +8,7 @@ import {
   transactions,
 } from "@/db/schema";
 import { endOfWibDateUtc, startOfWibDateUtc } from "./helpers";
+import { clampFromDate, getCutoffDate } from "@/features/cutoff/cutoff";
 import type {
   DailyCashSummary,
   Expense,
@@ -51,7 +52,9 @@ export async function fetchExpenses(
     eq(expenses.outletId, outletId),
     isNull(expenses.deletedAt),
   ];
-  if (opts.from) conds.push(gte(expenses.expenseDate, opts.from));
+  // Sesi AE-207 — daftar Pengeluaran ikut batas buku.
+  const from = clampFromDate(opts.from, await getCutoffDate(outletId));
+  if (from) conds.push(gte(expenses.expenseDate, from));
   if (opts.to) conds.push(lte(expenses.expenseDate, opts.to));
   if (opts.categoryId) conds.push(eq(expenses.categoryId, opts.categoryId));
   if (opts.sourceType) {
@@ -110,7 +113,9 @@ export async function fetchIncomes(
 ): Promise<Paginated<Income>> {
   const limit = opts.limit ?? 100;
   const conds = [eq(incomes.outletId, outletId), isNull(incomes.deletedAt)];
-  if (opts.from) conds.push(gte(incomes.incomeDate, opts.from));
+  // Sesi AE-207 — daftar Pemasukan ikut batas buku.
+  const from = clampFromDate(opts.from, await getCutoffDate(outletId));
+  if (from) conds.push(gte(incomes.incomeDate, from));
   if (opts.to) conds.push(lte(incomes.incomeDate, opts.to));
   if (opts.paymentMethod)
     conds.push(eq(incomes.paymentMethod, opts.paymentMethod));

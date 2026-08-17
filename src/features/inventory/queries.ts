@@ -16,6 +16,7 @@ import type {
   RecipeIngredientLine,
   RecipeWithIngredients,
 } from "./types";
+import { cutoffStartInstant, getCutoffDate } from "@/features/cutoff/cutoff";
 
 export interface ListIngredientsOptions {
   activeOnly?: boolean;
@@ -167,6 +168,11 @@ export async function fetchMovements(
   if (opts.ingredientId)
     conds.push(eq(inventoryMovements.ingredientId, opts.ingredientId));
   if (opts.kind) conds.push(eq(inventoryMovements.kind, opts.kind));
+  /* Sesi AE-207 — riwayat pergerakan stok ikut batas buku. Pakai instant
+   * 00:00 WIB, bukan `new Date(tanggal)` yang itu tengah malam UTC (= 07:00
+   * WIB) dan bakal ikut menampilkan mutasi pagi hari sebelum batas. */
+  const cutoffAt = cutoffStartInstant(await getCutoffDate(outletId));
+  if (cutoffAt) conds.push(gte(inventoryMovements.createdAt, cutoffAt));
   if (opts.dateFrom)
     conds.push(gte(inventoryMovements.createdAt, opts.dateFrom));
   if (opts.dateTo) conds.push(lt(inventoryMovements.createdAt, opts.dateTo));

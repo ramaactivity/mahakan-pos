@@ -337,6 +337,25 @@ const approvalSchema = z.object({
     .optional(),
 });
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+const booksCutoffSchema = z.object({
+  /** null / "" = matikan cutoff (tampilkan semua data lagi). */
+  date: z
+    .string()
+    .regex(ISO_DATE, "Format tanggal harus YYYY-MM-DD")
+    .nullable()
+    .optional()
+    .transform((v) => (v ? v : null)),
+  opnameDate: z
+    .string()
+    .regex(ISO_DATE, "Format tanggal harus YYYY-MM-DD")
+    .nullable()
+    .optional()
+    .transform((v) => (v ? v : null)),
+  note: z.string().max(300).nullable().optional(),
+});
+
 async function updateSettingsSection(
   perm: Permission,
   section:
@@ -347,6 +366,7 @@ async function updateSettingsSection(
     | "attendance"
     | "payroll"
     | "openingBalance"
+    | "booksCutoff"
     | "dividen",
   patch: Partial<OutletSettings[keyof OutletSettings]>,
 ): Promise<ApiResult<Outlet>> {
@@ -418,6 +438,43 @@ export async function updateThresholds(
     "settings.thresholds.update",
     "thresholds",
     parsed.data,
+  );
+}
+
+/**
+ * Sesi AE-207 — BATAS BUKU (cutoff). Sembunyikan data sebelum tanggal ini
+ * dari semua halaman, TANPA menghapusnya. Owner-only.
+ *
+ * Kirim `date: null` untuk MEMATIKAN cutoff → seluruh data lama muncul lagi
+ * seketika. Ini jalan keluar owner kalau suatu saat butuh nota/laporan lama
+ * (audit, pajak) tanpa perlu memanggil developer.
+ *
+ * `opnameDate` sengaja terpisah: sesi opname akhir bulan sebelum cutoff
+ * adalah STOK AWAL periode baru dan wajib tetap terlihat, kalau tidak laporan
+ * pemakaian bahan periode baru rusak. Kalau dikosongkan, ikut `date`.
+ */
+export async function updateBooksCutoff(
+  input: z.input<typeof booksCutoffSchema>,
+): Promise<ApiResult<Outlet>> {
+  const parsed = booksCutoffSchema.safeParse(input);
+  if (!parsed.success) {
+    return err("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "");
+  }
+  const { date, opnameDate, note } = parsed.data;
+  return updateSettingsSection(
+    "accounting.opening_balance.input",
+    "booksCutoff",
+    date
+      ? {
+          date,
+          opnameDate: opnameDate ?? date,
+          note: note ?? undefined,
+          setAt: new Date().toISOString(),
+        }
+      : /* Mematikan: kosongkan `date`. `getBooksCutoff()` menganggap cutoff
+         * mati kalau `date` tidak valid, jadi cukup ini — tak perlu menghapus
+         * key-nya, dan jejak kapan pernah aktif tetap ada di `setAt`. */
+        { date: null, opnameDate: null, setAt: new Date().toISOString() },
   );
 }
 

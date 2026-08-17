@@ -224,6 +224,19 @@ export type OutletSettings = {
     /** ISO timestamp last edit, untuk audit/staleness check. */
     updatedAt?: string;
   };
+  /** Sesi AE-207 — BATAS BUKU: sembunyikan (bukan hapus) data sebelum
+   * tanggal ini supaya pencatatan mulai bersih dari periode baru.
+   * Dibaca lewat `getBooksCutoff()` di features/cutoff/cutoff.ts — di sana
+   * ada penjelasan lengkap kenapa opname punya tanggal sendiri. */
+  booksCutoff?: {
+    /** Batas utama YYYY-MM-DD (jurnal + pembelian + kas + PR + stok). */
+    date?: string | null;
+    /** Batas khusus opname — sesi stok-awal periode baru wajib tetap tampil. */
+    opnameDate?: string | null;
+    note?: string;
+    /** ISO timestamp kapan cutoff di-set, untuk audit. */
+    setAt?: string;
+  };
   /** Sesi AE-70 — Opening balance checklist progress (Rekonsiliasi).
    * Persisted di server supaya tidak hilang antar device/browser. */
   openingBalance?: {

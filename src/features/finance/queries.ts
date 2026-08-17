@@ -15,6 +15,7 @@ import {
   users,
 } from "@/db/schema";
 import { JAKARTA_TZ, toJakartaDateOnly } from "@/lib/date";
+import { clampFromDate, getCutoffDate } from "@/features/cutoff/cutoff";
 import type {
   AggregatorChannel,
   CashDailyRollup,
@@ -974,9 +975,13 @@ export async function listCashDeposits(opts: {
 
 export async function getCashFlowLedger(
   outletId: string,
-  fromIso: string,
+  fromArg: string,
   toIso: string,
 ): Promise<CashFlowLedgerReport> {
+  /* Sesi AE-207 — halaman Kas (pengeluaran, pemasukan, setoran) ikut batas
+   * buku. Satu klem dipakai untuk KETIGA sumber; kalau salah satu terlewat,
+   * ringkasan arus kas jadi separuh periode lama separuh baru. */
+  const fromIso = clampFromDate(fromArg, await getCutoffDate(outletId)) as string;
   // Pull expenses + incomes + verified deposits, merge by date.
   const expRows = await db
     .select({

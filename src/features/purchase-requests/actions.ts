@@ -4,6 +4,7 @@ import {
   and,
   desc,
   eq,
+  gte,
   inArray,
   isNotNull,
   isNull,
@@ -34,6 +35,7 @@ import {
   indexMasterByName,
   matchManualItemToMaster,
 } from "./manual-link-pure";
+import { cutoffStartInstant, getCutoffDate } from "@/features/cutoff/cutoff";
 import {
   fail,
   ok,
@@ -600,6 +602,14 @@ export async function listPurchaseRequests(
     eq(purchaseRequests.outletId, session.user.outletId),
     isNull(purchaseRequests.deletedAt),
   ];
+  /* Sesi AE-207 — PR sebelum batas buku disembunyikan. PR adalah kertas kerja
+   * pengajuan belanja; kalau notanya sudah tak tampil, PR-nya ikut, supaya
+   * halaman ini tidak menandai item "sudah dibeli" yang notanya tak bisa
+   * dibuka lagi. */
+  const cutoffAt = cutoffStartInstant(
+    await getCutoffDate(session.user.outletId),
+  );
+  if (cutoffAt) conds.push(gte(purchaseRequests.createdAt, cutoffAt));
   if (opts.status && opts.status !== "all") {
     conds.push(eq(purchaseRequests.status, opts.status));
   }

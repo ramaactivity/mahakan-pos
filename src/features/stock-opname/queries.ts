@@ -8,6 +8,10 @@ import {
   users,
 } from "@/db/schema";
 import { jakartaMonthKey, jakartaMonthLabel } from "./cadence";
+import {
+  cutoffStartInstant,
+  getOpnameCutoffDate,
+} from "@/features/cutoff/cutoff";
 import type {
   MonthlyCadenceStatus,
   OpnameLineWithIngredient,
@@ -40,6 +44,13 @@ export async function fetchSessions(
   opts: { limit?: number } = {},
 ): Promise<OpnameSessionWithCounts[]> {
   const limit = Math.min(opts.limit ?? 30, 200);
+  /* Sesi AE-207 — daftar opname ikut batas buku, tapi pakai `opnameDate` yang
+   * SENGAJA lebih tua dari batas utama: sesi yang dihitung akhir bulan
+   * sebelum cutoff adalah STOK AWAL periode baru dan wajib tetap terlihat.
+   * Lihat features/cutoff/cutoff.ts. */
+  const cutoffAt = cutoffStartInstant(await getOpnameCutoffDate(outletId));
+  const conds = [eq(stockOpnameSessions.outletId, outletId)];
+  if (cutoffAt) conds.push(gte(stockOpnameSessions.startedAt, cutoffAt));
   const rows = await db
     .select({
       session: stockOpnameSessions,
@@ -47,7 +58,7 @@ export async function fetchSessions(
     })
     .from(stockOpnameSessions)
     .leftJoin(users, eq(users.id, stockOpnameSessions.startedBy))
-    .where(eq(stockOpnameSessions.outletId, outletId))
+    .where(and(...conds))
     .orderBy(desc(stockOpnameSessions.startedAt))
     .limit(limit);
 

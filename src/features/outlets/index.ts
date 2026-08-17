@@ -5,6 +5,7 @@ export {
   getOwnOutlet,
   updateApproval,
   updateAttendanceSettings,
+  updateBooksCutoff,
   updateBusinessInfo,
   updateOpeningBalance,
   updateOperationalHours,

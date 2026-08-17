@@ -13,6 +13,7 @@ import {
   resolveQtyToMaster,
   type IngredientPackConversion,
 } from "@/lib/unit-conversion";
+import { clampFromDate, getCutoffDate } from "@/features/cutoff/cutoff";
 import type {
   ListPurchasesOptions,
   PaymentMethod,
@@ -41,8 +42,9 @@ export async function fetchPurchases(
     conds.push(eq(purchases.supplierId, opts.supplierId));
   if (opts.paymentMethod)
     conds.push(eq(purchases.paymentMethod, opts.paymentMethod));
-  if (opts.dateFrom)
-    conds.push(gte(purchases.purchaseDate, opts.dateFrom));
+  // Sesi AE-207 — daftar Pembelian mulai dari batas buku.
+  const dateFrom = clampFromDate(opts.dateFrom, await getCutoffDate(outletId));
+  if (dateFrom) conds.push(gte(purchases.purchaseDate, dateFrom));
   if (opts.dateTo)
     conds.push(lte(purchases.purchaseDate, opts.dateTo));
 
@@ -138,6 +140,15 @@ export async function fetchPurchaseDetail(
   };
 }
 
+/**
+ * Hutang TOP yang belum lunas.
+ *
+ * ⚠️ Sesi AE-207 — SENGAJA TIDAK ikut batas buku. Arahan owner: hutang &
+ * hutang dagang DIPERTAHANKAN. Nota yang belum dibayar tidak boleh hilang dari
+ * layar cuma karena tanggalnya sebelum cutoff — itu kewajiban yang masih
+ * hidup. Yang disembunyikan hanya RIWAYAT yang sudah lunas/batal
+ * (lihat `fetchTopHistory`).
+ */
 export async function fetchTopOutstanding(
   outletId: string,
   todayIso: string,
@@ -210,7 +221,11 @@ export async function fetchPurchaseRollup(
       and(
         eq(purchases.outletId, outletId),
         sql`${purchases.status} != 'cancelled'`,
-        gte(purchases.purchaseDate, dateFrom),
+        // Sesi AE-207 — rekap pembelian ikut batas buku.
+        gte(
+          purchases.purchaseDate,
+          clampFromDate(dateFrom, await getCutoffDate(outletId)) as string,
+        ),
         lte(purchases.purchaseDate, dateTo),
       ),
     )
@@ -291,7 +306,13 @@ export async function fetchPurchasesByIngredient(
       and(
         eq(purchases.outletId, outletId),
         sql`${purchases.status} != 'cancelled'`,
-        gte(purchases.purchaseDate, dateFrom),
+        /* Sesi AE-207 — laporan HPP & layar Opname ikut batas buku, supaya
+         * "pembelian" periode baru tidak ketarik nota lama yang sudah
+         * disembunyikan (kalau ketarik, pemakaian jadi minus — bug AE-194). */
+        gte(
+          purchases.purchaseDate,
+          clampFromDate(dateFrom, await getCutoffDate(outletId)) as string,
+        ),
         lte(purchases.purchaseDate, dateTo),
       ),
     );
@@ -354,6 +375,14 @@ export async function fetchTopHistory(
   if (opts.status && opts.status !== "all") {
     conds.push(eq(purchases.status, opts.status));
   }
+  /* Sesi AE-207 — riwayat TOP ikut batas buku, TAPI nota yang belum lunas
+   * selalu ditampilkan berapa pun tanggalnya. Hutang hidup tidak boleh
+   * disembunyikan; yang disembunyikan hanya riwayat yang sudah beres. */
+  const cutoff = await getCutoffDate(outletId);
+  const topFloor = cutoff
+    ? sql`(${purchases.purchaseDate} >= ${cutoff} OR ${purchases.status} = 'pending_payment')`
+    : undefined;
+  if (topFloor) conds.push(topFloor);
   if (opts.fromDate) conds.push(gte(purchases.purchaseDate, opts.fromDate));
   if (opts.toDate) conds.push(lte(purchases.purchaseDate, opts.toDate));
   if (opts.supplierId) conds.push(eq(purchases.supplierId, opts.supplierId));
@@ -420,6 +449,9 @@ export async function fetchTopHistory(
     eq(purchases.outletId, outletId),
     eq(purchases.paymentMethod, "top"),
   ];
+  // Ringkasan wajib memakai batas yang sama dengan daftarnya, kalau tidak
+  // angka kartu "Lunas" ikut menghitung nota yang sudah disembunyikan.
+  if (topFloor) baseConds.push(topFloor);
   if (opts.fromDate) baseConds.push(gte(purchases.purchaseDate, opts.fromDate));
   if (opts.toDate) baseConds.push(lte(purchases.purchaseDate, opts.toDate));
   if (opts.supplierId) baseConds.push(eq(purchases.supplierId, opts.supplierId));

@@ -57,6 +57,7 @@ import type {
   TopItem,
 } from "./types";
 import { classifyMenuMatrix } from "./menu-engineering-pure";
+import { clampFromDate, getCutoffDate } from "@/features/cutoff/cutoff";
 import {
   aggregateClosingShifts,
   computeBillStats,
@@ -368,9 +369,18 @@ export async function fetchMenuEngineeringMatrix(
 
 export async function fetchPnlReport(
   outletId: string,
-  from: string,
+  fromArg: string,
   to: string,
 ): Promise<PnlReport> {
+  /* Sesi AE-207 — Laba Rugi operasional di-klem SELURUHNYA ke batas buku,
+   * bukan hanya bagian biayanya.
+   *
+   * Kalau cuma biaya yang di-klem, laporan Mei tampil dengan penjualan Rp48jt
+   * dan biaya Rp0 — untung palsu yang justru lebih menyesatkan daripada
+   * laporan kosong. Penjualan mentah Mei–Juni tetap bisa dilihat di Laporan
+   * PENJUALAN (sengaja tidak di-klem, sesuai arahan owner: penjualan
+   * dipertahankan). */
+  const from = clampFromDate(fromArg, await getCutoffDate(outletId)) as string;
   const fromUtc = startOfWibDateUtc(from);
   const toUtc = endOfWibDateUtc(to);
 
