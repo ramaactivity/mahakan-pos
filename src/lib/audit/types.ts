@@ -137,6 +137,8 @@ export const AUDIT_EVENT_TYPES = [
   /* Sesi AE-188 — koreksi tanggal pembayaran hutang yang terlanjur salah
    * (geser paid_at + tanggal expense + tanggal jurnal purchase_pay). */
   "purchase.payment_date_update",
+  /* Sesi AE-199 — koreksi metode pembayaran hutang (jurnal diposting ulang). */
+  "purchase.payment_method_update",
   // Purchase Requests (Phase 6.5+6.6, sesi AC-3)
   "purchase_request.create",
   "purchase_request.receive",

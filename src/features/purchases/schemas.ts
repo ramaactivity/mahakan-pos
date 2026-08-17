@@ -165,6 +165,19 @@ export const cancelPurchaseSchema = z.object({
   reason: z.string().trim().min(REASON_MIN).max(REASON_MAX),
 });
 
+/**
+ * Sesi AE-199 — koreksi metode pembayaran hutang yang sudah lunas.
+ * TOP ditolak: itu jenis pembeliannya, bukan alat bayarnya.
+ */
+export const updatePaymentMethodSchema = z.object({
+  id: z.uuid(),
+  paymentMethod: paymentMethodEnum.refine(
+    (m) => m !== "top",
+    "Metode pembayaran tidak boleh TOP",
+  ),
+  reason: z.string().trim().min(5, "Alasan koreksi minimal 5 karakter").max(200),
+});
+
 export const markPaidSchema = z.object({
   id: z.uuid(),
   paymentMethod: paymentMethodEnum.refine(

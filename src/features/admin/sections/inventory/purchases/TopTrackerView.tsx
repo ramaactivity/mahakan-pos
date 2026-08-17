@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CalendarClock,
+  Wallet,
   CheckCircle2,
   Clock,
   RefreshCw,
@@ -26,6 +27,7 @@ import {
   isOk,
   listTopHistory,
   markPurchasePaid,
+  updatePurchasePaymentMethod,
   updatePurchasePaymentDate,
   type PaymentMethod,
   type TopHistoryItem,
@@ -122,6 +124,12 @@ export function TopTrackerView() {
   const [fixReason, setFixReason] = useState("");
   const [fixSubmitting, setFixSubmitting] = useState(false);
 
+  /* Sesi AE-199 — koreksi METODE pembayaran untuk hutang yang sudah lunas. */
+  const [methodTarget, setMethodTarget] = useState<TopHistoryItem | null>(null);
+  const [methodValue, setMethodValue] = useState<PaymentMethod>("cash");
+  const [methodReason, setMethodReason] = useState("");
+  const [methodSubmitting, setMethodSubmitting] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     /* eslint-disable react-hooks/set-state-in-effect */
@@ -179,6 +187,32 @@ export function TopTrackerView() {
       `Lunas dicatat per ${payDate}${res.data.expenseId ? " + entry kas dibuat" : ""}`,
     );
     setPayTarget(null);
+    refresh();
+  }
+
+  async function onConfirmFixMethod() {
+    if (!methodTarget || methodSubmitting) return;
+    if (methodReason.trim().length < 5) {
+      toast.error("Alasan koreksi minimal 5 karakter");
+      return;
+    }
+    setMethodSubmitting(true);
+    const res = await updatePurchasePaymentMethod({
+      id: methodTarget.id,
+      paymentMethod: methodValue,
+      reason: methodReason.trim(),
+    });
+    setMethodSubmitting(false);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(
+      res.data.journalReposted
+        ? "Metode pembayaran dikoreksi — jurnal diposting ulang ke akun yang benar"
+        : "Metode pembayaran dikoreksi",
+    );
+    setMethodTarget(null);
     refresh();
   }
 
@@ -441,23 +475,42 @@ export function TopTrackerView() {
                         <td className="px-4 py-3 text-right">
                           {p.status === "paid" ? (
                             canFixPayDate ? (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => {
-                                  setFixTarget(p);
-                                  setFixDate(
-                                    p.paidAt
-                                      ? p.paidAt.slice(0, 10)
-                                      : todayJakartaIso(),
-                                  );
-                                  setFixReason("");
-                                }}
-                                title="Koreksi tanggal pembayaran"
-                              >
-                                <CalendarClock className="size-4" aria-hidden />{" "}
-                                Ubah Tanggal
-                              </Button>
+                              <div className="flex flex-wrap justify-end gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    setFixTarget(p);
+                                    setFixDate(
+                                      p.paidAt
+                                        ? p.paidAt.slice(0, 10)
+                                        : todayJakartaIso(),
+                                    );
+                                    setFixReason("");
+                                  }}
+                                  title="Koreksi tanggal pembayaran"
+                                >
+                                  <CalendarClock
+                                    className="size-4"
+                                    aria-hidden
+                                  />{" "}
+                                  Ubah Tanggal
+                                </Button>
+                                {/* Sesi AE-199 — koreksi metode pembayaran. */}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    setMethodTarget(p);
+                                    setMethodValue("cash");
+                                    setMethodReason("");
+                                  }}
+                                  title="Koreksi metode pembayaran"
+                                >
+                                  <Wallet className="size-4" aria-hidden /> Ubah
+                                  Metode
+                                </Button>
+                              </div>
                             ) : (
                               <span className="text-xs text-neutral-400">—</span>
                             )
@@ -494,6 +547,67 @@ export function TopTrackerView() {
           )}
         </CardContent>
       </Card>
+
+      {/* Sesi AE-199 — koreksi metode pembayaran hutang yang sudah lunas.
+          Metode menentukan akun kas/bank yang dikredit, jadi jurnalnya
+          dibalik lalu diposting ulang — bukan sekadar ditimpa. */}
+      <Modal
+        open={methodTarget !== null}
+        onClose={() => {
+          setMethodTarget(null);
+          setMethodReason("");
+        }}
+        title="Ubah Metode Pembayaran"
+        description={
+          methodTarget
+            ? `${methodTarget.supplierName ?? "Tanpa supplier"} — ${formatRupiah(methodTarget.totalAmount)}`
+            : undefined
+        }
+        size="md"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setMethodTarget(null)}
+              disabled={methodSubmitting}
+            >
+              Batal
+            </Button>
+            <Button
+              onClick={onConfirmFixMethod}
+              loading={methodSubmitting}
+              disabled={methodReason.trim().length < 5}
+            >
+              Simpan Koreksi
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Select
+            label="Metode Pembayaran Sebenarnya"
+            options={PAY_OPTIONS.map((o) => ({
+              value: o.value,
+              label: o.label,
+            }))}
+            value={methodValue}
+            onValueChange={(v) => setMethodValue(v as PaymentMethod)}
+          />
+          <Input
+            label="Alasan Koreksi"
+            value={methodReason}
+            onChange={(e) => setMethodReason(e.target.value)}
+            placeholder="Contoh: ternyata dibayar tunai, bukan transfer BCA"
+            maxLength={200}
+          />
+          <p className="rounded-md bg-warning-100/50 p-2 text-xs text-warning-700">
+            Jurnal pelunasan yang lama akan dibalik lalu diposting ulang ke akun
+            kas/bank yang benar, dan baris pengeluaran kasnya ikut disesuaikan.
+            Tanggal pembayaran tidak berubah — pakai &ldquo;Ubah Tanggal&rdquo;
+            untuk itu.
+          </p>
+        </div>
+      </Modal>
 
       {/* Sesi AE-188 — koreksi pelunasan yang terlanjur tercatat di tanggal
           klik, bukan tanggal uang keluar (permintaan staff). */}

@@ -12,6 +12,7 @@ import {
   ingredients,
   inventoryMovements,
   journalEntries,
+  journalLines,
   purchaseItems,
   purchaseRequestItems,
   purchaseRequests,
@@ -49,6 +50,7 @@ import {
   cancelPurchaseSchema,
   createPurchaseSchema,
   markPaidSchema,
+  updatePaymentMethodSchema,
   updatePurchaseOrderSchema,
 } from "./schemas";
 import {
@@ -1964,6 +1966,217 @@ export async function updatePurchasePaymentDate(input: {
       expenseMoved,
     },
   };
+}
+
+/**
+ * Sesi AE-199 — koreksi METODE PEMBAYARAN hutang dagang yang sudah lunas.
+ *
+ * Saudara dari `updatePurchasePaymentDate` (AE-188). Kebutuhannya sama: tagihan
+ * sudah ditandai lunas, lalu ketahuan uangnya sebenarnya keluar dari kantong
+ * yang lain — misal tercatat Transfer BCA padahal dibayar tunai.
+ *
+ * Metode menentukan AKUN KAS/BANK mana yang dikredit (1101 tunai, 1110 BCA,
+ * 1111 BRI, 1112 lainnya), jadi jurnalnya tidak bisa sekadar ditimpa: entry
+ * lama dibalik dengan pola pair-void lalu diposting ulang memakai akun yang
+ * benar. Tanpa ini satu-satunya jalan adalah membatalkan pelunasan dan
+ * mengulang — yang meninggalkan jejak audit berantakan.
+ */
+export async function updatePurchasePaymentMethod(input: {
+  id: string;
+  paymentMethod: PaymentMethod;
+  reason: string;
+}): Promise<
+  ApiResult<{
+    id: string;
+    paymentMethod: PaymentMethod;
+    previousMethod: PaymentMethod | null;
+    journalReposted: boolean;
+    expenseUpdated: boolean;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.journal.post")) {
+    return fail(
+      "FORBIDDEN",
+      "Hanya owner yang boleh mengoreksi metode pembayaran — perubahannya ikut memindahkan jurnal yang sudah diposting.",
+    );
+  }
+
+  const parsed = updatePaymentMethodSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  const [p] = await db
+    .select()
+    .from(purchases)
+    .where(
+      and(
+        eq(purchases.id, v.id),
+        eq(purchases.outletId, session.user.outletId),
+      ),
+    )
+    .limit(1);
+  if (!p) return fail("NOT_FOUND", "Pembelian tidak ditemukan");
+  if (p.status !== "paid") {
+    return fail(
+      "BAD_STATE",
+      "Pembelian ini belum ditandai lunas — belum ada pembayaran yang bisa dikoreksi.",
+    );
+  }
+  if (p.paymentMethod !== "top") {
+    return fail(
+      "BAD_STATE",
+      "Hanya pembelian tempo (TOP) yang punya pelunasan tersendiri. Untuk pembelian tunai/transfer, uangnya keluar saat barang diterima — koreksi lewat Edit Pembelian.",
+    );
+  }
+
+  /* Metode pelunasan yang berlaku sekarang tidak disimpan di baris purchase
+   * (kolom paymentMethod tetap 'top' = jenis pembeliannya). Sumber
+   * kebenarannya adalah baris kas pelunasan yang dibuat markPurchasePaid. */
+  const [payExpense] = p.expenseId
+    ? await db
+        .select({
+          id: expenses.id,
+          paymentMethod: expenses.paymentMethod,
+        })
+        .from(expenses)
+        .where(and(eq(expenses.id, p.expenseId), isNull(expenses.deletedAt)))
+        .limit(1)
+    : [];
+
+  const payDate = p.paidAt
+    ? toJakartaDateOnly(p.paidAt)
+    : String(p.purchaseDate);
+
+  /* 1) Jurnal dulu — penjaga paling ketat (periode terkunci). Kalau gagal di
+   *    sini, belum ada baris lain yang terlanjur berubah. */
+  let journalReposted = false;
+  const [payEntry] = await db
+    .select({ id: journalEntries.id })
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.outletId, session.user.outletId),
+        eq(journalEntries.sourceType, "purchase_pay"),
+        eq(journalEntries.sourceId, p.id),
+        eq(journalEntries.status, "posted"),
+      ),
+    )
+    .limit(1);
+
+  if (payEntry) {
+    /* Nilai jurnal ulang WAJIB persis sama dengan yang dibalik, jadi diambil
+     * dari entry-nya sendiri — bukan dihitung ulang dari totalAmount.
+     * markPurchasePaid memakai total GR kalau ada (bisa beda dari nilai PO
+     * saat penerimaan kurang/lebih); menghitung ulang di sini akan membuat
+     * pembalik dan posting ulang tidak seimbang, dan 2101 ikut melenceng. */
+    const [postedTotal] = await db
+      .select({
+        total: sql<number>`coalesce(sum(${journalLines.debit}), 0)::bigint`,
+      })
+      .from(journalLines)
+      .where(eq(journalLines.entryId, payEntry.id));
+    const repostTotal = Number(postedTotal?.total ?? 0);
+    if (repostTotal <= 0) {
+      return fail(
+        "JOURNAL_ERROR",
+        "Jurnal pelunasan lama tidak punya nilai yang bisa diposting ulang.",
+      );
+    }
+    const [{ pairVoidJournalForSource }, { postJournalForPurchasePay }] =
+      await Promise.all([
+        import("@/features/accounting/journal-void"),
+        import("@/features/accounting/hooks"),
+      ]);
+    const label = await resolvePurchaseLabel(p.id);
+    try {
+      await pairVoidJournalForSource({
+        outletId: session.user.outletId,
+        sourceType: "purchase_pay",
+        voidSourceType: "purchase_pay_reversal",
+        sourceId: p.id,
+        actorId: session.user.id,
+        reason: `Koreksi metode pembayaran — ${v.reason}`,
+      });
+      await postJournalForPurchasePay({
+        outletId: session.user.outletId,
+        purchaseId: p.id,
+        purchaseLabel: label,
+        paymentMethod: v.paymentMethod,
+        total: repostTotal,
+        entryDate: payDate,
+        actorId: session.user.id,
+      });
+      journalReposted = true;
+    } catch (e) {
+      return fail(
+        "JOURNAL_ERROR",
+        logAndSanitize(
+          e,
+          "purchases.payment_method_update.journal",
+          "Jurnal pelunasan tidak bisa diposting ulang",
+        ),
+      );
+    }
+  }
+
+  // 2) Baris kas pelunasannya.
+  let expenseUpdated = false;
+  if (payExpense) {
+    try {
+      const res = await db
+        .update(expenses)
+        .set({
+          paymentMethod: expensePaymentMethod(v.paymentMethod),
+          updatedAt: new Date(),
+          updatedBy: session.user.id,
+        })
+        .where(eq(expenses.id, payExpense.id))
+        .returning({ id: expenses.id });
+      expenseUpdated = res.length > 0;
+    } catch (e) {
+      return fail(
+        "DB_ERROR",
+        logAndSanitize(
+          e,
+          "purchases.payment_method_update",
+          "Gagal memperbarui baris kas pelunasan",
+        ),
+      );
+    }
+  }
+
+  await logAudit({
+    eventType: "purchase.payment_method_update",
+    userId: session.user.id,
+    entityType: "purchase",
+    entityId: p.id,
+    payload: {
+      summary: `Koreksi metode pembayaran hutang → ${labelMetodeBayar(v.paymentMethod)} — ${v.reason}`,
+      context: {
+        previousExpenseMethod: payExpense?.paymentMethod ?? null,
+        newMethod: v.paymentMethod,
+        reason: v.reason,
+        journalReposted,
+        expenseUpdated,
+        payDate,
+      },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  return ok({
+    id: p.id,
+    paymentMethod: v.paymentMethod,
+    previousMethod: null,
+    journalReposted,
+    expenseUpdated,
+  });
 }
 
 /* Sesi AE-87 — sebelumnya ada `export type { Purchase }` di sini, tapi
