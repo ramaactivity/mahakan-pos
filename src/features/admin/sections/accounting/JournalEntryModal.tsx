@@ -134,6 +134,8 @@ export function JournalEntryModal({
    * 3+ baris → baris ini menutup sisanya. Begitu baris ini diketik manual,
    * penandanya dilepas supaya angka ketikan tidak pernah ditimpa sistem. */
   const [autoLineId, setAutoLineId] = useState<string | null>(null);
+  /* Sesi AE-207 — petunjuk arah debit/kredit dari template yang baru dipilih. */
+  const [activeHint, setActiveHint] = useState<string | null>(null);
   /* Sesi AE-206 — bukti transaksi/transfer (link Google Drive). */
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
@@ -171,6 +173,7 @@ export function JournalEntryModal({
     }
     setError(null);
     setAutoLineId(null);
+    setActiveHint(null);
     setUploadingReceipt(false);
     setLoading(true);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -271,6 +274,12 @@ export function JournalEntryModal({
     lineCreditCode: string;
     /** Group label untuk visual organize. */
     group: "Saldo Awal" | "Operasional" | "Koreksi";
+    /* Sesi AE-207 — penjelasan ARAH debit/kredit, tampil sebagai tooltip.
+     * Template itu sepasang akun dengan arah TETAP, padahal penyesuaian bisa
+     * dua arah (stok naik atau turun). Tanpa penjelasan ini owner mudah
+     * memasukkan angka ke sisi yang salah — dan jurnalnya tetap "seimbang"
+     * jadi tidak ada error yang menahan. */
+    hint?: string;
   };
   const TEMPLATES: Template[] = [
     /* === Saldo Awal === */
@@ -297,6 +306,57 @@ export function JournalEntryModal({
       lineDebitCode: "1110",
       lineCreditCode: "3101",
       group: "Saldo Awal",
+      hint: "Uang modal BARU yang benar-benar masuk sekarang: Debit Bank BCA, Kredit Modal Owner. Untuk setoran LAMA yang belum pernah dijurnal, pakai 'Koreksi Modal Disetor'.",
+    },
+    /* Sesi AE-207 — penyesuaian saldo awal setelah cutoff "mulai bersih".
+     * Saldo awal 1 Juli diambil dari GL apa adanya, jadi owner butuh jalan
+     * yang mudah untuk membetulkannya ke angka riil tanpa hafal kode akun.
+     * Lawannya 3301 Saldo Laba Ditahan (bukan 3101 Modal Owner): selisih ini
+     * hasil pencatatan periode lalu, bukan setoran modal baru. */
+    {
+      key: "saldo-persediaan-kitchen",
+      label: "Nilai Stok Kitchen",
+      description: "Penyesuaian nilai Persediaan Kitchen per ",
+      lineDebitCode: "1140",
+      lineCreditCode: "3301",
+      group: "Saldo Awal",
+      hint: "Isi SELISIHNYA saja, bukan nilai totalnya. Susunan ini untuk stok riil LEBIH BESAR dari catatan. Kalau lebih KECIL, tukar angkanya: Debit 3301, Kredit 1140.",
+    },
+    {
+      key: "saldo-persediaan-bar",
+      label: "Nilai Stok Bar",
+      description: "Penyesuaian nilai Persediaan Bar per ",
+      lineDebitCode: "1141",
+      lineCreditCode: "3301",
+      group: "Saldo Awal",
+      hint: "Isi SELISIHNYA saja. Susunan ini untuk stok riil LEBIH BESAR dari catatan; kalau lebih KECIL, tukar jadi Debit 3301, Kredit 1141.",
+    },
+    {
+      key: "saldo-persediaan-pendukung",
+      label: "Nilai Stok Pendukung",
+      description: "Penyesuaian nilai Persediaan Bahan Pendukung per ",
+      lineDebitCode: "1142",
+      lineCreditCode: "3301",
+      group: "Saldo Awal",
+      hint: "Isi SELISIHNYA saja. Saldo awal 1 Juli akun ini di-nol-kan (aslinya minus), jadi kalau ada nilai stok pendukung riil, masukkan di sini.",
+    },
+    {
+      key: "saldo-hutang-dagang",
+      label: "Saldo Awal Hutang Dagang",
+      description: "Penyesuaian Hutang Dagang supplier per ",
+      lineDebitCode: "3301",
+      lineCreditCode: "2101",
+      group: "Saldo Awal",
+      hint: "Susunan ini MENAMBAH hutang (Kredit 2101). Untuk MENGURANGI hutang, tukar jadi Debit 2101, Kredit 3301.",
+    },
+    {
+      key: "saldo-modal-reklas",
+      label: "Koreksi Modal Disetor",
+      description: "Koreksi Modal disetor investor & pengelola yang belum terjurnal ",
+      lineDebitCode: "3301",
+      lineCreditCode: "3101",
+      group: "Saldo Awal",
+      hint: "Untuk setoran modal LAMA yang belum pernah masuk jurnal. TIDAK menambah kas — hanya memindahkan dari Saldo Laba Ditahan ke Modal Owner, jadi total ekuitas tidak berubah, cuma barisnya jadi benar.",
     },
     /* === Operasional === */
     {
@@ -376,6 +436,10 @@ export function JournalEntryModal({
     if (shouldOverwrite) {
       setDescription(t.description);
     }
+    /* Sesi AE-207 — tampilkan petunjuk arah debit/kredit sebagai TEKS, bukan
+     * cuma tooltip: back office kadang dibuka dari tablet, dan di layar sentuh
+     * `title` tidak pernah muncul. */
+    setActiveHint(t.hint ?? null);
     setLines([
       {
         id: crypto.randomUUID(),
@@ -628,6 +692,11 @@ export function JournalEntryModal({
                         key={t.key}
                         type="button"
                         onClick={() => applyTemplate(t)}
+                        /* Sesi AE-207 — tooltip arah debit/kredit. Jurnal yang
+                         * sisinya kebalik tetap seimbang, jadi tidak ada
+                         * validasi yang bisa menahannya — penjelasannya harus
+                         * ada sebelum owner mengetik angka. */
+                        title={t.hint ?? t.description.trim()}
                         className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 text-[11px] font-medium text-neutral-700 hover:border-mahakan-green-500 hover:bg-mahakan-green-50 hover:text-mahakan-green-900"
                       >
                         {t.label}
@@ -637,6 +706,11 @@ export function JournalEntryModal({
                 );
               },
             )}
+            {activeHint ? (
+              <p className="rounded-md border border-mahakan-green-500/30 bg-mahakan-green-50 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-700">
+                {activeHint}
+              </p>
+            ) : null}
           </div>
         ) : null}
 
