@@ -139,7 +139,12 @@ export async function fetchLatestOpnameBefore(
   `);
 }
 
-async function fetchLatestOpnameWithin(
+/**
+ * Opname terakhir yang DIHITUNG di dalam rentang [fromDate, toDate] — pasangan
+ * "stok akhir" dari {@link fetchLatestOpnameBefore}. Sama-sama pakai
+ * `started_at` supaya sebuah hitungan fisik selalu jatuh di periode yang benar.
+ */
+export async function fetchLatestOpnameWithin(
   outletId: string,
   fromDate: string,
   toDate: string,

@@ -12,7 +12,7 @@
  *     WHERE transactions in period AND status='paid'.
  */
 
-import { and, asc, desc, eq, gte, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   goodsReceiptItems,
@@ -22,13 +22,11 @@ import {
   outlets,
   purchaseItems,
   purchases,
-  recipeIngredients,
-  recipes,
-  stockOpnameLines,
-  stockOpnameSessions,
-  transactionItems,
-  transactions,
 } from "@/db/schema";
+import {
+  fetchLatestOpnameBefore,
+  fetchLatestOpnameWithin,
+} from "@/features/reports/inventory-reports";
 import {
   computeIngredientCogs,
   parseMonthlyPeriod,
@@ -38,6 +36,28 @@ import {
   type CogsSummary,
 } from "./cogs-calc";
 
+const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Tanggal kalender Jakarta (YYYY-MM-DD) dari sebuah timestamp. */
+function jakartaIsoDate(d: Date): string {
+  return new Date(d.getTime() + WIB_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** Selisih hari antara dua tanggal YYYY-MM-DD (b − a). */
+function daysBetween(a: string, b: string): number {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY_MS);
+}
+
+export interface OpnameRef {
+  id: string;
+  periodLabel: string;
+  /** ISO timestamp saat opname disetujui. */
+  finalizedAt: string;
+  /** YYYY-MM-DD (WIB) saat stok fisik dihitung. */
+  countedAt: string;
+}
+
 export interface CogsReport {
   period: ReturnType<typeof parseMonthlyPeriod>;
   outletName: string;
@@ -45,10 +65,12 @@ export interface CogsReport {
   summary: CogsSummary;
   /** Banners untuk UI display kalau data tidak lengkap. */
   banners: string[];
-  /** Last finalized opname info — supaya UI bisa show context. */
+  /** Opname yang dipakai jadi stok awal/akhir — supaya UI bisa show context.
+   *  `countedAt` = tanggal HITUNG FISIK (WIB), inilah yang menentukan periode;
+   *  `finalizedAt` cuma tanggal persetujuan. */
   lastOpname: {
-    before: { id: string; periodLabel: string; finalizedAt: string } | null;
-    within: { id: string; periodLabel: string; finalizedAt: string } | null;
+    before: OpnameRef | null;
+    within: OpnameRef | null;
   };
   /** Per-period purchase stats untuk surface ke UI. */
   purchaseStats: {
@@ -101,28 +123,26 @@ export async function getCogsReport(args: {
     );
 
   // ──────────────────────────────────────────────────────────────
-  // 3. Last finalized opname BEFORE period start → stock awal source
+  // 3. Opname terakhir yang DIHITUNG sebelum awal periode → stock awal
+  //
+  //    Sesi AE-201 — pakai `fetchLatestOpnameBefore` (kriteria `started_at`,
+  //    yaitu TANGGAL HITUNG FISIK), bukan `finalized_at` (tanggal disetujui).
+  //    Persetujuan sering menyusul berhari-hari sampai lewat batas bulan:
+  //    opname "Juli" dihitung 31 Juli baru disetujui 1 Agustus 09:02, opname
+  //    "Juni" dihitung 30 Juni baru disetujui 14 Juli. Dengan `finalized_at`
+  //    SETIAP bulan meleset satu siklus — stok akhir bulan lalu tidak pernah
+  //    jadi stok awal bulan ini (laporan Juli memakai hitungan Mei sebagai
+  //    stok awal), lalu awal + beli − akhir menghasilkan pemakaian minus.
+  //    Helper-nya dipakai bareng laporan HPP supaya tidak ada logika kembar.
   // ──────────────────────────────────────────────────────────────
-  const [opnameBefore] = await db
-    .select({
-      id: stockOpnameSessions.id,
-      periodLabel: stockOpnameSessions.periodLabel,
-      finalizedAt: stockOpnameSessions.finalizedAt,
-    })
-    .from(stockOpnameSessions)
-    .where(
-      and(
-        eq(stockOpnameSessions.outletId, args.outletId),
-        eq(stockOpnameSessions.status, "completed"),
-        lt(stockOpnameSessions.finalizedAt, new Date(`${period.fromDate}T00:00:00+07:00`)),
-      ),
-    )
-    .orderBy(desc(stockOpnameSessions.finalizedAt))
-    .limit(1);
+  const opnameBefore = await fetchLatestOpnameBefore(
+    args.outletId,
+    period.fromDate,
+  );
 
   const stockAwalByIng = new Map<
     string,
-    { qty: number; unitCost: number }
+    { qty: number; unitCost: number | undefined }
   >();
   /* AE-117 — Fallback map kalau no prev opname: net delta movements
    * dalam period per ingredient. Stock awal = current_stock - net_delta.
@@ -130,19 +150,10 @@ export async function getCogsReport(args: {
   let periodMovementByIng: Map<string, number> | null = null;
 
   if (opnameBefore) {
-    const lines = await db
-      .select({
-        ingredientId: stockOpnameLines.ingredientId,
-        actualQtyDecimal: stockOpnameLines.actualQtyDecimal,
-        unitCostAtSnapshot: stockOpnameLines.unitCostAtSnapshot,
-      })
-      .from(stockOpnameLines)
-      .where(eq(stockOpnameLines.sessionId, opnameBefore.id));
-    for (const l of lines) {
-      const qty = l.actualQtyDecimal !== null ? Number(l.actualQtyDecimal) : 0;
-      stockAwalByIng.set(l.ingredientId, {
+    for (const [ingredientId, qty] of opnameBefore.qtyByIngredient) {
+      stockAwalByIng.set(ingredientId, {
         qty,
-        unitCost: l.unitCostAtSnapshot,
+        unitCost: opnameBefore.costByIngredient.get(ingredientId),
       });
     }
   } else {
@@ -290,41 +301,23 @@ export async function getCogsReport(args: {
   }
 
   // ──────────────────────────────────────────────────────────────
-  // 5. Stock akhir from opname within period (or just after, until today
-  //    if period current month). Latest finalized opname.
+  // 5. Opname terakhir yang DIHITUNG di dalam periode → stock akhir.
+  //
+  //    Sesi AE-201 — dulu: `finalized_at >= awal periode` diurut ASC TANPA
+  //    batas atas, jadi yang terambil hitungan paling awal yang DISETUJUI
+  //    setelah tanggal 1 — biasanya opname BULAN SEBELUMNYA yang persetujuannya
+  //    telat. Sekarang batasnya tanggal hitung fisik di dalam [from, to].
   // ──────────────────────────────────────────────────────────────
-  const [opnameWithin] = await db
-    .select({
-      id: stockOpnameSessions.id,
-      periodLabel: stockOpnameSessions.periodLabel,
-      finalizedAt: stockOpnameSessions.finalizedAt,
-    })
-    .from(stockOpnameSessions)
-    .where(
-      and(
-        eq(stockOpnameSessions.outletId, args.outletId),
-        eq(stockOpnameSessions.status, "completed"),
-        gte(
-          stockOpnameSessions.finalizedAt,
-          new Date(`${period.fromDate}T00:00:00+07:00`),
-        ),
-      ),
-    )
-    .orderBy(asc(stockOpnameSessions.finalizedAt))
-    .limit(1);
+  const opnameWithin = await fetchLatestOpnameWithin(
+    args.outletId,
+    period.fromDate,
+    period.toDate,
+  );
 
   const stockAkhirByIng = new Map<string, number>();
   if (opnameWithin) {
-    const lines = await db
-      .select({
-        ingredientId: stockOpnameLines.ingredientId,
-        actualQtyDecimal: stockOpnameLines.actualQtyDecimal,
-      })
-      .from(stockOpnameLines)
-      .where(eq(stockOpnameLines.sessionId, opnameWithin.id));
-    for (const l of lines) {
-      const qty = l.actualQtyDecimal !== null ? Number(l.actualQtyDecimal) : 0;
-      stockAkhirByIng.set(l.ingredientId, qty);
+    for (const [ingredientId, qty] of opnameWithin.qtyByIngredient) {
+      stockAkhirByIng.set(ingredientId, qty);
     }
   } else {
     /* Sesi AE-177g — Banner jujur: kode pakai `currentStockDecimal` sebagai
@@ -334,6 +327,32 @@ export async function getCogsReport(args: {
     banners.push(
       `Belum ada opname dalam periode ${period.label}. Stock Akhir pakai stok saat ini (current) — COGS approximate, hitung opname akhir bulan utk akurasi.`,
     );
+  }
+
+  /* Sesi AE-201 — sebut terang-terangan hitungan mana yang jadi stok awal &
+   * stok akhir, memakai TANGGAL HITUNG (bukan tanggal setuju). Owner sempat
+   * ragu "stok akhir SO tidak jadi stok awal bulan berikutnya" — sekarang bisa
+   * dicek langsung dari layar. */
+  if (opnameBefore || opnameWithin) {
+    banners.push(
+      `Stok awal = opname ${opnameBefore ? `${opnameBefore.periodLabel} (dihitung ${jakartaIsoDate(opnameBefore.countedAt)})` : "—"}` +
+        ` · Stok akhir = opname ${opnameWithin ? `${opnameWithin.periodLabel} (dihitung ${jakartaIsoDate(opnameWithin.countedAt)})` : "stok saat ini"}.`,
+    );
+  }
+
+  /* Jeda hari antara hitungan stok awal dengan awal periode: belanja di
+   * rentang itu tidak masuk hitungan fisik mana pun, jadi pemakaian bisa
+   * tampak minus. Bukan bug rumus — hitung opname di akhir bulan. */
+  if (opnameBefore) {
+    const gapDays = daysBetween(
+      jakartaIsoDate(opnameBefore.countedAt),
+      period.fromDate,
+    );
+    if (gapDays > 1) {
+      banners.push(
+        `Opname stok awal dihitung ${jakartaIsoDate(opnameBefore.countedAt)}, ${gapDays - 1} hari sebelum ${period.fromDate}. Belanja di sela hari itu tidak terhitung di periode mana pun — pemakaian bisa tampak minus. Hitung opname di hari terakhir bulan supaya pas.`,
+      );
+    }
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -403,6 +422,8 @@ export async function getCogsReport(args: {
   // 8. Compute per-ingredient rows
   // ──────────────────────────────────────────────────────────────
   const rows: IngredientCogsRow[] = [];
+  /** Bahan yang punya stok tercatat tapi tidak ikut opname periode ini. */
+  const uncountedNames: string[] = [];
   for (const ing of ings) {
     const sa = stockAwalByIng.get(ing.id);
     const pb = pembelianByIng.get(ing.id);
@@ -422,6 +443,25 @@ export async function getCogsReport(args: {
       stockAwalAvgPrice = ing.costPerUnit;
     }
 
+    /* Sesi AE-201 — bahan yang TIDAK ikut dihitung di opname periode ini
+     * (biasanya bahan yang baru dibuat setelah opname) dulu jatuh ke
+     * `current_stock` — yaitu stok HARI INI, dipakai sebagai stok akhir bulan
+     * yang sudah lewat, padahal stok awalnya 0. Hasilnya pemakaian minus palsu
+     * (mis. Sabun Cuci Piring −75.000 di Juni) dan rantai antar bulan putus.
+     * Kalau opname periode ini ADA, bahan yang tak tercatat di dalamnya
+     * dianggap 0 dan dilaporkan lewat banner. `current_stock` hanya dipakai
+     * saat memang belum ada opname sama sekali di periode (bulan berjalan). */
+    let stockAkhirQty: number;
+    if (sk !== undefined) {
+      stockAkhirQty = sk;
+    } else if (opnameWithin) {
+      stockAkhirQty = 0;
+      const cur = currentStockByIng.get(ing.id) ?? 0;
+      if (cur !== 0) uncountedNames.push(ing.name);
+    } else {
+      stockAkhirQty = currentStockByIng.get(ing.id) ?? 0;
+    }
+
     /* Skip bahan kalau benar-benar no data (clean output). */
     if (!sa && !pb && !sk && !th && stockAwalQty === 0) continue;
 
@@ -434,12 +474,19 @@ export async function getCogsReport(args: {
       stockAwalAvgPrice,
       pembelianQty: pb?.qty ?? 0,
       pembelianTotal: pb?.total ?? 0,
-      stockAkhirQty: sk ?? currentStockByIng.get(ing.id) ?? 0,
+      stockAkhirQty,
       theoreticalUsageQty: th ?? 0,
       currentCostPerUnit: ing.costPerUnit,
     };
 
     rows.push(computeIngredientCogs(input));
+  }
+
+  if (uncountedNames.length > 0 && opnameWithin) {
+    const sample = uncountedNames.slice(0, 5).join(", ");
+    banners.push(
+      `${uncountedNames.length} bahan tidak ikut dihitung di opname ${opnameWithin.periodLabel} (${sample}${uncountedNames.length > 5 ? ", dll" : ""}). Stok akhirnya dianggap 0 — masukkan bahan ini ke opname berikutnya.`,
+    );
   }
 
   // Sort by section then name
@@ -459,16 +506,18 @@ export async function getCogsReport(args: {
     lastOpname: {
       before: opnameBefore
         ? {
-            id: opnameBefore.id,
+            id: opnameBefore.sessionId,
             periodLabel: opnameBefore.periodLabel,
-            finalizedAt: opnameBefore.finalizedAt?.toISOString() ?? "",
+            finalizedAt: opnameBefore.finalizedAt.toISOString(),
+            countedAt: jakartaIsoDate(opnameBefore.countedAt),
           }
         : null,
       within: opnameWithin
         ? {
-            id: opnameWithin.id,
+            id: opnameWithin.sessionId,
             periodLabel: opnameWithin.periodLabel,
-            finalizedAt: opnameWithin.finalizedAt?.toISOString() ?? "",
+            finalizedAt: opnameWithin.finalizedAt.toISOString(),
+            countedAt: jakartaIsoDate(opnameWithin.countedAt),
           }
         : null,
     },
