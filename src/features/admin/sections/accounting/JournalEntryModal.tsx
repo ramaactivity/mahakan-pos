@@ -490,7 +490,10 @@ export function JournalEntryModal({
             ? "Owner: post langsung atau save as draft. Reverse via Jurnal tab kalau perlu."
             : "Manager: save as draft. Owner approve + post via Jurnal tab."
       }
-      size="3xl"
+      /* Sesi AE-205 — dilebarkan dari 3xl (max-w-4xl) ke full
+       * (min(95vw, 80rem)). Entry jurnal punya 5 kolom + numpad inline; di
+       * laptop 4xl bikin kolom Catatan & tombol hapus kepotong. */
+      size="full"
       footer={
         <div className="flex w-full items-center justify-between gap-3">
           <div className="text-sm">
@@ -599,11 +602,25 @@ export function JournalEntryModal({
           />
         </div>
 
-        <div className="rounded-md border border-neutral-200">
-          <table className="min-w-full text-sm">
+        {/* Sesi AE-205 — tabel baris jurnal kepotong di laptop layar kecil:
+         * lebar kolom dulu ikut isi (`min-w-full`), jadi field Debit/Credit
+         * mendorong kolom Catatan + tombol hapus keluar layar dan modal ikut
+         * scroll ke samping. Sekarang `table-fixed` + colgroup: proporsi
+         * kolom tetap dan semua field mengecil mengikuti lebar modal. Kalau
+         * jendelanya benar-benar sempit, yang menggulir HANYA kotak tabel
+         * ini (min-w 56rem), bukan seluruh isi modal. */}
+        <div className="overflow-x-auto rounded-md border border-neutral-200">
+          <table className="w-full min-w-[56rem] table-fixed text-sm">
+            <colgroup>
+              <col className="w-[30%]" />
+              <col className="w-[21%]" />
+              <col className="w-[21%]" />
+              <col className="w-[24%]" />
+              <col className="w-[4%]" />
+            </colgroup>
             <thead className="bg-neutral-50">
               <tr>
-                <th className="w-1/3 px-2 py-1.5 text-left text-xs font-medium uppercase text-neutral-500">
+                <th className="px-2 py-1.5 text-left text-xs font-medium uppercase text-neutral-500">
                   Akun
                 </th>
                 <th className="px-2 py-1.5 text-left text-xs font-medium uppercase text-neutral-500">
@@ -615,7 +632,7 @@ export function JournalEntryModal({
                 <th className="px-2 py-1.5 text-left text-xs font-medium uppercase text-neutral-500">
                   Catatan
                 </th>
-                <th className="w-10"></th>
+                <th></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
