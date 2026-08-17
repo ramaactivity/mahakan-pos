@@ -543,6 +543,29 @@ export interface ListPurchaseRequestsOptions {
   status?: PurchaseRequestStatus | "all";
   /** Default 50. */
   limit?: number;
+  /** Sesi AE-197 — lewati N baris pertama (paging "Muat lebih banyak"). */
+  offset?: number;
+}
+
+/**
+ * Sesi AE-197 — hasil list SEKARANG membawa `totalCount`.
+ *
+ * Sebelumnya fungsi ini hanya mengembalikan array yang sudah dipotong `limit`,
+ * dan halaman Back Office memanggilnya dengan limit 50 mati. Di produksi ada
+ * 151 PR, jadi 101 PR TIDAK PERNAH diambil — sementara kartu statistik di
+ * atasnya menghitung semuanya. Layarnya bilang "88 selesai, 60 dibatalkan"
+ * tapi daftarnya cuma sanggup menampilkan 50, tanpa satu pun petunjuk bahwa
+ * ada yang dipotong. Itulah "data PR tidak terbaca semua" yang dilaporkan.
+ *
+ * Dengan `totalCount` pemanggil bisa jujur: tampilkan "menampilkan X dari Y"
+ * dan sediakan tombol memuat sisanya.
+ */
+export interface PurchaseRequestListResult {
+  items: PurchaseRequestWithItems[];
+  /** Jumlah SELURUH PR yang cocok filter — mengabaikan limit/offset. */
+  totalCount: number;
+  /** Masih ada baris di belakang halaman ini. */
+  hasMore: boolean;
 }
 
 export async function listPurchaseRequests(
@@ -553,7 +576,7 @@ export async function listPurchaseRequests(
      * (false) untuk lihat semua PR di outlet. */
     onlyMine?: boolean;
   } = {},
-): Promise<ApiResult<PurchaseRequestWithItems[]>> {
+): Promise<ApiResult<PurchaseRequestListResult>> {
   const session = await requireSession();
   // Staff can list their own PRs (createdBy = self), tapi backoffice list
   // semua PR di outlet butuh `purchase_request.view`.
@@ -572,6 +595,7 @@ export async function listPurchaseRequests(
   }
 
   const limit = opts.limit ?? 50;
+  const offset = Math.max(0, opts.offset ?? 0);
   const conds = [
     eq(purchaseRequests.outletId, session.user.outletId),
     isNull(purchaseRequests.deletedAt),
@@ -582,6 +606,14 @@ export async function listPurchaseRequests(
   if (opts.onlyMine) {
     conds.push(eq(purchaseRequests.createdBy, session.user.id));
   }
+
+  /* Hitung total DULU supaya halaman bisa bilang "menampilkan 50 dari 151"
+   * walaupun halaman ini kebetulan kosong. */
+  const [countRow] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(purchaseRequests)
+    .where(and(...conds));
+  const totalCount = Number(countRow?.total ?? 0);
 
   const requestRows = await db
     .select({
@@ -594,9 +626,12 @@ export async function listPurchaseRequests(
     .leftJoin(shifts, eq(shifts.id, purchaseRequests.shiftId))
     .where(and(...conds))
     .orderBy(desc(purchaseRequests.createdAt))
-    .limit(limit);
+    .limit(limit)
+    .offset(offset);
 
-  if (requestRows.length === 0) return ok([]);
+  if (requestRows.length === 0) {
+    return ok({ items: [], totalCount, hasMore: false });
+  }
 
   const requestIds = requestRows.map((r) => r.request.id);
   const itemRows = await db
@@ -646,7 +681,11 @@ export async function listPurchaseRequests(
     shiftStartedAt: r.shiftStartedAt,
   }));
 
-  return ok(result);
+  return ok({
+    items: result,
+    totalCount,
+    hasMore: offset + result.length < totalCount,
+  });
 }
 
 /**

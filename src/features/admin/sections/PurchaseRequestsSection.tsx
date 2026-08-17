@@ -71,9 +71,17 @@ const STATUS_VARIANT: Record<
 
 type SortOrder = "newest" | "oldest";
 
+/** Sesi AE-197 — jumlah PR yang diambil per halaman. */
+const PAGE_SIZE = 50;
+
 export function PurchaseRequestsSection() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<FilterTab>("open");
+  /* Sesi AE-197 — dulu halaman ini memanggil listPurchaseRequests dengan
+   * limit 50 MATI, tanpa paging dan tanpa keterangan. Di produksi ada 151 PR,
+   * jadi 101 di antaranya tidak pernah terambil sementara kartu statistik di
+   * atas tetap menghitung semuanya — itulah "data PR tidak terbaca semua". */
+  const [pageSize, setPageSize] = useState(PAGE_SIZE);
   /* Sesi AE-122 — explicit sort. Default newest first (yang baru muncul
    * paling atas). Owner request supaya konsisten dan bisa toggle ke
    * oldest (FIFO) kalau perlu prioritize PR lama. */
@@ -107,31 +115,38 @@ export function PurchaseRequestsSection() {
   const [pullPrId, setPullPrId] = useState<string | null>(null);
 
   const {
-    data: requestsRaw = [],
+    data: listResult,
     isLoading: loading,
+    isFetching,
     error: queryError,
   } = useQuery({
-    queryKey: ["admin", "purchase-requests", { filter }],
+    queryKey: ["admin", "purchase-requests", { filter, pageSize }],
     queryFn: async () => {
-      const res = await listPurchaseRequests({ status: filter, limit: 50 });
+      const res = await listPurchaseRequests({
+        status: filter,
+        limit: pageSize,
+      });
       if (!isOk(res)) throw new Error(res.error.message);
       return res.data;
     },
+    placeholderData: (prev) => prev,
   });
   const error =
     queryError instanceof Error ? queryError.message : null;
+  const totalCount = listResult?.totalCount ?? 0;
+  const hasMore = listResult?.hasMore ?? false;
 
   /* Sesi AE-122 — client-side sort. Server already returns desc createdAt
    * tapi force re-sort di sini supaya UX konsisten dengan toggle button
    * + defense kalau cache order ke-corrupt. */
   const requests = useMemo(() => {
-    const arr = [...requestsRaw];
+    const arr = [...(listResult?.items ?? [])];
     arr.sort((a, b) => {
       const diff = b.createdAt.getTime() - a.createdAt.getTime();
       return sortOrder === "newest" ? diff : -diff;
     });
     return arr;
-  }, [requestsRaw, sortOrder]);
+  }, [listResult, sortOrder]);
 
   // Sesi AE-15 — PR stats dashboard.
   const statsQuery = useQuery({
@@ -299,13 +314,33 @@ export function PurchaseRequestsSection() {
           aria-label="Filter status"
           className="flex flex-wrap gap-1"
         >
-          {FILTERS.map((f) => (
+          {FILTERS.map((f) => {
+            /* Sesi AE-197 — angka per tab diambil dari stats (menghitung
+             * SELURUH PR), supaya jelas berapa yang sebenarnya ada sebelum
+             * daftarnya dimuat. */
+            const tabCount =
+              f.key === "all"
+                ? (stats?.openCount ?? 0) +
+                  (stats?.partialCount ?? 0) +
+                  (stats?.completedCount ?? 0) +
+                  (stats?.cancelledCount ?? 0)
+                : f.key === "open"
+                  ? stats?.openCount
+                  : f.key === "partial"
+                    ? stats?.partialCount
+                    : f.key === "completed"
+                      ? stats?.completedCount
+                      : stats?.cancelledCount;
+            return (
             <button
               key={f.key}
               type="button"
               role="tab"
               aria-selected={filter === f.key}
-              onClick={() => setFilter(f.key)}
+              onClick={() => {
+                setFilter(f.key);
+                setPageSize(PAGE_SIZE);
+              }}
               className={cn(
                 "border-b-2 px-4 py-2 text-sm font-medium transition-colors",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
@@ -315,8 +350,21 @@ export function PurchaseRequestsSection() {
               )}
             >
               {f.label}
+              {typeof tabCount === "number" ? (
+                <span
+                  className={cn(
+                    "ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+                    filter === f.key
+                      ? "bg-mahakan-green-700 text-white"
+                      : "bg-neutral-100 text-neutral-500",
+                  )}
+                >
+                  {tabCount}
+                </span>
+              ) : null}
             </button>
-          ))}
+            );
+          })}
         </div>
         {/* Sesi AE-122 — sort toggle. Default newest first (terbaru atas). */}
         <div className="flex items-center gap-1 pb-2">
@@ -377,6 +425,27 @@ export function PurchaseRequestsSection() {
               onShowDetail={(r) => setDetailRequest(r)}
             />
           ))}
+
+          {/* Sesi AE-197 — SELALU tampilkan berapa yang terlihat dari total.
+              Sebelumnya daftar berhenti di 50 tanpa jejak apa pun, sehingga
+              101 PR hilang diam-diam dari layar. */}
+          <div className="flex flex-col items-center gap-2 pt-3">
+            <p className="text-xs text-neutral-500">
+              Menampilkan {requests.length} dari {totalCount} permintaan
+            </p>
+            {hasMore ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPageSize((n) => n + PAGE_SIZE)}
+                disabled={isFetching}
+              >
+                {isFetching
+                  ? "Memuat…"
+                  : `Muat ${Math.min(PAGE_SIZE, totalCount - requests.length)} lagi`}
+              </Button>
+            ) : null}
+          </div>
         </div>
       )}
 
@@ -670,6 +739,14 @@ function RequestCard({ request, onShowDetail }: RequestCardProps) {
     (b) => b === "outstanding",
   ).length;
   const orderedItemCount = buckets.filter((b) => b === "ordered").length;
+  /* Sesi AE-197 — PR yang sudah DITUTUP tapi masih menyisakan bahan yang tidak
+   * pernah dibeli. Kalau tidak ditandai, permintaan itu lenyap begitu saja:
+   * statusnya "Selesai"/"Dibatalkan" sehingga tidak muncul di daftar kerja,
+   * padahal bahannya belum pernah masuk. Di produksi ada 12 item seperti ini
+   * di 9 PR yang di-Tandai Selesai, plus 230 item di PR yang dibatalkan. */
+  const closedWithUnbought =
+    (request.status === "completed" || request.status === "cancelled") &&
+    outstandingItemCount > 0;
   return (
     <Card
       className="cursor-pointer transition-colors hover:border-mahakan-green-700 hover:shadow-sm"
@@ -692,6 +769,15 @@ function RequestCard({ request, onShowDetail }: RequestCardProps) {
           <Badge variant={STATUS_VARIANT[request.status]}>
             {STATUS_LABEL[request.status]}
           </Badge>
+          {closedWithUnbought ? (
+            <Badge
+              variant="warning"
+              title={`PR ditutup dengan status "${STATUS_LABEL[request.status]}", tapi ${outstandingItemCount} bahan di dalamnya tidak pernah dibeli.`}
+            >
+              <AlertTriangle className="mr-1 size-3" aria-hidden />
+              {outstandingItemCount} bahan tak jadi dibeli
+            </Badge>
+          ) : null}
           {request.whatsappSentAt ? (
             <p className="flex items-center gap-1 text-[10px] text-neutral-400">
               <MessageCircle className="size-3" /> WA dikirim

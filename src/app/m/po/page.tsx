@@ -147,7 +147,7 @@ function PoView() {
     void (async () => {
       const res = await listPurchaseRequests({ onlyMine: true, limit: 30 });
       if (cancelled) return;
-      if (isOk(res)) setHistory(res.data);
+      if (isOk(res)) setHistory(res.data.items);
       setHistoryLoading(false);
     })();
     return () => {
