@@ -48,6 +48,13 @@ import {
 } from "./posting";
 import { normalizeReceiptUrl } from "./receipt-url";
 import {
+  RETAINED_EARNINGS_CODE,
+  OpeningBalanceError,
+  buildOpeningBalanceLines,
+  linesToNaturalAmounts,
+  type OpeningAccountInput,
+} from "./opening-balance-pure";
+import {
   buildBalanceSheet,
   buildCashFlowStatement,
   buildGeneralLedger,
@@ -585,6 +592,336 @@ export async function postOpeningBalance(
   });
 
   return ok(result);
+}
+
+// ============================================================
+// Sesi AE-207 — UBAH SALDO AWAL (langsung ketik nominal riil)
+// ============================================================
+
+export type OpeningBalanceEditorAccount = {
+  accountId: string;
+  code: string;
+  name: string;
+  type: string;
+  normalBalance: "debit" | "credit";
+  isContra: boolean;
+  /** Nilai tersimpan sekarang, arah normal akun, 0 kalau belum ada. */
+  amount: number;
+};
+
+export type OpeningBalanceEditorData = {
+  /** null = saldo awal belum pernah di-post. */
+  entryId: string | null;
+  entryNumber: string | null;
+  entryDate: string | null;
+  /** Akun yang SUDAH punya nilai — ditampilkan sebagai baris form. */
+  filled: OpeningBalanceEditorAccount[];
+  /** Semua akun neraca aktif, untuk menu "tambah akun". */
+  available: OpeningBalanceEditorAccount[];
+  retainedCode: string;
+  /** Nilai 3301 sekarang (dihitung sistem, read-only di UI). */
+  retainedAmount: number;
+};
+
+/**
+ * Baca saldo awal yang berlaku, dalam bentuk "nilai riil per akun".
+ *
+ * Sengaja TIDAK memakai `getAccountBalances` (yang sudah ikut batas buku):
+ * yang dibutuhkan di sini adalah isi jurnal Saldo Awal itu sendiri, bukan
+ * saldo berjalan yang sudah tercampur mutasi periode baru.
+ */
+export async function fetchOpeningBalanceEditor(): Promise<
+  ApiResult<OpeningBalanceEditorData>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.opening_balance.input")) {
+    return fail("FORBIDDEN", "Hanya Owner yang dapat ubah saldo awal");
+  }
+  const outletId = session.user.outletId;
+
+  const balanceSheetAccounts = await db
+    .select({
+      accountId: chartOfAccounts.id,
+      code: chartOfAccounts.code,
+      name: chartOfAccounts.name,
+      type: chartOfAccounts.type,
+      normalBalance: chartOfAccounts.normalBalance,
+      isContra: chartOfAccounts.isContra,
+    })
+    .from(chartOfAccounts)
+    .where(
+      and(
+        eq(chartOfAccounts.outletId, outletId),
+        isNull(chartOfAccounts.deletedAt),
+        eq(chartOfAccounts.isActive, true),
+        sql`${chartOfAccounts.type} IN ('asset', 'liability', 'equity')`,
+      ),
+    )
+    .orderBy(asc(chartOfAccounts.code));
+
+  const available: OpeningBalanceEditorAccount[] = balanceSheetAccounts.map(
+    (a) => ({
+      accountId: a.accountId,
+      code: a.code,
+      name: a.name,
+      type: a.type,
+      normalBalance: a.normalBalance as "debit" | "credit",
+      isContra: a.isContra,
+      amount: 0,
+    }),
+  );
+
+  const [entry] = await db
+    .select({
+      id: journalEntries.id,
+      entryNumber: journalEntries.entryNumber,
+      entryDate: journalEntries.entryDate,
+    })
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.outletId, outletId),
+        eq(journalEntries.sourceType, "opening_balance"),
+        sql`${journalEntries.status} <> 'reversed'`,
+      ),
+    )
+    .limit(1);
+
+  if (!entry) {
+    return ok({
+      entryId: null,
+      entryNumber: null,
+      entryDate: null,
+      filled: [],
+      available,
+      retainedCode: RETAINED_EARNINGS_CODE,
+      retainedAmount: 0,
+    });
+  }
+
+  const rawLines = await db
+    .select({
+      accountId: journalLines.accountId,
+      debit: journalLines.debit,
+      credit: journalLines.credit,
+      normalBalance: chartOfAccounts.normalBalance,
+    })
+    .from(journalLines)
+    .innerJoin(chartOfAccounts, eq(chartOfAccounts.id, journalLines.accountId))
+    .where(eq(journalLines.entryId, entry.id));
+
+  const natural = linesToNaturalAmounts(
+    rawLines.map((l) => ({
+      accountId: l.accountId,
+      debit: l.debit,
+      credit: l.credit,
+      normalBalance: l.normalBalance as "debit" | "credit",
+    })),
+  );
+
+  const byId = new Map(available.map((a) => [a.accountId, a]));
+  const filled: OpeningBalanceEditorAccount[] = [];
+  let retainedAmount = 0;
+  for (const [accountId, amount] of natural) {
+    const acc = byId.get(accountId);
+    if (!acc) continue; // akun sudah dinonaktifkan/dihapus — jangan tawarkan
+    if (acc.code === RETAINED_EARNINGS_CODE) {
+      retainedAmount = amount;
+      continue;
+    }
+    if (amount === 0) continue;
+    filled.push({ ...acc, amount });
+  }
+  filled.sort((a, b) => a.code.localeCompare(b.code));
+
+  return ok({
+    entryId: entry.id,
+    entryNumber: entry.entryNumber,
+    entryDate: String(entry.entryDate),
+    filled,
+    available,
+    retainedCode: RETAINED_EARNINGS_CODE,
+    retainedAmount,
+  });
+}
+
+/**
+ * Simpan saldo awal baru = BATALKAN yang lama lalu POST ulang.
+ *
+ * Kenapa bukan meng-UPDATE baris jurnal yang sudah ter-post: di sistem ini
+ * jurnal ter-post itu tidak boleh diubah di tempat — semua perubahan lewat
+ * pair-void (entry lama + lawannya sama-sama ditandai 'reversed') supaya
+ * jejaknya bisa ditelusuri. Layar ini mengikuti aturan yang sama, jadi riwayat
+ * "dulu saldo awalnya berapa" tetap ada di Jurnal.
+ */
+export async function saveOpeningBalance(input: {
+  /** YYYY-MM-DD. */
+  entryDate: string;
+  /** Nilai riil per akun (positif, arah normal akun). Akun tak disebut = 0. */
+  amounts: Array<{ accountId: string; amount: number }>;
+  reason?: string;
+}): Promise<
+  ApiResult<{
+    entryId: string;
+    entryNumber: string;
+    totalDebit: number;
+    retainedPlug: number;
+    replacedEntryNumber: string | null;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.opening_balance.input")) {
+    return fail("FORBIDDEN", "Hanya Owner yang dapat ubah saldo awal");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.entryDate)) {
+    return fail("VALIDATION", "Tanggal saldo awal harus format YYYY-MM-DD");
+  }
+  if (!Array.isArray(input.amounts) || input.amounts.length === 0) {
+    return fail("VALIDATION", "Belum ada nilai yang diisi");
+  }
+
+  const outletId = session.user.outletId;
+
+  // Resolve akun + pastikan semuanya akun NERACA yang aktif.
+  const accounts = await db
+    .select({
+      id: chartOfAccounts.id,
+      code: chartOfAccounts.code,
+      type: chartOfAccounts.type,
+      normalBalance: chartOfAccounts.normalBalance,
+    })
+    .from(chartOfAccounts)
+    .where(
+      and(
+        eq(chartOfAccounts.outletId, outletId),
+        isNull(chartOfAccounts.deletedAt),
+        eq(chartOfAccounts.isActive, true),
+      ),
+    );
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+
+  const inputs: OpeningAccountInput[] = [];
+  for (const row of input.amounts) {
+    const acc = byId.get(row.accountId);
+    if (!acc) {
+      return fail("VALIDATION", "Ada akun yang tidak dikenal / sudah nonaktif");
+    }
+    if (!["asset", "liability", "equity"].includes(acc.type)) {
+      /* Akun pendapatan/beban tidak punya "saldo awal" — saldonya nol tiap
+       * awal tahun buku. Kalau dibiarkan masuk, Laba Rugi periode baru
+       * langsung terisi angka yang bukan hasil operasional. */
+      return fail(
+        "VALIDATION",
+        `Akun ${acc.code} bukan akun neraca — saldo awal hanya untuk aset, kewajiban, dan modal.`,
+      );
+    }
+    inputs.push({
+      accountId: acc.id,
+      code: acc.code,
+      normalBalance: acc.normalBalance as "debit" | "credit",
+      amount: Math.round(Number(row.amount) || 0),
+    });
+  }
+
+  const retained = accounts.find((a) => a.code === RETAINED_EARNINGS_CODE);
+
+  let built;
+  try {
+    built = buildOpeningBalanceLines(inputs, retained?.id ?? "");
+  } catch (e) {
+    if (e instanceof OpeningBalanceError) return fail("VALIDATION", e.message);
+    throw e;
+  }
+
+  // Entry lama (kalau ada) dibatalkan dulu.
+  const [existing] = await db
+    .select({
+      id: journalEntries.id,
+      entryNumber: journalEntries.entryNumber,
+    })
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.outletId, outletId),
+        eq(journalEntries.sourceType, "opening_balance"),
+        sql`${journalEntries.status} <> 'reversed'`,
+      ),
+    )
+    .limit(1);
+
+  if (existing) {
+    const reversed = await reverseJournalEntry(
+      existing.id,
+      `Saldo awal disesuaikan dengan data fisik${input.reason ? ` — ${input.reason}` : ""}`,
+    );
+    if (!reversed.ok) {
+      /* Teruskan apa adanya: pesan "periode terkunci"/"periode closed" dari
+       * reverse justru yang paling berguna buat owner. */
+      return reversed as ApiResult<never>;
+    }
+  }
+
+  let result;
+  try {
+    result = await recordJournal({
+      outletId,
+      entryDate: input.entryDate,
+      description: `Saldo Awal ${input.entryDate}${input.reason ? ` — ${input.reason}` : ""}`,
+      sourceType: "opening_balance",
+      sourceId: null,
+      lines: built.lines,
+      actorId: session.user.id,
+      metadata: {
+        replacedEntryId: existing?.id ?? null,
+        replacedEntryNumber: existing?.entryNumber ?? null,
+        retainedPlug: built.retainedPlug,
+        reason: input.reason ?? null,
+        setBy: "opening-balance-editor",
+      },
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.startsWith("PERIOD_LOCKED")) {
+      return fail(
+        "PERIOD_LOCKED",
+        `Periode ${msg.split(":")[1] ?? ""} sudah dikunci — buka kuncinya dulu di Akuntansi → Periode.`,
+      );
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "accounting", "Gagal menyimpan saldo awal"),
+    );
+  }
+
+  await logAudit({
+    eventType: "opening_balance.posted",
+    userId: session.user.id,
+    entityType: "journal_entry",
+    entityId: result.entryId,
+    payload: {
+      summary: `Saldo Awal ${input.entryDate} disesuaikan (${result.entryNumber})`,
+      before: existing
+        ? { entryId: existing.id, entryNumber: existing.entryNumber }
+        : null,
+      after: {
+        entryId: result.entryId,
+        entryNumber: result.entryNumber,
+        lineCount: built.lines.length,
+        totalDebit: built.totalDebit,
+        retainedPlug: built.retainedPlug,
+      },
+      context: { reason: input.reason ?? null },
+    },
+    metadata: { outletId, actorRole: session.user.role },
+  });
+
+  return ok({
+    entryId: result.entryId,
+    entryNumber: result.entryNumber,
+    totalDebit: built.totalDebit,
+    retainedPlug: built.retainedPlug,
+    replacedEntryNumber: existing?.entryNumber ?? null,
+  });
 }
 
 // ============================================================

@@ -9,16 +9,26 @@ import { FixedAssetsView } from "./accounting/FixedAssetsView";
 import { JournalView } from "./accounting/JournalView";
 import { PeriodsView } from "./accounting/PeriodsView";
 import { ReportsView } from "./accounting/ReportsView";
+import { OpeningBalanceEditor } from "./reconciliation/OpeningBalanceEditor";
 import { getOwnOutlet, isOk as outletIsOk } from "@/features/outlets";
 import type { Role } from "@/lib/auth/rbac";
 import { cn } from "@/lib/utils";
 
-type AccountingTab = "coa" | "journal" | "periods" | "reports" | "assets";
+type AccountingTab =
+  | "coa"
+  | "journal"
+  | "periods"
+  | "opening"
+  | "reports"
+  | "assets";
 
 const TABS: Array<{ key: AccountingTab; label: string }> = [
   { key: "coa", label: "Bagan Akun" },
   { key: "journal", label: "Jurnal" },
   { key: "periods", label: "Periode" },
+  /* Sesi AE-207 — tab sendiri supaya mudah ditemukan. Owner butuh ini setelah
+   * cutoff: saldo awal diambil dari GL, lalu disesuaikan ke data fisik. */
+  { key: "opening", label: "Saldo Awal" },
   { key: "reports", label: "Laporan" },
   { key: "assets", label: "Aset Tetap" },
 ];
@@ -113,6 +123,15 @@ export function AccountingSection({ viewerRole }: AccountingSectionProps) {
       </TabPanel>
       <TabPanel value="periods">
         <PeriodsView viewerRole={viewerRole} />
+      </TabPanel>
+      <TabPanel value="opening">
+        {viewerRole === "owner" ? (
+          <OpeningBalanceEditor />
+        ) : (
+          <p className="p-6 text-sm text-neutral-600">
+            Hanya Owner yang dapat melihat &amp; mengubah saldo awal.
+          </p>
+        )}
       </TabPanel>
       <TabPanel value="reports">
         <ReportsView />
