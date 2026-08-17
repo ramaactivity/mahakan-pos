@@ -62,10 +62,14 @@ import { cn } from "@/lib/utils";
  * dulu. Modal ini yang dipakai mengisi harga aslinya begitu nota datang —
  * dan server ikut merapikan nilai GR, pengeluaran kas, serta jurnalnya.
  *
- * Dua wajah, dipilih server lewat `priceOnly`:
- *  - PO belum diterima → semua boleh diubah (baris, qty, satuan, supplier).
- *  - PO sudah ada penerimaan → hanya harga (plus invoice/catatan/tanggal),
- *    karena qty & satuan sudah terlanjur jadi movement stok + baris GR.
+ * Sesi AE-200 — daftar bahan, qty, satuan, dan supplier SEKARANG boleh diubah
+ * walau barang sudah diterima. Dulu terkunci, dan karena di outlet ini barang
+ * selalu diterima sebelum notanya datang, kuncinya berarti kemampuan itu tidak
+ * pernah bisa dipakai (0 dari 253 pembelian bebas diedit).
+ *
+ * `priceOnly` dari server sekarang hanya berarti "PO ini sudah punya
+ * penerimaan", yang dipakai untuk memilih peringatan yang ditampilkan: setiap
+ * perubahan akan merapikan baris penerimaan + jurnalnya, bukan cuma harga.
  */
 
 const PAYMENT_OPTIONS: Array<{ value: PaymentMethod; label: string }> = [
@@ -314,11 +318,8 @@ export function PurchaseOrderEditModal({
         unitCost: cost,
         /* Simpan override hanya kalau beda dari master — sama dengan
          * Catat Pembelian, supaya tampilan jatuh ke unitSnapshot historis. */
-        unit: priceOnly
-          ? r.originalUnitOverride
-          : chosen && chosen !== masterUnit
-            ? chosen
-            : null,
+        unit:
+          chosen && chosen !== masterUnit ? chosen : null,
         purchaseRequestItemId: r.purchaseRequestItemId,
       });
     }
@@ -406,17 +407,19 @@ export function PurchaseOrderEditModal({
       ) : (
         <div className="space-y-4">
           {priceOnly ? (
-            <div className="rounded-md border border-info-300 bg-info-50 px-3 py-2.5 text-sm">
-              <p className="flex items-center gap-1.5 font-semibold text-info-700">
+            <div className="rounded-md border border-warning-300 bg-warning-50 px-3 py-2.5 text-sm">
+              <p className="flex items-center gap-1.5 font-semibold text-warning-700">
                 <Lock className="size-4" aria-hidden /> Barang sudah diterima —
-                yang bisa diubah tinggal harga
+                perubahan ikut merapikan catatan penerimaan
               </p>
               <p className="mt-1 text-[12px] leading-relaxed text-neutral-800">
-                PO ini punya {goodsReceiptCount} catatan penerimaan (GR).
-                Qty, satuan, daftar bahan, supplier, dan metode pembayaran
-                dikunci karena sudah terlanjur jadi catatan stok. Begitu harga
-                disimpan, nilai penerimaan, pengeluaran kas, dan jurnalnya
-                ikut disesuaikan otomatis.
+                PO ini punya {goodsReceiptCount} catatan penerimaan (GR). Daftar
+                bahan, qty, satuan, supplier, dan metode pembayaran{" "}
+                <strong>boleh diubah</strong> — begitu disimpan, qty yang
+                diterima disetel mengikuti PO ini, lalu nilai penerimaan,
+                pengeluaran kas, dan jurnalnya ikut disesuaikan otomatis.
+                Periksa lagi sebelum simpan: ini mengubah catatan yang sudah
+                masuk laporan.
               </p>
             </div>
           ) : (
@@ -440,7 +443,6 @@ export function PurchaseOrderEditModal({
               placeholder="Pilih supplier"
               searchPlaceholder="Cari supplier…"
               clearable
-              disabled={priceOnly}
               groups={[
                 {
                   label: "",
@@ -468,7 +470,6 @@ export function PurchaseOrderEditModal({
               }))}
               value={paymentMethod}
               onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}
-              disabled={priceOnly}
             />
             <Input
               label="TOP (hari)"
@@ -509,15 +510,13 @@ export function PurchaseOrderEditModal({
               <h3 className="text-sm font-semibold text-neutral-900">
                 Daftar Bahan
               </h3>
-              {!priceOnly ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setRows((prev) => [...prev, newRow()])}
-                >
-                  <Plus className="size-4" aria-hidden /> Tambah Bahan
-                </Button>
-              ) : null}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setRows((prev) => [...prev, newRow()])}
+              >
+                <Plus className="size-4" aria-hidden /> Tambah Bahan
+              </Button>
             </div>
             <div className="space-y-3 rounded-md border border-neutral-200 p-2">
               <div className="hidden gap-2 px-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 md:grid md:grid-cols-[minmax(260px,2.2fr)_90px_120px_180px_180px_44px]">
@@ -552,13 +551,7 @@ export function PurchaseOrderEditModal({
                 return (
                   <div key={row.key} className="rounded-md bg-neutral-50 p-2">
                     <div className="grid gap-2 md:grid-cols-[minmax(260px,2.2fr)_90px_120px_180px_180px_44px]">
-                      {priceOnly ? (
-                        <div className="flex min-h-10 items-center rounded-md border border-neutral-200 bg-neutral-100 px-3 text-sm text-neutral-700">
-                          {row.nameSnapshot ||
-                            ing?.name ||
-                            "(bahan tidak dikenal)"}
-                        </div>
-                      ) : (
+                      {(
                         <Combobox
                           ariaLabel={`Bahan ${idx + 1}`}
                           placeholder="Pilih bahan…"
@@ -595,8 +588,7 @@ export function PurchaseOrderEditModal({
                         type="text"
                         inputMode="decimal"
                         value={row.qty}
-                        disabled={priceOnly}
-                        onChange={(e) =>
+                                  onChange={(e) =>
                           patchRow(row.key, (r) => ({
                             ...r,
                             ...applyQtyChange(r, e.target.value),
@@ -607,7 +599,7 @@ export function PurchaseOrderEditModal({
                         ariaLabel={`Satuan baris ${idx + 1}`}
                         options={unitOptions}
                         value={unit}
-                        disabled={priceOnly || !ing}
+                        disabled={!ing}
                         onValueChange={(v) =>
                           patchRow(row.key, (r) => ({
                             ...r,
@@ -691,13 +683,9 @@ export function PurchaseOrderEditModal({
                           )
                         }
                         aria-label="Hapus baris"
-                        title={
-                          priceOnly
-                            ? "Tidak bisa dihapus — barang sudah diterima"
-                            : "Hapus baris"
-                        }
+                        title="Hapus baris"
                         className="text-danger-500 hover:bg-danger-100"
-                        disabled={priceOnly || rows.length <= 1}
+                        disabled={rows.length <= 1}
                       >
                         <Trash2 className="size-4" aria-hidden />
                       </Button>

@@ -28,6 +28,7 @@ import {
   computePrStatus,
 } from "@/features/purchase-requests/group-items-pure";
 import { fetchLastFinalizedOpname } from "@/features/stock-opname/queries";
+import { planGrMirror } from "./gr-mirror-pure";
 import { toJakartaDateOnly } from "@/lib/date";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
@@ -41,6 +42,7 @@ import {
   classifyPurchaseAgainstOpname,
   convertPurchaseQty,
   mergePackConversions,
+  resolveQtyToMaster,
   shouldSkipStockUpdate,
   type BackdateStatus,
   type PackInfo,
@@ -2643,34 +2645,50 @@ export async function updatePurchaseOrder(
         }
       }
 
-      // ---- Mode harga-saja: kunci semua yang sudah terlanjur jadi fisik ----
+      /* ---- PO yang sudah diterima: perubahan DIRAMBATKAN, bukan dikunci ----
+       *
+       * Sesi AE-200 — dulu blok ini menolak semua perubahan selain harga.
+       * Akibatnya kemampuan mengubah item/qty/supplier tidak pernah bisa
+       * dipakai: di produksi SEMUA pembelian sudah punya penerimaan (alur di
+       * outlet ini "terima dulu, nota menyusul"). Sekarang perubahannya
+       * dirambatkan ke baris penerimaan + pergerakan stok (lihat planGrMirror).
+       *
+       * Dua hal tetap ditolak keras, karena aturan "penerimaan mengikuti PO"
+       * jadi ambigu atau tidak aman di sana: */
       if (priceOnly) {
-        if (v.paymentMethod !== po.paymentMethod) {
-          throw new Error("METHOD_LOCKED");
+        /* (a) Penerimaan bertahap — tidak jelas penerimaan mana yang harus
+         *     menyesuaikan qty barunya. Di produksi tidak pernah terjadi
+         *     (233 dari 233 pembelian punya tepat satu penerimaan), jadi
+         *     menolak lebih benar daripada menebak. */
+        if (grRows.length > 1) {
+          throw new Error("MULTI_GR");
         }
-        if ((v.supplierId ?? null) !== (po.supplierId ?? null)) {
-          throw new Error("SUPPLIER_LOCKED");
+      }
+
+      /* Sesi AE-200 — konversi qty nota → satuan DASAR untuk tiap baris,
+       * dipakai menyetel pergerakan stok saat qty PO berubah. Memakai
+       * `resolveQtyToMaster` (sumber kebenaran tunggal AE-174) supaya
+       * konsisten dengan Opname / Market List / laporan COGS. Dihitung
+       * SEBELUM ada tulisan apa pun: kalau satu baris tidak bisa dikonversi,
+       * transaksi gagal utuh tanpa efek separuh. */
+      const convertedByItem = new Map<(typeof v.items)[number], number>();
+      for (const item of v.items) {
+        const ing = ingById.get(item.ingredientId)!;
+        const conv = resolveQtyToMaster({
+          qty: item.qty,
+          fromUnit: item.unit?.trim() || ing.unit,
+          masterUnit: ing.unit,
+          ingredientPacks:
+            (ing.packConversions as
+              | Array<{ unitLabel: string; qtyPerBase: number }>
+              | null) ?? null,
+          unitBelanja: ing.unitBelanja,
+          unitBelanjaPerCogs: ing.unitBelanjaPerCogs,
+        });
+        if (!conv.ok || conv.qtyMaster === null) {
+          throw new Error(`UNIT_ERROR:${ing.name}:satuan tidak bisa dikonversi ke ${ing.unit}`);
         }
-        if (v.items.length !== existingItems.length) {
-          throw new Error("LINES_LOCKED");
-        }
-        for (const item of v.items) {
-          if (!item.id) throw new Error("LINES_LOCKED");
-          const prev = existingById.get(item.id);
-          if (!prev) throw new Error("LINES_LOCKED");
-          if (prev.ingredientId !== item.ingredientId) {
-            throw new Error("LINES_LOCKED");
-          }
-          const prevQty = Number(prev.qtyDecimal ?? prev.qty);
-          if (Math.abs(prevQty - item.qty) > 1e-6) {
-            throw new Error(`QTY_LOCKED:${prev.ingredientNameSnapshot}`);
-          }
-          const prevUnit = prev.unitOverride ?? null;
-          const nextUnit = item.unit?.trim() || null;
-          if (prevUnit !== nextUnit) {
-            throw new Error(`UNIT_LOCKED:${prev.ingredientNameSnapshot}`);
-          }
-        }
+        convertedByItem.set(item, conv.qtyMaster);
       }
 
       /* ---- Validasi link PR untuk baris yang BARU ditautkan ----
@@ -2766,6 +2784,8 @@ export async function updatePurchaseOrder(
         );
       }
 
+      /* purchase_items.id final per baris input — dipakai penyelarasan GR. */
+      const finalItemIds = new Map<(typeof v.items)[number], string>();
       let total = 0;
       for (const item of v.items) {
         const lineTotal = Math.round(item.qty * item.unitCost);
@@ -2800,30 +2820,193 @@ export async function updatePurchaseOrder(
             })
             .where(eq(purchaseItems.id, item.id));
         } else {
-          await tx.insert(purchaseItems).values({
-            purchaseId: po.id,
-            ingredientId: item.ingredientId,
-            qty: Math.max(1, Math.round(item.qty)),
-            qtyDecimal: item.qty.toFixed(4),
-            unitCost: item.unitCost,
-            totalCost: lineTotal,
-            movementId: null,
-            ingredientNameSnapshot: ing.name,
-            unitSnapshot: ing.unit,
-            unitOverride: item.unit?.trim() || null,
-            sectionSnapshot: ing.section,
-            purchaseRequestItemId: item.purchaseRequestItemId ?? null,
-          });
+          const [insertedItem] = await tx
+            .insert(purchaseItems)
+            .values({
+              purchaseId: po.id,
+              ingredientId: item.ingredientId,
+              qty: Math.max(1, Math.round(item.qty)),
+              qtyDecimal: item.qty.toFixed(4),
+              unitCost: item.unitCost,
+              totalCost: lineTotal,
+              movementId: null,
+              ingredientNameSnapshot: ing.name,
+              unitSnapshot: ing.unit,
+              unitOverride: item.unit?.trim() || null,
+              sectionSnapshot: ing.section,
+              purchaseRequestItemId: item.purchaseRequestItemId ?? null,
+            })
+            .returning({ id: purchaseItems.id });
+          /* Sesi AE-200 — id baris baru dibutuhkan untuk menautkan baris
+           * penerimaannya. Tanpa ini baris baru tidak pernah punya GR dan
+           * nilainya hilang dari jurnal penerimaan. */
+          finalItemIds.set(item, insertedItem.id);
+        }
+        if (item.id && existingById.has(item.id)) {
+          finalItemIds.set(item, item.id);
         }
       }
       newTotalAmount = total;
+
+      /* ---- Selaraskan DAFTAR & QTY baris penerimaan dengan PO (AE-200) ----
+       *
+       * Sengaja dipisah dari penyesuaian NILAI di bawahnya: langkah ini hanya
+       * membetulkan baris mana yang ada dan berapa qty-nya, lalu blok lama —
+       * yang sudah teruji untuk koreksi harga — yang menghitung ulang nilai,
+       * total GR, pengeluaran kas, HPP rata-rata, dan jurnalnya. Dengan begitu
+       * jalur harga yang sudah jalan tidak ikut dibongkar.
+       *
+       * `totalCost` DIBIARKAN pada nilai lama di sini; blok bawah membacanya
+       * sebagai "nilai sebelum" untuk menghitung selisih HPP. Kalau ditulis di
+       * sini juga, selisihnya terhitung dua kali. */
+      if (priceOnly && grRows.length === 1) {
+        const gr = grRows[0];
+        const grItemsNow = await tx
+          .select()
+          .from(goodsReceiptItems)
+          .where(eq(goodsReceiptItems.goodsReceiptId, gr.id));
+
+        const movementIds = grItemsNow
+          .map((g) => g.movementId)
+          .filter((x): x is string => Boolean(x));
+        const movementRows =
+          movementIds.length > 0
+            ? await tx
+                .select()
+                .from(inventoryMovements)
+                .where(inArray(inventoryMovements.id, movementIds))
+                .for("update")
+            : [];
+        const movementById = new Map(movementRows.map((m) => [m.id, m] as const));
+
+        const poLinesForMirror = v.items.map((item) => {
+          const id = finalItemIds.get(item)!;
+          const ing = ingById.get(item.ingredientId)!;
+          const conv = convertedByItem.get(item)!;
+          return {
+            purchaseItemId: id,
+            ingredientId: item.ingredientId,
+            qtyNota: item.qty,
+            qtyMaster: conv,
+            unitCost: item.unitCost,
+            ingredientName: ing.name,
+            unitSnapshot: ing.unit,
+            sectionSnapshot: ing.section ?? null,
+          };
+        });
+
+        const grLinesForMirror = grItemsNow.map((g) => {
+          const mv = g.movementId ? movementById.get(g.movementId) : undefined;
+          return {
+            grItemId: g.id,
+            purchaseItemId: g.purchaseItemId,
+            movementId: g.movementId,
+            movementQtyMaster: mv
+              ? Math.abs(Number(mv.qtyDeltaDecimal ?? mv.qtyDelta))
+              : 0,
+            /* Tanpa movement dianggap ber-skip: tidak ada stok yang tersentuh. */
+            movementSkipped: mv ? mv.skippedStockUpdate : true,
+            ingredientId: g.ingredientId,
+          };
+        });
+
+        const actions = planGrMirror(poLinesForMirror, grLinesForMirror);
+
+        /* Pembelian era PERPETUAL (movement-nya benar-benar menambah stok)
+         * ditolak kalau qty-nya berubah atau barisnya dibuang. Merambatkan
+         * qty di sana berarti ikut membongkar nilai persediaan & HPP rata-rata
+         * yang sudah terpakai laporan — kelas drift yang direkonsiliasi manual
+         * di audit AE-181. Lebih jujur menolak dan menyuruh batalkan-catat-ulang
+         * daripada diam-diam menggeser nilai persediaan.
+         * Mode periodic yang berlaku sekarang selalu ber-skip → tidak kena. */
+        for (const a of actions) {
+          if (a.kind !== "insert" && a.stockDelta !== 0) {
+            throw new Error("LEGACY_STOCK_LOCKED");
+          }
+        }
+
+        for (const a of actions) {
+          if (a.kind === "delete") {
+            await tx
+              .delete(goodsReceiptItems)
+              .where(eq(goodsReceiptItems.id, a.grItemId));
+            if (a.movementId) {
+              await tx
+                .delete(inventoryMovements)
+                .where(eq(inventoryMovements.id, a.movementId));
+            }
+            continue;
+          }
+
+          if (a.kind === "update") {
+            await tx
+              .update(goodsReceiptItems)
+              .set({
+                receivedQty: Math.max(1, Math.round(a.receivedQtyNota)),
+                receivedQtyDecimal: a.receivedQtyNota.toFixed(4),
+              })
+              .where(eq(goodsReceiptItems.id, a.grItemId));
+            if (a.movementId) {
+              await tx
+                .update(inventoryMovements)
+                .set({
+                  qtyDelta: Math.max(1, Math.round(a.qtyMaster)),
+                  qtyDeltaDecimal: a.qtyMaster.toFixed(4),
+                })
+                .where(eq(inventoryMovements.id, a.movementId));
+            }
+            continue;
+          }
+
+          /* Baris baru: buat pergerakan + baris penerimaannya. Flag skip
+           * mengikuti pergerakan yang sudah ada di GR ini supaya satu
+           * penerimaan tidak setengah menyentuh stok setengah tidak. */
+          const skipStock = movementRows.length > 0
+            ? movementRows.every((m) => m.skippedStockUpdate)
+            : true;
+          const [mv] = await tx
+            .insert(inventoryMovements)
+            .values({
+              outletId: session.user.outletId,
+              ingredientId: a.ingredientId,
+              kind: "purchase",
+              qtyDelta: Math.max(1, Math.round(a.qtyMaster)),
+              qtyDeltaDecimal: a.qtyMaster.toFixed(4),
+              unitCostAtMovement: a.unitCost,
+              referenceType: "manual",
+              referenceId: po.id,
+              skippedStockUpdate: skipStock,
+              reason: `Tambahan baris dari koreksi PO ${po.invoiceNo ?? po.id.slice(0, 8)}`,
+              createdBy: session.user.id,
+            })
+            .returning({ id: inventoryMovements.id });
+          await tx.insert(goodsReceiptItems).values({
+            goodsReceiptId: gr.id,
+            purchaseItemId: a.purchaseItemId,
+            ingredientId: a.ingredientId,
+            receivedQty: Math.max(1, Math.round(a.receivedQtyNota)),
+            receivedQtyDecimal: a.receivedQtyNota.toFixed(4),
+            unitCost: a.unitCost,
+            /* Nilai awal 0 supaya blok penyesuaian di bawah membacanya sebagai
+             * "belum bernilai" dan menghitung selisihnya utuh. */
+            totalCost: 0,
+            movementId: mv.id,
+            ingredientNameSnapshot: a.ingredientName,
+            unitSnapshot: a.unitSnapshot,
+            sectionSnapshot: a.sectionSnapshot,
+          });
+        }
+      }
 
       // ---- Sinkronkan turunan GR (mode harga-saja) ----
       let lastExpenseId: string | null = null;
       if (priceOnly) {
         const costByItemId = new Map<string, number>();
         for (const item of v.items) {
-          if (item.id) costByItemId.set(item.id, item.unitCost);
+          /* Sesi AE-200 — pakai id FINAL, bukan item.id, supaya baris yang
+           * baru ditambah ikut dapat harga (dulu baris baru terlewat). */
+          const id = finalItemIds.get(item);
+          if (id) costByItemId.set(id, item.unitCost);
         }
         const isTop = po.paymentMethod === "top";
         const label = po.invoiceNo ?? `purchase ${po.id.slice(0, 8)}`;
@@ -3083,30 +3266,18 @@ export async function updatePurchaseOrder(
         "BAD_STATE",
         "Ini pembelian langsung (bukan PO), bukan lewat alur Terima Barang. Batalkan lalu catat ulang kalau ada yang salah.",
       );
-    if (msg === "METHOD_LOCKED")
+    /* Sesi AE-200 — METHOD_LOCKED / SUPPLIER_LOCKED / LINES_LOCKED /
+     * QTY_LOCKED / UNIT_LOCKED sudah tidak dilempar lagi: perubahannya kini
+     * dirambatkan ke baris penerimaan. Dua penolakan baru menggantikannya. */
+    if (msg === "MULTI_GR")
       return fail(
         "BAD_STATE",
-        "Barang sudah diterima — metode pembayaran tidak bisa diubah lagi.",
+        "PO ini barangnya diterima lebih dari sekali (penerimaan bertahap), jadi sistem tidak bisa memutuskan penerimaan mana yang harus ikut berubah. Batalkan penerimaannya dulu lewat Daftar Penerimaan, baru edit PO-nya.",
       );
-    if (msg === "SUPPLIER_LOCKED")
+    if (msg === "LEGACY_STOCK_LOCKED")
       return fail(
         "BAD_STATE",
-        "Barang sudah diterima — supplier tidak bisa diubah lagi.",
-      );
-    if (msg === "LINES_LOCKED")
-      return fail(
-        "BAD_STATE",
-        "Barang sudah diterima — daftar bahan tidak bisa ditambah/dihapus. Yang bisa diubah cuma harga.",
-      );
-    if (msg.startsWith("QTY_LOCKED:"))
-      return fail(
-        "BAD_STATE",
-        `Bahan "${msg.slice("QTY_LOCKED:".length)}": qty tidak bisa diubah karena barang sudah diterima. Yang bisa diubah cuma harga.`,
-      );
-    if (msg.startsWith("UNIT_LOCKED:"))
-      return fail(
-        "BAD_STATE",
-        `Bahan "${msg.slice("UNIT_LOCKED:".length)}": satuan tidak bisa diubah karena barang sudah diterima.`,
+        "Pembelian ini dari periode ketika stok masih ditambah langsung oleh pembelian, jadi qty-nya sudah terpakai di nilai persediaan & HPP. Mengubahnya bisa menggeser laporan yang sudah jadi. Harga masih boleh dikoreksi; kalau qty/itemnya yang salah, batalkan pembelian ini lalu catat ulang.",
       );
     if (msg === "INGREDIENT_NOT_FOUND")
       return fail("NOT_FOUND", "Salah satu bahan tidak ditemukan / non-aktif");
