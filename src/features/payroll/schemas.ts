@@ -70,3 +70,34 @@ export const createEmployeeAdvanceSchema = z.object({
 export const forgiveEmployeeAdvanceSchema = z.object({
   id: z.uuid(),
 });
+
+/* Sesi AE-209 — Cicilan kasbon (karyawan setor balik di luar potong gaji). */
+export const postEmployeeAdvanceRepaymentSchema = z
+  .object({
+    advanceId: z.uuid(),
+    amount: advanceMoneyPos,
+    /** 'cash' = setor tunai; 'transfer' = masuk rekening bisnis. */
+    method: z.enum(["cash", "transfer"]),
+    bankAccountId: z.uuid().nullish(),
+    occurredAt: dateString,
+    description: z
+      .string()
+      .trim()
+      .max(500)
+      .nullish()
+      .transform((s) => (s && s.length > 0 ? s : null)),
+    receiptImageUrl: z.string().trim().max(1000).nullish(),
+  })
+  .refine((v) => v.method !== "transfer" || !!v.bankAccountId, {
+    message: "Pilih rekening bisnis penerima transfer",
+    path: ["bankAccountId"],
+  })
+  .refine((v) => v.method !== "cash" || !v.bankAccountId, {
+    message: "Setoran tunai tidak perlu rekening",
+    path: ["bankAccountId"],
+  });
+
+export const reverseEmployeeAdvanceRepaymentSchema = z.object({
+  id: z.uuid(),
+  reason: z.string().trim().min(5, "Alasan minimal 5 karakter").max(500),
+});

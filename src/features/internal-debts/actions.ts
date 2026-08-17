@@ -19,6 +19,7 @@ import {
   lockInternalDebtParty,
 } from "@/lib/db/locking";
 import { recordJournal } from "@/features/accounting/posting";
+import { normalizeReceiptUrl } from "@/features/accounting/receipt-url";
 import { resolveExpenseAccountCode } from "@/features/accounting/hooks";
 import {
   mapInternalDebtEntryReversal,
@@ -787,6 +788,9 @@ export async function postInternalDebtRepayment(
   /* Audit AE-181 — kalender WIB (lihat catatan di postInternalDebtEntry). */
   const entryDate = v.occurredAt ? v.occurredAt.slice(0, 10) : todayWibIso();
   const occurredAt = v.occurredAt ? startOfWibDateUtc(entryDate) : new Date();
+  /* Sesi AE-209 — hanya http/https yang boleh masuk DB, karena URL-nya
+   * dirender jadi tautan yang bisa diklik (pola sesi AE-208 kreditur). */
+  const receiptImageUrl = normalizeReceiptUrl(v.receiptImageUrl);
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -815,6 +819,7 @@ export async function postInternalDebtRepayment(
           occurredAt,
           amount: v.amount,
           description: v.description ?? null,
+          receiptImageUrl,
           status: "posted",
           createdBy: session.user.id,
         })
@@ -835,6 +840,9 @@ export async function postInternalDebtRepayment(
         lines,
         status: "posted",
         actorId: session.user.id,
+        /* Bukti transfer ikut nempel di jurnalnya, jadi bisa dibuka lewat
+         * tombol "Lihat bukti" di halaman Jurnal juga (pola AE-206/AE-208). */
+        receiptImageUrl,
         metadata: {
           repaymentId: rp.id,
           partyId: v.partyId,

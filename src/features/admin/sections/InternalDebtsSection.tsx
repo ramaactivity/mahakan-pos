@@ -7,6 +7,7 @@ import {
   Banknote,
   HandCoins,
   Landmark,
+  Paperclip,
   Pencil,
   Plus,
   RefreshCw,
@@ -653,6 +654,7 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
                     <th className="px-3 py-2 text-left">Pihak</th>
                     <th className="px-3 py-2 text-right">Nominal</th>
                     <th className="px-3 py-2 text-left">Bank</th>
+                    <th className="px-3 py-2 text-left">Bukti</th>
                     <th className="px-3 py-2 text-left">Status</th>
                     {canManage ? (
                       <th className="px-3 py-2 text-right">Aksi</th>
@@ -673,6 +675,22 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
                       </td>
                       <td className="px-3 py-2 text-xs text-neutral-600">
                         {r.bankLabel}
+                      </td>
+                      {/* Sesi AE-209 — bukti transfer cicilan (Drive). */}
+                      <td className="px-3 py-2 text-xs">
+                        {r.receiptImageUrl ? (
+                          <a
+                            href={r.receiptImageUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-mahakan-green-700 hover:underline"
+                          >
+                            <Paperclip className="size-3 shrink-0" aria-hidden />
+                            Lihat bukti
+                          </a>
+                        ) : (
+                          <span className="text-neutral-400">—</span>
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <Badge

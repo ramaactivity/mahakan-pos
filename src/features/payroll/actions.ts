@@ -27,6 +27,7 @@ import {
   computeDoubleShiftBonus,
   computeThrSuggestion,
   countLinesWithManualEdits,
+  planAdvanceDeductions,
   recomputeGrossNetV2,
   type PaymentType,
 } from "./payroll-compute-pure";
@@ -354,6 +355,7 @@ export async function computePayrollLines(
       id: employeeAdvances.id,
       employeeId: employeeAdvances.employeeId,
       amount: employeeAdvances.amount,
+      repaidAmount: employeeAdvances.repaidAmount,
     })
     .from(employeeAdvances)
     .where(
@@ -366,15 +368,20 @@ export async function computePayrollLines(
         ),
       ),
     );
-  const advanceSumByEmployee = new Map<string, number>();
-  const advanceIdsByEmployee = new Map<string, string[]>();
-  for (const adv of pendingAdvances) {
-    const cur = advanceSumByEmployee.get(adv.employeeId) ?? 0;
-    advanceSumByEmployee.set(adv.employeeId, cur + Number(adv.amount));
-    const list = advanceIdsByEmployee.get(adv.employeeId) ?? [];
-    list.push(adv.id);
-    advanceIdsByEmployee.set(adv.employeeId, list);
-  }
+  /* Sesi AE-209 — yang dipotong gaji cuma SISA kasbon (nominal − cicilan
+   * yang sudah disetor tunai/transfer). Logikanya di planAdvanceDeductions
+   * supaya bisa dites tanpa DB. */
+  const {
+    sumByEmployee: advanceSumByEmployee,
+    idsByEmployee: advanceIdsByEmployee,
+  } = planAdvanceDeductions(
+    pendingAdvances.map((a) => ({
+      id: a.id,
+      employeeId: a.employeeId,
+      amount: Number(a.amount),
+      repaidAmount: Number(a.repaidAmount ?? 0),
+    })),
+  );
 
   const aggMap = new Map(aggregates.map((a) => [a.employeeId, a]));
   const warnings: Array<{ employeeName: string; message: string }> = [];

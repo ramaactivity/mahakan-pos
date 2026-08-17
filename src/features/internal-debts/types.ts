@@ -84,6 +84,8 @@ export interface PostInternalDebtRepaymentInput {
   amount: number;
   occurredAt?: string | null;
   description?: string | null;
+  /** Sesi AE-209 — URL bukti transfer di Google Drive (opsional). */
+  receiptImageUrl?: string | null;
 }
 
 export interface ReverseInternalDebtInput {

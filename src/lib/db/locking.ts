@@ -4,6 +4,7 @@ import {
   investors,
   pengelola,
   creditors,
+  employeeAdvances,
   internalDebtParties,
 } from "@/db/schema";
 import type { Database } from "@/db";
@@ -106,6 +107,22 @@ export async function lockInternalDebtParty(
     .select({ id: internalDebtParties.id })
     .from(internalDebtParties)
     .where(inArray(internalDebtParties.id, [id]))
+    .for("update");
+}
+
+/**
+ * Sesi AE-209 — Lock satu baris kasbon. Serialize cicilan bersamaan yang
+ * mutate `repaid_amount` kasbon yang sama (dua orang klik Cicil bareng →
+ * tanpa lock bisa lolos melebihi sisa hutang).
+ */
+export async function lockEmployeeAdvance(
+  tx: TxLike,
+  id: string,
+): Promise<void> {
+  await tx
+    .select({ id: employeeAdvances.id })
+    .from(employeeAdvances)
+    .where(inArray(employeeAdvances.id, [id]))
     .for("update");
 }
 

@@ -102,6 +102,28 @@ describe("postInternalDebtRepaymentSchema", () => {
     });
     expect(r.success).toBe(false);
   });
+
+  /* Sesi AE-209 — bukti transfer opsional; URL non-http disaring nanti
+   * oleh normalizeReceiptUrl di action, bukan oleh schema. */
+  it("menerima bukti transfer opsional", () => {
+    const r = postInternalDebtRepaymentSchema.safeParse({
+      partyId: UUID,
+      bankAccountId: UUID,
+      amount: 500_000,
+      receiptImageUrl: "https://drive.google.com/file/d/abc/view",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("tetap sah tanpa bukti transfer", () => {
+    const r = postInternalDebtRepaymentSchema.safeParse({
+      partyId: UUID,
+      bankAccountId: UUID,
+      amount: 500_000,
+      receiptImageUrl: null,
+    });
+    expect(r.success).toBe(true);
+  });
 });
 
 describe("reverseInternalDebtSchema", () => {

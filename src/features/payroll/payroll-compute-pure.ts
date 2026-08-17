@@ -121,6 +121,53 @@ export function recomputeGrossNetV2(
   return { grossPay, netPay };
 }
 
+/* ---------------- Kasbon: sisa yang dipotong gaji ---------------- */
+
+export interface PendingAdvanceRow {
+  id: string;
+  employeeId: string;
+  /** Nominal kasbon (Rp). */
+  amount: number;
+  /** Total cicilan posted (Rp). Sesi AE-209. */
+  repaidAmount?: number | null;
+}
+
+export interface AdvanceDeductionPlan {
+  /** Total potongan per employeeId = SUM(sisa kasbon). */
+  sumByEmployee: Map<string, number>;
+  /** Kasbon yang ikut ditarik periode ini per employeeId (buat mark
+   * 'deducted'). Kasbon yang sisanya sudah 0 TIDAK masuk sini. */
+  idsByEmployee: Map<string, string[]>;
+}
+
+/**
+ * Sesi AE-209 — hitung potongan kasbon per karyawan dari SISA hutang
+ * (nominal − cicilan yang sudah disetor), bukan nominal penuh.
+ *
+ * Kalau ini pakai `amount` mentah, karyawan yang sudah nyicil tunai kena
+ * tagih dua kali: sekali saat setor, sekali lagi lewat potong gaji.
+ * Kasbon yang sisanya 0 di-skip sepenuhnya supaya tidak ikut di-mark
+ * 'deducted' (statusnya sudah 'repaid').
+ */
+export function planAdvanceDeductions(
+  rows: PendingAdvanceRow[],
+): AdvanceDeductionPlan {
+  const sumByEmployee = new Map<string, number>();
+  const idsByEmployee = new Map<string, string[]>();
+  for (const adv of rows) {
+    const remaining = Number(adv.amount) - Number(adv.repaidAmount ?? 0);
+    if (remaining <= 0) continue;
+    sumByEmployee.set(
+      adv.employeeId,
+      (sumByEmployee.get(adv.employeeId) ?? 0) + remaining,
+    );
+    const list = idsByEmployee.get(adv.employeeId) ?? [];
+    list.push(adv.id);
+    idsByEmployee.set(adv.employeeId, list);
+  }
+  return { sumByEmployee, idsByEmployee };
+}
+
 /* ---------------- Recompute warning detector ---------------- */
 
 export interface PayrollLineSnapshot {

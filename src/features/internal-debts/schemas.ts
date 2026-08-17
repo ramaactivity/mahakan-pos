@@ -56,6 +56,10 @@ export const postInternalDebtRepaymentSchema = z.object({
   amount: moneyPos,
   occurredAt: isoDateOptional,
   description: z.string().trim().max(500).nullish(),
+  /* Sesi AE-209 — bukti transfer opsional (URL Drive dari endpoint
+   * /api/v1/journal-receipts/upload). Disaring `normalizeReceiptUrl`
+   * di action sebelum masuk DB. */
+  receiptImageUrl: z.string().trim().max(1000).nullish(),
 });
 
 export const reverseInternalDebtSchema = z.object({

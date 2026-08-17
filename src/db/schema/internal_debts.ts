@@ -184,6 +184,12 @@ export const internalDebtRepayments = pgTable(
 
     description: text("description"),
 
+    /** Sesi AE-209 — bukti transfer (Google Drive, folder BUKTI JURNAL).
+     *  Disaring `normalizeReceiptUrl` sebelum masuk DB karena dirender
+     *  jadi tautan yang bisa diklik di Riwayat Cicilan. Sama seperti
+     *  creditor_repayments.receipt_image_url (sesi AE-208). */
+    receiptImageUrl: text("receipt_image_url"),
+
     /** Idempotent via recordJournal sourceType='internal_debt_repayment'
      * + sourceId=this.id. */
     journalEntryId: uuid("journal_entry_id").references(

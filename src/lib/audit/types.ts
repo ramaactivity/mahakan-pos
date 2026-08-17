@@ -263,6 +263,9 @@ export const AUDIT_EVENT_TYPES = [
   /* Sesi AE-60 — Kasbon (employee advance) lifecycle. */
   "advance.create",
   "advance.forgive",
+  /* Sesi AE-209 — cicilan kasbon (setor tunai/transfer di luar potong gaji). */
+  "advance.repayment.post",
+  "advance.repayment.reverse",
   // Sesi Q — Finance (Keuangan): cash deposit + aggregator settlement.
   "cash_deposit.create",
   "cash_deposit.update",
@@ -410,6 +413,8 @@ export type AuditEntityType =
   | "payroll_line"
   | "payroll_payslip_email"
   | "employee_advance"
+  /* Sesi AE-209 — baris cicilan kasbon. */
+  | "employee_advance_repayment"
   /* Sesi AE-63 — Modal & Dividen */
   | "investor"
   | "pengelola"
