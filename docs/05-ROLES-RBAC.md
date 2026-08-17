@@ -115,6 +115,9 @@ session untuk avoid mid-shift logout.
 - Cannot access menu CRUD (can only mark sold-out, which is temporary operational flag)
 - Cannot access user management, settings, expenses
 - Can see **only their own shift** data
+- Sesi AE-203: **cannot create purchases** (`purchase.create` dicabut). Belanja
+  bahan baku dilaporkan ke accounting; accounting yang input di Back Office.
+  Staff tetap bisa buat purchase request + terima barang (GR).
 
 ---
 
@@ -211,7 +214,7 @@ Legend:
 | View suppliers | ✅ | ✅ | ✅ | ❌ |
 | Supplier CRUD | ✅ | ✅ (delete owner) | ❌ | ❌ |
 | View purchases | ✅ | ✅ | ✅ | ❌ |
-| Create purchase | ✅ | ✅ | ✅ | ✅ |
+| Create purchase (sesi AE-203: staff dicabut) | ✅ | ✅ | ✅ | ❌ |
 | Update/cancel/mark paid purchase | ✅ | ✅ | ❌ | ❌ |
 | **PURCHASE REQUESTS (Phase 6.5+6.6)** | | | | |
 | View requests | ✅ | ✅ | ✅ | ❌ |

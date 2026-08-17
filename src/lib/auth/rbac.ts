@@ -318,7 +318,15 @@ export const permissions = {
   // payment & cancel manager+ only. Supervisor view + create (operational
   // belanja), TIDAK update / cancel / mark_paid (financial commitment).
   "purchase.view": ["owner", "manager", "supervisor"],
-  "purchase.create": ["owner", "manager", "supervisor", "staff"],
+  /* Sesi AE-203 — "staff" DICABUT atas arahan owner. Satu-satunya jalur
+   * staff membuat pembelian dulunya mode "Beli Bahan" di petty cash POS
+   * (sesi AE-198); jurnalnya sering tidak sinkron karena supplier/harga/
+   * satuan diisi seadanya di layar kasir. Sekarang staff LAPOR ke accounting
+   * dan accounting yang input di Back Office → Persediaan → Pembelian.
+   * Ini backstop server: UI-nya sudah dihapus, ini menutup jalur langsung.
+   * Staff TETAP boleh terima barang (purchase.goods_receive) dan bikin
+   * purchase request (purchase_request.create). */
+  "purchase.create": ["owner", "manager", "supervisor"],
   "purchase.update": ["owner", "manager"],
   "purchase.cancel": ["owner", "manager"],
   "purchase.mark_paid": ["owner", "manager"],

@@ -31,6 +31,20 @@ describe("hasPermission", () => {
     expect(hasPermission("staff", "pos.menu.mark_sold_out")).toBe(true);
   });
 
+  /* Sesi AE-203 — belanja bahan baku diinput accounting, bukan kasir.
+   * Kalau permission ini balik ke staff, mode "Beli Bahan" di petty cash POS
+   * bisa hidup lagi lewat jalur server dan jurnal pembelian kacau lagi. */
+  it("Staff cannot create purchases, but keeps PR + goods receive", () => {
+    expect(hasPermission("staff", "purchase.create")).toBe(false);
+    expect(hasPermission("supervisor", "purchase.create")).toBe(true);
+    expect(hasPermission("staff", "purchase_request.create")).toBe(true);
+    expect(hasPermission("staff", "purchase.goods_receive")).toBe(true);
+    /* Pengeluaran + pemasukan petty cash TETAP boleh (arahan owner:
+     * owner/manager/supervisor ada liburnya, kasir harus bisa catat). */
+    expect(hasPermission("staff", "expense.create")).toBe(true);
+    expect(hasPermission("staff", "income.create")).toBe(true);
+  });
+
   it("Staff can pair + test thermal printer (operasional, not admin)", () => {
     expect(hasPermission("staff", "settings.printer.pair")).toBe(true);
     expect(hasPermission("staff", "settings.printer.test")).toBe(true);

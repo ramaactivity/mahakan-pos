@@ -9,27 +9,24 @@ import {
 } from "react";
 import {
   ArrowDownCircle,
-  Package,
   ArrowUpCircle,
   Calendar,
   Camera,
-  CheckCircle2,
   Coins,
   Delete,
   ExternalLink,
   Eraser,
-  Flame,
   Hammer,
   HandHelping,
   Heart,
   ImagePlus,
+  Info,
   ListTree,
   Loader2,
   PartyPopper,
   Pencil,
   RefreshCw,
   Scissors,
-  Snowflake,
   Trash2,
   TrendingUp,
   Wallet,
@@ -43,7 +40,6 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  Combobox,
   DatePicker,
   Input,
   Select,
@@ -51,9 +47,6 @@ import {
   toast,
   type SelectOption,
 } from "@/components/ui";
-import { createPurchase } from "@/features/purchases/actions";
-import { listRequestableIngredients } from "@/features/purchase-requests/actions";
-import type { RequestableIngredient } from "@/features/purchase-requests/types";
 import {
   createExpense,
   createIncome,
@@ -73,23 +66,27 @@ import { todayWibIso } from "@/features/cash/helpers";
 import { formatIndonesianTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
-/* Sesi AE-198 — mode "bahan" (Beli Bahan Baku).
+/* Sesi AE-203 — mode "bahan" (Beli Bahan Baku) DIMATIKAN atas arahan owner.
  *
- * Dulu kasir mencatat belanja bahan sebagai pengeluaran biasa berisi teks
- * bebas ("Beli es batu kristal"), sehingga uangnya keluar dari laci TAPI
- * pembeliannya tidak pernah muncul di modul Pembelian, kolom Pembelian di
- * laporan Persediaan, maupun tab Masuk Bahan. Di produksi ada 36 entri
- * seperti ini (Rp 874.000) — semuanya es batu & gas LPG.
+ * Mode itu (sesi AE-198) membiarkan kasir membuat PEMBELIAN langsung dari
+ * POS. Hasilnya jurnal pembelian sering tidak sinkron karena data supplier,
+ * harga, dan satuan diisi seadanya di layar kasir. Alur sekarang: staff
+ * LAPOR ke accounting, accounting yang menginput pembeliannya di Back Office
+ * → Persediaan → Pembelian.
  *
- * Mode ini memilih bahan dari master lalu membuat PEMBELIAN sungguhan.
- * Pembelian itu sendiri yang mencatat kas keluar (createPurchase otomatis
- * membuat baris expense tertaut), jadi TIDAK BOLEH memanggil createExpense
- * juga — kalau tidak, uangnya tercatat keluar dua kali. */
-type Mode = "expense" | "income" | "bahan";
+ * JANGAN kembalikan mode ini ke POS tanpa arahan owner. Kalau kasir juga
+ * mencatat belanja bahan sebagai pengeluaran biasa DI SINI sementara
+ * accounting menginput pembeliannya, kas laci kepotong DUA KALI — itulah
+ * sebabnya chip cepat bahan baku (Gas LPG / Ice Cube / Galon Cleo) ikut
+ * dihapus dan diganti catatan di layar.
+ *
+ * Riwayat tetap menampilkan expense ber-`sourceType='purchase'` (lihat efek
+ * pemuatan riwayat di bawah): pembelian tunai yang diinput accounting tetap
+ * memotong laci kasir, jadi kasir harus melihatnya saat tutup shift. */
+type Mode = "expense" | "income";
 
-/* Riwayat petty cash hanya berisi dua jenis baris. Sengaja TERPISAH dari
- * `Mode`: mode "bahan" menghasilkan pembelian, bukan jenis baris riwayat
- * tersendiri. */
+/* Riwayat petty cash hanya berisi dua jenis baris — sama dengan `Mode`,
+ * tapi sengaja tipe tersendiri supaya keduanya bisa berbeda lagi nanti. */
 type EntryKind = "expense" | "income";
 
 /** Sesi AE-40 — quick-pick chip dengan keyword priority list buat
@@ -101,36 +98,23 @@ type EntryKind = "expense" | "income";
 interface QuickPick {
   label: string;
   description: string;
-  icon: typeof Flame;
+  icon: typeof Wallet;
   /** Priority list — first match wins. Falls back ke "Lain-lain" kalau
    *  tidak match. Kosong = jangan auto-pilih kategori. */
   categoryKeywords?: string[];
 }
 
+/* Sesi AE-203 — chip "Gas LPG", "Ice Cube", dan "Galon Cleo" DIHAPUS.
+ * Ketiganya bahan baku yang ada di master; sekarang belanja bahan diinput
+ * accounting sebagai pembelian. Kalau chip-nya dibiarkan, kasir mencatat
+ * pengeluaran untuk barang yang sama → kas kepotong dua kali. "Galon
+ * Karyawan" TETAP: itu air minum staff, bukan bahan produksi. */
 const EXPENSE_QUICK_PICKS: QuickPick[] = [
-  {
-    label: "Gas LPG",
-    description: "Beli gas LPG dapur",
-    icon: Flame,
-    categoryKeywords: ["belanja bahan", "lpg", "operasional"],
-  },
-  {
-    label: "Ice Cube",
-    description: "Beli es batu kristal",
-    icon: Snowflake,
-    categoryKeywords: ["belanja bahan", "es", "operasional"],
-  },
   {
     label: "Galon Karyawan",
     description: "Refill galon air karyawan",
     icon: Wallet,
     categoryKeywords: ["listrik", "air", "galon"],
-  },
-  {
-    label: "Galon Cleo",
-    description: "Beli galon Cleo untuk produksi kopi",
-    icon: Wallet,
-    categoryKeywords: ["belanja bahan", "cleo", "air", "galon"],
   },
   {
     label: "Tukang Rumput",
@@ -210,14 +194,6 @@ const QUICK_AMOUNTS_INCOME: Array<{ label: string; value: string }> = [
  */
 export function PettyCashCard() {
   const [mode, setMode] = useState<Mode>("expense");
-  /* Sesi AE-198 — state khusus mode "bahan". */
-  const [ingredients, setIngredients] = useState<RequestableIngredient[]>([]);
-  const [ingredientsLoading, setIngredientsLoading] = useState(false);
-  const [ingredientId, setIngredientId] = useState<string | null>(null);
-  const [qtyText, setQtyText] = useState("");
-  /* Penanda "sudah pernah dimuat" pakai ref, bukan state — supaya efeknya
-   * tidak ikut bergantung pada state yang dia ubah sendiri (putaran render). */
-  const ingredientsLoadedRef = useRef(false);
   const [description, setDescription] = useState("");
   /** Raw digit string (no separator). Formatted display via formatRupiah. */
   const [amountDigits, setAmountDigits] = useState("");
@@ -287,9 +263,11 @@ export function PettyCashCard() {
       /* Sesi AE-63 phase9 — batasi ke paymentMethod='cash' supaya petty cash
        * drawer view tidak ke-leak entry yang sumbernya bukan laci kasir.
        * Sesi AE-67 — date pakai entryDate (default today, bisa retro).
-       * Sesi AE-198 — 'purchase' IKUT ditampilkan: belanja bahan yang dicatat
-       * kasir sekarang jadi pembelian, tapi uangnya tetap keluar dari laci
-       * yang sama. Payroll/refund tetap dikecualikan. */
+       * Sesi AE-198 — 'purchase' IKUT ditampilkan karena pembelian tunai
+       * memotong laci yang sama. Sesi AE-203: kasir tidak lagi membuat
+       * pembelian dari POS, tapi filter ini TETAP DIPERLUKAN — pembelian
+       * tunai yang diinput accounting tetap mengurangi laci, dan kasir harus
+       * melihatnya saat tutup shift. Payroll/refund tetap dikecualikan. */
       const [expRes, incRes, pecRes] = await Promise.all([
         listExpenses({
           from: entryDate,
@@ -471,47 +449,12 @@ export function PettyCashCard() {
   function resetForm() {
     setDescription("");
     setAmountDigits("");
-    setIngredientId(null);
-    setQtyText("");
     setActiveChipLabel(null);
     setReceiptUrl(null);
     // Re-pick default category (Lain-lain or first)
     const defId = pickCategoryId(undefined);
     if (defId) setCategoryId(defId);
   }
-
-  /* Muat master bahan sekali, saat mode "bahan" pertama kali dibuka —
-   * jangan tarik 184 baris di setiap POS mount kalau kasir tidak memakainya. */
-  useEffect(() => {
-    if (mode !== "bahan" || ingredientsLoadedRef.current) return;
-    ingredientsLoadedRef.current = true;
-    let cancelled = false;
-    void (async () => {
-      setIngredientsLoading(true);
-      const res = await listRequestableIngredients();
-      if (cancelled) return;
-      if (isOk(res)) setIngredients(res.data);
-      setIngredientsLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [mode]);
-
-  const selectedIngredient = ingredientId
-    ? ingredients.find((i) => i.id === ingredientId) ?? null
-    : null;
-  const parsedQty = Number(qtyText.replace(",", "."));
-  const qtyValid = Number.isFinite(parsedQty) && parsedQty > 0;
-  /* Server menyimpan harga per unit sebagai bilangan BULAT lalu menghitung
-   * ulang total = qty × unitCost. Kalau total yang diketik kasir tidak habis
-   * dibagi qty, angka yang tercatat bisa meleset beberapa rupiah dari uang
-   * fisik yang keluar — dan selisih itu akan muncul di variance tutup shift.
-   * Jadi hitung angka finalnya di sini dan TAMPILKAN, jangan dibiarkan diam. */
-  const bahanUnitCost =
-    qtyValid && parsedAmount > 0 ? Math.round(parsedAmount / parsedQty) : 0;
-  const bahanRecordedTotal = qtyValid ? Math.round(parsedQty * bahanUnitCost) : 0;
-  const bahanRounding = bahanRecordedTotal - parsedAmount;
 
   async function onSubmit() {
     /* Sesi AE-49 — defense against double-submit race. setSubmitting di
@@ -521,22 +464,10 @@ export function PettyCashCard() {
     setSubmitting(true);
     setError(null);
 
-    if (mode !== "bahan" && description.trim().length === 0) {
+    if (description.trim().length === 0) {
       setError("Deskripsi wajib diisi");
       setSubmitting(false);
       return;
-    }
-    if (mode === "bahan") {
-      if (!selectedIngredient) {
-        setError("Pilih bahan baku dulu");
-        setSubmitting(false);
-        return;
-      }
-      if (!qtyValid) {
-        setError("Jumlah harus lebih dari nol");
-        setSubmitting(false);
-        return;
-      }
     }
     if (parsedAmount <= 0) {
       setError("Nominal harus lebih dari nol");
@@ -549,43 +480,7 @@ export function PettyCashCard() {
       return;
     }
 
-    if (mode === "bahan") {
-      /* Membuat PEMBELIAN, bukan pengeluaran. createPurchase sendiri yang
-       * mencatat kas keluar (baris expense tertaut, sourceType='purchase'),
-       * jadi memanggil createExpense di sini akan menghitung uangnya dua kali.
-       *
-       * `unitCost` di server berarti harga per SATU unit baris. Kasir memasukkan
-       * TOTAL yang dibayar (itu yang ada di struk warung), jadi dibagi qty dulu.
-       * Dibulatkan supaya lolos validasi bilangan bulat; selisih pembulatan
-       * ditanggung di sini, bukan bikin submit gagal. */
-      const res = await createPurchase({
-        supplierId: null,
-        purchaseDate: entryDate,
-        paymentMethod: "cash",
-        paymentTermDays: 0,
-        notes:
-          description.trim().length > 0
-            ? description.trim()
-            : `Belanja kasir — ${selectedIngredient!.name}`,
-        receiptImageUrl: receiptUrl,
-        items: [
-          {
-            ingredientId: selectedIngredient!.id,
-            qty: parsedQty,
-            unitCost: bahanUnitCost,
-            unit: selectedIngredient!.unit,
-          },
-        ],
-      });
-      setSubmitting(false);
-      if (!isOk(res)) {
-        setError(res.error.message);
-        return;
-      }
-      toast.success(
-        `${selectedIngredient!.name} ${parsedQty} ${selectedIngredient!.unit} — ${formatRupiah(bahanRecordedTotal)} masuk ke Pembelian`,
-      );
-    } else if (mode === "expense") {
+    if (mode === "expense") {
       const res = await createExpense({
         expenseDate: entryDate,
         categoryId,
@@ -703,7 +598,7 @@ export function PettyCashCard() {
         <div
           role="radiogroup"
           aria-label="Tipe entri petty cash"
-          className="grid grid-cols-3 gap-2"
+          className="grid grid-cols-2 gap-2"
         >
           {(
             [
@@ -711,11 +606,6 @@ export function PettyCashCard() {
                 value: "expense" as const,
                 label: "Pengeluaran",
                 Icon: ArrowDownCircle,
-              },
-              {
-                value: "bahan" as const,
-                label: "Beli Bahan",
-                Icon: Package,
               },
               {
                 value: "income" as const,
@@ -740,9 +630,7 @@ export function PettyCashCard() {
                 mode === opt.value
                   ? opt.value === "expense"
                     ? "border-danger-500 bg-danger-100/60 text-danger-500"
-                    : opt.value === "bahan"
-                      ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
-                      : "border-success-500 bg-success-100/60 text-success-500"
+                    : "border-success-500 bg-success-100/60 text-success-500"
                   : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
               )}
             >
@@ -751,6 +639,24 @@ export function PettyCashCard() {
             </button>
           ))}
         </div>
+
+        {/* Sesi AE-203 — belanja bahan baku TIDAK dicatat di sini lagi.
+         * Catatan ini bukan hiasan: kalau kasir mencatat pengeluaran untuk
+         * barang yang sama dengan yang diinput accounting sebagai pembelian,
+         * kas laci kepotong dua kali dan variance tutup shift jadi kacau. */}
+        {mode === "expense" ? (
+          <div className="flex items-start gap-2 rounded-lg border border-warning-300 bg-warning-100/50 px-3 py-2.5 text-xs text-warning-700">
+            <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <p>
+              <strong>Belanja bahan baku jangan dicatat di sini.</strong> Es
+              batu, gas LPG, galon Cleo, kopi, susu, dan bahan lain yang ada di
+              daftar bahan — simpan notanya lalu lapor ke accounting. Accounting
+              yang menginput sebagai pembelian, supaya stok dan jurnalnya
+              sinkron. Kalau dicatat dua-duanya, uang laci terhitung keluar dua
+              kali.
+            </p>
+          </div>
+        ) : null}
 
         {/* Sesi AE-67 Phase 1 — Date picker untuk retroactive entry.
          * Default = today. Allow up to 3 hari ke belakang (mencegah backdate
@@ -866,85 +772,13 @@ export function PettyCashCard() {
             />
 
             {/* Category (expense only) */}
-            {/* Sesi AE-198 — pilih bahan dari master, bukan ketik bebas.
-                Hasilnya dicatat sebagai PEMBELIAN supaya ikut terbaca di modul
-                Pembelian, kolom Pembelian laporan Persediaan, dan Masuk Bahan. */}
-            {mode === "bahan" ? (
-              <div className="space-y-3">
-                <Combobox
-                  label="Bahan Baku"
-                  value={ingredientId}
-                  onChange={setIngredientId}
-                  loading={ingredientsLoading}
-                  disabled={submitting}
-                  placeholder="Pilih bahan…"
-                  searchPlaceholder="Ketik nama bahan…"
-                  emptyText="Bahan tidak ditemukan di master"
-                  required
-                  options={ingredients.map((i) => ({
-                    value: i.id,
-                    label: `${i.name} (${i.unit})`,
-                  }))}
-                />
-
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="petty-qty"
-                    className="block text-sm font-medium text-neutral-900"
-                  >
-                    Jumlah{" "}
-                    {selectedIngredient ? (
-                      <span className="text-neutral-500">
-                        (dalam {selectedIngredient.unit})
-                      </span>
-                    ) : null}
-                  </label>
-                  <Input
-                    id="petty-qty"
-                    inputMode="decimal"
-                    value={qtyText}
-                    onChange={(e) =>
-                      setQtyText(e.target.value.replace(/[^0-9.,]/g, ""))
-                    }
-                    placeholder={
-                      selectedIngredient
-                        ? `Contoh: 1 ${selectedIngredient.unit}`
-                        : "Pilih bahan dulu"
-                    }
-                    disabled={submitting || !selectedIngredient}
-                  />
-                </div>
-
-                {selectedIngredient && qtyValid && parsedAmount > 0 ? (
-                  <div className="space-y-1 rounded-lg bg-mahakan-green-50 px-3 py-2 text-xs text-mahakan-green-900">
-                    <p>
-                      {parsedQty} {selectedIngredient.unit} ×{" "}
-                      {formatRupiah(bahanUnitCost)} ={" "}
-                      <strong>{formatRupiah(bahanRecordedTotal)}</strong>
-                    </p>
-                    {bahanRounding !== 0 ? (
-                      <p className="text-warning-700">
-                        ⚠ {formatRupiah(parsedAmount)} tidak habis dibagi{" "}
-                        {parsedQty}. Yang tercatat{" "}
-                        {formatRupiah(bahanRecordedTotal)} (
-                        {bahanRounding > 0 ? "+" : ""}
-                        {formatRupiah(bahanRounding)} dari yang kamu ketik).
-                      </p>
-                    ) : null}
-                    <p>
-                      Dicatat sebagai pembelian bahan baku dan uangnya keluar
-                      dari laci kasir — tidak dihitung dua kali.
-                    </p>
-                  </div>
-                ) : null}
-              </div>
-            ) : mode === "expense" ? (
+            {mode === "expense" ? (
               visibleCategories.length === 0 ? (
                 <div className="rounded-lg border border-warning-500/40 bg-warning-100/40 px-3 py-2 text-xs text-warning-500">
                   ⚠️ Belum ada kategori pengeluaran. Owner / Manager perlu
                   set di Back Office → Cash → Kategori dulu, supaya petty
-                  cash bisa dicatat. Saran: <em>Belanja Bahan Baku</em>,{" "}
-                  <em>Listrik & Air</em>, <em>Perawatan Alat</em>,{" "}
+                  cash bisa dicatat. Saran: <em>Listrik & Air</em>,{" "}
+                  <em>Perawatan Alat</em>, <em>Kebersihan</em>,{" "}
                   <em>Lain-lain</em>.
                 </div>
               ) : (
@@ -1158,28 +992,20 @@ export function PettyCashCard() {
           onClick={onSubmit}
           loading={submitting}
           disabled={
-            submitting ||
-            (mode === "expense" && visibleCategories.length === 0) ||
-            (mode === "bahan" && (!selectedIngredient || !qtyValid))
+            submitting || (mode === "expense" && visibleCategories.length === 0)
           }
           fullWidth
           className={cn(
             "h-14 text-base font-semibold",
             mode === "expense"
               ? "!bg-danger-500 hover:!bg-danger-700"
-              : mode === "bahan"
-                ? "!bg-mahakan-green-700 hover:!bg-mahakan-green-900"
-                : "!bg-success-500 hover:!bg-success-500",
+              : "!bg-success-500 hover:!bg-success-500",
           )}
         >
           {submitting
             ? "Memproses…"
             : `Catat ${
-                mode === "expense"
-                  ? "Pengeluaran"
-                  : mode === "bahan"
-                    ? "Pembelian Bahan"
-                    : "Pemasukan"
+                mode === "expense" ? "Pengeluaran" : "Pemasukan"
               }${parsedAmount > 0 ? ` ${formatRupiah(parsedAmount)}` : ""}`}
         </Button>
 
