@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileText, ImagePlus, Loader2, Plus, Trash2, X } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import {
   Button,
   Combobox,
@@ -32,6 +32,10 @@ import {
   isOk as suppliersIsOk,
   type Supplier,
 } from "@/features/suppliers";
+import {
+  PurchaseReceiptsField,
+  type PurchaseReceipt,
+} from "./PurchaseReceiptsField";
 import { lookupMarketPriceForPurchase } from "@/features/market-list";
 import { getLastFinalizedOpname } from "@/features/stock-opname";
 import { formatRupiah, parseRupiah } from "@/lib/format";
@@ -56,10 +60,6 @@ interface PurchaseFormModalProps {
   onClose: () => void;
   onSaved: () => void;
 }
-
-/** Sesi AE-129 — cap multi-nota di 5. Cukup untuk skenario worst-case
- * Anisa (belanja 3-4 toko sekaligus) tapi cegah abuse Drive folder. */
-const MAX_RECEIPTS = 5;
 
 const PAYMENT_OPTIONS: Array<{ value: PaymentMethod; label: string }> = [
   { value: "cash", label: "Cash" },
@@ -270,14 +270,14 @@ export function PurchaseFormModal({
   //
   // Sesi AE-129 — multi-nota (Anisa request). Staff sering belanja dari
   // beberapa toko, jadi satu purchase bisa punya >1 nota. Store sebagai
-  // array of {url, name}; UI cap di MAX_RECEIPTS (5). Server tetap mirror
+  // array of {url, name}; UI cap di MAX_PURCHASE_RECEIPTS (5). Server mirror
   // item pertama ke kolom legacy receiptImageUrl untuk backward compat
   // dengan list/detail views lama.
-  const [receipts, setReceipts] = useState<
-    Array<{ url: string; name: string }>
-  >([]);
-  const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  //
+  // Sesi AE-209 — blok upload-nya pindah ke <PurchaseReceiptsField/> supaya
+  // dipakai bareng Edit PO (nota yang datang belakangan). State-nya tetap di
+  // sini karena ikut snapshot/restore draft form.
+  const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [updateCost, setUpdateCost] = useState(true);
   const [createKas, setCreateKas] = useState(true);
   // Sesi AE-173 — false = Langsung Terima (createPurchase, efek sekarang);
@@ -325,7 +325,6 @@ export function PurchaseFormModal({
     setInvoiceNo("");
     setNotes("");
     setReceipts([]);
-    setUploading(false);
     setUpdateCost(true);
     setCreateKas(true);
     setItems([newRow(), newRow()]);
@@ -1530,155 +1529,15 @@ export function PurchaseFormModal({
             />
           </div>
 
-          {/* Receipt / bukti transfer upload (sesi AA #2 + AE-129 multi-nota).
-              Allows JPG/PNG/WebP (foto nota) + PDF (bank/aggregator e-receipt).
-              Stored di Google Drive, file di-rename otomatis dengan timestamp +
-              nama original. Sesi AE-129 — Anisa feedback: belanja dari beberapa
-              toko dalam satu run, jadi support multi-upload (max 5). */}
-          <div className="space-y-1.5">
-            <div className="flex items-baseline justify-between gap-2">
-              <label className="block text-sm font-medium text-neutral-900">
-                Bukti Pembelian / Transfer (opsional)
-              </label>
-              {receipts.length > 0 ? (
-                <span className="text-xs text-neutral-500">
-                  {receipts.length} / {MAX_RECEIPTS} nota
-                </span>
-              ) : null}
-            </div>
-
-            {/* List existing receipts. Each row: link + filename + delete X. */}
-            {receipts.length > 0 ? (
-              <ul className="space-y-1.5">
-                {receipts.map((r, idx) => (
-                  <li
-                    key={`${r.url}-${idx}`}
-                    className="flex items-center justify-between gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-2"
-                  >
-                    <a
-                      href={r.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex flex-1 items-center gap-2 text-xs text-mahakan-green-900 hover:underline min-w-0"
-                    >
-                      <FileText className="size-4 shrink-0" />
-                      <span className="truncate">{r.name}</span>
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setReceipts((prev) =>
-                          prev.filter((_, i) => i !== idx),
-                        );
-                      }}
-                      disabled={submitting || uploading}
-                      className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-neutral-500 hover:bg-danger-100 hover:text-danger-500"
-                      aria-label={`Hapus nota ${idx + 1} dari form (file tetap di Drive)`}
-                      title="Hapus dari form. File yang sudah di Drive tidak ikut terhapus — hapus manual via Drive kalau perlu."
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-
-            {/* Add-button + helper. Hidden ketika sudah capai cap. */}
-            {receipts.length < MAX_RECEIPTS ? (
-              <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50/50 p-3">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,application/pdf"
-                  hidden
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    setUploading(true);
-                    setError(null);
-                    try {
-                      if (file.size > 5 * 1024 * 1024) {
-                        throw new Error("Ukuran maks 5 MB");
-                      }
-                      // Upload to Google Drive via /api/v1/purchase-receipts/upload.
-                      // Server handles auth + auto-creates year/month folders
-                      // matching Owner's NOTA MAHAKAN structure (sesi AA #2 Opsi B).
-                      const fd = new FormData();
-                      fd.append("file", file);
-                      fd.append("purchaseDate", purchaseDate);
-                      const res = await fetch(
-                        "/api/v1/purchase-receipts/upload",
-                        { method: "POST", body: fd },
-                      );
-                      const json = (await res.json()) as
-                        | { success: true; data: { url: string; folderPath: string } }
-                        | {
-                            success: false;
-                            error: { code: string; message: string };
-                          };
-                      if (!json.success) {
-                        throw new Error(json.error.message);
-                      }
-                      // Sesi AE-129 — append ke list (multi-nota). Defensive
-                      // cap di sini juga supaya kalau race condition (user
-                      // double-tap saat ada di list 4), tetap di-clamp.
-                      setReceipts((prev) =>
-                        prev.length >= MAX_RECEIPTS
-                          ? prev
-                          : [
-                              ...prev,
-                              { url: json.data.url, name: file.name },
-                            ],
-                      );
-                      toast.success(
-                        `Bukti tersimpan di Drive · ${json.data.folderPath}`,
-                      );
-                    } catch (e) {
-                      setError(
-                        e instanceof Error ? e.message : "Upload gagal",
-                      );
-                    } finally {
-                      setUploading(false);
-                      if (fileInputRef.current) fileInputRef.current.value = "";
-                    }
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading || submitting}
-                >
-                  {uploading ? (
-                    <>
-                      <Loader2 className="size-4 animate-spin" /> Uploading…
-                    </>
-                  ) : receipts.length > 0 ? (
-                    <>
-                      <Plus className="size-4" /> Tambah Nota Lain
-                    </>
-                  ) : (
-                    <>
-                      <ImagePlus className="size-4" /> Upload Foto / PDF
-                    </>
-                  )}
-                </Button>
-                <p className="mt-1 text-xs text-neutral-500">
-                  JPG / PNG / WebP / PDF, max 5 MB per file. Bisa upload
-                  sampai <strong>{MAX_RECEIPTS} nota</strong> (mis. belanja
-                  dari beberapa toko). Tersimpan otomatis di Google Drive
-                  Anda — folder <strong>NOTA MAHAKAN</strong> → tahun →
-                  bulan, sesuai struktur lama.
-                </p>
-              </div>
-            ) : (
-              <p className="rounded-md border border-info-200 bg-info-50 p-2 text-xs text-info-700">
-                Sudah {MAX_RECEIPTS} nota — hapus salah satu kalau mau
-                ganti.
-              </p>
-            )}
-          </div>
+          {/* Bukti nota/transfer (sesi AA #2 + AE-129 multi-nota) — sejak
+              AE-209 komponennya dipakai bareng Edit PO. */}
+          <PurchaseReceiptsField
+            value={receipts}
+            onChange={setReceipts}
+            purchaseDate={purchaseDate}
+            disabled={submitting}
+            onError={setError}
+          />
 
           <div className="rounded-md bg-mahakan-green-100/40 p-3 text-sm">
             <div className="flex items-center justify-between">

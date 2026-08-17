@@ -42,6 +42,10 @@ import {
   type IngredientPackConversion,
 } from "@/lib/unit-conversion";
 import {
+  PurchaseReceiptsField,
+  type PurchaseReceipt,
+} from "./PurchaseReceiptsField";
+import {
   applyQtyChange,
   applyTotalChange,
   applyUnitChange,
@@ -165,7 +169,9 @@ export function PurchaseOrderEditModal({
   const prevPaymentMethodRef = useRef<PaymentMethod>("cash");
   const [invoiceNo, setInvoiceNo] = useState("");
   const [notes, setNotes] = useState("");
-  const [receiptUrls, setReceiptUrls] = useState<string[]>([]);
+  /* Sesi AE-209 — bukti nota. Yang tersimpan di DB cuma URL-nya, jadi bukti
+   * lama diberi label urut; yang di-upload di sesi ini pakai nama file asli. */
+  const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [rows, setRows] = useState<EditRow[]>([]);
   const [originalTotal, setOriginalTotal] = useState(0);
 
@@ -204,12 +210,14 @@ export function PurchaseOrderEditModal({
       setPaymentTerm(String(detail.paymentTermDays ?? 0));
       setInvoiceNo(detail.invoiceNo ?? "");
       setNotes(detail.notes ?? "");
-      setReceiptUrls(
+      const savedUrls =
         detail.receiptImageUrls && detail.receiptImageUrls.length > 0
           ? detail.receiptImageUrls
           : detail.receiptImageUrl
             ? [detail.receiptImageUrl]
-            : [],
+            : [];
+      setReceipts(
+        savedUrls.map((url, i) => ({ url, name: `Bukti ${i + 1}` })),
       );
       setRows(rowsFromDetail(detail));
       setOriginalTotal(Number(detail.totalAmount));
@@ -350,7 +358,8 @@ export function PurchaseOrderEditModal({
       paymentTermDays: termCheck.days,
       invoiceNo: invoiceNo.trim() || null,
       notes: notes.trim() || null,
-      receiptImageUrls: receiptUrls.length > 0 ? receiptUrls : null,
+      receiptImageUrls:
+        receipts.length > 0 ? receipts.map((r) => r.url) : null,
       items,
     });
     setSubmitting(false);
@@ -503,6 +512,17 @@ export function PurchaseOrderEditModal({
             placeholder="mis. harga menyusul nota dari supplier"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
+          />
+
+          {/* Sesi AE-209 — nota fisik hampir selalu datang SESUDAH PO dibuat
+           * (PO dibikin dulu dengan harga Rp 0). Jadi tempat menempelkan
+           * buktinya harus ada di sini, bukan cuma di Catat Pembelian. */}
+          <PurchaseReceiptsField
+            value={receipts}
+            onChange={setReceipts}
+            purchaseDate={purchaseDate}
+            disabled={submitting}
+            label="Bukti Pembelian / Transfer (opsional)"
           />
 
           <div className="space-y-2">
