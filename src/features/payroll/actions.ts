@@ -854,6 +854,29 @@ export async function markPayrollPaid(
       Number(sumRow?.otherDeductions ?? 0);
     const totalNet = Number(sumRow?.netPay ?? 0);
 
+    /* Sesi AE-209b — porsi potongan kasbon yang boleh di-credit ke 1155
+     * Piutang Kasbon: HANYA kasbon yang punya jurnal pembukaan Dr 1155 dan
+     * ter-link ke periode ini. Kasbon lama (pra-AE-209, journal_entry_id
+     * NULL) tetap lewat 6105 seperti dulu — kalau ikut di-credit ke 1155,
+     * saldo piutang jadi minus tanpa error apa pun.
+     *
+     * Angkanya juga di-cap oleh totalDeductions di mapPayrollPaid, jadi
+     * override manual advanceDeduction tidak bisa bikin jurnal tak balance. */
+    const [linkedRow] = await tx
+      .select({
+        journaled: sql<string>`COALESCE(SUM(
+          CASE WHEN ${employeeAdvances.journalEntryId} IS NOT NULL
+            THEN ${employeeAdvances.amount} - ${employeeAdvances.repaidAmount}
+            ELSE 0 END
+        ), 0)`,
+      })
+      .from(employeeAdvances)
+      .where(eq(employeeAdvances.deductedFromPeriodId, periodId));
+    const totalAdvanceDeduction = Math.min(
+      Number(linkedRow?.journaled ?? 0),
+      Number(sumRow?.advanceDeduction ?? 0),
+    );
+
     const [row] = await tx
       .update(payrollPeriods)
       .set({
@@ -899,6 +922,7 @@ export async function markPayrollPaid(
       totalBonusAndThr,
       totalThr,
       totalDeductions,
+      totalAdvanceDeduction,
     };
   });
 
@@ -960,6 +984,8 @@ export async function markPayrollPaid(
           totalOvertimePay: result.totalOvertimePay,
           totalBonus: result.totalBonusAndThr,
           totalDeductions: result.totalDeductions,
+          /* Sesi AE-209b — porsi kasbon ber-jurnal → Cr 1155, sisanya 6105. */
+          totalAdvanceDeduction: result.totalAdvanceDeduction,
           totalNetPay: result.totalNet,
           paymentMethod: paymentMethod === "cash" ? "cash" : "transfer",
           entryDate: todayWib,

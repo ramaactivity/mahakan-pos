@@ -61,6 +61,7 @@ const DEFAULTS: DefaultAccount[] = [
   { code: "1141", name: "Persediaan Bahan Baku — Bar", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 31, notes: "Mirror section='bar'" },
   { code: "1142", name: "Persediaan Bahan Pendukung", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 32, notes: "Mirror section IN ('supporting','cleaning')" },
   { code: "1150", name: "Biaya Dibayar Dimuka", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: false, displayOrder: 40, notes: "Manual entry — sewa prepaid, asuransi" },
+  { code: "1155", name: "Piutang Kasbon Karyawan", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 41, notes: "Sesi AE-209b. Auto-debit saat kasbon diberikan; auto-credit saat dicicil / dipotong gaji / di-forgive. Saldo = kasbon karyawan yang belum lunas." },
 
   // ============ 12xx Aset Tetap (placeholder, sesi W) ============
   { code: "1201", name: "Furniture & Peralatan Cafe", type: "asset", normalBalance: "debit", parentCode: "1200", isSystem: false, isActiveOnSeed: false, displayOrder: 50, notes: "Sesi W: capitalized purchase ≥ Rp 500k threshold" },

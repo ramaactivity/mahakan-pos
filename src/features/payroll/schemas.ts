@@ -55,17 +55,35 @@ export const applyThrSchema = z.object({
 /* Sesi AE-60 — Employee Advance (Kasbon). */
 const advanceMoneyPos = z.number().int().positive().max(999_999_999);
 
-export const createEmployeeAdvanceSchema = z.object({
-  employeeId: z.uuid(),
-  amount: advanceMoneyPos,
-  reason: z
-    .string()
-    .trim()
-    .max(500)
-    .nullish()
-    .transform((s) => (s && s.length > 0 ? s : null)),
-  issuedDate: dateString,
-});
+export const createEmployeeAdvanceSchema = z
+  .object({
+    employeeId: z.uuid(),
+    amount: advanceMoneyPos,
+    reason: z
+      .string()
+      .trim()
+      .max(500)
+      .nullish()
+      .transform((s) => (s && s.length > 0 ? s : null)),
+    issuedDate: dateString,
+    /* Sesi AE-209b — uang kasbon diambil dari mana. Menentukan lawan jurnal
+     * Dr 1155 Piutang Kasbon. 'opening_balance' = kasbon lama yang uangnya
+     * sudah keluar sebelum kasbon masuk pembukuan → tanpa jurnal.
+     * Default 'cash' menjaga pemanggil lama tetap sah. */
+    fundingSource: z
+      .enum(["cash", "bank", "opening_balance"])
+      .optional()
+      .default("cash"),
+    bankAccountId: z.uuid().nullish(),
+  })
+  .refine((v) => v.fundingSource !== "bank" || !!v.bankAccountId, {
+    message: "Pilih rekening sumber uang kasbon",
+    path: ["bankAccountId"],
+  })
+  .refine((v) => v.fundingSource === "bank" || !v.bankAccountId, {
+    message: "Rekening hanya dipakai kalau uangnya dari bank",
+    path: ["bankAccountId"],
+  });
 
 export const forgiveEmployeeAdvanceSchema = z.object({
   id: z.uuid(),

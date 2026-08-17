@@ -1,10 +1,11 @@
 "use server";
 
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   accountingPeriods,
   chartOfAccounts,
+  employeeAdvances,
   ingredients,
   journalEntries,
   journalLines,
@@ -2437,6 +2438,24 @@ export async function fetchValidationReport(
     );
   const sourceHutang = Math.round(Number(hutangRow?.total ?? 0));
 
+  /* 4. Sesi AE-209b — sisa kasbon karyawan yang belum lunas DAN ber-jurnal
+   *    (kasbon lama di luar pembukuan tidak pernah menyentuh 1155, jadi
+   *    jangan ikut dibandingkan — kalau ikut, laporan validasi bakal
+   *    selalu merah padahal pembukuannya benar). */
+  const [kasbonRow] = await db
+    .select({
+      total: sql<string>`COALESCE(SUM(${employeeAdvances.amount} - ${employeeAdvances.repaidAmount}), 0)`,
+    })
+    .from(employeeAdvances)
+    .where(
+      and(
+        eq(employeeAdvances.outletId, session.user.outletId),
+        eq(employeeAdvances.status, "pending"),
+        isNotNull(employeeAdvances.journalEntryId),
+      ),
+    );
+  const sourceKasbon = Math.round(Number(kasbonRow?.total ?? 0));
+
   return ok(
     buildValidationReport({
       asOfDate,
@@ -2446,6 +2465,7 @@ export async function fetchValidationReport(
         persediaanBar: ledgerPersediaanBar,
         persediaanPendukung: ledgerPersediaanPendukung,
         hutangDagang: ledgerHutang,
+        piutangKasbon: balanceOf("1155"),
       },
       source: {
         cashOnHand: sourceCashOnHandStrict,
@@ -2453,6 +2473,7 @@ export async function fetchValidationReport(
         persediaanBar: sourceBar,
         persediaanPendukung: sourcePendukung,
         hutangDagangPending: sourceHutang,
+        kasbonOutstanding: sourceKasbon,
       },
     }),
   );

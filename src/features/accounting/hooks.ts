@@ -517,6 +517,8 @@ export async function postJournalForPayrollPaid(args: {
   totalOvertimePay: number;
   totalBonus: number;
   totalDeductions: number;
+  /** Sesi AE-209b — porsi potongan dari kasbon ber-jurnal → Cr 1155. */
+  totalAdvanceDeduction?: number;
   totalNetPay: number;
   paymentMethod: "cash" | "transfer";
   entryDate: string;
@@ -534,6 +536,7 @@ export async function postJournalForPayrollPaid(args: {
     totalOvertimePay: args.totalOvertimePay,
     totalBonus: args.totalBonus,
     totalDeductions: args.totalDeductions,
+    totalAdvanceDeduction: args.totalAdvanceDeduction,
     totalNetPay: args.totalNetPay,
     paymentMethod: args.paymentMethod,
   });

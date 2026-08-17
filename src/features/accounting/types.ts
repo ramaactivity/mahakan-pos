@@ -85,6 +85,11 @@ export type JournalSourceType =
   | "internal_debt_entry_reversal"
   | "internal_debt_repayment"
   | "internal_debt_repayment_reversal"
+  /* Sesi AE-209b — Kasbon Karyawan sebagai piutang (akun 1155). */
+  | "employee_advance_issue"
+  | "employee_advance_forgive"
+  | "employee_advance_repayment"
+  | "employee_advance_repayment_reversal"
   /* Sesi AE-116 — COGS period close adjustment (reconcile recognized vs actual). */
   | "cogs_period_close";
 

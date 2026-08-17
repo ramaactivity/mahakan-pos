@@ -31,6 +31,18 @@ import { bankAccounts } from "./bank-accounts";
  *
  * Tidak ada DELETE — semua kasbon di-track historical untuk audit.
  *
+ * Sesi AE-209b — KASBON MASUK PEMBUKUAN sebagai piutang. Kasbon yang
+ * diberikan sekarang memposting Dr 1155 Piutang Kasbon Karyawan / Cr Kas
+ * atau bank sesuai `funding_source`, dan `journal_entry_id` menyimpan
+ * jurnalnya. Semua penyelesaian (cicilan, potong gaji, forgive) meng-kredit
+ * 1155 sampai piutangnya nol. Detail + aturan anti saldo-minus ada di
+ * `src/features/accounting/mapping/employeeAdvance.ts`.
+ *
+ * `funding_source='opening_balance'` = kasbon lama yang uangnya sudah keluar
+ * sebelum kasbon masuk pembukuan → SENGAJA tanpa jurnal (journal_entry_id
+ * NULL). Baris tanpa jurnal tidak boleh menghasilkan credit 1155 di jalur
+ * mana pun; potongan gajinya tetap lewat 6105 seperti perilaku lama.
+ *
  * Sesi AE-209 — CICILAN. Sebelumnya kasbon cuma bisa lunas sekaligus
  * (potong gaji penuh) atau di-forgive; karyawan yang mau nyicil harus
  * dipecah manual per periode (lihat pesan error "Bagi kasbon ke periode
@@ -55,6 +67,22 @@ export const employeeAdvances = pgTable(
     reason: text("reason"),
     /** Tanggal owner kasih kasbon (WIB). */
     issuedDate: date("issued_date").notNull(),
+
+    /** Sesi AE-209b — uang kasbon diambil dari mana:
+     *  'cash'           → Dr 1155 / Cr 1101 Kas
+     *  'bank'           → Dr 1155 / Cr <bank>, bank_account_id WAJIB
+     *  'opening_balance'→ kasbon lama, uangnya keluar sebelum kasbon masuk
+     *                     pembukuan → TANPA jurnal (lihat catatan di atas). */
+    fundingSource: text("funding_source", {
+      enum: ["cash", "bank", "opening_balance"],
+    })
+      .notNull()
+      .default("cash"),
+    /** Rekening bisnis sumber uang (WAJIB untuk funding_source='bank'). */
+    bankAccountId: uuid("bank_account_id").references(() => bankAccounts.id),
+    /** Jurnal pembukaan piutang (Dr 1155). NULL = kasbon di luar pembukuan
+     * (baris pra-AE-209 atau funding_source='opening_balance'). */
+    journalEntryId: uuid("journal_entry_id"),
 
     /** Status workflow. Default 'pending' saat insert. */
     status: text("status", {
@@ -104,6 +132,13 @@ export const employeeAdvances = pgTable(
     check(
       "ck_employee_advances_repaid_range",
       sql`${t.repaidAmount} >= 0 AND ${t.repaidAmount} <= ${t.amount}`,
+    ),
+    /* Sesi AE-209b — bentuk data sumber dana dijaga di DB: hanya
+     * funding_source='bank' yang punya rekening. */
+    check(
+      "ck_employee_advances_funding_shape",
+      sql`(${t.fundingSource} = 'bank' AND ${t.bankAccountId} IS NOT NULL)
+        OR (${t.fundingSource} <> 'bank' AND ${t.bankAccountId} IS NULL)`,
     ),
   ],
 );

@@ -714,6 +714,10 @@ function KasbonInlineBody({
       amount: parsedAmount,
       issuedDate,
       reason: reason.trim() || null,
+      /* Sesi AE-209b — kasbon di wizard ini uangnya sudah keluar SEBELUM
+       * pembukuan berjalan (bagian dari saldo awal), jadi jangan dijurnal
+       * Dr 1155 / Cr kas: kasnya sudah berkurang di saldo awal. */
+      fundingSource: "opening_balance",
     });
     setSubmitting(false);
     if (!isOk(res)) {

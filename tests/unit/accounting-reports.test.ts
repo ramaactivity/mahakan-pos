@@ -690,6 +690,60 @@ describe("buildValidationReport", () => {
     expect(r.rows.every((row) => row.diff === 0)).toBe(true);
   });
 
+  /* Sesi AE-209b — baris validasi Piutang Kasbon (1155). */
+  it("tanpa data kasbon: baris Piutang Kasbon tidak muncul", () => {
+    const r = buildValidationReport({
+      asOfDate: ASOF,
+      ledger: baseLedger(),
+      source: baseSource(),
+    });
+    expect(
+      r.rows.find((row) => row.label === "Piutang Kasbon Karyawan"),
+    ).toBeUndefined();
+  });
+
+  it("saldo 1155 cocok dengan sisa kasbon → ok", () => {
+    const r = buildValidationReport({
+      asOfDate: ASOF,
+      ledger: baseLedger({ piutangKasbon: 600_000 }),
+      source: baseSource({ kasbonOutstanding: 600_000 }),
+    });
+    const row = r.rows.find(
+      (x) => x.label === "Piutang Kasbon Karyawan",
+    )!;
+    expect(row.status).toBe("ok");
+    expect(row.accountCodes).toEqual(["1155"]);
+    expect(r.allClean).toBe(true);
+  });
+
+  it("kasbon lunas tapi 1155 masih nyangkut → critical", () => {
+    /* Skenario nyata kalau ada jalur pelunasan yang lupa kredit 1155. */
+    const r = buildValidationReport({
+      asOfDate: ASOF,
+      ledger: baseLedger({ piutangKasbon: 600_000 }),
+      source: baseSource({ kasbonOutstanding: 0 }),
+    });
+    const row = r.rows.find(
+      (x) => x.label === "Piutang Kasbon Karyawan",
+    )!;
+    expect(row.status).toBe("critical");
+    expect(row.diff).toBe(600_000);
+    expect(row.note).toMatch(/kredit 1155/);
+  });
+
+  it("saldo 1155 minus (kredit tanpa debit) ketangkap sebagai drift", () => {
+    const r = buildValidationReport({
+      asOfDate: ASOF,
+      ledger: baseLedger({ piutangKasbon: -200_000 }),
+      source: baseSource({ kasbonOutstanding: 0 }),
+    });
+    const row = r.rows.find(
+      (x) => x.label === "Piutang Kasbon Karyawan",
+    )!;
+    expect(row.status).toBe("critical");
+    expect(row.diff).toBe(-200_000);
+  });
+
   it("warning level (≤ 1% drift)", () => {
     const r = buildValidationReport({
       asOfDate: ASOF,

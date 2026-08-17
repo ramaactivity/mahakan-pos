@@ -388,12 +388,31 @@ export function EmployeeAdvanceRepaymentModal({
           </div>
         ) : null}
 
-        <p className="text-[11px] leading-relaxed text-neutral-500">
-          Cicilan ini mengurangi sisa kasbon, jadi potongan gaji periode
-          berikutnya otomatis ikut berkurang. Uang kasbon (keluar maupun
-          masuk) belum masuk pembukuan/jurnal — sama seperti saat kasbon
-          diberikan.
-        </p>
+        {/* Sesi AE-209b — kasbon sudah masuk pembukuan sebagai piutang, jadi
+         * cicilannya ikut dijurnal. Kasbon lama (tanpa jurnal pembukaan)
+         * tetap cuma jadi catatan. */}
+        {advance.journalEntryId ? (
+          parsedAmount > 0 && validation.ok ? (
+            <div className="rounded-md border border-neutral-200 bg-neutral-50 p-2 text-[11px] font-mono text-neutral-700">
+              <p className="mb-1 font-semibold">Preview Jurnal:</p>
+              <p>
+                Dr {byTransfer ? "Bank (resolved)" : "1101 Kas"} ..........{" "}
+                {formatRupiah(parsedAmount)}
+              </p>
+              <p>
+                &nbsp;&nbsp;Cr 1155 Piutang Kasbon Karyawan ..{" "}
+                {formatRupiah(parsedAmount)}
+              </p>
+            </div>
+          ) : null
+        ) : (
+          <p className="text-[11px] leading-relaxed text-neutral-500">
+            Kasbon ini tercatat sebelum kasbon masuk pembukuan, jadi
+            cicilannya hanya jadi catatan (tanpa jurnal) — sama seperti saat
+            kasbonnya diberikan. Sisa kasbon tetap berkurang, dan potongan
+            gaji periode berikutnya ikut berkurang.
+          </p>
+        )}
       </div>
     </Modal>
   );

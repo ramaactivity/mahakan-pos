@@ -59,11 +59,21 @@ export interface ListEmployeeAdvanceRepaymentsOptions {
   limit?: number;
 }
 
+/** Sesi AE-209b — sumber uang kasbon (menentukan lawan jurnal Dr 1155). */
+export type EmployeeAdvanceFundingSource =
+  | "cash"
+  | "bank"
+  | "opening_balance";
+
 export interface CreateEmployeeAdvanceInput {
   employeeId: string;
   amount: number;
   reason?: string | null;
   issuedDate: string; // YYYY-MM-DD
+  /** Default 'cash'. 'opening_balance' = kasbon lama, tanpa jurnal. */
+  fundingSource?: EmployeeAdvanceFundingSource;
+  /** WAJIB kalau fundingSource='bank'. */
+  bankAccountId?: string | null;
 }
 
 export interface ListEmployeeAdvancesOptions {

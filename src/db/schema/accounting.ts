@@ -271,6 +271,21 @@ export const journalEntries = pgTable(
         "internal_debt_entry_reversal",
         "internal_debt_repayment",
         "internal_debt_repayment_reversal",
+        /* Sesi AE-209b — Kasbon Karyawan jadi piutang (akun 1155).
+         *
+         * employee_advance_issue: kasbon diberikan (Dr 1155 / Cr kas atau
+         *   bank). sourceId = employee_advances.id.
+         * employee_advance_forgive: sisa kasbon dimaafkan owner
+         *   (Dr 6102 Tunjangan & Bonus / Cr 1155). sourceId = advance.id.
+         * employee_advance_repayment: karyawan nyicil (Dr kas/bank / Cr 1155).
+         *   sourceId = employee_advance_repayments.id.
+         * employee_advance_repayment_reversal: pembalik cicilan.
+         * Pelunasan lewat potong gaji TIDAK punya sourceType sendiri — ikut
+         * di dalam jurnal 'payroll_paid' sebagai baris Cr 1155. */
+        "employee_advance_issue",
+        "employee_advance_forgive",
+        "employee_advance_repayment",
+        "employee_advance_repayment_reversal",
         /* Sesi AE-116 — COGS period close adjustment.
          *
          * Reconcile recognized HPP (pos_sale running) vs actual COGS (WAC

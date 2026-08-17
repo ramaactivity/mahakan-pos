@@ -2,6 +2,7 @@ export type {
   ApiResult,
   CreateEmployeeAdvanceInput,
   EmployeeAdvance,
+  EmployeeAdvanceFundingSource,
   EmployeeAdvanceRepayment,
   EmployeeAdvanceRepaymentListRow,
   EmployeeAdvanceRepaymentMethod,

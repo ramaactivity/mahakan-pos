@@ -34,9 +34,15 @@ import {
   listEmployeeAdvanceRepayments,
   listEmployeeAdvances,
   reverseEmployeeAdvanceRepayment,
+  type EmployeeAdvanceFundingSource,
   type EmployeeAdvanceStatus,
   type EmployeeAdvanceWithEmployee,
 } from "@/features/employee-advances";
+import {
+  formatBankAccountDisplay,
+  listBankAccounts,
+  type BankAccount,
+} from "@/features/bank-accounts";
 import { EmployeeAdvanceRepaymentModal } from "./employee-advances/EmployeeAdvanceRepaymentModal";
 import { listEmployees } from "@/features/employees";
 import { isOk as employeesIsOk } from "@/features/employees";
@@ -545,6 +551,11 @@ function CreateAdvanceModal({
   const [issuedDate, setIssuedDate] = useState(
     todayJakarta(),
   );
+  /* Sesi AE-209b — sumber uang menentukan lawan jurnal Dr 1155. */
+  const [fundingSource, setFundingSource] =
+    useState<EmployeeAdvanceFundingSource>("cash");
+  const [bankAccountId, setBankAccountId] = useState("");
+  const [bankList, setBankList] = useState<BankAccount[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -563,6 +574,10 @@ function CreateAdvanceModal({
         );
       }
     })();
+    void listBankAccounts().then((res) => {
+      if (cancelled) return;
+      if (res.ok) setBankList(res.data.filter((b) => b.isActive));
+    });
     return () => {
       cancelled = true;
     };
@@ -590,12 +605,18 @@ function CreateAdvanceModal({
       setError("Jumlah harus > 0");
       return;
     }
+    if (fundingSource === "bank" && !bankAccountId) {
+      setError("Pilih rekening sumber uang kasbon");
+      return;
+    }
     setSubmitting(true);
     const res = await createEmployeeAdvance({
       employeeId,
       amount: amt,
       reason: reason.trim() || null,
       issuedDate,
+      fundingSource,
+      bankAccountId: fundingSource === "bank" ? bankAccountId : null,
     });
     setSubmitting(false);
     if (!isOk(res)) {
@@ -611,7 +632,7 @@ function CreateAdvanceModal({
       open
       onClose={onClose}
       title="Tambah Kasbon"
-      description="Akan ke-status pending dan otomatis ter-link saat recompute payroll periode berikutnya."
+      description="Uang keluarnya dicatat sebagai Piutang Kasbon Karyawan. Sisanya otomatis dipotong saat recompute payroll periode berikutnya."
       size="md"
       footer={
         <>
@@ -664,6 +685,60 @@ function CreateAdvanceModal({
           placeholder="Mis. Bayar SPP anak"
           disabled={submitting}
         />
+
+        {/* Sesi AE-209b — sumber uang kasbon = lawan jurnal Dr 1155. */}
+        <Select
+          label="Uang Diambil Dari"
+          value={fundingSource}
+          onValueChange={(v) => {
+            setFundingSource(v as EmployeeAdvanceFundingSource);
+            if (v !== "bank") setBankAccountId("");
+          }}
+          disabled={submitting}
+          options={[
+            { value: "cash", label: "Kas Tunai (drawer/brankas)" },
+            { value: "bank", label: "Transfer dari Rekening Bisnis" },
+            {
+              value: "opening_balance",
+              label: "Kasbon Lama (sudah keluar, tanpa jurnal)",
+            },
+          ]}
+        />
+        {fundingSource === "bank" ? (
+          <Select
+            label="Rekening Sumber"
+            placeholder="— Pilih rekening —"
+            value={bankAccountId || undefined}
+            onValueChange={(v) => setBankAccountId(v ?? "")}
+            disabled={submitting}
+            options={bankList.map<SelectOption>((b) => ({
+              value: b.id,
+              label: formatBankAccountDisplay(b),
+            }))}
+          />
+        ) : null}
+
+        {fundingSource === "opening_balance" ? (
+          <p className="rounded-md border border-warning-300 bg-warning-50 p-2 text-[11px] text-warning-700">
+            Dipakai hanya untuk kasbon yang uangnya sudah keluar sebelum
+            kasbon masuk pembukuan. Tidak dijurnal, dan potongan gajinya
+            nanti tidak menyentuh Piutang Kasbon.
+          </p>
+        ) : tryParseAmount() > 0 ? (
+          <div className="rounded-md border border-neutral-200 bg-neutral-50 p-2 text-[11px] font-mono text-neutral-700">
+            <p className="mb-1 font-semibold">Preview Jurnal:</p>
+            <p>
+              Dr 1155 Piutang Kasbon Karyawan ..{" "}
+              {formatRupiah(tryParseAmount())}
+            </p>
+            <p>
+              &nbsp;&nbsp;Cr{" "}
+              {fundingSource === "cash" ? "1101 Kas" : "Bank (resolved)"} .....{" "}
+              {formatRupiah(tryParseAmount())}
+            </p>
+          </div>
+        ) : null}
+
         {error ? (
           <p role="alert" className="text-sm font-medium text-danger-500">
             {error}

@@ -7,6 +7,20 @@ export { mapPosCompliment } from "./posCompliment";
 export type { PosComplimentInput } from "./posCompliment";
 export { mapPayrollPaid } from "./payrollPaid";
 export type { PayrollPaidInput } from "./payrollPaid";
+/* Sesi AE-209b — Kasbon Karyawan sebagai piutang (akun 1155). */
+export {
+  ACCOUNT_BEBAN_KASBON_FORGIVE,
+  ACCOUNT_PIUTANG_KASBON,
+  mapEmployeeAdvanceForgive,
+  mapEmployeeAdvanceIssue,
+  mapEmployeeAdvanceRepayment,
+  mapEmployeeAdvanceRepaymentReversal,
+} from "./employeeAdvance";
+export type {
+  EmployeeAdvanceForgiveMappingInput,
+  EmployeeAdvanceIssueMappingInput,
+  EmployeeAdvanceRepaymentMappingInput,
+} from "./employeeAdvance";
 export {
   mapCashDepositVerified,
   mapCashDepositUnverified,

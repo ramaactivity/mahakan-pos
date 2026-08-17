@@ -16,7 +16,15 @@ import { logAudit } from "@/lib/audit/logger";
 import { logAndSanitize } from "@/lib/server-error";
 import { lockEmployeeAdvance } from "@/lib/db/locking";
 import { normalizeReceiptUrl } from "@/features/accounting/receipt-url";
-import { startOfWibDateUtc } from "@/features/cash/helpers";
+import { recordJournal } from "@/features/accounting/posting";
+import {
+  mapEmployeeAdvanceForgive,
+  mapEmployeeAdvanceIssue,
+  mapEmployeeAdvanceRepayment as mapAdvanceRepaymentLines,
+  mapEmployeeAdvanceRepaymentReversal,
+} from "@/features/accounting/mapping/employeeAdvance";
+import { resolveBankCodeFromBankName } from "@/features/accounting/mapping/dividendWithdrawal";
+import { startOfWibDateUtc, todayWibIso } from "@/features/cash/helpers";
 import {
   createEmployeeAdvanceSchema,
   forgiveEmployeeAdvanceSchema,
@@ -43,8 +51,92 @@ async function requireSession() {
   return session;
 }
 
+/** Akun kas tunai (drawer). Lawan jurnal kasbon tunai & setoran tunai. */
+const ACCOUNT_KAS = "1101";
+
+function bankLabelOf(
+  bankName: string | null,
+  accountName: string | null,
+  accountNumber: string | null,
+): string | null {
+  if (!bankName && !accountName && !accountNumber) return null;
+  const numTail =
+    accountNumber && accountNumber.length > 4
+      ? `...${accountNumber.slice(-4)}`
+      : (accountNumber ?? "");
+  return [bankName, accountName, numTail].filter(Boolean).join(" — ");
+}
+
+/**
+ * Sesi AE-209b — resolve rekening bisnis milik outlet ini + kode COA-nya.
+ * Dipakai jalur kasbon dari bank dan cicilan lewat transfer.
+ */
+async function resolveOutletBank(
+  outletId: string,
+  bankAccountId: string,
+): Promise<
+  | { ok: true; accountCode: string; label: string }
+  | { ok: false; error: ApiResult<never> }
+> {
+  const [bank] = await db
+    .select({
+      outletId: bankAccounts.outletId,
+      isActive: bankAccounts.isActive,
+      bankName: bankAccounts.bankName,
+      accountName: bankAccounts.accountName,
+      accountNumber: bankAccounts.accountNumber,
+    })
+    .from(bankAccounts)
+    .where(eq(bankAccounts.id, bankAccountId))
+    .limit(1);
+  if (!bank) {
+    return { ok: false, error: fail("NOT_FOUND", "Rekening tidak ditemukan") };
+  }
+  if (bank.outletId !== outletId) {
+    return { ok: false, error: fail("FORBIDDEN", "Rekening dari outlet lain") };
+  }
+  if (!bank.isActive) {
+    return {
+      ok: false,
+      error: fail("INVALID_STATE", "Rekening sudah tidak aktif"),
+    };
+  }
+  return {
+    ok: true,
+    accountCode: resolveBankCodeFromBankName(bank.bankName),
+    label:
+      bankLabelOf(bank.bankName, bank.accountName, bank.accountNumber) ??
+      "rekening bisnis",
+  };
+}
+
+/**
+ * Pesan error yang bisa dibaca owner untuk kegagalan posting jurnal yang
+ * sudah kita duga. Sisanya di-sanitize lewat logAndSanitize.
+ */
+function journalFailureMessage(e: unknown): string | null {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg.startsWith("PERIOD_LOCKED")) {
+    return `Periode akuntansi ${msg.split(":")[1] ?? ""} sudah ditutup — buka dulu periodenya atau pakai tanggal lain`;
+  }
+  if (msg.startsWith("ACCOUNT_NOT_FOUND")) {
+    return `Akun ${msg.split(":")[1] ?? ""} belum ada di Bagan Akun — jalankan seed akun dulu`;
+  }
+  if (msg.startsWith("ACCOUNT_INACTIVE")) {
+    return `Akun ${msg.split(":")[1] ?? ""} non-aktif di Bagan Akun`;
+  }
+  return null;
+}
+
 /* Sesi AE-60 — Buat kasbon baru. Status default 'pending'. Saat next
- * payroll compute, akan auto-link ke periode tersebut. */
+ * payroll compute, akan auto-link ke periode tersebut.
+ *
+ * Sesi AE-209b — kasbon sekarang MASUK PEMBUKUAN: uang yang keluar dijurnal
+ * Dr 1155 Piutang Kasbon Karyawan / Cr Kas atau <bank> sesuai fundingSource,
+ * sinkron di dalam transaction (pola modul kreditur/hutang internal, bukan
+ * hook fire-and-forget) supaya kasbon tidak pernah tercatat tanpa jurnalnya.
+ * Pengecualian: fundingSource='opening_balance' (kasbon lama yang uangnya
+ * sudah keluar sebelum fitur ini) sengaja TANPA jurnal. */
 export async function createEmployeeAdvance(
   input: CreateEmployeeAdvanceInput,
 ): Promise<ApiResult<EmployeeAdvance>> {
@@ -75,18 +167,78 @@ export async function createEmployeeAdvance(
     );
   }
 
-  const [created] = await db
-    .insert(employeeAdvances)
-    .values({
-      outletId: session.user.outletId,
-      employeeId: v.employeeId,
-      amount: v.amount,
-      reason: v.reason ?? null,
-      issuedDate: v.issuedDate,
-      status: "pending",
-      createdBy: session.user.id,
-    })
-    .returning();
+  /* Sesi AE-209b — resolve lawan jurnal sebelum buka transaction. */
+  let sourceAccountCode = ACCOUNT_KAS;
+  let sourceLabel = "Kas";
+  if (v.fundingSource === "bank" && v.bankAccountId) {
+    const res = await resolveOutletBank(
+      session.user.outletId,
+      v.bankAccountId,
+    );
+    if (!res.ok) return res.error;
+    sourceAccountCode = res.accountCode;
+    sourceLabel = res.label;
+  }
+  const withJournal = v.fundingSource !== "opening_balance";
+
+  let created: EmployeeAdvance;
+  try {
+    created = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(employeeAdvances)
+        .values({
+          outletId: session.user.outletId,
+          employeeId: v.employeeId,
+          amount: v.amount,
+          reason: v.reason ?? null,
+          issuedDate: v.issuedDate,
+          fundingSource: v.fundingSource,
+          bankAccountId:
+            v.fundingSource === "bank" ? (v.bankAccountId ?? null) : null,
+          status: "pending",
+          createdBy: session.user.id,
+        })
+        .returning();
+
+      if (!withJournal) return row;
+
+      const journalResult = await recordJournal({
+        outletId: session.user.outletId,
+        entryDate: v.issuedDate,
+        description: `Kasbon ${emp.fullName} — Rp ${v.amount.toLocaleString("id-ID")}`,
+        sourceType: "employee_advance_issue",
+        sourceId: row.id,
+        lines: mapEmployeeAdvanceIssue({
+          amount: v.amount,
+          sourceAccountCode,
+          sourceLabel,
+          employeeName: emp.fullName,
+        }),
+        status: "posted",
+        actorId: session.user.id,
+        metadata: {
+          advanceId: row.id,
+          employeeId: v.employeeId,
+          employeeName: emp.fullName,
+          fundingSource: v.fundingSource,
+        },
+      });
+
+      const [withJournalRow] = await tx
+        .update(employeeAdvances)
+        .set({ journalEntryId: journalResult.entryId })
+        .where(eq(employeeAdvances.id, row.id))
+        .returning();
+      return withJournalRow;
+    });
+  } catch (e) {
+    const friendly = journalFailureMessage(e);
+    return fail(
+      friendly ? "JOURNAL_FAILED" : "DB_ERROR",
+      friendly ??
+        logAndSanitize(e, "advance.create", "Operasi database gagal"),
+    );
+  }
 
   logAudit({
     eventType: "advance.create",
@@ -113,7 +265,14 @@ export async function createEmployeeAdvance(
 }
 
 /* Sesi AE-60 — Forgive (maafkan) kasbon. Status pending → forgiven.
- * Tidak akan dipotong dari payroll. */
+ * Tidak akan dipotong dari payroll.
+ *
+ * Sesi AE-209b — kalau kasbonnya ber-jurnal (Dr 1155), sisa piutangnya
+ * WAJIB dihapus lewat jurnal Dr 6102 Tunjangan & Bonus / Cr 1155: uangnya
+ * jadi tunjangan buat karyawan, dan piutang yang tidak akan ditagih lagi
+ * tidak boleh nyangkut di Neraca. Yang dihapus cuma SISA (nominal −
+ * cicilan yang sudah masuk), karena bagian yang sudah dicicil sudah
+ * meng-kredit 1155 duluan. */
 export async function forgiveEmployeeAdvance(
   id: string,
 ): Promise<ApiResult<EmployeeAdvance>> {
@@ -142,16 +301,84 @@ export async function forgiveEmployeeAdvance(
     );
   }
 
-  const [updated] = await db
-    .update(employeeAdvances)
-    .set({
-      status: "forgiven",
-      resolvedAt: new Date(),
-      resolvedBy: session.user.id,
-      updatedAt: new Date(),
-    })
-    .where(eq(employeeAdvances.id, id))
-    .returning();
+  const [emp] = await db
+    .select({ fullName: employees.fullName })
+    .from(employees)
+    .where(eq(employees.id, current.employeeId))
+    .limit(1);
+  const employeeName = emp?.fullName ?? "karyawan";
+  const remaining =
+    Number(current.amount) - Number(current.repaidAmount ?? 0);
+
+  let updated: EmployeeAdvance;
+  try {
+    updated = await db.transaction(async (tx) => {
+      await lockEmployeeAdvance(tx, id);
+
+      /* Re-check post-lock — cicilan bisa masuk barusan. */
+      const [fresh] = await tx
+        .select({
+          status: employeeAdvances.status,
+          amount: employeeAdvances.amount,
+          repaidAmount: employeeAdvances.repaidAmount,
+        })
+        .from(employeeAdvances)
+        .where(eq(employeeAdvances.id, id))
+        .limit(1);
+      if (!fresh) throw new Error("ADVANCE_NOT_FOUND");
+      if (fresh.status !== "pending") throw new Error("ADVANCE_NOT_PENDING");
+      const freshRemaining =
+        Number(fresh.amount) - Number(fresh.repaidAmount ?? 0);
+
+      /* Hapus sisa piutang HANYA kalau kasbonnya memang ada di pembukuan. */
+      if (current.journalEntryId && freshRemaining > 0) {
+        await recordJournal({
+          outletId: session.user.outletId,
+          entryDate: todayWibIso(),
+          description: `Kasbon ${employeeName} dimaafkan — Rp ${freshRemaining.toLocaleString("id-ID")}`,
+          sourceType: "employee_advance_forgive",
+          sourceId: id,
+          lines: mapEmployeeAdvanceForgive({
+            amount: freshRemaining,
+            employeeName,
+          }),
+          status: "posted",
+          actorId: session.user.id,
+          metadata: {
+            advanceId: id,
+            employeeName,
+            forgivenAmount: freshRemaining,
+          },
+        });
+      }
+
+      const [row] = await tx
+        .update(employeeAdvances)
+        .set({
+          status: "forgiven",
+          resolvedAt: new Date(),
+          resolvedBy: session.user.id,
+          updatedAt: new Date(),
+        })
+        .where(eq(employeeAdvances.id, id))
+        .returning();
+      return row;
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === "ADVANCE_NOT_PENDING") {
+      return fail(
+        "INVALID_STATE",
+        "Status kasbon berubah barusan — muat ulang halaman",
+      );
+    }
+    const friendly = journalFailureMessage(e);
+    return fail(
+      friendly ? "JOURNAL_FAILED" : "DB_ERROR",
+      friendly ??
+        logAndSanitize(e, "advance.forgive", "Operasi database gagal"),
+    );
+  }
 
   logAudit({
     eventType: "advance.forgive",
@@ -159,9 +386,13 @@ export async function forgiveEmployeeAdvance(
     entityType: "employee_advance",
     entityId: id,
     payload: {
-      summary: `Kasbon Rp ${Number(current.amount).toLocaleString("id-ID")} di-forgive`,
+      summary: `Kasbon ${employeeName} Rp ${Number(current.amount).toLocaleString("id-ID")} di-forgive (sisa dihapus Rp ${remaining.toLocaleString("id-ID")})`,
       before: { status: current.status },
-      after: { status: "forgiven" },
+      after: {
+        status: "forgiven",
+        forgivenRemaining: remaining,
+        journaled: Boolean(current.journalEntryId),
+      },
     },
     metadata: {
       outletId: session.user.outletId,
@@ -278,19 +509,6 @@ export async function listEmployeeAdvances(
 // Sesi AE-209 — Cicilan kasbon
 // ============================================================================
 
-function bankLabelOf(
-  bankName: string | null,
-  accountName: string | null,
-  accountNumber: string | null,
-): string | null {
-  if (!bankName && !accountName && !accountNumber) return null;
-  const numTail =
-    accountNumber && accountNumber.length > 4
-      ? `...${accountNumber.slice(-4)}`
-      : (accountNumber ?? "");
-  return [bankName, accountName, numTail].filter(Boolean).join(" — ");
-}
-
 /**
  * Catat cicilan kasbon. Karyawan bayar balik di luar potong gaji — setor
  * tunai ke kasir atau transfer ke rekening bisnis (boleh dilampiri bukti
@@ -305,8 +523,10 @@ function bankLabelOf(
  *  - kalau sisa jadi 0 → status 'repaid' + resolvedAt (kasbon lunas, tidak
  *    lagi ikut ditarik payroll compute).
  *
- * TIDAK memposting jurnal — alasannya ada di komentar skema
- * `employee_advance_repayments` (kasbon memang belum masuk pembukuan).
+ * Sesi AE-209b — kalau kasbonnya ber-jurnal (Dr 1155), cicilan diposting
+ * Dr Kas/<bank> / Cr 1155 sinkron dalam transaction. Kasbon lama yang tidak
+ * pernah masuk pembukuan (`journal_entry_id` NULL) tetap tanpa jurnal —
+ * credit 1155 tanpa debit pasangannya bikin saldo piutang MINUS.
  */
 export async function postEmployeeAdvanceRepayment(
   input: PostEmployeeAdvanceRepaymentInput,
@@ -345,33 +565,22 @@ export async function postEmployeeAdvanceRepayment(
     );
   }
 
-  let bankLabel: string | null = null;
+  /* Akun tujuan uang masuk: kas tunai atau rekening yang dipilih. */
+  let destinationAccountCode = ACCOUNT_KAS;
+  let destinationLabel = "Kas";
   if (v.method === "transfer" && v.bankAccountId) {
-    const [bank] = await db
-      .select({
-        id: bankAccounts.id,
-        outletId: bankAccounts.outletId,
-        isActive: bankAccounts.isActive,
-        bankName: bankAccounts.bankName,
-        accountName: bankAccounts.accountName,
-        accountNumber: bankAccounts.accountNumber,
-      })
-      .from(bankAccounts)
-      .where(eq(bankAccounts.id, v.bankAccountId))
-      .limit(1);
-    if (!bank) return fail("NOT_FOUND", "Rekening tidak ditemukan");
-    if (bank.outletId !== session.user.outletId) {
-      return fail("FORBIDDEN", "Rekening dari outlet lain");
-    }
-    if (!bank.isActive) {
-      return fail("INVALID_STATE", "Rekening sudah tidak aktif");
-    }
-    bankLabel = bankLabelOf(
-      bank.bankName,
-      bank.accountName,
-      bank.accountNumber,
+    const res = await resolveOutletBank(
+      session.user.outletId,
+      v.bankAccountId,
     );
+    if (!res.ok) return res.error;
+    destinationAccountCode = res.accountCode;
+    destinationLabel = res.label;
   }
+  const bankLabel = v.method === "transfer" ? destinationLabel : null;
+  /* Kasbon di luar pembukuan (baris lama / 'opening_balance') tetap tanpa
+   * jurnal — lihat komentar di atas fungsi ini. */
+  const withJournal = Boolean(row.advance.journalEntryId);
 
   const receiptImageUrl = normalizeReceiptUrl(v.receiptImageUrl);
   const occurredAt = startOfWibDateUtc(v.occurredAt);
@@ -415,6 +624,36 @@ export async function postEmployeeAdvanceRepayment(
           createdBy: session.user.id,
         })
         .returning({ id: employeeAdvanceRepayments.id });
+
+      if (withJournal) {
+        const journalResult = await recordJournal({
+          outletId: session.user.outletId,
+          entryDate: v.occurredAt,
+          description: `Cicilan kasbon ${row.employeeName} — Rp ${v.amount.toLocaleString("id-ID")}`,
+          sourceType: "employee_advance_repayment",
+          sourceId: rp.id,
+          lines: mapAdvanceRepaymentLines({
+            amount: v.amount,
+            destinationAccountCode,
+            destinationLabel,
+            employeeName: row.employeeName,
+          }),
+          status: "posted",
+          actorId: session.user.id,
+          /* Bukti transfer ikut nempel di jurnalnya (pola AE-206/AE-208). */
+          receiptImageUrl,
+          metadata: {
+            repaymentId: rp.id,
+            advanceId: v.advanceId,
+            employeeName: row.employeeName,
+            method: v.method,
+          },
+        });
+        await tx
+          .update(employeeAdvanceRepayments)
+          .set({ journalEntryId: journalResult.entryId })
+          .where(eq(employeeAdvanceRepayments.id, rp.id));
+      }
 
       const remainingAfter = remainingBefore - v.amount;
       const lunas = remainingAfter === 0;
@@ -477,9 +716,15 @@ export async function postEmployeeAdvanceRepayment(
         "Status kasbon berubah barusan — muat ulang halaman",
       );
     }
+    const friendly = journalFailureMessage(e);
     return fail(
-      "DB_ERROR",
-      logAndSanitize(e, "advance.repayment.post", "Operasi database gagal"),
+      friendly ? "JOURNAL_FAILED" : "DB_ERROR",
+      friendly ??
+        logAndSanitize(
+          e,
+          "advance.repayment.post",
+          "Operasi database gagal",
+        ),
     );
   }
 }
@@ -491,6 +736,10 @@ export async function postEmployeeAdvanceRepayment(
  *
  * Baris cicilan TIDAK dihapus — statusnya jadi 'reversed' + alasannya
  * disimpan (audit trail, pola reversal modul kreditur/hutang internal).
+ *
+ * Sesi AE-209b — cicilan yang punya jurnal dapat jurnal PEMBALIK
+ * (Dr 1155 / Cr kas atau bank) bertanggal hari ini, bukan hapus jurnal
+ * lama: periode yang sudah ditutup tidak boleh diubah ke belakang.
  */
 export async function reverseEmployeeAdvanceRepayment(
   input: ReverseEmployeeAdvanceRepaymentInput,
@@ -518,6 +767,33 @@ export async function reverseEmployeeAdvanceRepayment(
     /* Idempoten — sudah dibatalkan sebelumnya. */
     return ok({ id: rp.id, remainingAmount: -1 });
   }
+
+  /* Resolve akun & nama untuk jurnal pembalik (kalau cicilannya dijurnal). */
+  let destinationAccountCode = ACCOUNT_KAS;
+  let destinationLabel = "Kas";
+  if (rp.bankAccountId) {
+    const [bank] = await db
+      .select({
+        bankName: bankAccounts.bankName,
+        accountName: bankAccounts.accountName,
+        accountNumber: bankAccounts.accountNumber,
+      })
+      .from(bankAccounts)
+      .where(eq(bankAccounts.id, rp.bankAccountId))
+      .limit(1);
+    if (bank) {
+      destinationAccountCode = resolveBankCodeFromBankName(bank.bankName);
+      destinationLabel =
+        bankLabelOf(bank.bankName, bank.accountName, bank.accountNumber) ??
+        "rekening bisnis";
+    }
+  }
+  const [rpEmp] = await db
+    .select({ fullName: employees.fullName })
+    .from(employees)
+    .where(eq(employees.id, rp.employeeId))
+    .limit(1);
+  const repaymentEmployeeName = rpEmp?.fullName ?? "karyawan";
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -557,6 +833,32 @@ export async function reverseEmployeeAdvanceRepayment(
       /* CAS: kalau baris sudah di-reverse duluan oleh request lain,
        * jangan kurangi repaidAmount dua kali. */
       if (!updated) throw new Error("ALREADY_REVERSED");
+
+      /* Jurnal pembalik hanya untuk cicilan yang memang dijurnal. */
+      if (rp.journalEntryId) {
+        await recordJournal({
+          outletId: session.user.outletId,
+          entryDate: todayWibIso(),
+          description: `Batal cicilan kasbon ${repaymentEmployeeName} — Rp ${Number(rp.amount).toLocaleString("id-ID")}`,
+          sourceType: "employee_advance_repayment_reversal",
+          sourceId: rp.id,
+          lines: mapEmployeeAdvanceRepaymentReversal({
+            amount: Number(rp.amount),
+            destinationAccountCode,
+            destinationLabel,
+            employeeName: repaymentEmployeeName,
+            reason: v.reason,
+          }),
+          status: "posted",
+          actorId: session.user.id,
+          metadata: {
+            repaymentId: rp.id,
+            advanceId: rp.advanceId,
+            reversalReason: v.reason,
+            originalAmount: Number(rp.amount),
+          },
+        });
+      }
 
       const newRepaid = Math.max(
         0,
@@ -611,9 +913,15 @@ export async function reverseEmployeeAdvanceRepayment(
           : "Kasbon sudah di-forgive — cicilannya tidak bisa dibatalkan",
       );
     }
+    const friendly = journalFailureMessage(e);
     return fail(
-      "DB_ERROR",
-      logAndSanitize(e, "advance.repayment.reverse", "Operasi database gagal"),
+      friendly ? "JOURNAL_FAILED" : "DB_ERROR",
+      friendly ??
+        logAndSanitize(
+          e,
+          "advance.repayment.reverse",
+          "Operasi database gagal",
+        ),
     );
   }
 }

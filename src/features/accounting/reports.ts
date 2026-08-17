@@ -778,6 +778,9 @@ export function buildValidationReport(args: {
     persediaanBar: number;        // 1141
     persediaanPendukung: number;  // 1142
     hutangDagang: number;         // 2101
+    /** Sesi AE-209b — 1155 Piutang Kasbon Karyawan. Opsional supaya
+     *  pemanggil lama (dan tesnya) tetap sah. */
+    piutangKasbon?: number;
   };
   source: {
     cashOnHand: number;           // dari getCashOnHand
@@ -785,6 +788,9 @@ export function buildValidationReport(args: {
     persediaanBar: number;        // sum bar ingredients × cost
     persediaanPendukung: number;  // sum supporting/cleaning ingredients × cost
     hutangDagangPending: number;  // sum purchases pending_payment
+    /** Sesi AE-209b — sum sisa kasbon BELUM LUNAS yang ber-jurnal
+     *  (amount − repaid_amount, status pending, journal_entry_id NOT NULL). */
+    kasbonOutstanding?: number;
   };
 }): ValidationReport {
   const rows: ValidationRow[] = [];
@@ -892,6 +898,35 @@ export function buildValidationReport(args: {
           : status === "warning"
             ? "Drift kecil — kemungkinan rounding."
             : undefined,
+    });
+  }
+
+  /* Sesi AE-209b — Piutang Kasbon Karyawan. Saldo 1155 harus sama dengan
+   * sisa kasbon yang belum lunas. Kalau drift: ada jalur penyelesaian
+   * kasbon yang lupa meng-kredit 1155 (atau sebaliknya meng-kredit padahal
+   * kasbonnya tidak pernah dijurnal). Baris ini muncul hanya kalau salah
+   * satu sisinya berisi, supaya outlet yang belum pakai kasbon tidak dapat
+   * baris kosong. */
+  if (
+    args.ledger.piutangKasbon !== undefined &&
+    args.source.kasbonOutstanding !== undefined &&
+    (args.ledger.piutangKasbon !== 0 || args.source.kasbonOutstanding !== 0)
+  ) {
+    const { diff, status } = classifyDrift(
+      args.ledger.piutangKasbon,
+      args.source.kasbonOutstanding,
+    );
+    rows.push({
+      label: "Piutang Kasbon Karyawan",
+      accountCodes: ["1155"],
+      ledgerAmount: args.ledger.piutangKasbon,
+      sourceAmount: args.source.kasbonOutstanding,
+      diff,
+      status,
+      note:
+        status === "ok"
+          ? undefined
+          : "Drift vs sisa kasbon yang belum lunas. Cek jalur pelunasan kasbon: cicilan, potong gaji saat payroll mark-paid, dan forgive — semuanya harus meng-kredit 1155. Kasbon lama bertanda 'Kasbon Lama' memang di luar pembukuan dan tidak dihitung di sini.",
     });
   }
 

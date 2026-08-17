@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createEmployeeAdvanceSchema,
   postEmployeeAdvanceRepaymentSchema,
   reverseEmployeeAdvanceRepaymentSchema,
 } from "@/features/payroll/schemas";
@@ -135,6 +136,56 @@ describe("postEmployeeAdvanceRepaymentSchema", () => {
     });
     expect(res.success).toBe(true);
     if (res.success) expect(res.data.description).toBeNull();
+  });
+});
+
+/* Sesi AE-209b — sumber uang kasbon menentukan lawan jurnal Dr 1155. */
+describe("createEmployeeAdvanceSchema — sumber uang", () => {
+  const base = {
+    employeeId: "44444444-4444-4444-8444-444444444444",
+    amount: 500_000,
+    issuedDate: "2026-08-17",
+  };
+  const bankId = "55555555-5555-4555-8555-555555555555";
+
+  it("default 'cash' kalau tidak diisi (pemanggil lama tetap sah)", () => {
+    const res = createEmployeeAdvanceSchema.safeParse(base);
+    expect(res.success).toBe(true);
+    if (res.success) expect(res.data.fundingSource).toBe("cash");
+  });
+
+  it("dari bank wajib pilih rekening", () => {
+    expect(
+      createEmployeeAdvanceSchema.safeParse({ ...base, fundingSource: "bank" })
+        .success,
+    ).toBe(false);
+    expect(
+      createEmployeeAdvanceSchema.safeParse({
+        ...base,
+        fundingSource: "bank",
+        bankAccountId: bankId,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("tunai / kasbon lama tidak boleh bawa rekening", () => {
+    for (const fundingSource of ["cash", "opening_balance"] as const) {
+      expect(
+        createEmployeeAdvanceSchema.safeParse({
+          ...base,
+          fundingSource,
+          bankAccountId: bankId,
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("kasbon lama (opening_balance) sah tanpa rekening", () => {
+    const res = createEmployeeAdvanceSchema.safeParse({
+      ...base,
+      fundingSource: "opening_balance",
+    });
+    expect(res.success).toBe(true);
   });
 });
 
