@@ -141,17 +141,12 @@ export async function compressSelfieJpeg(
 
   const originalSize = input.size;
 
-  // Skip kalau sudah cukup kecil — masih lewat path EXIF preserve karena
-  // canvas re-encode gak diperlukan.
-  if (originalSize <= maxBytes && !input.type.startsWith("image/")) {
-    return {
-      file: input,
-      originalSize,
-      compressedSize: originalSize,
-      exifPreserved: true,
-    };
-  }
-
+  /* Sesi AE-200 — dulu ada early-return di sini untuk file kecil non-image
+   * yang melaporkan `exifPreserved: true` tanpa pernah melihat byte-nya.
+   * Itu klaim palsu (file non-JPEG tidak punya EXIF) dan bikin peringatan
+   * "foto ini akan ditolak" di SelfieCapture tidak muncul di HP yang
+   * mengirim file bertipe kosong. Sekarang semua file dibaca dulu, lalu
+   * keputusan EXIF-nya diambil dari byte asli. */
   let originalBytes: Uint8Array;
   try {
     originalBytes = new Uint8Array(await input.arrayBuffer());

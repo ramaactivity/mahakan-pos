@@ -88,8 +88,15 @@ function extractExifGps(
     typeof lng === "number" &&
     Number.isFinite(lat) &&
     Number.isFinite(lng) &&
-    /* Reject Null Island sentinel — exact (0,0) atau within ~1km. */
-    !(Math.abs(lat) < 0.01 && Math.abs(lng) < 0.01) &&
+    /* Reject Null Island sentinel — exact (0,0) atau sekitarnya.
+     *
+     * Sesi AE-200 — radius dilebarkan dari 0.01° (~1 km) ke 1° (~111 km).
+     * Data produksi: satu HP staff konsisten menanamkan tag GPS ~1° dari
+     * (0,0) — lolos filter lama, lalu tiap absen menulis satu baris audit
+     * "GPS garbage" (58 baris dalam 45 hari). (0°,0°) ± 111 km itu laut
+     * lepas Teluk Guinea; tidak ada foto absen yang sah dari sana, jadi
+     * melebarkannya tidak mengorbankan deteksi spoofing yang nyata. */
+    !(Math.abs(lat) < 1 && Math.abs(lng) < 1) &&
     /* Sanity: real coords must be in valid range. exifr should already
      * clamp but be defensive in case GPSLatitudeRef parsing miss. */
     lat >= -90 &&
@@ -152,11 +159,16 @@ export async function validateSelfieEXIF(
        * server, bukan dari metadata. */
       return { ok: true, exifGps: extractExifGps(parsed) };
     }
+    /* Sesi AE-200 — pesan lama ("kemungkinan upload galeri") MENUDUH, dan
+     * di HP yang memang tidak menulis EXIF sama sekali tuduhan itu selalu
+     * salah. Karyawan cuma butuh tahu langkah berikutnya: pindah ke jalur
+     * kamera live yang tidak butuh EXIF. Aturannya sendiri tidak berubah —
+     * jalur file input tetap ditolak. */
     return {
       ok: false,
       reason: parseFailed
-        ? "Gagal baca EXIF — pastikan foto dari kamera, bukan upload galeri"
-        : "EXIF DateTimeOriginal tidak ada — foto bukan dari kamera saat ini (kemungkinan upload galeri)",
+        ? 'Info waktu di foto tidak terbaca. Tap "Pakai Kamera Live" di halaman absen, lalu foto ulang.'
+        : 'Kamera bawaan HP ini tidak menyimpan info waktu di foto, jadi tidak bisa diverifikasi. Tap "Pakai Kamera Live" di halaman absen, lalu foto ulang.',
     };
   }
 

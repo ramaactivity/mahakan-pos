@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, eq, gte, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { attendanceRecords, employees, outlets, users } from "@/db/schema";
 import {
@@ -9,6 +9,7 @@ import {
 } from "@/lib/google-drive/uploader";
 import { validateSelfieEXIF } from "@/lib/exif-check";
 import { haversineDistanceMeters } from "@/lib/haversine";
+import { formatClockTimeWib } from "@/lib/duration";
 import { fetchScheduleByEmployeeAndDate } from "@/features/schedules/queries";
 import { logAudit } from "@/lib/audit/logger";
 import { toJakartaDateOnly } from "@/lib/date";
@@ -62,6 +63,29 @@ function jsonError(
     { ok: false, error: { code, message } },
     { status },
   );
+}
+
+/** Sesi AE-200 — baca penanda perangkat dari multipart. Bentuknya JSON
+ *  kiriman klien, jadi perlakukan sebagai tidak tepercaya: batasi panjang,
+ *  buang field asing, dan jangan pernah gagalkan request karena ini. */
+function parseDeviceHint(
+  raw: FormDataEntryValue | null,
+): { id: string; ua: string; standalone: boolean } | null {
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > 512) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const o = parsed as Record<string, unknown>;
+    return {
+      id: typeof o.id === "string" ? o.id.slice(0, 32) : "-",
+      ua: typeof o.ua === "string" ? o.ua.slice(0, 80) : "-",
+      standalone: o.standalone === true,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function minutesIntoWibDay(at: Date): number {
@@ -130,6 +154,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     typeof form.get("clientRefId") === "string"
       ? (form.get("clientRefId") as string)
       : null;
+  /* Sesi AE-200 — penanda perangkat (id acak per browser + ringkasan UA).
+   * Murni untuk audit: owner melaporkan absen "terdeteksi sebagai HP lain"
+   * dan sebelumnya tidak ada satu pun data untuk mengeceknya. JANGAN
+   * dipakai sebagai syarat absen — id-nya bisa hilang sendiri. */
+  const deviceHint = parseDeviceHint(form.get("deviceHint"));
 
   if (!/^\d{4,6}$/.test(pin)) {
     return jsonError("VALIDATION", "PIN harus 4-6 digit angka", 400);
@@ -246,7 +275,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       entityId: matched.id,
       payload: {
         summary: `${matched.fullName} ditolak — selfie EXIF tidak valid: ${exifResult.reason}`,
-        context: { mode, reason: exifResult.reason, captureMethod },
+        context: { mode, reason: exifResult.reason, captureMethod, deviceHint },
       },
       metadata: { outletId: matched.outletId, actorRole: "system" },
     }).catch((e) => console.error("[audit attendance reject exif]", e));
@@ -289,7 +318,9 @@ export async function POST(request: Request): Promise<NextResponse> {
        * supaya owner masih visibility kalau ada pattern aneh. */
       exifGpsCheckFlag = "absent";
       await logAudit({
-        eventType: "attendance.mobile_rejected",
+        /* Sesi AE-200 — ini BUKAN penolakan (absennya lanjut). Dicatat
+         * sebagai flagged supaya daftar penolakan owner bersih. */
+        eventType: "attendance.mobile_flagged",
         userId: null,
         entityType: "attendance",
         entityId: matched.id,
@@ -394,11 +425,25 @@ export async function POST(request: Request): Promise<NextResponse> {
         isNull(attendanceRecords.clockOutAt),
       ),
     )
+    /* Sesi AE-200 — kalau sampai ada lebih dari satu record menggantung,
+     * clock-out WAJIB menutup yang paling baru. Tanpa urutan, Postgres
+     * boleh mengembalikan yang mana saja dan jam kerja bisa dihitung dari
+     * shift yang salah. */
+    .orderBy(desc(attendanceRecords.clockInAt))
     .limit(1);
   if (mode === "in" && openRow) {
+    /* Sesi AE-200 — pesan lama menampilkan timestamp UTC mentah dan tidak
+     * memberi jalan keluar. Kalau record menggantungnya dari hari
+     * sebelumnya (mis. clock-out kemarin gagal terus), staff bisa mentok:
+     * tidak bisa clock-in DAN tidak bisa clock-out. Sebut tanggalnya dan
+     * arahkan ke tindakan yang benar. */
+    const openWibDate = toJakartaDateOnly(openRow.clockInAt);
+    const stale = openWibDate !== todayWib;
     return jsonError(
       "ALREADY_CLOCKED_IN",
-      `Kamu masih clock-in (${openRow.clockInAt.toISOString()}). Clock Out dulu.`,
+      stale
+        ? `Clock In kamu tanggal ${openWibDate} belum ditutup. Tap Clock Out dulu untuk menutupnya, lalu Clock In lagi. Kalau Clock Out juga ditolak, hubungi Owner — absen hari itu perlu ditutup manual.`
+        : `Kamu masih clock-in sejak pukul ${formatClockTimeWib(openRow.clockInAt)}. Clock Out dulu.`,
       409,
     );
   }
@@ -577,6 +622,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           exifGpsCheck: exifGpsCheckFlag,
           exifGpsDistance,
           captureMethod,
+          deviceHint,
         },
       },
       metadata: { outletId: matched.outletId, actorRole: "system" },
@@ -664,6 +710,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         exifGpsCheck: exifGpsCheckFlag,
         exifGpsDistance,
         captureMethod,
+        deviceHint,
       },
     },
     metadata: { outletId: matched.outletId, actorRole: "system" },

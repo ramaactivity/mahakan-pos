@@ -16,6 +16,7 @@ import {
 import { Button, PinPad } from "@/components/ui";
 import { verifyAttendancePin, type VerifiedKaryawan } from "./actions";
 import { SelfieCapture, type CaptureMethod } from "./SelfieCapture";
+import { collectDeviceHint } from "./device-hint";
 import { formatIndonesianDateTime } from "@/lib/date";
 import {
   formatClockTimeWib,
@@ -425,6 +426,10 @@ function ActStep({
       formData.append("gpsLng", String(gps.lng ?? ""));
       formData.append("mode", mode);
       formData.append("clientRefId", clientRefIdRef.current);
+      /* Sesi AE-200 — penanda perangkat masuk audit log supaya laporan
+       * "absen terdeteksi sebagai HP lain" bisa diverifikasi. Tidak pernah
+       * dipakai memblokir absen; lihat device-hint.ts. */
+      formData.append("deviceHint", JSON.stringify(collectDeviceHint()));
 
       const res = await fetch("/api/v1/attendance/clock-mobile", {
         method: "POST",

@@ -168,6 +168,11 @@ export const AUDIT_EVENT_TYPES = [
   "attendance.mobile_clock_in",
   "attendance.mobile_clock_out",
   "attendance.mobile_rejected",
+  /* Sesi AE-200 — absen TETAP DITERIMA tapi ada yang perlu dilihat owner
+   * (mis. tag GPS di foto ngaco). Dulu kejadian ini ikut dicatat sebagai
+   * "mobile_rejected" — 58 baris palsu dalam 45 hari — sehingga daftar
+   * penolakan tidak bisa dipercaya. Jangan gabungkan lagi. */
+  "attendance.mobile_flagged",
   "attendance.drive_upload_failed",
   /* Sesi AE-63 phase8 — HR manual edit attendance status / lateMinutes /
    * overtimeMinutes (special case: konfirmasi izin, sakit, dll). */

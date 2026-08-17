@@ -29,7 +29,13 @@ interface ModuleCard {
 
 const MODULES: ModuleCard[] = [
   {
-    href: "/absenkaryawan",
+    /* Sesi AE-200 — WAJIB tetap di dalam cakupan "/m" (lihat
+     * manifest-staff.webmanifest). Tautan /absenkaryawan yang lama ada di
+     * LUAR cakupan, jadi kalau dibuka dari ikon aplikasi terpasang halaman
+     * melompat ke browser-dalam-aplikasi dengan izin kamera terpisah →
+     * kamera live gagal → selfie jatuh ke jalur EXIF ketat → ditolak.
+     * Jangan kembalikan ke /absenkaryawan. */
+    href: "/m/absen",
     title: "Absensi",
     description:
       "Clock-in / clock-out kerja dengan foto selfie + GPS lokasi outlet.",
