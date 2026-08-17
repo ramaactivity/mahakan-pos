@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ingredients } from "@/db/schema";
+import { getStockMode } from "@/features/inventory/flag";
 import {
   fetchPurchaseRollup,
   fetchPurchasesByIngredient,
@@ -174,8 +175,9 @@ export async function fetchHppReport(
   dateFrom: string,
   dateTo: string,
 ): Promise<HppReport> {
-  const [activeIngredients, stockAwal, stockAkhir, purchasesByIng] =
+  const [stockMode, activeIngredients, stockAwal, stockAkhir, purchasesByIng] =
     await Promise.all([
+      getStockMode(outletId),
       db
         .select({
           id: ingredients.id,
@@ -204,6 +206,9 @@ export async function fetchHppReport(
       fetchPurchasesByIngredient(outletId, dateFrom, dateTo),
     ]);
 
+  /** Mode periodic penuh: `current_stock` hanya bergerak lewat opname. */
+  const periodicMode = !stockMode.deductOnSale && !stockMode.addOnPurchase;
+
   const rows: HppReportRow[] = [];
   let totalStockAwalCost = 0;
   let totalPembelianCost = 0;
@@ -224,12 +229,21 @@ export async function fetchHppReport(
     const pembelianQty = purch?.qty ?? 0;
     const pembelianCost = purch?.cost ?? 0;
 
-    // Stock Akhir
+    /* Stock Akhir.
+     *
+     * Sesi AE-202 — di mode PERIODIC `current_stock` hanya bergerak lewat
+     * opname (penjualan tak mengurangi, pembelian ber-skippedStockUpdate).
+     * Jadi kalau periode ini belum punya opname, memakainya sebagai stok
+     * akhir membuat rumus awal + beli − akhir = SELURUH PEMBELIAN, seolah
+     * semua belanja habis terpakai. Lebih jujur: tandai belum diketahui. */
     const akhirQty = stockAkhir?.qtyByIngredient.get(ing.id);
     const akhirCostPerUnit =
       stockAkhir?.costByIngredient.get(ing.id) ?? ing.costPerUnit;
-    const stockAkhirQty = akhirQty ?? ing.currentStock;
-    const stockAkhirCost = stockAkhirQty * akhirCostPerUnit;
+    const stockAkhirUnknown = akhirQty === undefined && periodicMode;
+    const stockAkhirQty = stockAkhirUnknown ? 0 : akhirQty ?? ing.currentStock;
+    const stockAkhirCost = stockAkhirUnknown
+      ? 0
+      : stockAkhirQty * akhirCostPerUnit;
 
     /* Sesi AE-194 — baris yang satuan belinya tidak bisa dikonversi ikut
      * ditandai "perlu dicek". Qty-nya memang dipakai apa adanya sebagai
@@ -240,8 +254,12 @@ export async function fetchHppReport(
       (purch?.hasUnconvertedLines ?? false);
     if (partial) hasPartialRows = true;
 
-    const hppQty = stockAwalQty + pembelianQty - stockAkhirQty;
-    const hppCost = stockAwalCost + pembelianCost - stockAkhirCost;
+    const hppQty = stockAkhirUnknown
+      ? 0
+      : stockAwalQty + pembelianQty - stockAkhirQty;
+    const hppCost = stockAkhirUnknown
+      ? 0
+      : stockAwalCost + pembelianCost - stockAkhirCost;
 
     rows.push({
       ingredientId: ing.id,
@@ -257,6 +275,7 @@ export async function fetchHppReport(
       hppQty,
       hppCost,
       partial,
+      stockAkhirUnknown,
     });
 
     totalStockAwalCost += stockAwalCost;
@@ -318,6 +337,7 @@ export async function fetchHppReport(
     },
     bySection,
     hasPartialRows,
+    stockAkhirUnknown: stockAkhir === null && periodicMode,
     opnameRefs: {
       stockAwalSessionId: stockAwal?.sessionId ?? null,
       stockAwalSessionDate: stockAwal?.finalizedAt

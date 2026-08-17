@@ -186,8 +186,15 @@ export function CogsVarianceSection() {
             <Button
               variant="outline"
               onClick={() => setCloseOpen(true)}
-              disabled={!report || loading}
-              title="Tutup periode COGS: post adjustment journal supaya Income Statement reflect actual COGS"
+              /* AE-202 — jangan biarkan periode ditutup selagi pemakaian belum
+               * bisa dihitung; jurnal adjustment-nya akan memakai stok akhir
+               * karangan. Server juga menolak (closeCogsPeriod). */
+              disabled={!report || loading || !report.usageComputable}
+              title={
+                report && !report.usageComputable
+                  ? "Belum ada opname di periode ini — pemakaian belum bisa dihitung, jadi periode belum boleh ditutup"
+                  : "Tutup periode COGS: post adjustment journal supaya Income Statement reflect actual COGS"
+              }
             >
               <LockOpen className="size-4" /> Tutup Periode
             </Button>
@@ -587,28 +594,29 @@ function CogsTab({ report }: { report: CogsReport }) {
         </Button>
       </div>
 
-      {/* Summary cards by section */}
+      {/* Summary cards by section — AE-202: "—" selama pemakaian belum bisa
+          dihitung (mode periodic + belum opname), bukan Rp 0. */}
       <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
         <StatCard
           label="Total COGS"
-          value={formatRupiah(report.summary.total)}
+          value={usageValue(report, report.summary.total)}
           tone="default"
         />
         <StatCard
           label="Kitchen"
-          value={formatRupiah(report.summary.bySection.kitchen)}
+          value={usageValue(report, report.summary.bySection.kitchen)}
         />
         <StatCard
           label="Bar"
-          value={formatRupiah(report.summary.bySection.bar)}
+          value={usageValue(report, report.summary.bySection.bar)}
         />
         <StatCard
           label="Supporting"
-          value={formatRupiah(report.summary.bySection.supporting)}
+          value={usageValue(report, report.summary.bySection.supporting)}
         />
         <StatCard
           label="Cleaning"
-          value={formatRupiah(report.summary.bySection.cleaning)}
+          value={usageValue(report, report.summary.bySection.cleaning)}
         />
       </div>
 
@@ -686,7 +694,7 @@ function CogsTab({ report }: { report: CogsReport }) {
                 <td className="px-2 py-2 text-right" />
                 <td className="px-2 py-2 text-right" />
                 <td className="px-2 py-2 text-right font-mono font-bold">
-                  {formatRupiah(report.summary.total)}
+                  {usageValue(report, report.summary.total)}
                 </td>
               </tr>
             </tfoot>
@@ -702,8 +710,11 @@ function CogsRow({ r }: { r: IngredientCogsRow }) {
    * Total ke-display 0 / "—" karena qty × harga = 0 regardless. */
   const showAwalPrice = r.stockAwalQty !== 0;
   const showPembelianPrice = r.pembelianQty !== 0;
-  const showAkhirPrice = r.stockAkhirQty !== 0;
-  const showCogsPrice = r.cogsQty !== 0;
+  /* AE-202 — stok akhir belum dihitung → seluruh kolom Stok Akhir & Pemakaian
+   * jadi "—". Angka 0 akan terbaca "stok habis / tidak ada pemakaian". */
+  const unknown = r.stockAkhirUnknown;
+  const showAkhirPrice = !unknown && r.stockAkhirQty !== 0;
+  const showCogsPrice = !unknown && r.cogsQty !== 0;
 
   return (
     <tr className="hover:bg-neutral-50">
@@ -739,7 +750,13 @@ function CogsRow({ r }: { r: IngredientCogsRow }) {
       </td>
       {/* Stock Akhir */}
       <td className="px-2 py-1 text-right font-mono bg-info-50/30">
-        {formatNum(r.stockAkhirQty)}
+        {unknown ? (
+          <span className="text-neutral-400" title="Belum ada opname di periode ini">
+            —
+          </span>
+        ) : (
+          formatNum(r.stockAkhirQty)
+        )}
       </td>
       <td className="px-2 py-1 text-right font-mono bg-info-50/30">
         {showAkhirPrice ? formatRupiah(r.stockAkhirAvgPrice) : "—"}
@@ -749,7 +766,13 @@ function CogsRow({ r }: { r: IngredientCogsRow }) {
       </td>
       {/* COGS */}
       <td className="px-2 py-1 text-right font-mono bg-mahakan-green-50/30">
-        {formatNum(r.cogsQty)}
+        {unknown ? (
+          <span className="text-neutral-400" title="Belum ada opname di periode ini">
+            —
+          </span>
+        ) : (
+          formatNum(r.cogsQty)
+        )}
       </td>
       <td className="px-2 py-1 text-right font-mono bg-mahakan-green-50/30">
         {showCogsPrice ? formatRupiah(r.cogsAvgPrice) : "—"}
@@ -788,6 +811,12 @@ function StatCard({
       <div className="text-base font-bold">{value}</div>
     </div>
   );
+}
+
+/* AE-202 — angka pemakaian/COGS hanya ditampilkan kalau memang bisa dihitung.
+ * Selama belum ada opname di periode (mode periodic), tampilkan "—". */
+function usageValue(report: CogsReport, value: number): string {
+  return report.usageComputable ? formatRupiah(value) : "—";
 }
 
 function formatNum(n: number): string {

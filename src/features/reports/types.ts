@@ -204,6 +204,14 @@ export interface HppReportRow {
   /** True kalau Stock Awal/Akhir di-derive dari current_stock (bukan opname).
    * UI surface ini sebagai warning. */
   partial: boolean;
+  /**
+   * Sesi AE-202 — stok akhir BELUM DIKETAHUI: periode ini belum punya opname
+   * DAN mode persediaan periodic, sehingga `current_stock` beku di angka
+   * opname terakhir. Memakainya sebagai stok akhir membuat pemakaian =
+   * seluruh pembelian. Saat true, `stockAkhirQty/Cost` + `hppQty/Cost` = 0
+   * dan UI WAJIB menampilkan "—".
+   */
+  stockAkhirUnknown: boolean;
 }
 
 export interface HppReport {
@@ -226,6 +234,12 @@ export interface HppReport {
   }>;
   /** True kalau >= 1 row punya partial=true. UI banner. */
   hasPartialRows: boolean;
+  /**
+   * Sesi AE-202 — periode ini belum punya opname DAN mode persediaan periodic
+   * → stok akhir (dan karenanya HPP) belum bisa dihitung sama sekali. UI WAJIB
+   * menampilkan "—", bukan Rp 0.
+   */
+  stockAkhirUnknown: boolean;
   /** Opname references actually used for stockAwal / stockAkhir. */
   opnameRefs: {
     stockAwalSessionId: string | null;

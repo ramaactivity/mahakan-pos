@@ -24,6 +24,7 @@ function row(overrides: Partial<HppReportRow>): HppReportRow {
     hppQty: overrides.hppQty ?? 0,
     hppCost: overrides.hppCost ?? 0,
     partial: overrides.partial ?? false,
+    stockAkhirUnknown: overrides.stockAkhirUnknown ?? false,
   };
 }
 

@@ -51,6 +51,56 @@ describe("computeIngredientCogs — WAC formula", () => {
   });
 });
 
+/* Sesi AE-202 — mode periodic + belum opname di periode. `current_stock` beku
+ * di angka opname terakhir, jadi kalau dipakai sebagai stok akhir hasilnya
+ * "semua yang dibeli habis terpakai". Harus dilaporkan BELUM DIKETAHUI. */
+describe("computeIngredientCogs — stok akhir belum dihitung", () => {
+  const UNKNOWN: IngredientCogsInput = {
+    ...BASE,
+    // persis skenario Agustus 2026: stok akhir = current_stock = stok awal
+    stockAwalQty: 905.8,
+    stockAwalAvgPrice: 165,
+    pembelianQty: 3_000,
+    pembelianTotal: 495_000,
+    stockAkhirQty: 905.8,
+    stockAkhirUnknown: true,
+  };
+
+  it("tidak mengarang pemakaian — semuanya 0 + ditandai unknown", () => {
+    const r = computeIngredientCogs(UNKNOWN);
+    expect(r.stockAkhirUnknown).toBe(true);
+    expect(r.stockAkhirQty).toBe(0);
+    expect(r.stockAkhirTotal).toBe(0);
+    expect(r.cogsQty).toBe(0);
+    expect(r.cogsTotal).toBe(0);
+    expect(r.warnings.some((w) => w.includes("belum bisa dihitung"))).toBe(
+      true,
+    );
+  });
+
+  it("variance ikut dinolkan supaya tidak menuduh selisih palsu", () => {
+    const r = computeIngredientCogs({ ...UNKNOWN, theoreticalUsageQty: 500 });
+    expect(r.actualUsageQty).toBe(0);
+    expect(r.varianceQty).toBe(0);
+    expect(r.variancePct).toBeNull();
+    expect(r.varianceCost).toBe(0);
+  });
+
+  it("stok awal & pembelian TETAP tampil apa adanya (data nyata)", () => {
+    const r = computeIngredientCogs(UNKNOWN);
+    expect(r.stockAwalQty).toBe(905.8);
+    expect(r.pembelianQty).toBe(3_000);
+    expect(r.pembelianTotal).toBe(495_000);
+  });
+
+  it("tanpa flag, rumus lama akan bilang seluruh pembelian terpakai", () => {
+    const r = computeIngredientCogs({ ...UNKNOWN, stockAkhirUnknown: false });
+    // 905.8 + 3000 - 905.8 = 3000 → inilah angka palsu yang dilaporkan owner
+    expect(r.cogsQty).toBe(3_000);
+    expect(r.stockAkhirUnknown).toBe(false);
+  });
+});
+
 describe("computeIngredientCogs — Variance", () => {
   it("computes variance = actual - theoretical (zero variance case)", () => {
     const r = computeIngredientCogs({ ...BASE, theoreticalUsageQty: 101 });
@@ -271,6 +321,7 @@ function mockRow(overrides: Partial<IngredientCogsRow>): IngredientCogsRow {
     stockAkhirQty: 0,
     stockAkhirAvgPrice: 0,
     stockAkhirTotal: 0,
+    stockAkhirUnknown: false,
     cogsQty: 0,
     cogsAvgPrice: 0,
     cogsTotal: 0,

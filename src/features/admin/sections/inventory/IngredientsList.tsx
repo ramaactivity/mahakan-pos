@@ -1280,15 +1280,19 @@ function MonthlyFlowTable({
                   qty={row?.stockAkhirQty ?? 0}
                   cost={row?.stockAkhirCost ?? 0}
                   unit={ing.unit}
+                  unknown={row?.stockAkhirUnknown}
                 />
                 <FlowQtyCell
                   qty={row?.hppQty ?? 0}
                   cost={row?.hppCost ?? 0}
                   unit={ing.unit}
                   emphasize={(row?.hppQty ?? 0) > 0}
+                  unknown={row?.stockAkhirUnknown}
                 />
                 <td className="px-3 py-2 text-right font-mono font-semibold text-neutral-900">
-                  {formatRupiah(row?.hppCost ?? 0)}
+                  {row?.stockAkhirUnknown
+                    ? "—"
+                    : formatRupiah(row?.hppCost ?? 0)}
                 </td>
                 <td className="px-3 py-2 text-center">
                   <span
@@ -1409,12 +1413,28 @@ function FlowQtyCell({
   cost,
   unit,
   emphasize,
+  unknown,
 }: {
   qty: number;
   cost: number;
   unit: string;
   emphasize?: boolean;
+  /** AE-202 — nilainya belum diketahui (belum opname di periode, mode
+   *  periodic). Tampilkan "—", jangan 0 yang terbaca "habis". */
+  unknown?: boolean;
 }) {
+  if (unknown) {
+    return (
+      <td className="px-3 py-2 text-right">
+        <div
+          className="font-mono text-neutral-400"
+          title="Belum ada opname di periode ini — belum bisa dihitung"
+        >
+          —
+        </div>
+      </td>
+    );
+  }
   return (
     <td className="px-3 py-2 text-right">
       <div

@@ -69,6 +69,33 @@ function jakartaYearMonthFromIso(iso: string): { year: number; month: number } {
   return { year: Number(yy), month: Number(mm) };
 }
 
+/**
+ * Sesi AE-202 — apakah periode akuntansi yang memuat `entryDateIso` (WIB)
+ * sudah dikunci? Pemanggil yang ingin memundurkan tanggal jurnal (mis. jurnal
+ * penyesuaian opname yang bertanggal hari hitung fisik) memakai ini untuk
+ * memilih tanggal cadangan, ketimbang kena `PERIOD_LOCKED` di tengah jalan.
+ *
+ * Periode yang belum pernah dibuat = belum dikunci → false.
+ */
+export async function isAccountingPeriodLocked(
+  outletId: string,
+  entryDateIso: string,
+): Promise<boolean> {
+  const { year, month } = jakartaYearMonthFromIso(entryDateIso);
+  const [row] = await db
+    .select({ status: accountingPeriods.status })
+    .from(accountingPeriods)
+    .where(
+      and(
+        eq(accountingPeriods.outletId, outletId),
+        eq(accountingPeriods.periodYear, year),
+        eq(accountingPeriods.periodMonth, month),
+      ),
+    )
+    .limit(1);
+  return row?.status === "locked";
+}
+
 function pad4(n: number): string {
   return String(n).padStart(4, "0");
 }

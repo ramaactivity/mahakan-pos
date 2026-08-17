@@ -55,6 +55,18 @@ export interface IngredientCogsInput {
   pembelianTotal: number;
   /** Stock akhir qty dari opname bulan ini (decimal, 0 kalau no opname). */
   stockAkhirQty: number;
+  /**
+   * Sesi AE-202 — TRUE kalau stok akhir sebetulnya TIDAK DIKETAHUI: periode
+   * ini belum punya opname DAN mode periodic (penjualan tidak mengurangi
+   * stok, pembelian tidak menambah stok) sehingga `current_stock` beku di
+   * angka opname terakhir.
+   *
+   * Kalau dibiarkan, rumus awal + beli − akhir menjadi
+   * (opname lalu) + beli − (opname lalu) = SELURUH PEMBELIAN, seolah-olah
+   * semua yang dibeli habis terpakai. Angka itu fiksi, jadi pemakaian
+   * dilaporkan 0 + `stockAkhirUnknown` supaya UI menampilkan "—".
+   */
+  stockAkhirUnknown?: boolean;
   /** Theoretical usage dari recipes × menu terjual (decimal). */
   theoreticalUsageQty: number;
   /** Current cost_per_unit (fallback kalau no data). */
@@ -84,6 +96,9 @@ export interface IngredientCogsRow {
   stockAkhirQty: number;
   stockAkhirAvgPrice: number; // = averagePrice
   stockAkhirTotal: number;
+  /** Sesi AE-202 — stok akhir belum dihitung; UI WAJIB tampilkan "—",
+   *  bukan angka 0 (0 terbaca "habis", padahal artinya "belum tahu"). */
+  stockAkhirUnknown: boolean;
 
   // COGS / Pemakaian
   cogsQty: number;
@@ -138,29 +153,44 @@ export function computeIngredientCogs(
     }
   }
 
-  const stockAkhirTotal = input.stockAkhirQty * averagePrice;
+  /* Sesi AE-202 — stok akhir belum dihitung: JANGAN mengarang. Semua turunan
+   * stok akhir (nilai stok akhir, pemakaian, variance) dilaporkan 0 + ditandai
+   * `stockAkhirUnknown` supaya UI menampilkan "—". */
+  const stockAkhirUnknown = input.stockAkhirUnknown === true;
+  const stockAkhirQty = stockAkhirUnknown ? 0 : input.stockAkhirQty;
 
-  const cogsQty = totalQty - input.stockAkhirQty;
-  const cogsTotal = cogsQty * averagePrice;
+  const stockAkhirTotal = stockAkhirUnknown ? 0 : stockAkhirQty * averagePrice;
+
+  const cogsQty = stockAkhirUnknown ? 0 : totalQty - stockAkhirQty;
+  const cogsTotal = stockAkhirUnknown ? 0 : cogsQty * averagePrice;
+
+  if (stockAkhirUnknown) {
+    warnings.push(
+      "Belum ada opname di periode ini — stok akhir & pemakaian belum bisa dihitung.",
+    );
+  }
 
   if (cogsQty < 0) {
     warnings.push(
-      `Stock akhir (${input.stockAkhirQty}) > Stock awal + Pembelian (${totalQty}). Cek opname atau pembelian missing.`,
+      `Stock akhir (${stockAkhirQty}) > Stock awal + Pembelian (${totalQty}). Cek opname atau pembelian missing.`,
     );
   }
 
   // Variance
   const actualUsageQty = cogsQty;
-  const varianceQty = actualUsageQty - input.theoreticalUsageQty;
+  const varianceQty = stockAkhirUnknown
+    ? 0
+    : actualUsageQty - input.theoreticalUsageQty;
   const variancePct =
-    input.theoreticalUsageQty > 0
+    !stockAkhirUnknown && input.theoreticalUsageQty > 0
       ? (varianceQty / input.theoreticalUsageQty) * 100
       : null;
-  const varianceCost = varianceQty * averagePrice;
+  const varianceCost = stockAkhirUnknown ? 0 : varianceQty * averagePrice;
 
   if (
+    !stockAkhirUnknown &&
     input.theoreticalUsageQty > 0 &&
-    input.stockAkhirQty === 0 &&
+    stockAkhirQty === 0 &&
     cogsQty > 0
   ) {
     // No opname → cogs assumes all used. Likely overstated.
@@ -185,9 +215,10 @@ export function computeIngredientCogs(
 
     averagePrice: round(averagePrice),
 
-    stockAkhirQty: input.stockAkhirQty,
+    stockAkhirQty,
     stockAkhirAvgPrice: round(averagePrice),
     stockAkhirTotal: round(stockAkhirTotal),
+    stockAkhirUnknown,
 
     cogsQty: round(cogsQty, 4),
     cogsAvgPrice: round(averagePrice),

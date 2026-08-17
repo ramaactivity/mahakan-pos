@@ -13,7 +13,7 @@ import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
 import { errorChainIncludes, logAndSanitize } from "@/lib/server-error";
 import { computeNewStock, formatMovementDelta } from "@/lib/stock-decimal";
-import { todayJakarta } from "@/lib/tz";
+import { jakartaDateOf, todayJakarta } from "@/lib/tz";
 import { jakartaMonthLabel } from "./cadence";
 import { computeDiffStats } from "./diff-stats";
 import {
@@ -1001,20 +1001,41 @@ export async function finalizeOpname(
 
     if (sectionDiffs.length > 0) {
       const [sessRow] = await db
-        .select({ periodLabel: stockOpnameSessions.periodLabel })
+        .select({
+          periodLabel: stockOpnameSessions.periodLabel,
+          startedAt: stockOpnameSessions.startedAt,
+        })
         .from(stockOpnameSessions)
         .where(eq(stockOpnameSessions.id, v.sessionId))
         .limit(1);
-      const todayWib = todayJakarta();
+      /* Sesi AE-202 — jurnal penyesuaian bertanggal TANGGAL HITUNG FISIK,
+       * bukan tanggal persetujuan. Persetujuan sering menyusul sampai lewat
+       * bulan (opname Juli dihitung 31 Juli, disetujui 1 Agustus), sehingga
+       * neraca akhir Juli tidak mencerminkan hitungan Juli dan koreksinya
+       * malah nongol di Agustus. Kalau periode tanggal hitung sudah dikunci,
+       * jatuh kembali ke hari ini supaya finalisasi tidak gagal. */
       const { fireJournalHook, postJournalForOpnameAdjustment } = await import(
         "@/features/accounting/hooks"
       );
+      const { isAccountingPeriodLocked } = await import(
+        "@/features/accounting/posting"
+      );
+      const todayWib = todayJakarta();
+      const countedWib = sessRow?.startedAt
+        ? jakartaDateOf(sessRow.startedAt)
+        : todayWib;
+      const entryDate = (await isAccountingPeriodLocked(
+        session.user.outletId,
+        countedWib,
+      ))
+        ? todayWib
+        : countedWib;
       const opnameArgs = {
         outletId: session.user.outletId,
         opnameSessionId: v.sessionId,
         sessionLabel: sessRow?.periodLabel ?? "—",
         sectionDiffs,
-        entryDate: todayWib,
+        entryDate,
         actorId: session.user.id,
       };
       fireJournalHook(

@@ -23,6 +23,7 @@ import {
   purchaseItems,
   purchases,
 } from "@/db/schema";
+import { getStockMode } from "@/features/inventory/flag";
 import {
   fetchLatestOpnameBefore,
   fetchLatestOpnameWithin,
@@ -65,6 +66,12 @@ export interface CogsReport {
   summary: CogsSummary;
   /** Banners untuk UI display kalau data tidak lengkap. */
   banners: string[];
+  /**
+   * Sesi AE-202 — FALSE kalau pemakaian/COGS periode ini belum bisa dihitung
+   * (mode periodic + belum ada opname di periode). UI WAJIB menampilkan "—"
+   * untuk Stok Akhir, Pemakaian, dan Total COGS; Tutup Periode harus dikunci.
+   */
+  usageComputable: boolean;
   /** Opname yang dipakai jadi stok awal/akhir — supaya UI bisa show context.
    *  `countedAt` = tanggal HITUNG FISIK (WIB), inilah yang menentukan periode;
    *  `finalizedAt` cuma tanggal persetujuan. */
@@ -89,6 +96,9 @@ export async function getCogsReport(args: {
 }): Promise<CogsReport> {
   const period = parseMonthlyPeriod(args.ym);
   const banners: string[] = [];
+  const stockMode = await getStockMode(args.outletId);
+  /** Mode periodic penuh: `current_stock` hanya bergerak lewat opname. */
+  const periodicMode = !stockMode.deductOnSale && !stockMode.addOnPurchase;
 
   // ──────────────────────────────────────────────────────────────
   // 1. Outlet info
@@ -156,6 +166,16 @@ export async function getCogsReport(args: {
         unitCost: opnameBefore.costByIngredient.get(ingredientId),
       });
     }
+  } else if (periodicMode) {
+    /* Sesi AE-202 — mode periodic tanpa opname pembuka: stok awal TIDAK
+     * diketahui. Rumus lama `current_stock − pergerakan` mengandaikan stok
+     * ikut bergerak tiap transaksi; di mode periodic dia beku, dan
+     * pergerakannya ber-skippedStockUpdate, sehingga hasilnya angka MINUS
+     * (mis. Beans Houseblend −4.611 di Mei 2026). Lebih jujur: 0 + banner,
+     * dan seluruh pemakaian periode ini ditandai belum bisa dihitung. */
+    banners.push(
+      `Belum ada opname sebelum ${period.fromDate}, dan mode persediaan periodic. Stok awal belum diketahui sehingga pemakaian periode ini belum bisa dihitung.`,
+    );
   } else {
     banners.push(
       `Belum ada opname sebelum ${period.fromDate}. Stock Awal di-derive dari current stock minus movements bulan ini (math-guaranteed: awal + delta = akhir).`,
@@ -314,18 +334,35 @@ export async function getCogsReport(args: {
     period.toDate,
   );
 
+  /* Sesi AE-202 — pemakaian butuh KEDUA ujungnya diketahui. Di mode periodic
+   * itu berarti ada opname sebelum periode (stok awal) DAN di dalam periode
+   * (stok akhir); di mode perpetual `current_stock` hidup jadi selalu bisa. */
+  const usageComputable =
+    !periodicMode || (opnameBefore !== null && opnameWithin !== null);
+
   const stockAkhirByIng = new Map<string, number>();
   if (opnameWithin) {
     for (const [ingredientId, qty] of opnameWithin.qtyByIngredient) {
       stockAkhirByIng.set(ingredientId, qty);
     }
-  } else {
+  } else if (stockMode.deductOnSale || stockMode.addOnPurchase) {
     /* Sesi AE-177g — Banner jujur: kode pakai `currentStockDecimal` sebagai
      * fallback (lihat baris pembentukan IngredientCogsInput), BUKAN 0.
      * COGS hasilnya = pemakaian aktual via invariant `awal + delta = akhir`.
      * Tetap kurang akurat karena tidak ada hitung fisik akhir periode. */
     banners.push(
       `Belum ada opname dalam periode ${period.label}. Stock Akhir pakai stok saat ini (current) — COGS approximate, hitung opname akhir bulan utk akurasi.`,
+    );
+  } else {
+    /* Sesi AE-202 — MODE PERIODIC + belum ada opname = stok akhir TIDAK
+     * DIKETAHUI. `current_stock` beku di angka opname terakhir (penjualan tak
+     * mengurangi, pembelian ber-skippedStockUpdate), jadi memakainya sebagai
+     * stok akhir membuat rumus jadi
+     *   (opname lalu) + beli − (opname lalu) = SELURUH PEMBELIAN,
+     * seolah semua belanja habis terpakai. Itu yang bikin Agustus 2026 tampil
+     * "pemakaian Rp 6 jt" padahal belum ada hitungan fisik sama sekali. */
+    banners.push(
+      `Belum ada opname di periode ${period.label}, dan mode persediaan periodic (stok hanya bergerak dari opname). Stok akhir & pemakaian BELUM BISA DIHITUNG — kolomnya ditampilkan "—". Lakukan Stock Opname untuk melihat pemakaian.`,
     );
   }
 
@@ -334,9 +371,14 @@ export async function getCogsReport(args: {
    * ragu "stok akhir SO tidak jadi stok awal bulan berikutnya" — sekarang bisa
    * dicek langsung dari layar. */
   if (opnameBefore || opnameWithin) {
+    const akhirLabel = opnameWithin
+      ? `opname ${opnameWithin.periodLabel} (dihitung ${jakartaIsoDate(opnameWithin.countedAt)})`
+      : usageComputable
+        ? "stok saat ini (belum ada opname di periode)"
+        : "belum dihitung";
     banners.push(
-      `Stok awal = opname ${opnameBefore ? `${opnameBefore.periodLabel} (dihitung ${jakartaIsoDate(opnameBefore.countedAt)})` : "—"}` +
-        ` · Stok akhir = opname ${opnameWithin ? `${opnameWithin.periodLabel} (dihitung ${jakartaIsoDate(opnameWithin.countedAt)})` : "stok saat ini"}.`,
+      `Stok awal = ${opnameBefore ? `opname ${opnameBefore.periodLabel} (dihitung ${jakartaIsoDate(opnameBefore.countedAt)})` : "—"}` +
+        ` · Stok akhir = ${akhirLabel}.`,
     );
   }
 
@@ -459,7 +501,9 @@ export async function getCogsReport(args: {
       const cur = currentStockByIng.get(ing.id) ?? 0;
       if (cur !== 0) uncountedNames.push(ing.name);
     } else {
-      stockAkhirQty = currentStockByIng.get(ing.id) ?? 0;
+      /* Belum ada opname di periode. Di mode perpetual `current_stock` hidup
+       * jadi masih masuk akal; di mode periodic dia beku → tandai UNKNOWN. */
+      stockAkhirQty = periodicMode ? 0 : currentStockByIng.get(ing.id) ?? 0;
     }
 
     /* Skip bahan kalau benar-benar no data (clean output). */
@@ -475,6 +519,7 @@ export async function getCogsReport(args: {
       pembelianQty: pb?.qty ?? 0,
       pembelianTotal: pb?.total ?? 0,
       stockAkhirQty,
+      stockAkhirUnknown: !usageComputable,
       theoreticalUsageQty: th ?? 0,
       currentCostPerUnit: ing.costPerUnit,
     };
@@ -503,6 +548,7 @@ export async function getCogsReport(args: {
     rows,
     summary: summarizeCogs(rows),
     banners,
+    usageComputable,
     lastOpname: {
       before: opnameBefore
         ? {

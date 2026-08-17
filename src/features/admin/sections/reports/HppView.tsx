@@ -209,6 +209,23 @@ export function HppView() {
             </p>
           ) : (
             <>
+              {/* AE-202 — mode periodic + belum opname di periode: stok akhir
+                  (dan HPP) belum bisa dihitung. Ditampilkan "—", bukan Rp 0. */}
+              {report.stockAkhirUnknown ? (
+                <div className="flex items-start gap-2 rounded-md border border-warning-500/40 bg-warning-100/30 p-3 text-xs text-warning-500">
+                  <AlertTriangle className="mt-0.5 size-4" aria-hidden />
+                  <div>
+                    <p className="font-medium">Belum ada opname di periode ini</p>
+                    <p className="text-neutral-700">
+                      Mode persediaan periodic — stok hanya bergerak dari
+                      opname, jadi stok akhir &amp; HPP belum bisa dihitung
+                      dan ditampilkan &quot;&mdash;&quot;. Lakukan Stock Opname
+                      di akhir periode untuk melihat pemakaian.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
               {report.hasPartialRows ? (
                 <div className="flex items-start gap-2 rounded-md border border-warning-500/40 bg-warning-100/30 p-3 text-xs text-warning-500">
                   <AlertTriangle className="mt-0.5 size-4" aria-hidden />
@@ -240,11 +257,11 @@ export function HppView() {
                 />
                 <SummaryCard
                   label="Stok Akhir"
-                  value={formatRupiah(report.totals.stockAkhirCost)}
+                  value={hppMoney(report, report.totals.stockAkhirCost)}
                 />
                 <SummaryCard
                   label="HPP Total"
-                  value={formatRupiah(report.totals.hppCost)}
+                  value={hppMoney(report, report.totals.hppCost)}
                   highlight
                 />
               </div>
@@ -284,10 +301,10 @@ export function HppView() {
                             {formatRupiah(s.pembelianCost)}
                           </td>
                           <td className="px-3 py-2 text-right font-mono">
-                            {formatRupiah(s.stockAkhirCost)}
+                            {hppMoney(report, s.stockAkhirCost)}
                           </td>
                           <td className="px-3 py-2 text-right font-mono font-semibold text-mahakan-green-900">
-                            {formatRupiah(s.hppCost)}
+                            {hppMoney(report, s.hppCost)}
                           </td>
                         </tr>
                       ))}
@@ -356,7 +373,9 @@ export function HppView() {
                                 {formatRupiah(r.pembelianCost)}
                               </td>
                               <td className="px-3 py-2 text-right font-mono text-xs">
-                                {formatRupiah(r.stockAkhirCost)}
+                                {r.stockAkhirUnknown
+                                  ? "—"
+                                  : formatRupiah(r.stockAkhirCost)}
                               </td>
                               <td
                                 className={cn(
@@ -366,7 +385,9 @@ export function HppView() {
                                     : "text-neutral-500",
                                 )}
                               >
-                                {formatRupiah(r.hppCost)}
+                                {r.stockAkhirUnknown
+                                  ? "—"
+                                  : formatRupiah(r.hppCost)}
                               </td>
                             </tr>
                           ))}
@@ -413,4 +434,11 @@ function SummaryCard({
       </p>
     </div>
   );
+}
+
+/* AE-202 — nilai stok akhir & HPP hanya bermakna kalau periodenya sudah
+ * dihitung fisik. Selama belum, tampilkan "—" (bukan Rp 0, yang terbaca
+ * "stok habis / tidak ada HPP"). */
+function hppMoney(report: HppReport, value: number): string {
+  return report.stockAkhirUnknown ? "—" : formatRupiah(value);
 }

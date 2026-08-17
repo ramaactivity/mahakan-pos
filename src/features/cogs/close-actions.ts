@@ -28,6 +28,7 @@ import {
   chartOfAccounts,
 } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
+import { todayJakarta } from "@/lib/tz";
 import { logAudit } from "@/lib/audit/logger";
 import { recordJournal } from "@/features/accounting/posting";
 import { getCogsReport } from "./queries";
@@ -138,6 +139,30 @@ export async function closeCogsPeriod(
     outletId: session.user.outletId,
     ym,
   });
+
+  /* Sesi AE-202 — DUA rem sebelum jurnal adjustment di-post.
+   *
+   * 1. Periode belum berakhir. Menutup bulan yang masih berjalan mengunci
+   *    angka setengah bulan sebagai "actual" — dan periode close bersifat
+   *    sekali jalan (unique per ym).
+   * 2. Pemakaian belum bisa dihitung (mode periodic + belum ada opname di
+   *    periode). Dulu `stock akhir` diam-diam memakai `current_stock` yang
+   *    di mode periodic beku di angka opname terakhir, sehingga "actual COGS"
+   *    = seluruh pembelian bulan itu. Menutup periode dengan angka itu akan
+   *    memposting jurnal Dr/Cr HPP-Persediaan sebesar selisih karangan. */
+  const todayWib = todayJakarta();
+  if (report.period.toDate >= todayWib) {
+    return fail(
+      "PERIOD_NOT_ENDED",
+      `Periode ${report.period.label} belum berakhir (baru ${todayWib}). Tutup periode setelah tanggal ${report.period.toDate}.`,
+    );
+  }
+  if (!report.usageComputable) {
+    return fail(
+      "OPNAME_REQUIRED",
+      `Belum ada Stock Opname di periode ${report.period.label}, jadi stok akhir & pemakaian belum diketahui. Lakukan opname dulu — menutup periode sekarang akan memposting jurnal dari angka karangan.`,
+    );
+  }
 
   /* Compute recognized HPP per section from journal entries (pos_sale +
    * pos_refund + shift_variance — any source yang post ke 5101/5102/5103).
