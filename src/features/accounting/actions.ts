@@ -46,6 +46,7 @@ import {
   resolveAccounts,
   validateLines,
 } from "./posting";
+import { normalizeReceiptUrl } from "./receipt-url";
 import {
   buildBalanceSheet,
   buildCashFlowStatement,
@@ -1010,6 +1011,8 @@ export type PostManualJournalInput = {
   lines: ManualJournalLineInput[];
   /** Default 'posted' untuk Owner; Manager bisa save 'draft'. */
   status: "draft" | "posted";
+  /** Sesi AE-206 — link bukti transaksi di Drive (opsional). */
+  receiptImageUrl?: string | null;
 };
 
 export async function saveManualJournal(
@@ -1064,6 +1067,7 @@ export async function saveManualJournal(
         description: l.description ?? null,
       })),
       status: input.status,
+      receiptImageUrl: normalizeReceiptUrl(input.receiptImageUrl),
       actorId: session.user.id,
     });
   } catch (e) {
@@ -1662,6 +1666,9 @@ export type UpdateDraftJournalInput = {
   /** Optional — kalau di-set 'posted', sekalian transition status saat update.
    * Default tetap 'draft' (just save edits). */
   newStatus?: "draft" | "posted";
+  /** Sesi AE-206 — bukti transaksi. `null` = hapus lampiran dari entry.
+   * Field-nya selalu dikirim modal, jadi undefined pun diperlakukan hapus. */
+  receiptImageUrl?: string | null;
 };
 
 export async function updateDraftJournalEntry(
@@ -1830,6 +1837,7 @@ export async function updateDraftJournalEntry(
           status: targetStatus,
           postedAt: targetStatus === "posted" ? new Date() : null,
           postedBy: targetStatus === "posted" ? session.user.id : null,
+          receiptImageUrl: normalizeReceiptUrl(input.receiptImageUrl),
           updatedAt: new Date(),
         })
         .where(

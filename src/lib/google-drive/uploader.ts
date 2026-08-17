@@ -62,6 +62,8 @@ const MODULE_ROOT_FOLDER: Record<UploadModule, string> = {
   setoran: "BUKTI SETORAN",
   /* Sesi AE-132 — Arsip dokumentasi nota staff. */
   nota_archive: "ARSIP NOTA",
+  /* Sesi AE-206 — bukti transaksi/transfer untuk jurnal manual. */
+  journal: "BUKTI JURNAL",
 };
 
 export type UploadModule =
@@ -70,7 +72,8 @@ export type UploadModule =
   | "expense"
   | "attendance"
   | "setoran"
-  | "nota_archive";
+  | "nota_archive"
+  | "journal";
 
 let _drive: drive_v3.Drive | null = null;
 
@@ -195,9 +198,11 @@ async function resolveTargetFolder(
     };
   }
 
-  // purchase + expense + setoran + nota_archive: year/month structure
+  // purchase + expense + setoran + nota_archive + journal: year/month
   if (!ctx.date)
-    throw new Error("date wajib untuk purchase/expense/setoran/nota_archive");
+    throw new Error(
+      "date wajib untuk purchase/expense/setoran/nota_archive/journal",
+    );
   const m = ctx.date.match(/^(\d{4})-(\d{2})-\d{2}$/);
   if (!m) throw new Error("date harus YYYY-MM-DD");
   const yyyy = m[1];

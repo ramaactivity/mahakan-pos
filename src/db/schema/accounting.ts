@@ -300,6 +300,12 @@ export const journalEntries = pgTable(
     reversesEntryId: uuid("reverses_entry_id"),
     reverseReason: text("reverse_reason"),
 
+    /* Sesi AE-206 — bukti transaksi/transfer untuk jurnal manual (link
+     * Google Drive, folder "BUKTI JURNAL/{YYYY}/{NN. BULAN}/"). Nullable:
+     * jurnal otomatis (POS, pembelian, payroll) punya buktinya di modul
+     * masing-masing dan tidak mengisi kolom ini. */
+    receiptImageUrl: text("receipt_image_url"),
+
     metadata: jsonb("metadata"),
 
     createdAt: timestamp("created_at", { withTimezone: true })

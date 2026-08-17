@@ -1,12 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
   Trash2,
   CheckCircle2,
   AlertCircle,
+  ExternalLink,
+  Loader2,
+  Paperclip,
   Sparkles,
+  UploadCloud,
+  X,
 } from "lucide-react";
 import {
   Badge,
@@ -129,6 +134,10 @@ export function JournalEntryModal({
    * 3+ baris → baris ini menutup sisanya. Begitu baris ini diketik manual,
    * penandanya dilepas supaya angka ketikan tidak pernah ditimpa sistem. */
   const [autoLineId, setAutoLineId] = useState<string | null>(null);
+  /* Sesi AE-206 — bukti transaksi/transfer (link Google Drive). */
+  const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -153,13 +162,16 @@ export function JournalEntryModal({
             }))
           : [blankLine(), blankLine()],
       );
+      setReceiptUrl(editEntry.receiptImageUrl ?? null);
     } else {
       setEntryDate(todayJakarta());
       setDescription("");
       setLines([blankLine(), blankLine()]);
+      setReceiptUrl(null);
     }
     setError(null);
     setAutoLineId(null);
+    setUploadingReceipt(false);
     setLoading(true);
     /* eslint-enable react-hooks/set-state-in-effect */
     fetchAccounts({ isActive: true })
@@ -383,6 +395,43 @@ export function JournalEntryModal({
     setAutoLineId(null);
   }
 
+  /* Sesi AE-206 — upload bukti ke Drive lewat endpoint khusus jurnal.
+   * Filenya masuk folder "BUKTI JURNAL/{tahun}/{bulan}" mengikuti Tanggal
+   * Entry, jadi upload baru bisa jalan setelah tanggalnya terisi. */
+  async function handleReceiptUpload(file: File) {
+    if (uploadingReceipt) return;
+    setError(null);
+    if (!entryDate) {
+      setError("Isi Tanggal Entry dulu sebelum unggah bukti");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError("Bukti transaksi maksimal 5 MB");
+      return;
+    }
+    setUploadingReceipt(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("entryDate", entryDate);
+      const res = await fetch("/api/v1/journal-receipts/upload", {
+        method: "POST",
+        body: fd,
+      });
+      const json = (await res.json()) as
+        | { success: true; data: { url: string; folderPath: string } }
+        | { success: false; error: { code: string; message: string } };
+      if (!json.success) throw new Error(json.error.message);
+      setReceiptUrl(json.data.url);
+      toast.success(`Bukti tersimpan di Drive · ${json.data.folderPath}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload bukti gagal");
+    } finally {
+      setUploadingReceipt(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
   function addLine() {
     setLines((prev) => [...prev, blankLine()]);
   }
@@ -440,12 +489,14 @@ export function JournalEntryModal({
           description: description.trim(),
           newStatus: status,
           lines: inputLines,
+          receiptImageUrl: receiptUrl,
         })
       : await saveManualJournal({
           entryDate,
           description: description.trim(),
           status,
           lines: inputLines,
+          receiptImageUrl: receiptUrl,
         });
     setSubmitting(false);
 
@@ -519,10 +570,12 @@ export function JournalEntryModal({
             <Button variant="ghost" onClick={onClose} disabled={submitting}>
               Batal
             </Button>
+            {/* Sesi AE-206 — jangan simpan selagi bukti masih naik ke Drive;
+                URL-nya belum ada, entry-nya jadi tanpa lampiran. */}
             <Button
               variant="outline"
               onClick={() => submit("draft")}
-              disabled={submitting}
+              disabled={submitting || uploadingReceipt}
             >
               Save Draft
             </Button>
@@ -530,7 +583,7 @@ export function JournalEntryModal({
               <Button
                 onClick={() => submit("posted")}
                 loading={submitting}
-                disabled={submitting || !balanced}
+                disabled={submitting || uploadingReceipt || !balanced}
               >
                 Post Entry
               </Button>
@@ -778,6 +831,87 @@ export function JournalEntryModal({
               <Plus className="size-4" /> Tambah Baris
             </Button>
           </div>
+        </div>
+
+        {/* Sesi AE-206 — bukti transaksi/transfer.
+         * Filenya naik ke Google Drive (folder BUKTI JURNAL/{tahun}/{bulan})
+         * dan URL-nya nempel di entry, jadi bisa dibuka lagi dari daftar
+         * Jurnal lewat tombol "Lihat bukti". */}
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-neutral-900">
+            Bukti Transaksi{" "}
+            <span className="font-normal text-neutral-500">(opsional)</span>
+          </label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,application/pdf"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void handleReceiptUpload(file);
+            }}
+          />
+          {receiptUrl ? (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-mahakan-green-700/30 bg-mahakan-green-50 px-3 py-2">
+              <a
+                href={receiptUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium text-mahakan-green-900 hover:underline"
+              >
+                <Paperclip className="size-4 shrink-0" aria-hidden />
+                <span className="truncate">
+                  Bukti tersimpan di Drive — klik untuk lihat
+                </span>
+                <ExternalLink className="size-3.5 shrink-0" aria-hidden />
+              </a>
+              <button
+                type="button"
+                onClick={() => setReceiptUrl(null)}
+                disabled={submitting || uploadingReceipt}
+                className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-neutral-500 hover:bg-danger-100 hover:text-danger-500"
+                aria-label="Lepas bukti dari entry ini (file tetap ada di Drive)"
+                title="Lepas bukti dari entry ini (file tetap ada di Drive)"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          ) : (
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const file = e.dataTransfer.files?.[0];
+                if (file) void handleReceiptUpload(file);
+              }}
+              className="flex flex-col items-center gap-1.5 rounded-md border border-dashed border-neutral-300 bg-neutral-50/60 px-3 py-5 text-center"
+            >
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingReceipt || submitting}
+              >
+                {uploadingReceipt ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" /> Mengunggah…
+                  </>
+                ) : (
+                  <>
+                    <UploadCloud className="size-4" /> Lampirkan Bukti Transfer
+                    / Nota
+                  </>
+                )}
+              </Button>
+              <p className="text-[11px] text-neutral-500">
+                Tarik file ke sini atau klik tombol · JPG / PNG / WebP / PDF,
+                maks 5 MB · disimpan ke Google Drive folder{" "}
+                <em>BUKTI JURNAL</em>
+              </p>
+            </div>
+          )}
         </div>
 
         {error ? (

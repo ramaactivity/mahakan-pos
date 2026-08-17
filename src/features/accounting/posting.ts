@@ -50,6 +50,8 @@ export type RecordJournalInput = {
   lines: JournalLineInput[];
   status?: "draft" | "posted";
   metadata?: Record<string, unknown> | null;
+  /** Sesi AE-206 — link bukti transaksi di Google Drive (jurnal manual). */
+  receiptImageUrl?: string | null;
   /** Acting user id (Owner for manual; system actor for auto). */
   actorId: string;
 };
@@ -389,6 +391,7 @@ export async function recordJournal(
         postedBy: input.status === "draft" ? null : input.actorId,
         createdBy: input.actorId,
         metadata: input.metadata ?? null,
+        receiptImageUrl: input.receiptImageUrl ?? null,
       })
       .returning();
 

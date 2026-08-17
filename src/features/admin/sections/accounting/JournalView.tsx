@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
+  ExternalLink,
   Filter,
   Info,
   Loader2,
   CalendarDays,
+  Paperclip,
   Pencil,
   Plus,
   RotateCcw,
@@ -724,6 +726,14 @@ function RowList({
               <span className="font-mono text-sm font-medium text-neutral-900">
                 {formatRupiah(totalDebit)}
               </span>
+              {/* Sesi AE-206 — penanda entry punya lampiran bukti. Ikonnya
+                  di baris ringkasan supaya kelihatan tanpa perlu dibuka. */}
+              {entry.receiptImageUrl ? (
+                <Paperclip
+                  className="size-3.5 shrink-0 text-mahakan-green-700"
+                  aria-label="Ada bukti transaksi"
+                />
+              ) : null}
               {/* Sesi AE-185 — koreksi tanggal tanpa perlu reverse. Tersedia
                   untuk draft & posted; entry yang sudah di-reverse tidak. */}
               {canEditDate && entry.status !== "reversed" ? (
@@ -824,6 +834,25 @@ function RowList({
                   ))}
                 </tbody>
               </table>
+              {/* Sesi AE-206 — buka bukti transaksi yang dilampirkan saat
+                  entry dibuat (file di Google Drive, buka di tab baru). */}
+              {entry.receiptImageUrl ? (
+                <div className="mt-2 flex items-center justify-between gap-2 border-t border-neutral-200 pt-2">
+                  <span className="inline-flex items-center gap-1.5 text-xs text-neutral-600">
+                    <Paperclip className="size-3.5" aria-hidden /> Bukti
+                    transaksi
+                  </span>
+                  <a
+                    href={entry.receiptImageUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 hover:border-mahakan-green-700 hover:text-mahakan-green-900"
+                  >
+                    <ExternalLink className="size-3.5" aria-hidden /> Lihat
+                    bukti
+                  </a>
+                </div>
+              ) : null}
             </div>
           </details>
         );

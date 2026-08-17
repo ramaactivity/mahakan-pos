@@ -25,9 +25,12 @@ MAHAKAN COFFEE/                                    ← root parent
   STRUK PENGELUARAN/                               ← expense receipts (Kas)
     2026/
       01. JANUARI / 02. FEBRUARI / ... /
+  BUKTI JURNAL/                                    ← bukti transfer/nota entry jurnal manual (sesi AE-206)
+    2026/
+      01. JANUARI / 02. FEBRUARI / ... /
 ```
 
-Folder `NOTA MAHAKAN`, `DOKUMEN HR`, `STRUK PENGELUARAN` + subfolder
+Folder `NOTA MAHAKAN`, `DOKUMEN HR`, `STRUK PENGELUARAN`, `BUKTI JURNAL` + subfolder
 year/month/employee semua **auto-created** di first upload module
 masing-masing. Owner cuma perlu kasih ID parent folder MAHAKAN COFFEE.
 
