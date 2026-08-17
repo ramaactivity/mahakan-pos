@@ -68,15 +68,26 @@ export interface UpdateCreditorInput extends Partial<CreateCreditorInput> {
   status?: CreditorStatus;
 }
 
+/** Sesi AE-208 — sumber dana cicilan kreditur. */
+export type RepaymentFundingSource = "company" | "pengelola";
+
 export interface PostRepaymentInput {
   creditorId: string;
-  bankAccountId: string;
+  /** Wajib kalau fundingSource='company' (default). */
+  bankAccountId?: string | null;
+  /** Sesi AE-208 — 'company' = kas Mahakan, 'pengelola' = uang pribadi
+   *  pengelola yang menalangi (modalnya naik sebesar total cicilan). */
+  fundingSource?: RepaymentFundingSource;
+  /** Wajib kalau fundingSource='pengelola'. */
+  paidByPengelolaId?: string | null;
   /** Pokok cicilan (Rupiah). Min 0, total > 0. */
   principalAmount: number;
   /** Bunga periode (Rupiah). Default 0. */
   interestAmount?: number;
   occurredAt?: string | null;
   description?: string | null;
+  /** Sesi AE-208 — bukti transfer (URL Google Drive). */
+  receiptImageUrl?: string | null;
 }
 
 export interface ReverseRepaymentInput {
@@ -145,6 +156,9 @@ export interface CreditorListRow extends Creditor {
 
 export interface CreditorRepaymentListRow extends CreditorRepayment {
   creditorName: string;
+  /** Label rekening sumber. Kosong kalau cicilan ditalangi pengelola. */
   bankLabel: string;
+  /** Sesi AE-208 — nama pengelola yang menalangi (null kalau uang perusahaan). */
+  paidByPengelolaName: string | null;
   createdByName: string | null;
 }

@@ -18,6 +18,9 @@ import type { JournalLineInput } from "../posting";
 
 const ACCOUNT_HUTANG_KREDITUR = "2150";
 const ACCOUNT_BEBAN_BUNGA = "6701";
+/* Sesi AE-208 — modal pengelola/investor pakai akun yang sama dengan
+ * konversi investor→kreditur (investorToCreditorConversion.ts). */
+const ACCOUNT_MODAL_OWNER = "3101";
 
 /**
  * Audit AE-181 — jurnal pengakuan hutang saat kreditur dibuat/diimport.
@@ -63,17 +66,65 @@ export function mapCreditorCreate(
   ];
 }
 
+/**
+ * Sesi AE-208 — sumber dana cicilan.
+ *
+ * 'company'   : kas perusahaan keluar dari rekening bank → sisi kredit =
+ *               akun bank.
+ * 'pengelola' : pengelola menalangi pakai uang pribadi. Kas perusahaan
+ *               tidak bergerak; hutang ke kreditur berubah jadi modal
+ *               pengelola → sisi kredit = 3101 Modal Owner.
+ *
+ * Keputusan owner (sesi AE-208): cukup dicatat langsung jadi modal
+ * pengelola. Secara substansi ini sama dengan "hutang dikonversi jadi
+ * saham lalu sahamnya dibeli pengelola" — jurnalnya identik (Dr 2150 /
+ * Cr 3101) karena tukar pemilik saham tidak menyentuh total ekuitas.
+ * Bedanya cuma record investor bayangan yang modalnya langsung 0, dan itu
+ * sengaja tidak dibuat.
+ */
+export type RepaymentFunding =
+  | {
+      kind: "company";
+      /** Pre-resolved bank COA code. */
+      bankAccountCode: string;
+      /** Display label untuk description. */
+      bankDestinationLabel: string;
+    }
+  | {
+      kind: "pengelola";
+      /** Nama pengelola yang menalangi — masuk ke description jurnal. */
+      pengelolaName: string;
+    };
+
 export interface CreditorRepaymentMappingInput {
   /** Pokok cicilan (Rupiah). Min 0, total > 0. */
   principalAmount: number;
   /** Bunga periode ini (Rupiah). Bisa 0. */
   interestAmount: number;
-  /** Pre-resolved bank COA code. */
-  bankAccountCode: string;
-  /** Display label untuk description. */
-  bankDestinationLabel: string;
   /** Creditor name untuk audit trail. */
   creditorName: string;
+  /** Sumber dana — menentukan akun sisi kredit. */
+  funding: RepaymentFunding;
+}
+
+/** Sisi lawan (kredit saat bayar, debit saat reversal) + labelnya. */
+function resolveCounterAccount(funding: RepaymentFunding): {
+  accountCode: string;
+  payLabel: string;
+  reversalLabel: string;
+} {
+  if (funding.kind === "pengelola") {
+    return {
+      accountCode: ACCOUNT_MODAL_OWNER,
+      payLabel: `Modal pengelola ${funding.pengelolaName} (menalangi cicilan)`,
+      reversalLabel: `Reversal modal pengelola ${funding.pengelolaName}`,
+    };
+  }
+  return {
+    accountCode: funding.bankAccountCode,
+    payLabel: `Transfer cicilan ke ${funding.bankDestinationLabel}`,
+    reversalLabel: `Reversal cicilan dari ${funding.bankDestinationLabel}`,
+  };
 }
 
 export function mapCreditorRepayment(
@@ -85,6 +136,7 @@ export function mapCreditorRepayment(
   if (total <= 0) {
     throw new Error("MAP_CREDITOR_REPAYMENT_ZERO_TOTAL");
   }
+  const counter = resolveCounterAccount(input.funding);
   const lines: JournalLineInput[] = [];
   if (principal > 0) {
     lines.push({
@@ -101,9 +153,9 @@ export function mapCreditorRepayment(
     });
   }
   lines.push({
-    accountCode: input.bankAccountCode,
+    accountCode: counter.accountCode,
     credit: total,
-    description: `Transfer cicilan ke ${input.bankDestinationLabel}`,
+    description: counter.payLabel,
   });
   return lines;
 }
@@ -118,11 +170,12 @@ export function mapCreditorRepaymentReversal(
     throw new Error("MAP_CREDITOR_REPAYMENT_REVERSAL_ZERO_TOTAL");
   }
   const reasonShort = input.reason.slice(0, 100);
+  const counter = resolveCounterAccount(input.funding);
   const lines: JournalLineInput[] = [
     {
-      accountCode: input.bankAccountCode,
+      accountCode: counter.accountCode,
       debit: total,
-      description: `Reversal cicilan dari ${input.bankDestinationLabel}: ${reasonShort}`,
+      description: `${counter.reversalLabel}: ${reasonShort}`,
     },
   ];
   if (principal > 0) {

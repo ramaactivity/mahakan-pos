@@ -69,16 +69,39 @@ export const updateCreditorSchema = z.object({
 export const postRepaymentSchema = z
   .object({
     creditorId: z.string().uuid(),
-    bankAccountId: z.string().uuid(),
+    /* Sesi AE-208 — wajib untuk fundingSource='company', diabaikan untuk
+     * 'pengelola' (kas perusahaan tidak bergerak). */
+    bankAccountId: z.string().uuid().nullish(),
+    /* Sesi AE-208 — sumber dana cicilan. Default 'company' supaya pemanggil
+     * lama (tanpa field ini) tetap jalan seperti sebelumnya. */
+    fundingSource: z.enum(["company", "pengelola"]).default("company"),
+    /** Pengelola yang menalangi — wajib kalau fundingSource='pengelola'. */
+    paidByPengelolaId: z.string().uuid().nullish(),
     principalAmount: moneyNonNeg,
     interestAmount: moneyNonNeg.optional(),
     occurredAt: isoDateOptional,
     description: z.string().trim().max(500).nullish(),
+    /** Bukti transfer (URL Drive). Disaring lagi server-side. */
+    receiptImageUrl: z.string().trim().max(2000).nullish(),
   })
   .refine((v) => v.principalAmount + (v.interestAmount ?? 0) > 0, {
     message: "Total cicilan (pokok + bunga) harus > 0",
     path: ["principalAmount"],
-  });
+  })
+  .refine(
+    (v) => v.fundingSource !== "company" || !!v.bankAccountId,
+    {
+      message: "Pilih bank sumber untuk cicilan dari uang perusahaan",
+      path: ["bankAccountId"],
+    },
+  )
+  .refine(
+    (v) => v.fundingSource !== "pengelola" || !!v.paidByPengelolaId,
+    {
+      message: "Pilih pengelola yang membayar cicilan ini",
+      path: ["paidByPengelolaId"],
+    },
+  );
 
 export const reverseRepaymentSchema = z.object({
   id: z.string().uuid(),

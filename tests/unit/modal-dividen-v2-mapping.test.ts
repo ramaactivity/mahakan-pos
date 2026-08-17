@@ -128,13 +128,20 @@ describe("Dividend withdrawal mappings", () => {
   });
 });
 
+/* Sesi AE-208 — sumber dana cicilan kreditur jadi 2 jalur, jadi bank code +
+ * labelnya sekarang dibungkus dalam `funding`. */
+const COMPANY_BCA = {
+  kind: "company",
+  bankAccountCode: "1110",
+  bankDestinationLabel: "BCA",
+} as const;
+
 describe("Creditor repayment mappings", () => {
   it("repayment principal-only (no interest)", () => {
     const lines = mapCreditorRepayment({
       principalAmount: 1_000_000,
       interestAmount: 0,
-      bankAccountCode: "1110",
-      bankDestinationLabel: "BCA",
+      funding: COMPANY_BCA,
       creditorName: "Pak Budi",
     });
     expect(lines.length).toBe(2); // Dr principal + Cr bank (no Dr interest)
@@ -149,8 +156,7 @@ describe("Creditor repayment mappings", () => {
     const lines = mapCreditorRepayment({
       principalAmount: 1_000_000,
       interestAmount: 50_000,
-      bankAccountCode: "1110",
-      bankDestinationLabel: "BCA",
+      funding: COMPANY_BCA,
       creditorName: "Pak Budi",
     });
     expect(lines.length).toBe(3);
@@ -167,8 +173,7 @@ describe("Creditor repayment mappings", () => {
     const lines = mapCreditorRepayment({
       principalAmount: 0,
       interestAmount: 50_000,
-      bankAccountCode: "1110",
-      bankDestinationLabel: "BCA",
+      funding: COMPANY_BCA,
       creditorName: "Pak Budi",
     });
     expect(lines.length).toBe(2);
@@ -182,8 +187,7 @@ describe("Creditor repayment mappings", () => {
       mapCreditorRepayment({
         principalAmount: 0,
         interestAmount: 0,
-        bankAccountCode: "1110",
-        bankDestinationLabel: "BCA",
+        funding: COMPANY_BCA,
         creditorName: "x",
       }),
     ).toThrow();
@@ -193,13 +197,61 @@ describe("Creditor repayment mappings", () => {
     const lines = mapCreditorRepaymentReversal({
       principalAmount: 1_000_000,
       interestAmount: 50_000,
-      bankAccountCode: "1110",
-      bankDestinationLabel: "BCA",
+      funding: COMPANY_BCA,
       creditorName: "Pak Budi",
       reason: "salah input",
     });
     expect(lines[0].accountCode).toBe("1110");
     expect(lines[0].debit).toBe(1_050_000);
+    expect(sumLines(lines).debit).toBe(sumLines(lines).credit);
+  });
+
+  /* Sesi AE-208 — cicilan ditalangi pengelola: kas perusahaan tidak
+   * bergerak, hutangnya berpindah jadi modal pengelola (3101). */
+  it("ditalangi pengelola: Cr 3101 Modal, bukan akun bank", () => {
+    const lines = mapCreditorRepayment({
+      principalAmount: 500_000,
+      interestAmount: 0,
+      creditorName: "Dendy Gustian",
+      funding: { kind: "pengelola", pengelolaName: "Muhamad Bayu Kurnia" },
+    });
+    expect(lines.length).toBe(2);
+    expect(lines[0].accountCode).toBe("2150");
+    expect(lines[0].debit).toBe(500_000);
+    expect(lines[1].accountCode).toBe("3101");
+    expect(lines[1].credit).toBe(500_000);
+    /* Tidak boleh ada akun kas/bank (11xx) — kas perusahaan tidak keluar. */
+    expect(lines.some((l) => l.accountCode?.startsWith("11"))).toBe(false);
+    expect(lines[1].description).toContain("Muhamad Bayu Kurnia");
+    expect(sumLines(lines).debit).toBe(sumLines(lines).credit);
+  });
+
+  it("ditalangi pengelola + bunga: modal naik sebesar pokok + bunga", () => {
+    const lines = mapCreditorRepayment({
+      principalAmount: 500_000,
+      interestAmount: 20_000,
+      creditorName: "Dendy Gustian",
+      funding: { kind: "pengelola", pengelolaName: "Anisa Amalia" },
+    });
+    expect(lines.length).toBe(3);
+    expect(lines[0].accountCode).toBe("2150");
+    expect(lines[1].accountCode).toBe("6701");
+    expect(lines[2].accountCode).toBe("3101");
+    expect(lines[2].credit).toBe(520_000);
+    expect(sumLines(lines).debit).toBe(sumLines(lines).credit);
+  });
+
+  it("reversal talangan pengelola: Dr 3101 (modal ditarik balik)", () => {
+    const lines = mapCreditorRepaymentReversal({
+      principalAmount: 500_000,
+      interestAmount: 20_000,
+      creditorName: "Dendy Gustian",
+      funding: { kind: "pengelola", pengelolaName: "Anisa Amalia" },
+      reason: "salah pilih pengelola",
+    });
+    expect(lines[0].accountCode).toBe("3101");
+    expect(lines[0].debit).toBe(520_000);
+    expect(lines.some((l) => l.accountCode?.startsWith("11"))).toBe(false);
     expect(sumLines(lines).debit).toBe(sumLines(lines).credit);
   });
 });

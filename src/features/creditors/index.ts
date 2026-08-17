@@ -26,6 +26,7 @@ export {
   type CreditorStatus,
   type InterestPeriod,
   type PostRepaymentInput,
+  type RepaymentFundingSource,
   type ReverseRepaymentInput,
   type UpdateCreditorInput,
 } from "./types";

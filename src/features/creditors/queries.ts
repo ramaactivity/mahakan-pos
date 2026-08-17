@@ -5,6 +5,7 @@ import {
   bankAccounts,
   creditorRepayments,
   creditors,
+  pengelola,
   users,
 } from "@/db/schema";
 import type {
@@ -172,6 +173,7 @@ export async function listCreditorRepayments(opts: {
       bankName: bankAccounts.bankName,
       accountName: bankAccounts.accountName,
       accountNumber: bankAccounts.accountNumber,
+      pengelolaName: pengelola.fullName,
       createdByName: users.name,
     })
     .from(creditorRepayments)
@@ -179,6 +181,12 @@ export async function listCreditorRepayments(opts: {
     .leftJoin(
       bankAccounts,
       eq(bankAccounts.id, creditorRepayments.bankAccountId),
+    )
+    /* Sesi AE-208 — pengelola yang menalangi (null untuk cicilan kas
+     * perusahaan). */
+    .leftJoin(
+      pengelola,
+      eq(pengelola.id, creditorRepayments.paidByPengelolaId),
     )
     .leftJoin(users, eq(users.id, creditorRepayments.createdBy))
     .where(and(...conds))
@@ -196,6 +204,7 @@ export async function listCreditorRepayments(opts: {
       bankLabel: [row.bankName, row.accountName, numTail]
         .filter(Boolean)
         .join(" — "),
+      paidByPengelolaName: row.pengelolaName ?? null,
       createdByName: row.createdByName ?? null,
     };
   });

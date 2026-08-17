@@ -8,6 +8,7 @@ import {
   creditorRepayments,
   creditors,
   investors,
+  pengelola,
 } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
@@ -18,12 +19,15 @@ import {
   lockCreditor,
   lockInvestors,
   lockOutletDividenAdvisory,
+  lockPengelola,
 } from "@/lib/db/locking";
 import { recordJournal } from "@/features/accounting/posting";
+import { normalizeReceiptUrl } from "@/features/accounting/receipt-url";
 import {
   mapCreditorCreate,
   mapCreditorRepayment,
   mapCreditorRepaymentReversal,
+  type RepaymentFunding,
 } from "@/features/accounting/mapping/creditorRepayment";
 import { mapInvestorToCreditorConversion } from "@/features/accounting/mapping/investorToCreditorConversion";
 import { resolveBankCodeFromBankName } from "@/features/accounting/mapping/dividendWithdrawal";
@@ -486,44 +490,104 @@ export async function postRepayment(
     );
   }
 
-  const [bank] = await db
-    .select({
-      id: bankAccounts.id,
-      outletId: bankAccounts.outletId,
-      bankName: bankAccounts.bankName,
-      accountName: bankAccounts.accountName,
-      accountNumber: bankAccounts.accountNumber,
-      isActive: bankAccounts.isActive,
-    })
-    .from(bankAccounts)
-    .where(eq(bankAccounts.id, v.bankAccountId))
-    .limit(1);
-  if (!bank) return fail("NOT_FOUND", "Bank account tidak ditemukan");
-  if (bank.outletId !== session.user.outletId) {
-    return fail("FORBIDDEN", "Bank account dari outlet lain");
-  }
-  if (!bank.isActive) return fail("BANK_INACTIVE", "Bank account non-aktif");
+  /* Sesi AE-208 — dua jalur sumber dana. 'company' resolve rekening bank
+   * (kas keluar); 'pengelola' resolve pengelola yang menalangi (kas
+   * perusahaan tidak bergerak, modal pengelola yang naik). */
+  const byPengelola = v.fundingSource === "pengelola";
 
-  const bankAccountCode = resolveBankCodeFromBankName(bank.bankName);
-  const bankDestinationLabel = (() => {
+  let bankAccountId: string | null = null;
+  let funding: RepaymentFunding;
+  let pengelolaRow: {
+    id: string;
+    fullName: string;
+    modalDisetor: number;
+  } | null = null;
+
+  if (byPengelola) {
+    const [pg] = await db
+      .select({
+        id: pengelola.id,
+        outletId: pengelola.outletId,
+        fullName: pengelola.fullName,
+        modalDisetor: pengelola.modalDisetor,
+        status: pengelola.status,
+        deletedAt: pengelola.deletedAt,
+      })
+      .from(pengelola)
+      .where(eq(pengelola.id, v.paidByPengelolaId!))
+      .limit(1);
+    if (!pg || pg.deletedAt) {
+      return fail("NOT_FOUND", "Pengelola tidak ditemukan", "paidByPengelolaId");
+    }
+    if (pg.outletId !== session.user.outletId) {
+      return fail("FORBIDDEN", "Pengelola dari outlet lain", "paidByPengelolaId");
+    }
+    if (pg.status !== "active") {
+      return fail(
+        "INVALID_STATE",
+        `Pengelola ${pg.fullName} status ${pg.status} — tidak bisa jadi penalang`,
+        "paidByPengelolaId",
+      );
+    }
+    pengelolaRow = {
+      id: pg.id,
+      fullName: pg.fullName,
+      modalDisetor: pg.modalDisetor,
+    };
+    funding = { kind: "pengelola", pengelolaName: pg.fullName };
+  } else {
+    const [bank] = await db
+      .select({
+        id: bankAccounts.id,
+        outletId: bankAccounts.outletId,
+        bankName: bankAccounts.bankName,
+        accountName: bankAccounts.accountName,
+        accountNumber: bankAccounts.accountNumber,
+        isActive: bankAccounts.isActive,
+      })
+      .from(bankAccounts)
+      .where(eq(bankAccounts.id, v.bankAccountId!))
+      .limit(1);
+    if (!bank) return fail("NOT_FOUND", "Bank account tidak ditemukan");
+    if (bank.outletId !== session.user.outletId) {
+      return fail("FORBIDDEN", "Bank account dari outlet lain");
+    }
+    if (!bank.isActive) return fail("BANK_INACTIVE", "Bank account non-aktif");
+
+    bankAccountId = bank.id;
     const numTail =
       bank.accountNumber && bank.accountNumber.length > 4
         ? `...${bank.accountNumber.slice(-4)}`
         : bank.accountNumber ?? "";
-    return [bank.bankName, bank.accountName, numTail]
-      .filter(Boolean)
-      .join(" — ");
-  })();
+    funding = {
+      kind: "company",
+      bankAccountCode: resolveBankCodeFromBankName(bank.bankName),
+      bankDestinationLabel: [bank.bankName, bank.accountName, numTail]
+        .filter(Boolean)
+        .join(" — "),
+    };
+  }
+
+  /* Label sumber dana untuk audit trail + pesan sukses. */
+  const fundingLabel =
+    funding.kind === "pengelola"
+      ? `uang pengelola ${funding.pengelolaName}`
+      : funding.bankDestinationLabel;
 
   const principal = v.principalAmount;
   const interest = v.interestAmount ?? 0;
+  const total = principal + interest;
   const occurredAt = v.occurredAt ? new Date(v.occurredAt) : new Date();
   const entryDate = jakartaDateOf(occurredAt);
+  /* Sesi AE-208 — URL bukti disaring: hanya http/https yang boleh masuk DB,
+   * karena nanti dirender jadi tautan yang bisa diklik di Riwayat Cicilan. */
+  const receiptImageUrl = normalizeReceiptUrl(v.receiptImageUrl);
 
   try {
     const result = await db.transaction(async (tx) => {
       await lockCreditor(tx, v.creditorId);
-      await lockBankAccountAdvisory(tx, v.bankAccountId);
+      if (bankAccountId) await lockBankAccountAdvisory(tx, bankAccountId);
+      if (pengelolaRow) await lockPengelola(tx, [pengelolaRow.id]);
 
       /* Re-check outstanding post-lock. */
       const [reC] = await tx
@@ -549,41 +613,85 @@ export async function postRepayment(
         .values({
           outletId: session.user.outletId,
           creditorId: v.creditorId,
-          bankAccountId: v.bankAccountId,
+          bankAccountId,
+          fundingSource: byPengelola ? "pengelola" : "company",
+          paidByPengelolaId: pengelolaRow?.id ?? null,
           occurredAt,
           principalAmount: principal,
           interestAmount: interest,
           description: v.description ?? null,
+          receiptImageUrl,
           status: "posted",
           createdBy: session.user.id,
         })
         .returning();
 
-      /* Post journal Dr 2150 (+ Dr 6701 kalau bunga) / Cr Bank. */
+      /* Post journal Dr 2150 (+ Dr 6701 kalau bunga) / Cr Bank — atau
+       * Cr 3101 Modal Owner kalau pengelola yang menalangi. */
       const lines = mapCreditorRepayment({
         principalAmount: principal,
         interestAmount: interest,
-        bankAccountCode,
-        bankDestinationLabel,
         creditorName: creditor.fullName,
+        funding,
       });
       const journalResult = await recordJournal({
         outletId: session.user.outletId,
         entryDate,
-        description: `Cicilan kreditur ${creditor.fullName} — pokok Rp ${principal.toLocaleString("id-ID")}${interest > 0 ? `, bunga Rp ${interest.toLocaleString("id-ID")}` : ""}`,
+        description: `Cicilan kreditur ${creditor.fullName} — pokok Rp ${principal.toLocaleString("id-ID")}${interest > 0 ? `, bunga Rp ${interest.toLocaleString("id-ID")}` : ""}${pengelolaRow ? ` (ditalangi ${pengelolaRow.fullName})` : ""}`,
         sourceType: "creditor_repayment",
         sourceId: rp.id,
         lines,
         status: "posted",
         actorId: session.user.id,
+        /* Bukti transfer ikut nempel di jurnalnya, jadi bisa dibuka lewat
+         * tombol "Lihat bukti" di halaman Jurnal juga (sesi AE-206). */
+        receiptImageUrl,
         metadata: {
           repaymentId: rp.id,
           creditorId: v.creditorId,
           creditorName: creditor.fullName,
           principal,
           interest,
+          fundingSource: byPengelola ? "pengelola" : "company",
+          paidByPengelolaId: pengelolaRow?.id ?? null,
+          paidByPengelolaName: pengelolaRow?.fullName ?? null,
         },
       });
+
+      /* Sesi AE-208 — pengelola menalangi: hutang ke kreditur berpindah
+       * jadi modal pengelola. Modalnya naik sebesar TOTAL yang keluar dari
+       * kantong dia (pokok + bunga), sesuai sisi kredit jurnal di atas.
+       *
+       * Trail pakai kind='top_up' (bukan 'share_transfer_in') supaya ikut
+       * terhitung sebagai Setoran di Laporan Perubahan Modal — kalau tidak,
+       * saldo akhir laporan itu meleset dari pengelola.modalDisetor. */
+      let capitalMovementId: string | null = null;
+      if (pengelolaRow) {
+        const [movement] = await tx
+          .insert(capitalMovements)
+          .values({
+            outletId: session.user.outletId,
+            holderType: "pengelola",
+            holderId: pengelolaRow.id,
+            kind: "top_up",
+            amount: total,
+            occurredAt,
+            description: `Menalangi cicilan kreditur ${creditor.fullName} pakai uang pribadi`,
+            journalEntryId: journalResult.entryId,
+            createdBy: session.user.id,
+          })
+          .returning({ id: capitalMovements.id });
+        capitalMovementId = movement.id;
+
+        await tx
+          .update(pengelola)
+          .set({
+            modalDisetor: sql`${pengelola.modalDisetor} + ${total}`,
+            updatedAt: new Date(),
+            updatedBy: session.user.id,
+          })
+          .where(eq(pengelola.id, pengelolaRow.id));
+      }
 
       /* Capital movement trail (kind='creditor_repayment_principal').
        * Holder type: creditor doesn't fit investor/pengelola enum, so
@@ -603,10 +711,10 @@ export async function postRepayment(
         })
         .where(eq(creditors.id, v.creditorId));
 
-      /* Link journalEntryId ke repayment. */
+      /* Link journalEntryId (+ capital movement kalau ditalangi) ke repayment. */
       await tx
         .update(creditorRepayments)
-        .set({ journalEntryId: journalResult.entryId })
+        .set({ journalEntryId: journalResult.entryId, capitalMovementId })
         .where(eq(creditorRepayments.id, rp.id));
 
       return {
@@ -614,6 +722,7 @@ export async function postRepayment(
         journalEntryId: journalResult.entryId,
         newOutstanding,
         newStatus,
+        capitalMovementId,
       };
     });
 
@@ -623,11 +732,20 @@ export async function postRepayment(
       entityType: "creditor_repayment",
       entityId: result.repaymentId,
       payload: {
-        summary: `Cicilan ${creditor.fullName}: pokok Rp ${principal.toLocaleString("id-ID")}${interest > 0 ? `, bunga Rp ${interest.toLocaleString("id-ID")}` : ""} via ${bankDestinationLabel}`,
+        summary: `Cicilan ${creditor.fullName}: pokok Rp ${principal.toLocaleString("id-ID")}${interest > 0 ? `, bunga Rp ${interest.toLocaleString("id-ID")}` : ""} via ${fundingLabel}`,
         context: {
           creditorId: v.creditorId,
           principal,
           interest,
+          fundingSource: byPengelola ? "pengelola" : "company",
+          paidByPengelolaId: pengelolaRow?.id ?? null,
+          paidByPengelolaName: pengelolaRow?.fullName ?? null,
+          /* Modal pengelola setelah menalangi — biar audit trail-nya bisa
+           * dicocokkan tanpa query tambahan. */
+          pengelolaModalAfter: pengelolaRow
+            ? pengelolaRow.modalDisetor + total
+            : null,
+          capitalMovementId: result.capitalMovementId,
           newOutstanding: result.newOutstanding,
           newStatus: result.newStatus,
           journalEntryId: result.journalEntryId,
@@ -701,43 +819,96 @@ export async function reverseRepayment(
   );
   if (!creditor) return fail("NOT_FOUND", "Kreditur tidak ditemukan");
 
-  const [bank] = await db
-    .select({
-      bankName: bankAccounts.bankName,
-      accountName: bankAccounts.accountName,
-      accountNumber: bankAccounts.accountNumber,
-    })
-    .from(bankAccounts)
-    .where(eq(bankAccounts.id, rp.bankAccountId))
-    .limit(1);
-  const bankAccountCode = bank
-    ? resolveBankCodeFromBankName(bank.bankName)
-    : "1112";
-  const bankDestinationLabel = bank
-    ? [
-        bank.bankName,
-        bank.accountName,
-        bank.accountNumber && bank.accountNumber.length > 4
-          ? `...${bank.accountNumber.slice(-4)}`
-          : bank.accountNumber ?? "",
-      ]
-        .filter(Boolean)
-        .join(" — ")
-    : "(unknown bank)";
+  /* Sesi AE-208 — reversal harus balik ke sumber dana yang sama seperti
+   * saat cicilan di-post: kas bank (uang perusahaan) atau modal pengelola
+   * (uang pribadi yang menalangi). */
+  const total = rp.principalAmount + rp.interestAmount;
+  let funding: RepaymentFunding;
+  let reversePengelola: { id: string; fullName: string } | null = null;
+
+  if (rp.fundingSource === "pengelola") {
+    if (!rp.paidByPengelolaId) {
+      /* Tidak mungkin lewat check constraint, tapi jangan sampai jurnal
+       * pembalik nyasar ke akun bank kalau datanya cacat. */
+      return fail(
+        "DATA_INCONSISTENT",
+        "Cicilan ini tercatat ditalangi pengelola tapi nama pengelolanya kosong",
+      );
+    }
+    const [pg] = await db
+      .select({ id: pengelola.id, fullName: pengelola.fullName })
+      .from(pengelola)
+      .where(eq(pengelola.id, rp.paidByPengelolaId))
+      .limit(1);
+    if (!pg) return fail("NOT_FOUND", "Pengelola penalang tidak ditemukan");
+    reversePengelola = pg;
+    funding = { kind: "pengelola", pengelolaName: pg.fullName };
+  } else {
+    /* Cicilan lama (sebelum AE-208) selalu punya bankAccountId. Query-nya
+     * di-skip kalau kosong — `eq(uuid, "")` bikin Postgres error syntax,
+     * bukan sekadar 0 baris. */
+    const [bank] = rp.bankAccountId
+      ? await db
+          .select({
+            bankName: bankAccounts.bankName,
+            accountName: bankAccounts.accountName,
+            accountNumber: bankAccounts.accountNumber,
+          })
+          .from(bankAccounts)
+          .where(eq(bankAccounts.id, rp.bankAccountId))
+          .limit(1)
+      : [];
+    funding = {
+      kind: "company",
+      bankAccountCode: bank
+        ? resolveBankCodeFromBankName(bank.bankName)
+        : "1112",
+      bankDestinationLabel: bank
+        ? [
+            bank.bankName,
+            bank.accountName,
+            bank.accountNumber && bank.accountNumber.length > 4
+              ? `...${bank.accountNumber.slice(-4)}`
+              : bank.accountNumber ?? "",
+          ]
+            .filter(Boolean)
+            .join(" — ")
+        : "(unknown bank)",
+    };
+  }
 
   const entryDate = todayJakarta();
 
   try {
     const result = await db.transaction(async (tx) => {
       await lockCreditor(tx, rp.creditorId);
-      await lockBankAccountAdvisory(tx, rp.bankAccountId);
+      if (rp.bankAccountId) {
+        await lockBankAccountAdvisory(tx, rp.bankAccountId);
+      }
+      if (reversePengelola) await lockPengelola(tx, [reversePengelola.id]);
+
+      /* Modal pengelola tidak boleh jadi minus (ck_pengelola_modal_nonneg).
+       * Bisa kejadian kalau modalnya sudah dipakai/dikurangi lewat jalur
+       * lain setelah cicilan ini di-post — tolak dengan pesan jelas, jangan
+       * biarkan constraint DB yang bicara. */
+      if (reversePengelola) {
+        const [pgNow] = await tx
+          .select({ modalDisetor: pengelola.modalDisetor })
+          .from(pengelola)
+          .where(eq(pengelola.id, reversePengelola.id))
+          .limit(1);
+        if (!pgNow || pgNow.modalDisetor < total) {
+          throw new Error(
+            `MODAL_INSUFFICIENT:${reversePengelola.fullName}:${pgNow?.modalDisetor ?? 0}`,
+          );
+        }
+      }
 
       const lines = mapCreditorRepaymentReversal({
         principalAmount: rp.principalAmount,
         interestAmount: rp.interestAmount,
-        bankAccountCode,
-        bankDestinationLabel,
         creditorName: creditor.fullName,
+        funding,
         reason: v.reason,
       });
 
@@ -755,8 +926,49 @@ export async function reverseRepayment(
           reversalReason: v.reason,
           originalPrincipal: rp.principalAmount,
           originalInterest: rp.interestAmount,
+          fundingSource: rp.fundingSource,
+          paidByPengelolaId: rp.paidByPengelolaId,
         },
       });
+
+      /* Sesi AE-208 — tarik balik kenaikan modal pengelola.
+       *
+       * Pakai kind='adjustment' bernilai negatif, BUKAN kind='reversal'
+       * seperti di reversal pencairan dividen: Laporan Perubahan Modal
+       * menjumlah 'adjustment' (signed) tapi mengabaikan 'reversal', jadi
+       * dengan 'reversal' saldo laporan akan tetap memuat setoran yang sudah
+       * dibatalkan dan meleset dari pengelola.modalDisetor. */
+      if (reversePengelola) {
+        await tx.insert(capitalMovements).values({
+          outletId: session.user.outletId,
+          holderType: "pengelola",
+          holderId: reversePengelola.id,
+          kind: "adjustment",
+          amount: -total,
+          occurredAt: new Date(),
+          description: `Reversal talangan cicilan kreditur ${creditor.fullName}: ${v.reason.slice(0, 100)}`,
+          journalEntryId: journalResult.entryId,
+          parentMovementId: rp.capitalMovementId,
+          createdBy: session.user.id,
+        });
+
+        /* Tandai movement asal sebagai sudah di-reverse (trail, bukan hapus). */
+        if (rp.capitalMovementId) {
+          await tx
+            .update(capitalMovements)
+            .set({ reversedAt: new Date(), reversedBy: session.user.id })
+            .where(eq(capitalMovements.id, rp.capitalMovementId));
+        }
+
+        await tx
+          .update(pengelola)
+          .set({
+            modalDisetor: sql`${pengelola.modalDisetor} - ${total}`,
+            updatedAt: new Date(),
+            updatedBy: session.user.id,
+          })
+          .where(eq(pengelola.id, reversePengelola.id));
+      }
 
       /* Restore creditor.principalOutstanding += principalAmount. */
       await tx
@@ -789,11 +1001,14 @@ export async function reverseRepayment(
       entityType: "creditor_repayment",
       entityId: rp.id,
       payload: {
-        summary: `Reverse cicilan ${creditor.fullName} Rp ${(rp.principalAmount + rp.interestAmount).toLocaleString("id-ID")}: ${v.reason}`,
+        summary: `Reverse cicilan ${creditor.fullName} Rp ${total.toLocaleString("id-ID")}${reversePengelola ? ` (talangan ${reversePengelola.fullName}, modalnya dikurangi lagi)` : ""}: ${v.reason}`,
         context: {
           reversalReason: v.reason,
           journalEntryId: result.journalEntryId,
           restoredPrincipal: rp.principalAmount,
+          fundingSource: rp.fundingSource,
+          paidByPengelolaId: rp.paidByPengelolaId,
+          modalPengelolaReduced: reversePengelola ? total : null,
         },
       },
       metadata: {
@@ -804,6 +1019,14 @@ export async function reverseRepayment(
 
     return ok({ id: rp.id, journalEntryId: result.journalEntryId });
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.startsWith("MODAL_INSUFFICIENT:")) {
+      const parts = msg.split(":");
+      return fail(
+        "MODAL_INSUFFICIENT",
+        `Modal pengelola ${parts[1] ?? ""} sekarang Rp ${Number(parts[2] ?? 0).toLocaleString("id-ID")} — kurang dari Rp ${total.toLocaleString("id-ID")} yang harus ditarik balik. Betulkan modalnya dulu sebelum reverse cicilan ini.`,
+      );
+    }
     return fail(
       "DB_ERROR",
       logAndSanitize(e, "creditor_repayment.reverse", "Operasi database gagal"),

@@ -8,12 +8,14 @@ import {
   Banknote,
   HandCoins,
   Link2,
+  Paperclip,
   Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
   Trash2,
   Upload,
+  UserRound,
   Wallet,
 } from "lucide-react";
 import {
@@ -445,7 +447,10 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
                     <th className="px-3 py-2 text-right">Pokok</th>
                     <th className="px-3 py-2 text-right">Bunga</th>
                     <th className="px-3 py-2 text-right">Total</th>
-                    <th className="px-3 py-2 text-left">Bank</th>
+                    {/* Sesi AE-208 — kolom Bank jadi Sumber Dana: bisa
+                     * rekening perusahaan atau talangan pengelola. */}
+                    <th className="px-3 py-2 text-left">Sumber Dana</th>
+                    <th className="px-3 py-2 text-left">Bukti</th>
                     <th className="px-3 py-2 text-left">Status</th>
                     {canManage ? (
                       <th className="px-3 py-2 text-right">Aksi</th>
@@ -473,7 +478,33 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
                         {formatRupiah(r.principalAmount + r.interestAmount)}
                       </td>
                       <td className="px-3 py-2 text-xs text-neutral-600">
-                        {r.bankLabel}
+                        {r.fundingSource === "pengelola" ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-mahakan-green-700"
+                            title={`Ditalangi uang pribadi ${r.paidByPengelolaName ?? "pengelola"} — modalnya naik ${formatRupiah(r.principalAmount + r.interestAmount)}`}
+                          >
+                            <UserRound className="size-3 shrink-0" aria-hidden />
+                            {r.paidByPengelolaName ?? "Pengelola"}{" "}
+                            <span className="text-neutral-500">(pribadi)</span>
+                          </span>
+                        ) : (
+                          (r.bankLabel || "—")
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {r.receiptImageUrl ? (
+                          <a
+                            href={r.receiptImageUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-mahakan-green-700 hover:underline"
+                          >
+                            <Paperclip className="size-3 shrink-0" aria-hidden />
+                            Lihat bukti
+                          </a>
+                        ) : (
+                          <span className="text-neutral-400">—</span>
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <Badge
@@ -596,6 +627,20 @@ export function CreditorsTab({ canManage }: CreditorsTabProps) {
           <div className="rounded-md border border-warning-300 bg-warning-50 p-2 text-xs text-warning-700">
             <AlertTriangle className="mr-1 inline size-3" />
             Outstanding kreditur akan dikembalikan + jurnal pembalik di-post.
+            {/* Sesi AE-208 — reversal talangan pengelola juga menarik balik
+             * kenaikan modalnya, jadi sebut angkanya di depan. */}
+            {reverseTarget?.fundingSource === "pengelola" ? (
+              <>
+                {" "}
+                Modal{" "}
+                {reverseTarget.paidByPengelolaName ?? "pengelola"} juga dikurangi
+                lagi{" "}
+                {formatRupiah(
+                  reverseTarget.principalAmount + reverseTarget.interestAmount,
+                )}
+                .
+              </>
+            ) : null}
           </div>
           <Input
             label="Alasan reverse"
