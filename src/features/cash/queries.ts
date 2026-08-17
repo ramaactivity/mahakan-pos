@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, gte, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   expenseCategories,
@@ -25,7 +25,17 @@ export interface ListExpensesOptions {
    * hanya tampilkan entry MANUAL (gas, ice, galon, tip). Auto-generated
    * expenses dari payroll/purchase/refund di-isolate ke Admin Kas /
    * Akuntansi. Default undefined = semua source (admin behavior). */
-  sourceType?: "manual" | "purchase" | "payroll" | "refund";
+  sourceType?:
+    | "manual"
+    | "purchase"
+    | "payroll"
+    | "refund"
+    /* Sesi AE-198 — boleh beberapa sekaligus. Petty Cash POS perlu
+     * manual + purchase: belanja bahan yang dicatat kasir kini jadi
+     * PEMBELIAN (sourceType='purchase'), padahal uangnya tetap keluar dari
+     * laci yang sama. Tanpa ini kasir tidak melihat entri yang baru saja
+     * dia buat, sementara saldo lacinya sudah berkurang. */
+    | Array<"manual" | "purchase" | "payroll" | "refund">;
   /* Sesi AE-63 phase9 — filter by paymentMethod. Petty Cash kasir
    * dirancang spesifik untuk CASH DRAWER (laci kasir). Transfer/other
    * tidak affect drawer fisik → exclude dari POS view. */
@@ -44,7 +54,13 @@ export async function fetchExpenses(
   if (opts.from) conds.push(gte(expenses.expenseDate, opts.from));
   if (opts.to) conds.push(lte(expenses.expenseDate, opts.to));
   if (opts.categoryId) conds.push(eq(expenses.categoryId, opts.categoryId));
-  if (opts.sourceType) conds.push(eq(expenses.sourceType, opts.sourceType));
+  if (opts.sourceType) {
+    conds.push(
+      Array.isArray(opts.sourceType)
+        ? inArray(expenses.sourceType, opts.sourceType)
+        : eq(expenses.sourceType, opts.sourceType),
+    );
+  }
   if (opts.paymentMethod)
     conds.push(eq(expenses.paymentMethod, opts.paymentMethod));
 

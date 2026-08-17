@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   ArrowDownCircle,
+  Package,
   ArrowUpCircle,
   Calendar,
   Camera,
@@ -42,6 +43,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Combobox,
   DatePicker,
   Input,
   Select,
@@ -49,6 +51,9 @@ import {
   toast,
   type SelectOption,
 } from "@/components/ui";
+import { createPurchase } from "@/features/purchases/actions";
+import { listRequestableIngredients } from "@/features/purchase-requests/actions";
+import type { RequestableIngredient } from "@/features/purchase-requests/types";
 import {
   createExpense,
   createIncome,
@@ -68,7 +73,24 @@ import { todayWibIso } from "@/features/cash/helpers";
 import { formatIndonesianTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
-type Mode = "expense" | "income";
+/* Sesi AE-198 — mode "bahan" (Beli Bahan Baku).
+ *
+ * Dulu kasir mencatat belanja bahan sebagai pengeluaran biasa berisi teks
+ * bebas ("Beli es batu kristal"), sehingga uangnya keluar dari laci TAPI
+ * pembeliannya tidak pernah muncul di modul Pembelian, kolom Pembelian di
+ * laporan Persediaan, maupun tab Masuk Bahan. Di produksi ada 36 entri
+ * seperti ini (Rp 874.000) — semuanya es batu & gas LPG.
+ *
+ * Mode ini memilih bahan dari master lalu membuat PEMBELIAN sungguhan.
+ * Pembelian itu sendiri yang mencatat kas keluar (createPurchase otomatis
+ * membuat baris expense tertaut), jadi TIDAK BOLEH memanggil createExpense
+ * juga — kalau tidak, uangnya tercatat keluar dua kali. */
+type Mode = "expense" | "income" | "bahan";
+
+/* Riwayat petty cash hanya berisi dua jenis baris. Sengaja TERPISAH dari
+ * `Mode`: mode "bahan" menghasilkan pembelian, bukan jenis baris riwayat
+ * tersendiri. */
+type EntryKind = "expense" | "income";
 
 /** Sesi AE-40 — quick-pick chip dengan keyword priority list buat
  *  match ke nama kategori (substring, case-insensitive). Fallback chain
@@ -188,6 +210,14 @@ const QUICK_AMOUNTS_INCOME: Array<{ label: string; value: string }> = [
  */
 export function PettyCashCard() {
   const [mode, setMode] = useState<Mode>("expense");
+  /* Sesi AE-198 — state khusus mode "bahan". */
+  const [ingredients, setIngredients] = useState<RequestableIngredient[]>([]);
+  const [ingredientsLoading, setIngredientsLoading] = useState(false);
+  const [ingredientId, setIngredientId] = useState<string | null>(null);
+  const [qtyText, setQtyText] = useState("");
+  /* Penanda "sudah pernah dimuat" pakai ref, bukan state — supaya efeknya
+   * tidak ikut bergantung pada state yang dia ubah sendiri (putaran render). */
+  const ingredientsLoadedRef = useRef(false);
   const [description, setDescription] = useState("");
   /** Raw digit string (no separator). Formatted display via formatRupiah. */
   const [amountDigits, setAmountDigits] = useState("");
@@ -196,7 +226,7 @@ export function PettyCashCard() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recent, setRecent] = useState<
-    Array<{ kind: Mode; row: Expense | Income; ts: number }>
+    Array<{ kind: EntryKind; row: Expense | Income; ts: number }>
   >([]);
   const [loadingRecent, setLoadingRecent] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -254,16 +284,18 @@ export function PettyCashCard() {
     let cancelled = false;
     void (async () => {
       if (!hasLoadedOnce.current) setLoadingRecent(true);
-      /* Sesi AE-63 phase9 — filter sourceType='manual' + paymentMethod='cash'
-       * supaya petty cash drawer view tidak ke-leak entries auto-generated
-       * (payroll/purchase/refund) yang sumbernya bukan kas drawer.
-       * Sesi AE-67 — date pakai entryDate (default today, bisa retro). */
+      /* Sesi AE-63 phase9 — batasi ke paymentMethod='cash' supaya petty cash
+       * drawer view tidak ke-leak entry yang sumbernya bukan laci kasir.
+       * Sesi AE-67 — date pakai entryDate (default today, bisa retro).
+       * Sesi AE-198 — 'purchase' IKUT ditampilkan: belanja bahan yang dicatat
+       * kasir sekarang jadi pembelian, tapi uangnya tetap keluar dari laci
+       * yang sama. Payroll/refund tetap dikecualikan. */
       const [expRes, incRes, pecRes] = await Promise.all([
         listExpenses({
           from: entryDate,
           to: entryDate,
           limit: 50,
-          sourceType: "manual",
+          sourceType: ["manual", "purchase"],
           paymentMethod: "cash",
         }),
         listIncomes({
@@ -276,7 +308,7 @@ export function PettyCashCard() {
       ]);
       if (cancelled) return;
       const merged: Array<{
-        kind: Mode;
+        kind: EntryKind;
         row: Expense | Income;
         ts: number;
       }> = [];
@@ -439,12 +471,47 @@ export function PettyCashCard() {
   function resetForm() {
     setDescription("");
     setAmountDigits("");
+    setIngredientId(null);
+    setQtyText("");
     setActiveChipLabel(null);
     setReceiptUrl(null);
     // Re-pick default category (Lain-lain or first)
     const defId = pickCategoryId(undefined);
     if (defId) setCategoryId(defId);
   }
+
+  /* Muat master bahan sekali, saat mode "bahan" pertama kali dibuka —
+   * jangan tarik 184 baris di setiap POS mount kalau kasir tidak memakainya. */
+  useEffect(() => {
+    if (mode !== "bahan" || ingredientsLoadedRef.current) return;
+    ingredientsLoadedRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      setIngredientsLoading(true);
+      const res = await listRequestableIngredients();
+      if (cancelled) return;
+      if (isOk(res)) setIngredients(res.data);
+      setIngredientsLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
+
+  const selectedIngredient = ingredientId
+    ? ingredients.find((i) => i.id === ingredientId) ?? null
+    : null;
+  const parsedQty = Number(qtyText.replace(",", "."));
+  const qtyValid = Number.isFinite(parsedQty) && parsedQty > 0;
+  /* Server menyimpan harga per unit sebagai bilangan BULAT lalu menghitung
+   * ulang total = qty × unitCost. Kalau total yang diketik kasir tidak habis
+   * dibagi qty, angka yang tercatat bisa meleset beberapa rupiah dari uang
+   * fisik yang keluar — dan selisih itu akan muncul di variance tutup shift.
+   * Jadi hitung angka finalnya di sini dan TAMPILKAN, jangan dibiarkan diam. */
+  const bahanUnitCost =
+    qtyValid && parsedAmount > 0 ? Math.round(parsedAmount / parsedQty) : 0;
+  const bahanRecordedTotal = qtyValid ? Math.round(parsedQty * bahanUnitCost) : 0;
+  const bahanRounding = bahanRecordedTotal - parsedAmount;
 
   async function onSubmit() {
     /* Sesi AE-49 — defense against double-submit race. setSubmitting di
@@ -454,10 +521,22 @@ export function PettyCashCard() {
     setSubmitting(true);
     setError(null);
 
-    if (description.trim().length === 0) {
+    if (mode !== "bahan" && description.trim().length === 0) {
       setError("Deskripsi wajib diisi");
       setSubmitting(false);
       return;
+    }
+    if (mode === "bahan") {
+      if (!selectedIngredient) {
+        setError("Pilih bahan baku dulu");
+        setSubmitting(false);
+        return;
+      }
+      if (!qtyValid) {
+        setError("Jumlah harus lebih dari nol");
+        setSubmitting(false);
+        return;
+      }
     }
     if (parsedAmount <= 0) {
       setError("Nominal harus lebih dari nol");
@@ -470,7 +549,43 @@ export function PettyCashCard() {
       return;
     }
 
-    if (mode === "expense") {
+    if (mode === "bahan") {
+      /* Membuat PEMBELIAN, bukan pengeluaran. createPurchase sendiri yang
+       * mencatat kas keluar (baris expense tertaut, sourceType='purchase'),
+       * jadi memanggil createExpense di sini akan menghitung uangnya dua kali.
+       *
+       * `unitCost` di server berarti harga per SATU unit baris. Kasir memasukkan
+       * TOTAL yang dibayar (itu yang ada di struk warung), jadi dibagi qty dulu.
+       * Dibulatkan supaya lolos validasi bilangan bulat; selisih pembulatan
+       * ditanggung di sini, bukan bikin submit gagal. */
+      const res = await createPurchase({
+        supplierId: null,
+        purchaseDate: entryDate,
+        paymentMethod: "cash",
+        paymentTermDays: 0,
+        notes:
+          description.trim().length > 0
+            ? description.trim()
+            : `Belanja kasir — ${selectedIngredient!.name}`,
+        receiptImageUrl: receiptUrl,
+        items: [
+          {
+            ingredientId: selectedIngredient!.id,
+            qty: parsedQty,
+            unitCost: bahanUnitCost,
+            unit: selectedIngredient!.unit,
+          },
+        ],
+      });
+      setSubmitting(false);
+      if (!isOk(res)) {
+        setError(res.error.message);
+        return;
+      }
+      toast.success(
+        `${selectedIngredient!.name} ${parsedQty} ${selectedIngredient!.unit} — ${formatRupiah(bahanRecordedTotal)} masuk ke Pembelian`,
+      );
+    } else if (mode === "expense") {
       const res = await createExpense({
         expenseDate: entryDate,
         categoryId,
@@ -588,7 +703,7 @@ export function PettyCashCard() {
         <div
           role="radiogroup"
           aria-label="Tipe entri petty cash"
-          className="grid grid-cols-2 gap-2"
+          className="grid grid-cols-3 gap-2"
         >
           {(
             [
@@ -596,6 +711,11 @@ export function PettyCashCard() {
                 value: "expense" as const,
                 label: "Pengeluaran",
                 Icon: ArrowDownCircle,
+              },
+              {
+                value: "bahan" as const,
+                label: "Beli Bahan",
+                Icon: Package,
               },
               {
                 value: "income" as const,
@@ -620,7 +740,9 @@ export function PettyCashCard() {
                 mode === opt.value
                   ? opt.value === "expense"
                     ? "border-danger-500 bg-danger-100/60 text-danger-500"
-                    : "border-success-500 bg-success-100/60 text-success-500"
+                    : opt.value === "bahan"
+                      ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                      : "border-success-500 bg-success-100/60 text-success-500"
                   : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50",
               )}
             >
@@ -744,7 +866,79 @@ export function PettyCashCard() {
             />
 
             {/* Category (expense only) */}
-            {mode === "expense" ? (
+            {/* Sesi AE-198 — pilih bahan dari master, bukan ketik bebas.
+                Hasilnya dicatat sebagai PEMBELIAN supaya ikut terbaca di modul
+                Pembelian, kolom Pembelian laporan Persediaan, dan Masuk Bahan. */}
+            {mode === "bahan" ? (
+              <div className="space-y-3">
+                <Combobox
+                  label="Bahan Baku"
+                  value={ingredientId}
+                  onChange={setIngredientId}
+                  loading={ingredientsLoading}
+                  disabled={submitting}
+                  placeholder="Pilih bahan…"
+                  searchPlaceholder="Ketik nama bahan…"
+                  emptyText="Bahan tidak ditemukan di master"
+                  required
+                  options={ingredients.map((i) => ({
+                    value: i.id,
+                    label: `${i.name} (${i.unit})`,
+                  }))}
+                />
+
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="petty-qty"
+                    className="block text-sm font-medium text-neutral-900"
+                  >
+                    Jumlah{" "}
+                    {selectedIngredient ? (
+                      <span className="text-neutral-500">
+                        (dalam {selectedIngredient.unit})
+                      </span>
+                    ) : null}
+                  </label>
+                  <Input
+                    id="petty-qty"
+                    inputMode="decimal"
+                    value={qtyText}
+                    onChange={(e) =>
+                      setQtyText(e.target.value.replace(/[^0-9.,]/g, ""))
+                    }
+                    placeholder={
+                      selectedIngredient
+                        ? `Contoh: 1 ${selectedIngredient.unit}`
+                        : "Pilih bahan dulu"
+                    }
+                    disabled={submitting || !selectedIngredient}
+                  />
+                </div>
+
+                {selectedIngredient && qtyValid && parsedAmount > 0 ? (
+                  <div className="space-y-1 rounded-lg bg-mahakan-green-50 px-3 py-2 text-xs text-mahakan-green-900">
+                    <p>
+                      {parsedQty} {selectedIngredient.unit} ×{" "}
+                      {formatRupiah(bahanUnitCost)} ={" "}
+                      <strong>{formatRupiah(bahanRecordedTotal)}</strong>
+                    </p>
+                    {bahanRounding !== 0 ? (
+                      <p className="text-warning-700">
+                        ⚠ {formatRupiah(parsedAmount)} tidak habis dibagi{" "}
+                        {parsedQty}. Yang tercatat{" "}
+                        {formatRupiah(bahanRecordedTotal)} (
+                        {bahanRounding > 0 ? "+" : ""}
+                        {formatRupiah(bahanRounding)} dari yang kamu ketik).
+                      </p>
+                    ) : null}
+                    <p>
+                      Dicatat sebagai pembelian bahan baku dan uangnya keluar
+                      dari laci kasir — tidak dihitung dua kali.
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : mode === "expense" ? (
               visibleCategories.length === 0 ? (
                 <div className="rounded-lg border border-warning-500/40 bg-warning-100/40 px-3 py-2 text-xs text-warning-500">
                   ⚠️ Belum ada kategori pengeluaran. Owner / Manager perlu
@@ -965,21 +1159,28 @@ export function PettyCashCard() {
           loading={submitting}
           disabled={
             submitting ||
-            (mode === "expense" && visibleCategories.length === 0)
+            (mode === "expense" && visibleCategories.length === 0) ||
+            (mode === "bahan" && (!selectedIngredient || !qtyValid))
           }
           fullWidth
           className={cn(
             "h-14 text-base font-semibold",
             mode === "expense"
               ? "!bg-danger-500 hover:!bg-danger-700"
-              : "!bg-success-500 hover:!bg-success-500",
+              : mode === "bahan"
+                ? "!bg-mahakan-green-700 hover:!bg-mahakan-green-900"
+                : "!bg-success-500 hover:!bg-success-500",
           )}
         >
           {submitting
             ? "Memproses…"
-            : `Catat ${mode === "expense" ? "Pengeluaran" : "Pemasukan"}${
-                parsedAmount > 0 ? ` ${formatRupiah(parsedAmount)}` : ""
-              }`}
+            : `Catat ${
+                mode === "expense"
+                  ? "Pengeluaran"
+                  : mode === "bahan"
+                    ? "Pembelian Bahan"
+                    : "Pemasukan"
+              }${parsedAmount > 0 ? ` ${formatRupiah(parsedAmount)}` : ""}`}
         </Button>
 
         {/* Today's recent list */}
