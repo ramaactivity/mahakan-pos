@@ -24,6 +24,7 @@ import {
   saveManualJournal,
   updateDraftJournalEntry,
 } from "@/features/accounting/actions";
+import { planAutoBalance } from "@/features/accounting/journal-balance-pure";
 import type {
   AccountListRow,
   AccountType,
@@ -120,6 +121,14 @@ export function JournalEntryModal({
   const [description, setDescription] = useState("");
   const [lines, setLines] = useState<LineDraft[]>([blankLine(), blankLine()]);
   const [error, setError] = useState<string | null>(null);
+  /* Sesi AE-204 — baris penyeimbang otomatis.
+   *
+   * Owner: "kalau isi debit, kreditnya keisi sendiri dengan nominal yang sama,
+   * begitu juga sebaliknya." Ini id baris yang nilainya DIISI SISTEM. Nilainya
+   * selalu = sisa selisih baris-baris lain, jadi 2 baris → nominal kembar,
+   * 3+ baris → baris ini menutup sisanya. Begitu baris ini diketik manual,
+   * penandanya dilepas supaya angka ketikan tidak pernah ditimpa sistem. */
+  const [autoLineId, setAutoLineId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -150,6 +159,7 @@ export function JournalEntryModal({
       setLines([blankLine(), blankLine()]);
     }
     setError(null);
+    setAutoLineId(null);
     setLoading(true);
     /* eslint-enable react-hooks/set-state-in-effect */
     fetchAccounts({ isActive: true })
@@ -190,24 +200,49 @@ export function JournalEntryModal({
   }, [lines]);
   const balanced = totals.dr > 0 && totals.diff === 0;
 
+  /* Sesi AE-73 — akun unidirectional (revenue/expense/cogs non-kontra) hanya
+   * boleh diisi di sisi normal-nya. Dipakai render (disable field) DAN
+   * penyeimbang otomatis (jangan isi sisi yang terkunci). */
+  function lockedSidesOf(accountId: string | null) {
+    const acc = accountId ? accountById.get(accountId) : null;
+    const unidirectional =
+      acc != null &&
+      !acc.isContra &&
+      (acc.type === "revenue" || acc.type === "expense" || acc.type === "cogs");
+    return {
+      lockDebit: unidirectional && acc.normalBalance === "credit",
+      lockCredit: unidirectional && acc.normalBalance === "debit",
+    };
+  }
+
   function updateLine(id: string, patch: Partial<LineDraft>) {
-    setLines((prev) =>
-      prev.map((l) => {
-        if (l.id !== id) return l;
-        const next = { ...l, ...patch };
-        /* Sesi AE-72 — Smart Dr/Cr exclusivity:
-         * Setiap baris hanya boleh Dr ATAU Cr, tidak keduanya. Saat user
-         * isi salah satu > 0, otomatis clear yang sebaliknya supaya
-         * tidak accidentally double-input + tidak perlu manual reset. */
-        if (patch.debit !== undefined && Number(patch.debit) > 0) {
-          next.credit = "0";
-        }
-        if (patch.credit !== undefined && Number(patch.credit) > 0) {
-          next.debit = "0";
-        }
-        return next;
-      }),
-    );
+    const applied = lines.map((l) => {
+      if (l.id !== id) return l;
+      const next = { ...l, ...patch };
+      /* Sesi AE-72 — Smart Dr/Cr exclusivity:
+       * Setiap baris hanya boleh Dr ATAU Cr, tidak keduanya. Saat user
+       * isi salah satu > 0, otomatis clear yang sebaliknya supaya
+       * tidak accidentally double-input + tidak perlu manual reset. */
+      if (patch.debit !== undefined && Number(patch.debit) > 0) {
+        next.credit = "0";
+      }
+      if (patch.credit !== undefined && Number(patch.credit) > 0) {
+        next.debit = "0";
+      }
+      return next;
+    });
+
+    const touchesAmount = patch.debit !== undefined || patch.credit !== undefined;
+    if (!touchesAmount) {
+      setLines(applied);
+      return;
+    }
+
+    /* Sesi AE-204 — isi sisi lawannya otomatis (logikanya di
+     * `journal-balance-pure.ts` supaya bisa dites). */
+    const plan = planAutoBalance(applied, id, autoLineId, lockedSidesOf);
+    setLines(plan.lines);
+    setAutoLineId(plan.autoLineId);
   }
 
   /* Sesi AE-72 + AE-73 — Quick templates: preset 1-tap untuk pola umum.
@@ -345,6 +380,7 @@ export function JournalEntryModal({
         description: "",
       },
     ]);
+    setAutoLineId(null);
   }
 
   function addLine() {
@@ -353,6 +389,7 @@ export function JournalEntryModal({
 
   function removeLine(id: string) {
     setLines((prev) => (prev.length > 2 ? prev.filter((l) => l.id !== id) : prev));
+    if (autoLineId === id) setAutoLineId(null);
   }
 
   async function submit(status: "draft" | "posted") {
@@ -596,14 +633,12 @@ export function JournalEntryModal({
                  * Plus: kontra account (akun yang flip normal balance,
                  * mis. Diskon Penjualan 4110) skip hard lock juga karena
                  * sengaja inverted. */
-                const isUnidirectional =
-                  acc != null &&
-                  !acc.isContra &&
-                  (acc.type === "revenue" ||
-                    acc.type === "expense" ||
-                    acc.type === "cogs");
-                const lockDebit = isUnidirectional && normalBalance === "credit";
-                const lockCredit = isUnidirectional && normalBalance === "debit";
+                const { lockDebit, lockCredit } = lockedSidesOf(line.accountId);
+                /* Sesi AE-204 — tandai baris yang nominalnya diisi sistem,
+                 * supaya owner tahu angka itu boleh ditimpa manual. */
+                const isAutoLine =
+                  line.id === autoLineId &&
+                  (Number(line.debit) > 0 || Number(line.credit) > 0);
                 return (
                   <tr key={line.id}>
                     <td className="px-2 py-1.5 align-top">
@@ -657,6 +692,10 @@ export function JournalEntryModal({
                         <p className="mt-0.5 text-[10px] italic text-neutral-400">
                           Akun ini normal CR — isi di kolom Credit
                         </p>
+                      ) : isAutoLine && Number(line.debit) > 0 ? (
+                        <p className="mt-0.5 text-[10px] italic text-mahakan-green-700">
+                          Terisi otomatis — bisa diubah manual
+                        </p>
                       ) : null}
                     </td>
                     <td
@@ -677,6 +716,10 @@ export function JournalEntryModal({
                       {lockCredit ? (
                         <p className="mt-0.5 text-[10px] italic text-neutral-400">
                           Akun ini normal DR — isi di kolom Debit
+                        </p>
+                      ) : isAutoLine && Number(line.credit) > 0 ? (
+                        <p className="mt-0.5 text-[10px] italic text-mahakan-green-700">
+                          Terisi otomatis — bisa diubah manual
                         </p>
                       ) : null}
                     </td>
