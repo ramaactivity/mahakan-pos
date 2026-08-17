@@ -2665,32 +2665,6 @@ export async function updatePurchaseOrder(
         }
       }
 
-      /* Sesi AE-200 — konversi qty nota → satuan DASAR untuk tiap baris,
-       * dipakai menyetel pergerakan stok saat qty PO berubah. Memakai
-       * `resolveQtyToMaster` (sumber kebenaran tunggal AE-174) supaya
-       * konsisten dengan Opname / Market List / laporan COGS. Dihitung
-       * SEBELUM ada tulisan apa pun: kalau satu baris tidak bisa dikonversi,
-       * transaksi gagal utuh tanpa efek separuh. */
-      const convertedByItem = new Map<(typeof v.items)[number], number>();
-      for (const item of v.items) {
-        const ing = ingById.get(item.ingredientId)!;
-        const conv = resolveQtyToMaster({
-          qty: item.qty,
-          fromUnit: item.unit?.trim() || ing.unit,
-          masterUnit: ing.unit,
-          ingredientPacks:
-            (ing.packConversions as
-              | Array<{ unitLabel: string; qtyPerBase: number }>
-              | null) ?? null,
-          unitBelanja: ing.unitBelanja,
-          unitBelanjaPerCogs: ing.unitBelanjaPerCogs,
-        });
-        if (!conv.ok || conv.qtyMaster === null) {
-          throw new Error(`UNIT_ERROR:${ing.name}:satuan tidak bisa dikonversi ke ${ing.unit}`);
-        }
-        convertedByItem.set(item, conv.qtyMaster);
-      }
-
       /* ---- Validasi link PR untuk baris yang BARU ditautkan ----
        *
        * "Baru" mencakup dua hal: tautan yang memang berubah, DAN baris yang
@@ -2774,14 +2748,72 @@ export async function updatePurchaseOrder(
       );
       const removed = existingItems.filter((r) => !keptIds.has(r.id));
       if (removed.length > 0) {
-        /* Hanya mungkin di mode bebas (PO belum di-GR), jadi aman: belum ada
-         * movement / gr_item yang menunjuk baris ini. */
-        await tx.delete(purchaseItems).where(
-          inArray(
-            purchaseItems.id,
-            removed.map((r) => r.id),
-          ),
-        );
+        const removedIds = removed.map((r) => r.id);
+
+        /* Sesi AE-200b — baris penerimaan yang menunjuk baris PO ini WAJIB
+         * dihapus DULU. `goods_receipt_items.purchase_item_id` punya foreign
+         * key tanpa cascade, jadi menghapus baris PO lebih dulu langsung
+         * ditolak database — dan pesannya jatuh ke "Gagal menyimpan perubahan
+         * PO" yang generik. Dulu blok ini aman karena penghapusan hanya
+         * mungkin di PO yang belum diterima; sejak AE-200 asumsi itu batal. */
+        const orphanGrItems = await tx
+          .select({
+            id: goodsReceiptItems.id,
+            movementId: goodsReceiptItems.movementId,
+          })
+          .from(goodsReceiptItems)
+          .where(inArray(goodsReceiptItems.purchaseItemId, removedIds));
+
+        if (orphanGrItems.length > 0) {
+          const orphanMovementIds = orphanGrItems
+            .map((g) => g.movementId)
+            .filter((x): x is string => Boolean(x));
+
+          /* Pergerakan yang BENAR-BENAR menambah stok tidak boleh dibuang
+           * begitu saja — nilai persediaan & HPP sudah memakainya. Tolak,
+           * sama seperti perubahan qty di pembelian era perpetual. */
+          if (orphanMovementIds.length > 0) {
+            const [stillCounted] = await tx
+              .select({ n: sql<number>`count(*)::int` })
+              .from(inventoryMovements)
+              .where(
+                and(
+                  inArray(inventoryMovements.id, orphanMovementIds),
+                  eq(inventoryMovements.skippedStockUpdate, false),
+                ),
+              );
+            if (Number(stillCounted?.n ?? 0) > 0) {
+              throw new Error("LEGACY_STOCK_LOCKED");
+            }
+          }
+
+          /* URUTAN HAPUS WAJIB: baris penerimaan → baris PO → pergerakan.
+           * Dua foreign key menunjuk ke pergerakan yang sama —
+           * `goods_receipt_items.movement_id` DAN `purchase_items.movement_id`
+           * — jadi pergerakan harus jadi yang TERAKHIR. Diuji langsung ke
+           * database: menghapus pergerakan sebelum baris PO ditolak dengan
+           * `purchase_items_movement_id_...` (23503). */
+          await tx.delete(goodsReceiptItems).where(
+            inArray(
+              goodsReceiptItems.id,
+              orphanGrItems.map((g) => g.id),
+            ),
+          );
+
+          await tx
+            .delete(purchaseItems)
+            .where(inArray(purchaseItems.id, removedIds));
+
+          if (orphanMovementIds.length > 0) {
+            await tx
+              .delete(inventoryMovements)
+              .where(inArray(inventoryMovements.id, orphanMovementIds));
+          }
+        } else {
+          await tx
+            .delete(purchaseItems)
+            .where(inArray(purchaseItems.id, removedIds));
+        }
       }
 
       /* purchase_items.id final per baris input — dipakai penyelarasan GR. */
@@ -2879,15 +2911,65 @@ export async function updatePurchaseOrder(
             : [];
         const movementById = new Map(movementRows.map((m) => [m.id, m] as const));
 
+        /* Qty satuan-dasar per baris.
+         *
+         * Untuk baris yang SUDAH punya penerimaan, faktor konversinya dibaca
+         * BALIK dari data tersimpan (qty pergerakan ÷ qty nota lama) — bukan
+         * dihitung ulang. Ini penting: perhitungan ulang butuh info pack dari
+         * supplier_ingredients, dan kalau infonya tidak lengkap konversinya
+         * gagal lalu MENGGAGALKAN edit yang sebelumnya jalan (termasuk edit
+         * harga biasa). Membaca balik faktor juga tahan terhadap master satuan
+         * yang berubah setelah penerimaan.
+         *
+         * Konversi baru dihitung HANYA untuk baris yang benar-benar baru. */
+        const grByItemId = new Map(
+          grItemsNow.map((g) => [g.purchaseItemId, g] as const),
+        );
         const poLinesForMirror = v.items.map((item) => {
           const id = finalItemIds.get(item)!;
           const ing = ingById.get(item.ingredientId)!;
-          const conv = convertedByItem.get(item)!;
+          const prevGr = grByItemId.get(id);
+          const prevMv = prevGr?.movementId
+            ? movementById.get(prevGr.movementId)
+            : undefined;
+
+          let qtyMaster: number | null = null;
+          if (prevGr && prevMv) {
+            const oldNota = Number(
+              prevGr.receivedQtyDecimal ?? prevGr.receivedQty,
+            );
+            const oldMaster = Math.abs(
+              Number(prevMv.qtyDeltaDecimal ?? prevMv.qtyDelta),
+            );
+            if (oldNota > 0 && oldMaster > 0) {
+              qtyMaster = (oldMaster / oldNota) * item.qty;
+            }
+          }
+          if (qtyMaster === null) {
+            const conv = resolveQtyToMaster({
+              qty: item.qty,
+              fromUnit: item.unit?.trim() || ing.unit,
+              masterUnit: ing.unit,
+              ingredientPacks:
+                (ing.packConversions as
+                  | Array<{ unitLabel: string; qtyPerBase: number }>
+                  | null) ?? null,
+              unitBelanja: ing.unitBelanja,
+              unitBelanjaPerCogs: ing.unitBelanjaPerCogs,
+            });
+            if (!conv.ok || conv.qtyMaster === null) {
+              throw new Error(
+                `UNIT_ERROR:${ing.name}:satuan "${item.unit?.trim() || ing.unit}" belum punya konversi ke ${ing.unit}. Lengkapi di Kelola Bahan dulu.`,
+              );
+            }
+            qtyMaster = conv.qtyMaster;
+          }
+
           return {
             purchaseItemId: id,
             ingredientId: item.ingredientId,
             qtyNota: item.qty,
-            qtyMaster: conv,
+            qtyMaster,
             unitCost: item.unitCost,
             ingredientName: ing.name,
             unitSnapshot: ing.unit,
@@ -2931,6 +3013,12 @@ export async function updatePurchaseOrder(
               .delete(goodsReceiptItems)
               .where(eq(goodsReceiptItems.id, a.grItemId));
             if (a.movementId) {
+              /* Lepaskan dulu tautan dari baris PO (FK kedua ke pergerakan
+               * yang sama), kalau tidak penghapusan pergerakan ditolak. */
+              await tx
+                .update(purchaseItems)
+                .set({ movementId: null })
+                .where(eq(purchaseItems.movementId, a.movementId));
               await tx
                 .delete(inventoryMovements)
                 .where(eq(inventoryMovements.id, a.movementId));
@@ -2972,7 +3060,11 @@ export async function updatePurchaseOrder(
               kind: "purchase",
               qtyDelta: Math.max(1, Math.round(a.qtyMaster)),
               qtyDeltaDecimal: a.qtyMaster.toFixed(4),
-              unitCostAtMovement: a.unitCost,
+              /* Per satuan DASAR, bukan per satuan nota. `a.unitCost` adalah
+               * Rp/galon; pergerakan menyimpan Rp/ml. Kalau dipakai mentah,
+               * harga per ml jadi 25.000× lipat dan mencemari HPP. */
+              unitCostAtMovement:
+                a.qtyMaster > 0 ? Math.round(a.lineTotal / a.qtyMaster) : 0,
               referenceType: "manual",
               referenceId: po.id,
               skippedStockUpdate: skipStock,
@@ -3269,6 +3361,17 @@ export async function updatePurchaseOrder(
     /* Sesi AE-200 — METHOD_LOCKED / SUPPLIER_LOCKED / LINES_LOCKED /
      * QTY_LOCKED / UNIT_LOCKED sudah tidak dilempar lagi: perubahannya kini
      * dirambatkan ke baris penerimaan. Dua penolakan baru menggantikannya. */
+    /* Sesi AE-200b — `UNIT_ERROR:` WAJIB dipetakan. Tanpa ini pesannya jatuh
+     * ke "Gagal menyimpan perubahan PO" yang generik: owner tidak tahu bahan
+     * mana yang bermasalah, dan saya sendiri harus menebak-nebak saat
+     * ditanya. Format: UNIT_ERROR:<bahan>:<penjelasan>. */
+    if (msg.startsWith("UNIT_ERROR:")) {
+      const rest = msg.slice("UNIT_ERROR:".length);
+      const sep = rest.indexOf(":");
+      const bahan = sep > 0 ? rest.slice(0, sep) : rest;
+      const detail = sep > 0 ? rest.slice(sep + 1) : "satuannya tidak bisa dikonversi";
+      return fail("VALIDATION_ERROR", `Bahan "${bahan}": ${detail}`);
+    }
     if (msg === "MULTI_GR")
       return fail(
         "BAD_STATE",
