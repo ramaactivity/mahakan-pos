@@ -22,6 +22,14 @@ export type {
 export { isOk } from "./types";
 
 export { computeDiffStats } from "./diff-stats";
+export {
+  computeStockValue,
+  persediaanAccountForSection,
+  OPNAME_PERSEDIAAN_ACCOUNTS,
+  type StockValueBucket,
+  type StockValueLineLike,
+  type StockValueSummary,
+} from "./stock-value";
 export { jakartaMonthKey, jakartaMonthLabel } from "./cadence";
 
 export {

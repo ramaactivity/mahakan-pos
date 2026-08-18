@@ -70,6 +70,11 @@ export function downloadOpnameResult(
       "Qty Aktual": actual ?? "",
       Selisih: diff ?? "",
       "Cost / Unit": l.unitCostAtSnapshot,
+      /* Sesi AE-210 — nilai stok per baris (qty aktual × harga beku).
+         Dampak Biaya hanya bicara SELISIH; owner butuh nilai stoknya untuk
+         menyusun saldo awal persediaan. */
+      "Nilai Stok (Rp)":
+        actual !== null ? actual * l.unitCostAtSnapshot : "",
       "Dampak Biaya (Rp)": costImpact ?? "",
       Catatan: l.note ?? "",
     };

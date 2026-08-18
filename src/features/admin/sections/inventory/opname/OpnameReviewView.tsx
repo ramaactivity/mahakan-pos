@@ -28,6 +28,7 @@ import type { Role } from "@/lib/auth/rbac";
 import { hasPermission } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
 import { downloadOpnameResult } from "./opname-csv";
+import { OpnameStockValueCard } from "./OpnameStockValueCard";
 import { cn } from "@/lib/utils";
 
 interface OpnameReviewViewProps {
@@ -204,6 +205,13 @@ export function OpnameReviewView({
               tone={stats.totalAbsDiffCost > 0 ? "warn" : "ok"}
             />
           </div>
+
+          {/* Sesi AE-210 — nilai stok hasil hitung (bukan selisihnya), supaya
+              owner bisa langsung memakainya sebagai saldo awal persediaan. */}
+          <OpnameStockValueCard
+            periodLabel={detail.periodLabel}
+            lines={detail.lines}
+          />
 
           <div className="flex flex-wrap items-center gap-2">
             {canFinalize ? (

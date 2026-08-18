@@ -40,6 +40,7 @@ import { useLiveRefresh } from "@/lib/use-live-refresh";
 import { hasPermission } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
 import { OpnameCountView } from "./OpnameCountView";
+import { OpnameStockValueCard } from "./OpnameStockValueCard";
 import { OpnameReviewView } from "./OpnameReviewView";
 import { downloadOpnameResult } from "./opname-csv";
 
@@ -288,6 +289,9 @@ export function OpnameTab() {
                       Bahan
                     </th>
                     <th className="px-4 py-2 text-right font-medium">
+                      Nilai Stok
+                    </th>
+                    <th className="px-4 py-2 text-right font-medium">
                       Δ Cost (abs)
                     </th>
                     <th className="px-4 py-2 text-right font-medium">
@@ -329,6 +333,15 @@ export function OpnameTab() {
                       </td>
                       <td className="px-4 py-3 text-right font-mono">
                         {h.countedLines}/{h.totalLines}
+                      </td>
+                      {/* Sesi AE-210 — nilai rupiah stok hasil hitung.
+                          Owner butuh ini untuk mengisi saldo awal; sebelumnya
+                          hanya Δ Cost (nilai selisih) yang tampil. */}
+                      <td className="px-4 py-3 text-right font-mono text-xs font-semibold text-neutral-900">
+                        {h.status === "completed" ||
+                        h.status === "pending_review"
+                          ? formatRupiah(h.stockValue)
+                          : "—"}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-xs">
                         {h.status === "completed" ||
@@ -553,6 +566,13 @@ function HistoryDetailModal({
               })}
             />
           </div>
+          {/* Sesi AE-210 — nilai rupiah stok + rincian per akun persediaan,
+              bahan untuk mengisi saldo awal. */}
+          <OpnameStockValueCard
+            periodLabel={detail.periodLabel}
+            lines={detail.lines}
+            compact
+          />
           {detail.notes ? (
             <p className="rounded-md bg-neutral-50 p-2 text-xs text-neutral-700">
               <strong>Catatan:</strong> {detail.notes}

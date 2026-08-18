@@ -8,6 +8,7 @@ import {
   users,
 } from "@/db/schema";
 import { jakartaMonthKey, jakartaMonthLabel } from "./cadence";
+import { computeStockValue } from "./stock-value";
 import {
   cutoffStartInstant,
   getOpnameCutoffDate,
@@ -80,8 +81,38 @@ export async function fetchSessions(
     for (const u of userRows) nameById.set(u.id, u.name);
   }
 
+  /* Sesi AE-210 — nilai rupiah stok per sesi (Σ qty aktual × unit cost beku).
+   * Dijumlah di SQL, bukan dengan menarik semua baris: 30 sesi × ~160 bahan
+   * = ribuan baris yang tidak dipakai untuk apa pun di layar daftar.
+   * COALESCE ke decimal dulu — bigint-nya di-clamp 0 oleh check constraint. */
+  const valueBySession = new Map<string, number>();
+  const valueRows = await db
+    .select({
+      sessionId: stockOpnameLines.sessionId,
+      value: sql<string>`COALESCE(SUM(
+        COALESCE(
+          ${stockOpnameLines.actualQtyDecimal},
+          ${stockOpnameLines.actualQty}::numeric,
+          0
+        ) * ${stockOpnameLines.unitCostAtSnapshot}
+      ), 0)`,
+    })
+    .from(stockOpnameLines)
+    .where(
+      inArray(
+        stockOpnameLines.sessionId,
+        rows.map((r) => r.session.id),
+      ),
+    )
+    .groupBy(stockOpnameLines.sessionId);
+  for (const v of valueRows) {
+    const n = Number(v.value);
+    valueBySession.set(v.sessionId, Number.isFinite(n) ? n : 0);
+  }
+
   return rows.map((r) => ({
     ...r.session,
+    stockValue: valueBySession.get(r.session.id) ?? 0,
     startedByName: r.startedByName,
     submittedByName: r.session.submittedBy
       ? nameById.get(r.session.submittedBy) ?? null
@@ -173,6 +204,16 @@ export async function fetchSessionDetail(
 
   return {
     ...sessionRow.session,
+    /* Sesi AE-210 — dihitung dari baris yang sudah ada di tangan, pakai
+     * pemetaan section→akun yang sama dengan jurnal opname. */
+    stockValue: computeStockValue(
+      lines.map((l) => ({
+        actualQty: l.actualQty,
+        actualQtyDecimal: l.actualQtyDecimal,
+        unitCostAtSnapshot: l.unitCostAtSnapshot,
+        section: l.ingredient.section,
+      })),
+    ).total,
     startedByName: sessionRow.startedByName,
     submittedByName: sessionRow.session.submittedBy
       ? nameById.get(sessionRow.session.submittedBy) ?? null

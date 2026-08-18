@@ -36,6 +36,12 @@ export interface OpnameLineWithIngredient extends OpnameLine {
 }
 
 export interface OpnameSessionWithCounts extends OpnameSession {
+  /**
+   * Sesi AE-210 — NILAI RUPIAH stok hasil hitung (Σ qty aktual × unit cost
+   * snapshot). Beda dengan `totalDiffCost` yang hanya nilai SELISIH-nya.
+   * Ini angka yang dipakai owner untuk mengisi saldo awal persediaan.
+   */
+  stockValue: number;
   startedByName: string | null;
   submittedByName: string | null;
   finalizedByName: string | null;
