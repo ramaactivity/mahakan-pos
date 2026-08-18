@@ -119,3 +119,47 @@ export const reverseEmployeeAdvanceRepaymentSchema = z.object({
   id: z.uuid(),
   reason: z.string().trim().min(5, "Alasan minimal 5 karakter").max(500),
 });
+
+/* Sesi AE-210 — REKENING SUMBER PEMBAYARAN GAJI.
+ *
+ * Bentuknya sengaja dikunci di sini, bukan cuma di DB: "transfer tanpa
+ * rekening" harus ditolak sebelum menyentuh tabel, karena diam-diam
+ * jatuh ke default 1110 BCA persis seperti bug yang sedang ditutup
+ * (gaji ditransfer dari BRI, saldo BCA jadi minus). */
+export const payrollPaymentSchema = z
+  .object({
+    paymentMethod: z.enum(["cash", "transfer", "other"]),
+    bankAccountId: z.uuid().nullish().transform((v) => v ?? null),
+  })
+  .refine(
+    (v) => v.paymentMethod === "cash" || v.bankAccountId !== null,
+    {
+      path: ["bankAccountId"],
+      message: "Pilih rekening asal transfer — jangan dikosongkan",
+    },
+  )
+  .refine((v) => v.paymentMethod !== "cash" || v.bankAccountId === null, {
+    path: ["bankAccountId"],
+    message: "Pembayaran tunai tidak boleh punya rekening",
+  });
+
+/** Koreksi rekening/metode setelah periode berstatus paid. Alasan wajib —
+ * jurnalnya dibalik lalu diposting ulang, jadi jejaknya harus terbaca. */
+export const updatePayrollPaymentSchema = z
+  .object({
+    periodId: z.uuid(),
+    paymentMethod: z.enum(["cash", "transfer", "other"]),
+    bankAccountId: z.uuid().nullish().transform((v) => v ?? null),
+    reason: z.string().trim().min(5, "Alasan koreksi minimal 5 karakter").max(300),
+  })
+  .refine(
+    (v) => v.paymentMethod === "cash" || v.bankAccountId !== null,
+    {
+      path: ["bankAccountId"],
+      message: "Pilih rekening asal transfer — jangan dikosongkan",
+    },
+  )
+  .refine((v) => v.paymentMethod !== "cash" || v.bankAccountId === null, {
+    path: ["bankAccountId"],
+    message: "Pembayaran tunai tidak boleh punya rekening",
+  });

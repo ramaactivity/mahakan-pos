@@ -16,6 +16,7 @@ import {
 import { outlets } from "./outlets";
 import { users } from "./users";
 import { employees } from "./employees";
+import { bankAccounts } from "./bank-accounts";
 
 /**
  * Per-employee per-date scheduled work hours (Sesi C-8).
@@ -94,6 +95,23 @@ export const payrollPeriods = pgTable(
       .default("draft"),
     notes: text("notes"),
 
+    /* Sesi AE-210 — REKENING SUMBER PEMBAYARAN GAJI.
+     *
+     * Sebelum ini metode bayar hanya hidup sebagai argumen fungsi
+     * markPayrollPaid (default "transfer") dan jurnalnya SELALU mengkredit
+     * 1110 Bank BCA. Gaji yang benar-benar ditransfer dari BRI tetap
+     * tercatat keluar dari BCA → saldo BCA di Neraca minus, saldo BRI
+     * ketinggian, dan tidak ada satu kolom pun yang bisa dipakai untuk
+     * melacak salahnya. Dua kolom ini yang membuat pilihan owner
+     * TERSIMPAN, jadi jurnal bisa diposting ulang ke akun yang benar. */
+    paymentMethod: text("payment_method", {
+      enum: ["cash", "transfer", "other"],
+    }),
+    /** Rekening asal transfer. WAJIB terisi kalau paymentMethod bukan
+     * "cash" — ditegakkan `ck_payroll_periods_payment_shape`. Sumber kode
+     * GL yang dikredit (BCA→1110, BRI→1111, lainnya→1112). */
+    bankAccountId: uuid("bank_account_id").references(() => bankAccounts.id),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -113,6 +131,16 @@ export const payrollPeriods = pgTable(
     check(
       "ck_payroll_period_range",
       sql`${t.periodEnd} >= ${t.periodStart}`,
+    ),
+    /* Sesi AE-210 — bayar non-tunai WAJIB menyebut rekeningnya. Tanpa rem
+     * ini "transfer tanpa rekening" diam-diam jatuh ke default 1110 BCA
+     * lagi, yaitu persis bug yang sedang ditutup. Periode lama (kedua
+     * kolom NULL) sengaja tetap lolos. */
+    check(
+      "ck_payroll_periods_payment_shape",
+      sql`${t.paymentMethod} IS NULL
+        OR (${t.paymentMethod} = 'cash' AND ${t.bankAccountId} IS NULL)
+        OR (${t.paymentMethod} <> 'cash' AND ${t.bankAccountId} IS NOT NULL)`,
     ),
   ],
 );

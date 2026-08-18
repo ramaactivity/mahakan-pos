@@ -48,6 +48,7 @@ export type JournalSourceType =
   /* Audit AE-181 — reversal jurnal pembayaran saat cancel purchase paid. */
   | "purchase_pay_reversal"
   | "payroll_paid"
+  | "payroll_paid_reversal"
   | "expense_create"
   | "expense_void"
   | "income_create"

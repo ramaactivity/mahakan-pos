@@ -26,14 +26,19 @@ export type PairVoidSourceType =
   /* Sesi AE-199 — koreksi metode pembayaran hutang dagang. Metode menentukan
    * akun kas/bank mana yang dikredit, jadi jurnalnya tidak bisa sekadar
    * diubah nilainya — wajib dibalik lalu diposting ulang. */
-  | "purchase_pay";
+  | "purchase_pay"
+  /* Sesi AE-210 — koreksi rekening/metode pembayaran gaji. Rekening
+   * menentukan akun bank mana yang dikredit, jadi jurnalnya tidak bisa
+   * sekadar di-update — wajib dibalik lalu diposting ulang. */
+  | "payroll_paid";
 
 export type PairVoidCounterType =
   | "expense_void"
   | "income_void"
   | "purchase_create_void"
   | "pos_daily_sales_void"
-  | "purchase_pay_reversal";
+  | "purchase_pay_reversal"
+  | "payroll_paid_reversal";
 
 export async function pairVoidJournalForSource(args: {
   outletId: string;

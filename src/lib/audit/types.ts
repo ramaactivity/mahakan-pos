@@ -253,6 +253,9 @@ export const AUDIT_EVENT_TYPES = [
   "payroll.compute",
   "payroll.finalize",
   "payroll.paid",
+  /* Sesi AE-210 — koreksi rekening/metode pembayaran gaji (jurnal dibalik
+   * lalu diposting ulang ke akun bank yang benar). */
+  "payroll.payment_method_update",
   "payroll.expense.create",
   /* Sesi AE-60 — Apply THR ke semua line di period. */
   "payroll.thr_applied",

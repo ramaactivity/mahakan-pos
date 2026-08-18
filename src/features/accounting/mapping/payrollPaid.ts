@@ -9,7 +9,7 @@
  *   Dr 6102 Tunjangan & Bonus      bonus
  *      Cr 6105 Potongan Karyawan   lateDeduction + otherDeductions  (kontra-expense, NEW)
  *      Cr 1155 Piutang Kasbon      advanceDeduction (sesi AE-209b)
- *      Cr 1101 Kas / 1110 Bank     netPay (= base + OT + bonus - deductions)
+ *      Cr 1101 Kas / <rekening>    netPay (= base + OT + bonus - deductions)
  *
  * Sum debit  = base + OT + bonus
  * Sum credit = deductions + netPay = base + OT + bonus  ✓ balanced.
@@ -27,6 +27,11 @@
  *
  * Akun 6105 dirilis additive di migration 0028. Auto-journal flag default
  * OFF — owner toggle setelah cutover, jadi safe untuk deploy code first.
+ *
+ * Sesi AE-210 — akun kas/bank sisi kredit tidak lagi hardcoded 1110 untuk
+ * semua pembayaran non-tunai. Owner memilih rekening asal transfer; caller
+ * me-resolve-nya jadi `bankAccountCode`. Tanpa ini gaji yang ditransfer dari
+ * BRI tetap tercatat keluar dari BCA dan saldo BCA jadi minus.
  *
  * Idempotency via sourceId = payrollPeriodId tetap berlaku.
  */
@@ -54,8 +59,21 @@ export type PayrollPaidInput = {
   totalAdvanceDeduction?: number;
   /** Sum of netPay = base + OT + bonus - deductions. Must match. */
   totalNetPay: number;
-  /** "cash" → Cr 1101; "transfer" / others → Cr 1110 (Bank BCA default). */
+  /** "cash" → Cr 1101; selain itu → `bankAccountCode` (fallback 1110). */
   paymentMethod: "cash" | "transfer";
+  /* Sesi AE-210 — KODE GL REKENING ASAL TRANSFER.
+   *
+   * Dulu semua pembayaran non-tunai dikredit ke 1110 Bank BCA, apa pun
+   * rekening yang benar-benar dipakai. Gaji yang ditransfer dari BRI
+   * membuat saldo BCA minus dan BRI ketinggian, tanpa error apa pun.
+   * Caller me-resolve kode ini dari `payroll_periods.bank_account_id`
+   * (BCA→1110, BRI→1111, lainnya→1112). Dibiarkan opsional supaya
+   * pemanggil lama & jurnal periode lama tetap jatuh ke 1110 persis
+   * seperti dulu — perilaku historis tidak berubah diam-diam. */
+  bankAccountCode?: string | null;
+  /** Nama rekening buat deskripsi jurnal ("BRI — Mahakan ...4821").
+   * Jangan pernah tulis UUID mentah di sini (aturan AE-189). */
+  bankAccountLabel?: string | null;
 };
 
 export function mapPayrollPaid(input: PayrollPaidInput): JournalLineInput[] {
@@ -73,7 +91,10 @@ export function mapPayrollPaid(input: PayrollPaidInput): JournalLineInput[] {
     throw new Error("MAP_PAYROLL_PAID_BREAKDOWN_MISMATCH");
   }
 
-  const cashAccount = input.paymentMethod === "cash" ? "1101" : "1110";
+  const cashAccount =
+    input.paymentMethod === "cash"
+      ? "1101"
+      : (input.bankAccountCode ?? "1110");
   const lines: JournalLineInput[] = [];
 
   if (input.totalBaseSalary > 0) {
@@ -122,10 +143,16 @@ export function mapPayrollPaid(input: PayrollPaidInput): JournalLineInput[] {
     });
   }
 
+  /* Deskripsi menyebut rekeningnya supaya salah-rekening ketahuan dari
+   * Buku Besar tanpa harus buka modul payroll. */
+  const via =
+    input.paymentMethod === "cash"
+      ? "tunai"
+      : (input.bankAccountLabel?.trim() || "transfer bank");
   lines.push({
     accountCode: cashAccount,
     credit: input.totalNetPay,
-    description: `Pembayaran payroll ${input.periodLabel}`,
+    description: `Pembayaran payroll ${input.periodLabel} via ${via}`,
   });
 
   return lines;

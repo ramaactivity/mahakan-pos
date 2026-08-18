@@ -521,11 +521,37 @@ export async function postJournalForPayrollPaid(args: {
   totalAdvanceDeduction?: number;
   totalNetPay: number;
   paymentMethod: "cash" | "transfer";
+  /* Sesi AE-210 — rekening asal transfer yang owner pilih. Null = periode
+   * lama / tunai → jatuh ke perilaku lama (1110 BCA untuk non-tunai). */
+  bankAccountId?: string | null;
   entryDate: string;
   actorId: string;
 }): Promise<void> {
   if (!(await isAutoJournalEnabled(args.outletId))) return;
   if (args.totalNetPay <= 0) return;
+
+  /* Resolve rekening → kode GL. Pola identik dengan expense/income
+   * (AE-69): bankName yang menentukan akun, bukan tebakan metode. */
+  let bankAccountCode: string | null = null;
+  let bankAccountLabel: string | null = null;
+  if (args.paymentMethod !== "cash" && args.bankAccountId) {
+    const [ba] = await db
+      .select({
+        bankName: bankAccounts.bankName,
+        accountName: bankAccounts.accountName,
+        accountNumber: bankAccounts.accountNumber,
+      })
+      .from(bankAccounts)
+      .where(eq(bankAccounts.id, args.bankAccountId))
+      .limit(1);
+    if (ba) {
+      bankAccountCode = resolveBankCodeFromDestination(ba.bankName);
+      const tail = ba.accountNumber.trim();
+      bankAccountLabel = `${ba.bankName} — ${ba.accountName}${
+        tail ? ` ...${tail.slice(-4)}` : ""
+      }`;
+    }
+  }
 
   const lines = mapPayrollPaid({
     payrollPeriodId: args.payrollPeriodId,
@@ -539,6 +565,8 @@ export async function postJournalForPayrollPaid(args: {
     totalAdvanceDeduction: args.totalAdvanceDeduction,
     totalNetPay: args.totalNetPay,
     paymentMethod: args.paymentMethod,
+    bankAccountCode,
+    bankAccountLabel,
   });
 
   await recordJournal({

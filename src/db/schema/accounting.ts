@@ -189,6 +189,11 @@ export const journalEntries = pgTable(
          * jurnal create yang dibalik → 2101 + bank drift per cancel-paid. */
         "purchase_pay_reversal",
         "payroll_paid",
+        /* Sesi AE-210 — pembalik payroll_paid saat owner mengoreksi
+         * rekening/metode pembayaran gaji (mis. tercatat BCA padahal
+         * ditransfer dari BRI). sourceId = payroll_periods.id, sama
+         * dengan jurnal aslinya. */
+        "payroll_paid_reversal",
         "expense_create",
         "expense_void",
         "income_create",

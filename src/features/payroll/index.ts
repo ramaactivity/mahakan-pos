@@ -23,6 +23,8 @@ export {
   resendPayslipForLine,
   resendPayslipsForPeriod,
   updatePayrollLine,
+  /* Sesi AE-210 — koreksi rekening/metode pembayaran gaji. */
+  updatePayrollPaymentMethod,
 } from "./actions";
 
 export {

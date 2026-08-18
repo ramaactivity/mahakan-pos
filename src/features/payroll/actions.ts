@@ -4,10 +4,14 @@ import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm"
 import { db } from "@/db";
 import {
   attendanceRecords,
+  bankAccounts,
+  chartOfAccounts,
   employeeAdvances,
   employees,
   expenseCategories,
   expenses,
+  journalEntries,
+  journalLines,
   outlets,
   payrollLines,
   payrollPeriods,
@@ -15,12 +19,15 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { logAndSanitize } from "@/lib/server-error";
 import { toJakartaDateOnly } from "@/lib/date";
 import {
   applyThrSchema,
   computePayrollLinesSchema,
   createPayrollPeriodSchema,
+  payrollPaymentSchema,
   updatePayrollLineSchema,
+  updatePayrollPaymentSchema,
 } from "./schemas";
 import {
   computeBaseSalary,
@@ -795,14 +802,55 @@ async function getOrCreatePayrollExpenseCategory(
   return created.id;
 }
 
+/* Sesi AE-210 — memastikan rekening yang dipilih memang milik outlet ini
+ * dan masih aktif. Tanpa cek ini, id rekening outlet lain bisa lolos lewat
+ * server action dan jurnal gaji mengkredit bank yang bukan miliknya. */
+async function assertBankAccountUsable(
+  outletId: string,
+  bankAccountId: string | null,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!bankAccountId) return { ok: true };
+  const [ba] = await db
+    .select({ id: bankAccounts.id, isActive: bankAccounts.isActive })
+    .from(bankAccounts)
+    .where(
+      and(
+        eq(bankAccounts.id, bankAccountId),
+        eq(bankAccounts.outletId, outletId),
+        isNull(bankAccounts.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!ba) return { ok: false, message: "Rekening tidak ditemukan di outlet ini" };
+  if (!ba.isActive) return { ok: false, message: "Rekening sudah non-aktif" };
+  return { ok: true };
+}
+
 export async function markPayrollPaid(
   periodId: string,
   paymentMethod: "cash" | "transfer" | "other" = "transfer",
+  bankAccountId: string | null = null,
 ): Promise<ApiResult<PayrollPeriod>> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "payroll.manage")) {
     return fail("FORBIDDEN", "Tidak punya hak mark paid");
   }
+  /* Sesi AE-210 — bentuk metode+rekening divalidasi SEBELUM apa pun
+   * berubah. "transfer tanpa rekening" ditolak di sini, bukan dibiarkan
+   * diam-diam jatuh ke 1110 BCA. */
+  const shape = payrollPaymentSchema.safeParse({ paymentMethod, bankAccountId });
+  if (!shape.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      shape.error.issues[0]?.message ?? "Metode pembayaran tidak valid",
+    );
+  }
+  const bankCheck = await assertBankAccountUsable(
+    session.user.outletId,
+    shape.data.bankAccountId,
+  );
+  if (!bankCheck.ok) return fail("VALIDATION_ERROR", bankCheck.message);
+
   const [period] = await db
     .select()
     .from(payrollPeriods)
@@ -883,6 +931,11 @@ export async function markPayrollPaid(
         status: "paid",
         paidAt: new Date(),
         paidBy: session.user.id,
+        /* Sesi AE-210 — pilihan owner DISIMPAN, bukan cuma jadi argumen
+         * fungsi. Ini yang membuat jurnal bisa diposting ulang ke akun
+         * yang benar kalau ternyata salah rekening. */
+        paymentMethod: shape.data.paymentMethod,
+        bankAccountId: shape.data.bankAccountId,
         updatedAt: new Date(),
       })
       .where(eq(payrollPeriods.id, periodId))
@@ -903,7 +956,10 @@ export async function markPayrollPaid(
           categoryId,
           description: `Payroll ${row.label}`,
           amount: totalNet,
-          paymentMethod,
+          paymentMethod: shape.data.paymentMethod,
+          /* Baris kas ikut menunjuk rekening yang sama supaya modul Kas
+           * dan jurnal tidak pernah bercerita beda. */
+          bankAccountId: shape.data.bankAccountId,
           sourceType: "payroll",
           payrollPeriodId: periodId,
           createdBy: session.user.id,
@@ -956,7 +1012,8 @@ export async function markPayrollPaid(
         summary: `Expense Gaji Karyawan ${result.row.label} dibuat otomatis`,
         after: {
           amount: result.totalNet,
-          paymentMethod,
+          paymentMethod: shape.data.paymentMethod,
+          bankAccountId: shape.data.bankAccountId,
           payrollPeriodId: periodId,
         },
       },
@@ -987,7 +1044,11 @@ export async function markPayrollPaid(
           /* Sesi AE-209b — porsi kasbon ber-jurnal → Cr 1155, sisanya 6105. */
           totalAdvanceDeduction: result.totalAdvanceDeduction,
           totalNetPay: result.totalNet,
-          paymentMethod: paymentMethod === "cash" ? "cash" : "transfer",
+          paymentMethod:
+            shape.data.paymentMethod === "cash" ? "cash" : "transfer",
+          /* Sesi AE-210 — akun bank yang dikredit mengikuti rekening ini,
+           * bukan lagi 1110 BCA untuk semua transfer. */
+          bankAccountId: shape.data.bankAccountId,
           entryDate: todayWib,
           actorId: session.user.id,
         }),
@@ -1062,6 +1123,250 @@ export async function deletePayrollPeriod(
   }).catch((e) => console.error("[audit payroll.period.delete]", e));
 
   return ok({ id: periodId });
+}
+
+
+/* ============================================================
+ * Sesi AE-210 — KOREKSI REKENING / METODE PEMBAYARAN GAJI
+ * ============================================================
+ *
+ * Kejadian nyata yang ditutup fitur ini: gaji ditransfer dari BRI, tapi
+ * sistem mencatatnya keluar dari BCA (dulu SEMUA pembayaran non-tunai
+ * hardcoded kredit 1110 Bank BCA). Saldo BCA di Neraca jadi minus dan
+ * saldo BRI ketinggian, tanpa satu error pun yang muncul.
+ *
+ * Rekening menentukan AKUN mana yang dikredit, jadi jurnalnya tidak bisa
+ * sekadar di-update nilainya — wajib dibalik (pair-void) lalu diposting
+ * ulang ke akun yang benar. Pola ini identik dengan koreksi metode bayar
+ * hutang dagang (AE-199) yang sudah terbukti di produksi.
+ *
+ * Urutan sengaja: JURNAL DULU, baru baris kas & periode. Jurnal adalah
+ * penjaga paling ketat (periode terkunci bisa menolak), jadi kalau gagal
+ * belum ada baris lain yang terlanjur berubah.
+ */
+export async function updatePayrollPaymentMethod(input: {
+  periodId: string;
+  paymentMethod: "cash" | "transfer" | "other";
+  bankAccountId: string | null;
+  reason: string;
+}): Promise<
+  ApiResult<{
+    id: string;
+    journalReposted: boolean;
+    expenseUpdated: boolean;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "payroll.manage")) {
+    return fail("FORBIDDEN", "Tidak punya hak koreksi pembayaran payroll");
+  }
+
+  const parsed = updatePayrollPaymentSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(
+      "VALIDATION_ERROR",
+      parsed.error.issues[0]?.message ?? "Input tidak valid",
+    );
+  }
+  const v = parsed.data;
+
+  const [period] = await db
+    .select()
+    .from(payrollPeriods)
+    .where(eq(payrollPeriods.id, v.periodId))
+    .limit(1);
+  if (!period) return fail("NOT_FOUND", "Period tidak ditemukan");
+  if (period.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Period dari outlet lain");
+  }
+  if (period.status !== "paid") {
+    return fail(
+      "INVALID_STATE",
+      "Hanya periode yang sudah dibayar yang perlu dikoreksi rekeningnya",
+    );
+  }
+
+  const bankCheck = await assertBankAccountUsable(
+    session.user.outletId,
+    v.bankAccountId,
+  );
+  if (!bankCheck.ok) return fail("VALIDATION_ERROR", bankCheck.message);
+
+  /* Tidak ada yang berubah → jangan bikin sepasang jurnal kosong yang cuma
+   * meramaikan Buku Besar. */
+  if (
+    period.paymentMethod === v.paymentMethod &&
+    (period.bankAccountId ?? null) === v.bankAccountId
+  ) {
+    return fail("NO_CHANGE", "Metode & rekening sama dengan yang tercatat");
+  }
+
+  /* 1) Jurnal — dibalik lalu diposting ulang ke akun yang benar.
+   *
+   * Nilai posting ulang WAJIB diambil dari entry lamanya sendiri, BUKAN
+   * dihitung ulang dari payroll_lines. Baris payroll bisa saja sudah
+   * berubah setelah pembayaran (koreksi manual), dan menghitung ulang di
+   * sini akan membuat pembalik dan posting ulang tidak seimbang — persis
+   * jebakan yang sudah kena di AE-199 pada markPurchasePaid. */
+  let journalReposted = false;
+  const [payEntry] = await db
+    .select({ id: journalEntries.id, entryDate: journalEntries.entryDate })
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.outletId, session.user.outletId),
+        eq(journalEntries.sourceType, "payroll_paid"),
+        eq(journalEntries.sourceId, period.id),
+        eq(journalEntries.status, "posted"),
+      ),
+    )
+    .limit(1);
+
+  if (payEntry) {
+    /* Komposisi jurnal payroll dibaca ulang dari BARIS jurnal aslinya,
+     * bukan dihitung ulang dari payroll_lines — lihat alasan di atas.
+     * Sisi debit = komponen beban, sisi kredit = potongan + netPay. */
+    const oldLines = await db
+      .select({
+        code: chartOfAccounts.code,
+        debit: journalLines.debit,
+        credit: journalLines.credit,
+      })
+      .from(journalLines)
+      .innerJoin(
+        chartOfAccounts,
+        eq(chartOfAccounts.id, journalLines.accountId),
+      )
+      .where(eq(journalLines.entryId, payEntry.id));
+
+    const sumOf = (code: string, side: "debit" | "credit") =>
+      oldLines
+        .filter((l) => l.code === code)
+        .reduce((acc, l) => acc + Number(l[side] ?? 0), 0);
+
+    const totalBaseSalary = sumOf("6101", "debit");
+    const totalOvertimePay = sumOf("6103", "debit");
+    const totalBonus = sumOf("6102", "debit");
+    const otherDeduction = sumOf("6105", "credit");
+    const advanceDeduction = sumOf("1155", "credit");
+    /* netPay = sisa kredit setelah potongan, yaitu baris kas/bank-nya.
+     * Diambil sebagai total debit dikurangi potongan supaya tetap benar
+     * berapa pun akun kas yang dipakai jurnal lama. */
+    const totalDebit = oldLines.reduce((a, l) => a + Number(l.debit ?? 0), 0);
+    const totalNetPay = totalDebit - otherDeduction - advanceDeduction;
+
+    if (totalNetPay <= 0) {
+      return fail(
+        "JOURNAL_ERROR",
+        "Jurnal payroll lama tidak punya nilai yang bisa diposting ulang.",
+      );
+    }
+
+    const [{ pairVoidJournalForSource }, { postJournalForPayrollPaid }] =
+      await Promise.all([
+        import("@/features/accounting/journal-void"),
+        import("@/features/accounting/hooks"),
+      ]);
+
+    try {
+      await pairVoidJournalForSource({
+        outletId: session.user.outletId,
+        sourceType: "payroll_paid",
+        voidSourceType: "payroll_paid_reversal",
+        sourceId: period.id,
+        actorId: session.user.id,
+        reason: `Koreksi rekening pembayaran gaji — ${v.reason}`,
+      });
+      await postJournalForPayrollPaid({
+        outletId: session.user.outletId,
+        payrollPeriodId: period.id,
+        periodLabel: period.label,
+        totalBaseSalary,
+        totalOvertimePay,
+        totalBonus,
+        totalDeductions: otherDeduction + advanceDeduction,
+        totalAdvanceDeduction: advanceDeduction,
+        totalNetPay,
+        paymentMethod: v.paymentMethod === "cash" ? "cash" : "transfer",
+        bankAccountId: v.bankAccountId,
+        /* Tanggal jurnal baru = tanggal jurnal lama. Koreksi rekening
+         * TIDAK memindahkan beban gaji ke bulan lain. */
+        entryDate: String(payEntry.entryDate),
+        actorId: session.user.id,
+      });
+      journalReposted = true;
+    } catch (e) {
+      return fail(
+        "JOURNAL_ERROR",
+        logAndSanitize(
+          e,
+          "payroll.payment_method_update.journal",
+          "Jurnal payroll tidak bisa diposting ulang",
+        ),
+      );
+    }
+  }
+
+  // 2) Baris kas payroll-nya + periode.
+  let expenseUpdated = false;
+  try {
+    const res = await db
+      .update(expenses)
+      .set({
+        paymentMethod: v.paymentMethod,
+        bankAccountId: v.bankAccountId,
+        updatedAt: new Date(),
+        updatedBy: session.user.id,
+      })
+      .where(
+        and(
+          eq(expenses.payrollPeriodId, period.id),
+          isNull(expenses.deletedAt),
+        ),
+      )
+      .returning({ id: expenses.id });
+    expenseUpdated = res.length > 0;
+
+    await db
+      .update(payrollPeriods)
+      .set({
+        paymentMethod: v.paymentMethod,
+        bankAccountId: v.bankAccountId,
+        updatedAt: new Date(),
+      })
+      .where(eq(payrollPeriods.id, period.id));
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(
+        e,
+        "payroll.payment_method_update",
+        "Gagal memperbarui baris kas payroll",
+      ),
+    );
+  }
+
+  await logAudit({
+    eventType: "payroll.payment_method_update",
+    userId: session.user.id,
+    entityType: "payroll_period",
+    entityId: period.id,
+    payload: {
+      summary: `Koreksi rekening pembayaran gaji ${period.label} — ${v.reason}`,
+      before: {
+        paymentMethod: period.paymentMethod,
+        bankAccountId: period.bankAccountId,
+      },
+      after: {
+        paymentMethod: v.paymentMethod,
+        bankAccountId: v.bankAccountId,
+      },
+      context: { reason: v.reason, journalReposted, expenseUpdated },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+
+  return ok({ id: period.id, journalReposted, expenseUpdated });
 }
 
 // ---------- Sesi AE-62ad: Slip Gaji email ----------

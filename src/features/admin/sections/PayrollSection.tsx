@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   DollarSign,
   Gift,
+  Landmark,
   Lock,
   Pencil,
   Plus,
@@ -34,11 +35,18 @@ import {
   isOk,
   listPayrollLines,
   listPayrollPeriods,
-  markPayrollPaid,
   updatePayrollLine,
   type PayrollLineWithEmployee,
   type PayrollStatus,
 } from "@/features/payroll";
+import {
+  PayrollPaymentModal,
+  type PayrollPaymentMode,
+} from "./payroll/PayrollPaymentModal";
+import {
+  formatBankAccountDisplay,
+  listBankAccounts,
+} from "@/features/bank-accounts";
 import {
   getOwnOutlet,
   isOk as outletIsOk,
@@ -73,6 +81,11 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
 
   const [editingLine, setEditingLine] =
     useState<PayrollLineWithEmployee | null>(null);
+
+  /* Sesi AE-210 — modal pilih rekening. "pay" = saat menandai lunas,
+   * "correct" = saat rekening yang tercatat ternyata salah. */
+  const [paymentModalMode, setPaymentModalMode] =
+    useState<PayrollPaymentMode | null>(null);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -214,6 +227,27 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
     [periods, selectedPeriodId],
   );
 
+  /* Sesi AE-210 — nama rekening sumber pembayaran, buat ditampilkan di
+   * baris "Paid". Master rekening jarang berubah, jadi di-cache lama dan
+   * memakai queryKey yang sama dengan BankAccountSelect supaya satu fetch
+   * dipakai bersama. */
+  const { data: bankAccounts = [] } = useQuery({
+    queryKey: ["bank-accounts", "list", "active"],
+    queryFn: async () => {
+      const res = await listBankAccounts();
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const paidBankLabel = useMemo(() => {
+    if (!selectedPeriod?.bankAccountId) return null;
+    const b = bankAccounts.find(
+      (x) => x.id === selectedPeriod.bankAccountId,
+    );
+    return b ? formatBankAccountDisplay(b) : null;
+  }, [bankAccounts, selectedPeriod]);
+
   async function handleCompute(force = false) {
     if (!selectedPeriod) return;
     const res = await computePayrollLines(selectedPeriod.id, { force });
@@ -281,16 +315,13 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
     refresh();
   }
 
-  async function handleMarkPaid() {
+  /* Sesi AE-210 — tombol ini dulu langsung memanggil markPayrollPaid tanpa
+   * menanyakan apa pun, dan jurnalnya SELALU mengkredit 1110 Bank BCA. Gaji
+   * yang ditransfer dari BRI tetap tercatat keluar dari BCA → saldo BCA
+   * minus. Sekarang rekeningnya ditanyakan dulu lewat modal. */
+  function handleMarkPaid() {
     if (!selectedPeriod) return;
-    if (!confirm(`Tandai payroll "${selectedPeriod.label}" sebagai Paid?`)) return;
-    const res = await markPayrollPaid(selectedPeriod.id);
-    if (!isOk(res)) {
-      toast.error(res.error.message);
-      return;
-    }
-    toast.success("Payroll ditandai paid");
-    refresh();
+    setPaymentModalMode("pay");
   }
 
   async function handleDelete() {
@@ -614,6 +645,17 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
                         <p className="text-[11px] text-mahakan-green-700">
                           Paid{" "}
                           {formatIndonesianDateTime(selectedPeriod.paidAt)}
+                          {/* Sesi AE-210 — rekening sumbernya ditampilkan di
+                            * sini supaya salah-rekening ketahuan tanpa harus
+                            * membuka Buku Besar. Periode lama belum punya
+                            * datanya, jadi ditandai jujur apa adanya. */}
+                          {selectedPeriod.paymentMethod === "cash"
+                            ? " · tunai dari kas"
+                            : selectedPeriod.bankAccountId
+                              ? ` · transfer dari ${
+                                  paidBankLabel ?? "rekening terdaftar"
+                                }`
+                              : " · rekening belum dicatat"}
                         </p>
                       ) : null}
                     </div>
@@ -662,6 +704,20 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
                             />{" "}
                             Mark Paid
                           </Button>
+                          {/* Sesi AE-210 — jalan keluar kalau rekeningnya
+                            * terlanjur salah: jurnal dibalik lalu diposting
+                            * ulang ke akun bank yang benar. */}
+                          {selectedPeriod.status === "paid" ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setPaymentModalMode("correct")}
+                              title="Koreksi rekening/metode pembayaran gaji"
+                            >
+                              <Landmark className="size-3.5" aria-hidden />{" "}
+                              Koreksi Rekening
+                            </Button>
+                          ) : null}
                         </div>
                         {/* Group 3: danger */}
                         <Button
@@ -735,6 +791,23 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
           refresh();
         }}
       />
+
+      {/* Sesi AE-210 — pilih/koreksi rekening asal pembayaran gaji. */}
+      {paymentModalMode && selectedPeriod ? (
+        <PayrollPaymentModal
+          mode={paymentModalMode}
+          periodId={selectedPeriod.id}
+          periodLabel={selectedPeriod.label}
+          totalNetPay={selectedPeriod.netPayTotal}
+          currentPaymentMethod={selectedPeriod.paymentMethod}
+          currentBankAccountId={selectedPeriod.bankAccountId}
+          onClose={() => setPaymentModalMode(null)}
+          onSaved={() => {
+            setPaymentModalMode(null);
+            refresh();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

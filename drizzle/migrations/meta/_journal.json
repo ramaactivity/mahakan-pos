@@ -673,6 +673,13 @@
       "when": 1786983342024,
       "tag": "0095_lovely_cannonball",
       "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1787051785345,
+      "tag": "0096_illegal_apocalypse",
+      "breakpoints": true
     }
   ]
 }
