@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Loader2,
   Paperclip,
+  Scale,
   Sparkles,
   UploadCloud,
   X,
@@ -21,15 +22,23 @@ import {
   Input,
   Modal,
   NumericInput,
+  Select,
   toast,
   type ComboboxOption,
 } from "@/components/ui";
 import {
   fetchAccounts,
+  postAdjustingJournal,
   saveManualJournal,
   updateDraftJournalEntry,
 } from "@/features/accounting/actions";
 import { planAutoBalance } from "@/features/accounting/journal-balance-pure";
+import {
+  ADJUSTMENT_KINDS,
+  planAdjustmentDelta,
+  type AdjustmentKind,
+  type AdjustSourceLine,
+} from "@/features/accounting/adjusting-pure";
 import type {
   AccountListRow,
   AccountType,
@@ -90,6 +99,14 @@ interface Props {
    * Pre-fill date/description/lines dari draft. Pada save, panggil
    * updateDraftJournalEntry (entryId stable, no new entry number). */
   editEntry?: JournalEntryWithLines | null;
+  /** Sesi AE-211 — "adjusting" = Jurnal Penyesuaian: entry BARU berisi
+   * selisih, entry aslinya tetap berlaku. Beda dari edit draft (mengubah
+   * entry yang sama) dan dari reverse (meniadakan keduanya). */
+  mode?: "manual" | "adjusting";
+  /** Sesi AE-211 — jurnal yang sedang disesuaikan. Kalau diisi, modal
+   * menampilkan alat hitung "nilai seharusnya" per baris. Boleh kosong untuk
+   * penyesuaian berdiri sendiri (mis. penyusutan bulanan). */
+  adjustTarget?: JournalEntryWithLines | null;
 }
 
 type LineDraft = {
@@ -116,8 +133,11 @@ export function JournalEntryModal({
   onSaved,
   isOwner,
   editEntry,
+  mode = "manual",
+  adjustTarget = null,
 }: Props) {
   const isEdit = editEntry != null;
+  const isAdjusting = mode === "adjusting";
   const [accounts, setAccounts] = useState<AccountListRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -136,6 +156,13 @@ export function JournalEntryModal({
   const [autoLineId, setAutoLineId] = useState<string | null>(null);
   /* Sesi AE-207 — petunjuk arah debit/kredit dari template yang baru dipilih. */
   const [activeHint, setActiveHint] = useState<string | null>(null);
+  /* Sesi AE-211 — khusus mode penyesuaian. `corrected` = "nilai seharusnya"
+   * per baris jurnal asli (kunci = journal_lines.id); selisihnya dihitung
+   * `planAdjustmentDelta` lalu dituang ke tabel baris di bawah. */
+  const [adjustmentType, setAdjustmentType] =
+    useState<AdjustmentKind>("koreksi_nilai");
+  const [reason, setReason] = useState("");
+  const [corrected, setCorrected] = useState<Record<string, string>>({});
   /* Sesi AE-206 — bukti transaksi/transfer (link Google Drive). */
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
@@ -165,12 +192,23 @@ export function JournalEntryModal({
           : [blankLine(), blankLine()],
       );
       setReceiptUrl(editEntry.receiptImageUrl ?? null);
+    } else if (isAdjusting && adjustTarget) {
+      /* Penyesuaian atas jurnal tertentu: tanggalnya default HARI INI, bukan
+       * tanggal jurnal aslinya — penyesuaian adalah kejadian baru, dan
+       * tanggal lama kemungkinan besar ada di bulan yang sudah tutup buku. */
+      setEntryDate(todayJakarta());
+      setDescription(`Penyesuaian ${adjustTarget.entryNumber} — ${adjustTarget.description}`.slice(0, 200));
+      setLines([blankLine(), blankLine()]);
+      setReceiptUrl(null);
     } else {
       setEntryDate(todayJakarta());
       setDescription("");
       setLines([blankLine(), blankLine()]);
       setReceiptUrl(null);
     }
+    setAdjustmentType(adjustTarget ? "koreksi_nilai" : "penyusutan");
+    setReason("");
+    setCorrected({});
     setError(null);
     setAutoLineId(null);
     setActiveHint(null);
@@ -183,7 +221,7 @@ export function JournalEntryModal({
         else toast.error(res.error.message);
       })
       .finally(() => setLoading(false));
-  }, [open, editEntry]);
+  }, [open, editEntry, isAdjusting, adjustTarget]);
 
   const accountOptions: ComboboxOption[] = useMemo(
     () =>
@@ -417,6 +455,97 @@ export function JournalEntryModal({
       group: "Koreksi",
     },
   ];
+
+  /* Sesi AE-211 — template khusus Jurnal Penyesuaian. Pola akhir bulan yang
+   * memang bentuknya penyesuaian, bukan transaksi kas. Beberapa akunnya
+   * NONAKTIF di seed (1290, 6501–6504) — kalau kosong saat dipilih, owner
+   * perlu mengaktifkannya dulu di Bagan Akun. */
+  const ADJUSTING_TEMPLATES: Template[] = [
+    {
+      key: "adj-penyusutan",
+      label: "Penyusutan Bulanan",
+      description: "Beban penyusutan bulan ",
+      lineDebitCode: "6501",
+      lineCreditCode: "1290",
+      group: "Operasional",
+      hint: "Debit beban penyusutan, Kredit Akumulasi Penyusutan. Ganti akun bebannya sesuai jenis aset (6501 furniture, 6502 dapur, 6503 bar, 6504 IT). Kalau akunnya tidak muncul, aktifkan dulu di Bagan Akun.",
+    },
+    {
+      key: "adj-sewa-dimuka",
+      label: "Sewa Dibayar di Muka Jadi Beban",
+      description: "Pengakuan beban sewa bulan ",
+      lineDebitCode: "6201",
+      lineCreditCode: "1150",
+      group: "Operasional",
+      hint: "Untuk sewa yang dibayar sekaligus beberapa bulan. Isi JATAH BULAN INI saja — Debit Beban Sewa, Kredit Biaya Dibayar Dimuka.",
+    },
+    {
+      key: "adj-gaji-akrual",
+      label: "Gaji Masih Harus Dibayar",
+      description: "Gaji bulan ini yang belum dibayar ",
+      lineDebitCode: "6101",
+      lineCreditCode: "2102",
+      group: "Operasional",
+      hint: "Beban gajinya masuk bulan ini walau uangnya keluar bulan depan: Debit Gaji Karyawan, Kredit Hutang Gaji. Saat benar-benar dibayar nanti, jurnalnya Debit Hutang Gaji / Kredit Bank.",
+    },
+    {
+      key: "adj-pendapatan-dimuka",
+      label: "Pendapatan Diterima di Muka Diakui",
+      description: "Pengakuan pendapatan diterima di muka ",
+      lineDebitCode: "2120",
+      lineCreditCode: "4202",
+      group: "Operasional",
+      hint: "Uang sudah diterima duluan (mis. DP sewa ruang). Akui bagian yang acaranya SUDAH jalan: Debit Pendapatan Diterima Dimuka, Kredit Pendapatan Sewa Ruang.",
+    },
+    {
+      key: "adj-stok-kitchen",
+      label: "Selisih Nilai Stok Kitchen",
+      description: "Penyesuaian nilai persediaan Kitchen per ",
+      lineDebitCode: "6903",
+      lineCreditCode: "1140",
+      group: "Koreksi",
+      hint: "Susunan ini untuk stok fisik LEBIH KECIL dari catatan (ada susut/terbuang). Kalau stok fisik lebih BESAR, tukar: Debit 1140, Kredit 6903. Isi selisihnya saja.",
+    },
+  ];
+  const activeTemplates = isAdjusting ? ADJUSTING_TEMPLATES : TEMPLATES;
+  /* Sesi AE-211 — alat hitung selisih. Owner cuma mengetik BERAPA YANG
+   * SEHARUSNYA per baris jurnal asli; sisi debit/kreditnya diambil dari baris
+   * itu, dan kalau nilai yang benar lebih KECIL, selisihnya otomatis jatuh ke
+   * sisi sebaliknya. Logikanya di `adjusting-pure.ts` supaya bisa dites. */
+  const adjustSourceLines: AdjustSourceLine[] = useMemo(
+    () =>
+      (adjustTarget?.lines ?? []).map((l) => ({
+        lineId: l.id,
+        accountId: l.accountId,
+        accountCode: l.accountCode,
+        accountName: l.accountName,
+        debit: Number(l.debit) || 0,
+        credit: Number(l.credit) || 0,
+      })),
+    [adjustTarget],
+  );
+  const deltaPlan = useMemo(
+    () => planAdjustmentDelta(adjustSourceLines, corrected),
+    [adjustSourceLines, corrected],
+  );
+
+  function applyDeltaToLines() {
+    if (deltaPlan.lines.length === 0) return;
+    setLines(
+      deltaPlan.lines.map((l) => ({
+        id: crypto.randomUUID(),
+        accountId: l.accountId,
+        debit: String(l.debit),
+        credit: String(l.credit),
+        description: "Selisih penyesuaian",
+      })),
+    );
+    /* Baris hasil hitungan JANGAN ditandai auto-line: nilainya sudah final,
+     * bukan angka penyeimbang yang boleh ditimpa sistem saat baris lain diisi. */
+    setAutoLineId(null);
+    setError(null);
+  }
+
   function applyTemplate(t: Template) {
     const findId = (code: string) =>
       accounts.find((a) => a.code === code)?.id ?? null;
@@ -517,6 +646,12 @@ export function JournalEntryModal({
       setError("Deskripsi minimal 3 karakter");
       return;
     }
+    if (isAdjusting && reason.trim().length < 10) {
+      setError(
+        "Alasan penyesuaian minimal 10 karakter — jurnal ini mengoreksi angka yang sudah masuk laporan, jadi harus bisa dijelaskan",
+      );
+      return;
+    }
     const validLines = lines.filter(
       (l) => l.accountId && (Number(l.debit) > 0 || Number(l.credit) > 0),
     );
@@ -546,7 +681,18 @@ export function JournalEntryModal({
       credit: Number(l.credit),
       description: l.description.trim() || null,
     }));
-    const res = isEdit
+    const res = isAdjusting
+      ? await postAdjustingJournal({
+          entryDate,
+          description: description.trim(),
+          reason: reason.trim(),
+          adjustmentType,
+          adjustsEntryId: adjustTarget?.id ?? null,
+          status,
+          lines: inputLines,
+          receiptImageUrl: receiptUrl,
+        })
+      : isEdit
       ? await updateDraftJournalEntry({
           entryId: editEntry!.id,
           entryDate,
@@ -579,7 +725,11 @@ export function JournalEntryModal({
         : "";
       const suffix = tanggal ? ` — tanggal ${tanggal}` : "";
       toast.success(
-        isEdit
+        isAdjusting
+          ? status === "posted"
+            ? `Jurnal penyesuaian ${res.data.entryNumber} terposting${suffix}`
+            : `Draft penyesuaian ${res.data.entryNumber} disimpan${suffix}`
+          : isEdit
           ? status === "posted"
             ? `Entry ${res.data.entryNumber} ter-edit + ter-post${suffix}`
             : `Draft ${res.data.entryNumber} ter-update${suffix}`
@@ -597,13 +747,23 @@ export function JournalEntryModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={isEdit ? `Edit Draft ${editEntry!.entryNumber}` : "Entry Jurnal Manual"}
+      title={
+        isAdjusting
+          ? adjustTarget
+            ? `Jurnal Penyesuaian atas ${adjustTarget.entryNumber}`
+            : "Jurnal Penyesuaian"
+          : isEdit
+            ? `Edit Draft ${editEntry!.entryNumber}`
+            : "Entry Jurnal Manual"
+      }
       description={
-        isEdit
-          ? "Edit draft entry. Save changes sebagai draft, atau post langsung (Owner) sekalian."
-          : isOwner
-            ? "Owner: post langsung atau save as draft. Reverse via Jurnal tab kalau perlu."
-            : "Manager: save as draft. Owner approve + post via Jurnal tab."
+        isAdjusting
+          ? "Entry BARU berisi selisihnya saja. Jurnal yang lama tetap berlaku dan tetap terhitung — tidak dihapus, tidak diubah."
+          : isEdit
+            ? "Edit draft entry. Save changes sebagai draft, atau post langsung (Owner) sekalian."
+            : isOwner
+              ? "Owner: post langsung atau save as draft. Reverse via Jurnal tab kalau perlu."
+              : "Manager: save as draft. Owner approve + post via Jurnal tab."
       }
       /* Sesi AE-205 — dilebarkan dari 3xl (max-w-4xl) ke full
        * (min(95vw, 80rem)). Entry jurnal punya 5 kolom + numpad inline; di
@@ -649,7 +809,7 @@ export function JournalEntryModal({
                 loading={submitting}
                 disabled={submitting || uploadingReceipt || !balanced}
               >
-                Post Entry
+                {isAdjusting ? "Post Penyesuaian" : "Post Entry"}
               </Button>
             ) : null}
           </div>
@@ -657,6 +817,183 @@ export function JournalEntryModal({
       }
     >
       <div className="space-y-3">
+        {/* Sesi AE-211 — panel Jurnal Penyesuaian: apa bedanya dengan dua
+            tombol koreksi yang lain, jenis penyesuaiannya apa, dan alasannya
+            (wajib, ikut ke jejak audit). */}
+        {isAdjusting ? (
+          <div className="space-y-3 rounded-md border border-mahakan-green-500/40 bg-mahakan-green-50/50 p-3">
+            <div className="flex items-start gap-2">
+              <Scale
+                className="mt-0.5 size-4 shrink-0 text-mahakan-green-700"
+                aria-hidden
+              />
+              <div className="text-xs leading-relaxed text-neutral-700">
+                <span className="font-semibold text-mahakan-green-900">
+                  Penyesuaian menambah jurnal baru berisi SELISIHNYA saja.
+                </span>{" "}
+                Jurnal lama tetap ada dan tetap terhitung.
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-neutral-600">
+                  <li>
+                    Kalau jurnalnya memang <em>tidak boleh ada</em> — pakai{" "}
+                    <strong>Reverse</strong>, bukan ini.
+                  </li>
+                  <li>
+                    Kalau jurnalnya masih <em>draft</em> — pakai{" "}
+                    <strong>Edit Draft</strong>, tidak perlu penyesuaian.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            {adjustTarget ? (
+              <div className="rounded-md border border-neutral-200 bg-white p-2 text-xs">
+                <div className="mb-1 font-medium text-neutral-800">
+                  Jurnal yang disesuaikan:{" "}
+                  <span className="font-mono">{adjustTarget.entryNumber}</span>{" "}
+                  <span className="text-neutral-500">
+                    · {String(adjustTarget.entryDate)}
+                  </span>
+                </div>
+                <p className="text-neutral-600">{adjustTarget.description}</p>
+              </div>
+            ) : null}
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Select
+                label="Jenis Penyesuaian"
+                options={ADJUSTMENT_KINDS.map((k) => ({
+                  value: k.value,
+                  label: k.label,
+                }))}
+                value={adjustmentType}
+                onValueChange={(v) => setAdjustmentType(v as AdjustmentKind)}
+                size="sm"
+              />
+              <Input
+                label="Alasan penyesuaian"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="mis. nota supplier ternyata Rp 450rb, bukan Rp 500rb"
+                hint="Minimal 10 karakter — tersimpan di jurnal & Audit Log."
+                maxLength={300}
+              />
+            </div>
+            <p className="text-[11px] italic text-neutral-600">
+              {ADJUSTMENT_KINDS.find((k) => k.value === adjustmentType)?.help}
+            </p>
+          </div>
+        ) : null}
+
+        {/* Sesi AE-211 — alat hitung selisih. Owner cukup mengetik BERAPA YANG
+            SEHARUSNYA per baris; sisi debit/kredit + arah selisihnya diurus
+            sistem. Ini yang bikin penyesuaian tidak perlu hitung manual. */}
+        {isAdjusting && adjustSourceLines.length > 0 ? (
+          <div className="rounded-md border border-neutral-200 bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 px-3 py-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-600">
+                Hitung selisih dari nilai yang benar
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={applyDeltaToLines}
+                disabled={deltaPlan.lines.length === 0}
+              >
+                Isi Baris Selisih
+              </Button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-neutral-50 text-neutral-500">
+                  <tr>
+                    <th className="px-3 py-1.5 text-left font-medium">Akun</th>
+                    <th className="px-3 py-1.5 text-right font-medium">
+                      Sisi
+                    </th>
+                    <th className="px-3 py-1.5 text-right font-medium">
+                      Nilai sekarang
+                    </th>
+                    <th className="px-3 py-1.5 text-left font-medium">
+                      Nilai seharusnya
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {adjustSourceLines.map((l) => {
+                    const isDebitSide = l.debit > 0;
+                    return (
+                      <tr key={l.lineId}>
+                        <td className="px-3 py-1.5 align-middle text-neutral-800">
+                          <span className="font-mono text-neutral-500">
+                            {l.accountCode}
+                          </span>{" "}
+                          {l.accountName}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-medium text-neutral-600">
+                          {isDebitSide ? "Debit" : "Kredit"}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono text-neutral-800">
+                          {formatRupiah(isDebitSide ? l.debit : l.credit)}
+                        </td>
+                        <td className="w-56 px-3 py-1.5">
+                          <NumericInput
+                            ariaLabel={`Nilai seharusnya ${l.accountCode}`}
+                            value={corrected[l.lineId] ?? ""}
+                            onChange={(v) =>
+                              setCorrected((prev) => ({
+                                ...prev,
+                                [l.lineId]: v,
+                              }))
+                            }
+                            prefix="Rp"
+                            placeholder="kosongkan kalau sudah benar"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="border-t border-neutral-100 px-3 py-2 text-xs">
+              {deltaPlan.unchanged ? (
+                <span className="text-neutral-500">
+                  Kosongkan baris yang nilainya sudah benar. Isi hanya yang
+                  berubah — selisihnya dihitung otomatis.
+                </span>
+              ) : (
+                <div className="space-y-1">
+                  {deltaPlan.lines.map((l) => (
+                    <div
+                      key={l.accountId}
+                      className="flex items-center justify-between gap-2"
+                    >
+                      <span className="text-neutral-700">
+                        <span className="font-mono text-neutral-500">
+                          {l.accountCode}
+                        </span>{" "}
+                        {l.accountName}
+                      </span>
+                      <span className="font-mono text-neutral-900">
+                        {l.debit > 0
+                          ? `Debit ${formatRupiah(l.debit)}`
+                          : `Kredit ${formatRupiah(l.credit)}`}
+                      </span>
+                    </div>
+                  ))}
+                  {!deltaPlan.balanced ? (
+                    <p className="rounded-md bg-warning-100/50 p-2 text-[11px] text-warning-700">
+                      Selisihnya belum seimbang (beda{" "}
+                      {formatRupiah(Math.abs(deltaPlan.diff))}). Isi juga baris
+                      lawannya, atau tekan &ldquo;Isi Baris Selisih&rdquo; lalu
+                      tambahkan baris penyeimbang di tabel bawah.
+                    </p>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
+
         {/* Sesi AE-72/AE-73 — Quick templates grouped. Hanya tampil di
          * mode CREATE, bukan edit (edit pre-fill dari existing entry). */}
         {!isEdit ? (
@@ -675,7 +1012,7 @@ export function JournalEntryModal({
             </div>
             {(["Saldo Awal", "Operasional", "Koreksi"] as const).map(
               (group) => {
-                const groupTemplates = TEMPLATES.filter(
+                const groupTemplates = activeTemplates.filter(
                   (t) => t.group === group,
                 );
                 if (groupTemplates.length === 0) return null;

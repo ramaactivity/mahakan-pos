@@ -299,6 +299,18 @@ export const journalEntries = pgTable(
          *      Cr 1140/1141/1142 Persediaan <section>
          * sourceId = cogs_period_closes.id. One entry per (outlet, period). */
         "cogs_period_close",
+        /* Sesi AE-211 — Jurnal Penyesuaian (adjusting entry).
+         *
+         * Entry BARU berisi SELISIH-nya saja; entry yang disesuaikan tetap
+         * 'posted' dan tetap terhitung (beda dengan reverse yang menandai
+         * keduanya 'reversed', dan beda dengan edit draft yang mengubah entry
+         * yang sama di tempatnya).
+         *
+         * sourceId sengaja NULL — satu jurnal boleh disesuaikan lebih dari
+         * sekali, sedangkan `ux_je_outlet_source_active` hanya mengizinkan
+         * satu entry aktif per (sourceType, sourceId). Tautan ke jurnal yang
+         * disesuaikan disimpan di `metadata.adjusting.adjustsEntryId`. */
+        "adjusting",
       ],
     }).notNull(),
 

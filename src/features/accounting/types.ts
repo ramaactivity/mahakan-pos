@@ -92,7 +92,11 @@ export type JournalSourceType =
   | "employee_advance_repayment"
   | "employee_advance_repayment_reversal"
   /* Sesi AE-116 — COGS period close adjustment (reconcile recognized vs actual). */
-  | "cogs_period_close";
+  | "cogs_period_close"
+  /* Sesi AE-211 — Jurnal Penyesuaian: entry baru berisi selisih, entry
+   * aslinya tetap berlaku. Lihat `adjusting-pure.ts` untuk bedanya dengan
+   * Edit Jurnal & Reverse Jurnal. */
+  | "adjusting";
 
 export type JournalEntryStatus = "draft" | "posted" | "reversed";
 

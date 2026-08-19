@@ -46,6 +46,15 @@ export type PeriodCloseInput = {
   balances: AccountBalance[];
 };
 
+/**
+ * Sesi AE-211 — kontra-revenue dikenali dari KODE akun, bukan flag `isContra`,
+ * supaya pratinjau Tutup Buku dan jurnal penutup yang sebenarnya tidak pernah
+ * beda. Dipakai bersama oleh `mapPeriodClose` dan `summarizeClosingNominals`.
+ */
+export function isContraRevenueCode(code: string): boolean {
+  return code === "4110" || code === "4111";
+}
+
 export function mapPeriodClose(input: PeriodCloseInput): JournalLineInput[] {
   const lines: JournalLineInput[] = [];
 
@@ -59,7 +68,7 @@ export function mapPeriodClose(input: PeriodCloseInput): JournalLineInput[] {
     if (acc.type === "revenue") {
       // Revenue accounts: 4101/4102/4103/4104/4201/4301 (credit-normal, balance positive = credit)
       // Contra-revenue: 4110/4111 (debit-normal, isContra=true, balance positive = debit)
-      if (acc.code === "4110" || acc.code === "4111") {
+      if (isContraRevenueCode(acc.code)) {
         // Contra-revenue: debit-normal balance. Counter = credit it back to zero,
         // counter-counter = debit 3302 untuk match.
         if (acc.balance > 0) {

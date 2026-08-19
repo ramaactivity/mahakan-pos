@@ -13,6 +13,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  Scale,
   Trash2,
   X,
   Zap,
@@ -30,10 +31,12 @@ import {
 } from "@/components/ui";
 import {
   deleteDraftJournalEntry,
+  fetchAdjustmentCounts,
   fetchJournalEntries,
   reverseJournalEntry,
   updateJournalEntryDate,
 } from "@/features/accounting/actions";
+import { adjustmentKindLabel } from "@/features/accounting/adjusting-pure";
 import type {
   JournalEntryStatus,
   JournalEntryWithLines,
@@ -67,6 +70,9 @@ const STATUS_VARIANT: Record<
 const SOURCE_TYPE_OPTIONS = [
   { value: "all", label: "Semua sumber" },
   { value: "manual", label: "Manual" },
+  /* Sesi AE-211 — jurnal penyesuaian punya sumbernya sendiri supaya owner
+   * bisa memisahkan koreksi akhir bulan dari jurnal manual biasa. */
+  { value: "adjusting", label: "Jurnal Penyesuaian" },
   { value: "opening_balance", label: "Jurnal Pembukaan" },
   { value: "pos_sale", label: "POS Sale" },
   /* Sesi AE-193 — ringkasan penjualan harian. */
@@ -103,6 +109,17 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
   const [editEntry, setEditEntry] = useState<JournalEntryWithLines | null>(
     null,
   );
+  /* Sesi AE-211 — Jurnal Penyesuaian. `adjustTarget` = jurnal yang sedang
+   * disesuaikan; null + `adjustOpen` = penyesuaian berdiri sendiri (mis.
+   * penyusutan bulanan) yang tidak menunjuk jurnal manapun. */
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustTarget, setAdjustTarget] =
+    useState<JournalEntryWithLines | null>(null);
+  /* Berapa penyesuaian yang sudah menempel per entry — supaya jurnal yang
+   * sudah dikoreksi tidak dikoreksi dua kali tanpa sadar. */
+  const [adjustmentCounts, setAdjustmentCounts] = useState<
+    Record<string, number>
+  >({});
 
   // Filters
   /* Sesi AE-72 — Search query untuk filter client-side (deskripsi /
@@ -120,6 +137,9 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
   const canDraft = hasPermission(viewerRole, "accounting.journal.draft");
   const canPost = hasPermission(viewerRole, "accounting.journal.post");
   const canReverse = hasPermission(viewerRole, "accounting.journal.reverse");
+  /* Penyesuaian membuat entry baru — haknya sama dengan membuat jurnal
+   * (draft untuk manager, posting untuk owner). */
+  const canAdjust = hasPermission(viewerRole, "accounting.journal.draft");
   /* Sesi AE-185 — ubah tanggal memakai hak posting jurnal (owner). */
   const canEditDate = hasPermission(viewerRole, "accounting.journal.post");
 
@@ -172,8 +192,13 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
         fromDate: filterRange.from ?? undefined,
         toDate: filterRange.to ?? undefined,
       });
-      if (res.ok) setRows(res.data);
-      else toast.error(res.error.message);
+      if (res.ok) {
+        setRows(res.data);
+        /* Sesi AE-211 — tautan penyesuaian tersimpan di metadata (bukan
+         * kolom), jadi hitungannya diambil sekali untuk seluruh halaman. */
+        const countRes = await fetchAdjustmentCounts(res.data.map((e) => e.id));
+        setAdjustmentCounts(countRes.ok ? countRes.data : {});
+      } else toast.error(res.error.message);
     } finally {
       setLoading(false);
     }
@@ -313,11 +338,29 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
           Daftar entri jurnal (max 100). Auto-jurnal aktif kalau Owner toggle
           flag di Settings.
         </p>
-        {canDraft || canPost ? (
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="size-4" /> Buat Entry Manual
-          </Button>
-        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {/* Sesi AE-211 — penyesuaian akhir bulan yang tidak menunjuk jurnal
+              tertentu (penyusutan, akrual, dibayar di muka) dimulai dari sini.
+              Untuk mengoreksi nilai satu jurnal, pakai tombol timbangan di
+              baris jurnalnya. */}
+          {canAdjust ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setAdjustTarget(null);
+                setAdjustOpen(true);
+              }}
+            >
+              <Scale className="size-4" /> Jurnal Penyesuaian
+            </Button>
+          ) : null}
+          {canDraft || canPost ? (
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" /> Buat Entry Manual
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       {/* Filters */}
@@ -511,6 +554,12 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
       ) : (
         <RowList
           rows={filteredRows}
+          adjustmentCounts={adjustmentCounts}
+          canAdjust={canAdjust}
+          onAdjust={(e) => {
+            setAdjustTarget(e);
+            setAdjustOpen(true);
+          }}
           canReverse={canReverse}
           canDeleteDraft={canDraft}
           canEditDraft={canDraft}
@@ -661,6 +710,24 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
         />
       ) : null}
 
+      {adjustOpen ? (
+        <JournalEntryModal
+          open={adjustOpen}
+          mode="adjusting"
+          adjustTarget={adjustTarget}
+          onClose={() => {
+            setAdjustOpen(false);
+            setAdjustTarget(null);
+          }}
+          onSaved={() => {
+            setAdjustOpen(false);
+            setAdjustTarget(null);
+            void load();
+          }}
+          isOwner={viewerRole === "owner"}
+        />
+      ) : null}
+
       {editEntry ? (
         <JournalEntryModal
           open={editEntry != null}
@@ -677,8 +744,25 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
   );
 }
 
+/** Sesi AE-211 — bentuk metadata jurnal penyesuaian (lihat postAdjustingJournal). */
+type AdjustingMeta = {
+  kind?: string;
+  reason?: string;
+  adjustsEntryNumber?: string | null;
+  adjustsEntryDate?: string | null;
+};
+
+function readAdjustingMeta(entry: JournalEntryWithLines): AdjustingMeta | null {
+  if (entry.sourceType !== "adjusting") return null;
+  const meta = entry.metadata as { adjusting?: AdjustingMeta } | null;
+  return meta?.adjusting ?? null;
+}
+
 function RowList({
   rows,
+  adjustmentCounts,
+  canAdjust,
+  onAdjust,
   canReverse,
   canDeleteDraft,
   canEditDraft,
@@ -689,6 +773,9 @@ function RowList({
   onEditDraft,
 }: {
   rows: JournalEntryWithLines[];
+  adjustmentCounts: Record<string, number>;
+  canAdjust: boolean;
+  onAdjust: (e: JournalEntryWithLines) => void;
   canReverse: boolean;
   canDeleteDraft: boolean;
   canEditDraft: boolean;
@@ -705,6 +792,8 @@ function RowList({
           (s, l) => s + Number(l.debit),
           0,
         );
+        const adjustingMeta = readAdjustingMeta(entry);
+        const adjustedByCount = adjustmentCounts[entry.id] ?? 0;
         return (
           <details
             key={entry.id}
@@ -723,6 +812,18 @@ function RowList({
               <Badge variant={STATUS_VARIANT[entry.status]}>
                 {STATUS_LABEL[entry.status]}
               </Badge>
+              {/* Sesi AE-211 — dua arah penandaan: entry ini SEBUAH
+                  penyesuaian, atau entry ini SUDAH pernah disesuaikan. */}
+              {adjustingMeta ? (
+                <Badge variant="info" className="shrink-0">
+                  Penyesuaian
+                </Badge>
+              ) : null}
+              {adjustedByCount > 0 ? (
+                <Badge variant="warning" className="shrink-0">
+                  Disesuaikan {adjustedByCount}×
+                </Badge>
+              ) : null}
               <span className="font-mono text-sm font-medium text-neutral-900">
                 {formatRupiah(totalDebit)}
               </span>
@@ -748,6 +849,23 @@ function RowList({
                   title="Ubah tanggal jurnal (tanpa reverse)"
                 >
                   <CalendarDays className="size-3.5" />
+                </button>
+              ) : null}
+              {/* Sesi AE-211 — Sesuaikan: bikin jurnal baru berisi selisih,
+                  entry ini tetap berlaku. Bedanya dengan Reverse di
+                  sebelahnya (meniadakan) dijelaskan di dalam modalnya. */}
+              {canAdjust && entry.status === "posted" ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onAdjust(entry);
+                  }}
+                  className="inline-flex items-center gap-1 rounded p-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-mahakan-green-700"
+                  aria-label={`Sesuaikan ${entry.entryNumber}`}
+                  title="Jurnal penyesuaian (koreksi nilai tanpa membatalkan)"
+                >
+                  <Scale className="size-3.5" />
                 </button>
               ) : null}
               {canReverse && entry.status === "posted" ? (
@@ -800,6 +918,33 @@ function RowList({
               ) : null}
             </summary>
             <div className="border-t border-neutral-100 bg-neutral-50/50 px-3 py-2">
+              {adjustingMeta ? (
+                <div className="mb-2 rounded-md border border-mahakan-green-500/30 bg-mahakan-green-50/60 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-700">
+                  <span className="font-semibold text-mahakan-green-900">
+                    {adjustmentKindLabel(adjustingMeta.kind ?? "")}
+                  </span>
+                  {adjustingMeta.adjustsEntryNumber ? (
+                    <>
+                      {" "}
+                      atas{" "}
+                      <span className="font-mono">
+                        {adjustingMeta.adjustsEntryNumber}
+                      </span>
+                      {adjustingMeta.adjustsEntryDate
+                        ? ` (${adjustingMeta.adjustsEntryDate})`
+                        : ""}
+                      {" — jurnal itu TETAP berlaku, ini hanya selisihnya."}
+                    </>
+                  ) : (
+                    " — penyesuaian akhir periode, tidak menunjuk jurnal tertentu."
+                  )}
+                  {adjustingMeta.reason ? (
+                    <div className="mt-0.5 text-neutral-600">
+                      Alasan: {adjustingMeta.reason}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <table className="min-w-full text-xs">
                 <thead>
                   <tr className="text-neutral-500">

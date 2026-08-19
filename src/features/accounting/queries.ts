@@ -219,7 +219,9 @@ export async function listJournalEntries(
           | "shift_variance"
           | "opname_adjustment"
           | "period_close"
-          | "period_reopen",
+          | "period_reopen"
+          /* Sesi AE-211 — jurnal penyesuaian. */
+          | "adjusting",
       ),
     );
   }

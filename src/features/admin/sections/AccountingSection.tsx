@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, CheckCircle2, Zap } from "lucide-react";
 import { Tab, TabList, TabPanel, Tabs } from "@/components/ui";
+import { ClosingView } from "./accounting/ClosingView";
 import { CoaView } from "./accounting/CoaView";
 import { FixedAssetsView } from "./accounting/FixedAssetsView";
 import { JournalView } from "./accounting/JournalView";
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils";
 type AccountingTab =
   | "coa"
   | "journal"
+  | "closing"
   | "periods"
   | "opening"
   | "reports"
@@ -25,6 +27,10 @@ type AccountingTab =
 const TABS: Array<{ key: AccountingTab; label: string }> = [
   { key: "coa", label: "Bagan Akun" },
   { key: "journal", label: "Jurnal" },
+  /* Sesi AE-211 — tab sendiri untuk tutup buku bulanan. Tombolnya dulu
+   * terselip di tab Periode tanpa pratinjau sama sekali: owner menekan, jurnal
+   * penutup terbentuk, dan baru sesudahnya bisa dilihat isinya. */
+  { key: "closing", label: "Tutup Buku" },
   { key: "periods", label: "Periode" },
   /* Sesi AE-207 — tab sendiri supaya mudah ditemukan. Owner butuh ini setelah
    * cutoff: saldo awal diambil dari GL, lalu disesuaikan ke data fisik. */
@@ -92,7 +98,7 @@ export function AccountingSection({ viewerRole }: AccountingSectionProps) {
           ) : null}
         </div>
         <p className="text-sm text-neutral-700">
-          Bagan Akun, Jurnal Umum, dan Periode Akuntansi.{" "}
+          Bagan Akun, Jurnal Umum, Tutup Buku bulanan, dan Periode Akuntansi.{" "}
           {autoJournalEnabled ? (
             <span className="text-success-700">
               Auto-jurnal AKTIF — POS / payroll / setoran / pembelian /
@@ -120,6 +126,9 @@ export function AccountingSection({ viewerRole }: AccountingSectionProps) {
       </TabPanel>
       <TabPanel value="journal">
         <JournalView viewerRole={viewerRole} />
+      </TabPanel>
+      <TabPanel value="closing">
+        <ClosingView viewerRole={viewerRole} />
       </TabPanel>
       <TabPanel value="periods">
         <PeriodsView viewerRole={viewerRole} />

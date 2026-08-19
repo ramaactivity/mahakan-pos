@@ -231,7 +231,14 @@ export function PeriodsView({ viewerRole }: { viewerRole: Role }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-neutral-700">
           Periode bulanan (Asia/Jakarta calendar). State: <em>open</em> →{" "}
-          <em>closed</em> → <em>locked</em> (irreversible).
+          <em>closed</em> → <em>locked</em> (irreversible).{" "}
+          {/* Sesi AE-211 — tutup buku satu bulan sebaiknya lewat tab Tutup
+              Buku yang menampilkan pratinjau jurnal penutupnya dulu. Tombol
+              di sini dipertahankan untuk bulk-close tunggakan lama. */}
+          <span className="text-neutral-500">
+            Untuk menutup satu bulan dengan pratinjau, pakai tab{" "}
+            <strong>Tutup Buku</strong>.
+          </span>
         </p>
         <div className="flex flex-wrap gap-2">
           {canCutover ? (

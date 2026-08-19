@@ -308,6 +308,12 @@ export const AUDIT_EVENT_TYPES = [
   "journal_entry.post",
   "journal_entry.update_draft",
   "journal_entry.reverse",
+  /* Sesi AE-211 — jurnal penyesuaian: entry BARU berisi selisih, entry
+   * aslinya tetap berlaku (beda dari reverse yang meniadakan keduanya, dan
+   * beda dari update_draft yang mengubah entry yang sama). Payload menyimpan
+   * alasan + nomor jurnal yang disesuaikan. */
+  "journal_entry.adjust",
+  "journal_entry.adjust_draft",
   /* Sesi AE-185 — ubah tanggal jurnal yang sudah posted tanpa reverse.
    * Payload menyimpan tanggal & nomor lama supaya jejaknya utuh. */
   "journal_entry.date_changed",

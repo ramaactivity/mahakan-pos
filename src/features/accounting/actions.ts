@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   accountingPeriods,
@@ -39,6 +39,19 @@ import {
   mapPeriodClose,
   type AccountBalance as PeriodCloseAccountBalance,
 } from "./mapping";
+import {
+  collectPeriodCloseBalances,
+  periodBalanceCheck,
+  periodBounds,
+  periodLabelId,
+  summarizeClosingNominals,
+  type ClosingNominalAccount,
+} from "./closing-pure";
+import {
+  adjustmentKindLabel,
+  isAdjustmentKind,
+  type AdjustmentKind,
+} from "./adjusting-pure";
 import {
   formatJournalEntryNumber,
   isDifferentPeriod,
@@ -80,6 +93,7 @@ import {
   type ApiResult,
   type ChartOfAccount,
   type JournalEntryWithLines,
+  type PeriodStatus,
   type PeriodSummary,
 } from "./types";
 
@@ -929,6 +943,239 @@ export async function saveOpeningBalance(input: {
 // Sesi V — Period Close + Reopen + Lock
 // ============================================================
 
+/* ============================================================
+ * Sesi AE-211 — Pratinjau Tutup Buku Bulanan
+ *
+ * Sebelum ini tombol "Tutup Periode" adalah lompatan buta: owner menekan,
+ * jurnal penutup terbentuk, dan baru sesudahnya bisa dilihat apa isinya.
+ * Fungsi ini menghitung persis apa yang AKAN terjadi — akun nominal mana yang
+ * dinolkan, berapa laba/ruginya, jurnal penutupnya seperti apa — tanpa
+ * menulis apa pun, plus daftar penghalang & peringatan.
+ *
+ * Angkanya dijamin sama dengan hasil `closeAccountingPeriod` karena keduanya
+ * memakai `collectPeriodCloseBalances` + `mapPeriodClose` yang sama.
+ * ============================================================ */
+
+export type ClosingCheckItem = {
+  code: string;
+  message: string;
+};
+
+export type PeriodClosePreview = {
+  periodId: string;
+  periodYear: number;
+  periodMonth: number;
+  periodLabel: string;
+  status: PeriodStatus;
+  firstDay: string;
+  lastDay: string;
+  /** Akun nominal yang akan dinolkan (kosong = tidak ada yang perlu ditutup). */
+  accounts: ClosingNominalAccount[];
+  revenueTotal: number;
+  contraRevenueTotal: number;
+  cogsTotal: number;
+  expenseTotal: number;
+  netIncome: number;
+  /** Jurnal penutup yang akan diposting — pratinjau baris per baris. */
+  lines: Array<{
+    accountCode: string;
+    accountName: string;
+    debit: number;
+    credit: number;
+    description: string | null;
+  }>;
+  draftCount: number;
+  /** Bulan lebih tua yang masih terbuka (label siap tampil). */
+  earlierOpenPeriods: string[];
+  /** Harus nol dulu sebelum tombol Tutup Buku boleh ditekan. */
+  blockers: ClosingCheckItem[];
+  /** Tidak menghalangi, tapi wajib dibaca. */
+  warnings: ClosingCheckItem[];
+  /** Terisi kalau periodenya sudah ditutup. */
+  closingEntry: {
+    id: string;
+    entryNumber: string;
+    entryDate: string;
+  } | null;
+};
+
+export async function fetchPeriodClosePreview(
+  periodId: string,
+): Promise<ApiResult<PeriodClosePreview>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.period.view")) {
+    return fail("FORBIDDEN", "Tidak punya akses periode akuntansi");
+  }
+
+  const [period] = await db
+    .select()
+    .from(accountingPeriods)
+    .where(
+      and(
+        eq(accountingPeriods.id, periodId),
+        eq(accountingPeriods.outletId, session.user.outletId),
+      ),
+    )
+    .limit(1);
+  if (!period) return fail("NOT_FOUND", "Periode tidak ditemukan");
+
+  const { firstDay, lastDay } = periodBounds(
+    period.periodYear,
+    period.periodMonth,
+  );
+  const periodLabel = periodLabelId(period.periodYear, period.periodMonth);
+
+  const balances = await getAccountBalances({
+    outletId: session.user.outletId,
+    fromDate: firstDay,
+    toDate: lastDay,
+    /* Sama dengan closeAccountingPeriod: jurnal penutup/pembatalan dari
+     * siklus tutup–buka sebelumnya tidak boleh ikut disapu lagi. */
+    excludeClosingEntries: true,
+  });
+
+  const summary = summarizeClosingNominals(balances);
+  const nominals = collectPeriodCloseBalances(balances);
+  const nameByCode = new Map(balances.map((b) => [b.code, b.name]));
+
+  let lines: PeriodClosePreview["lines"] = [];
+  if (nominals.length > 0) {
+    try {
+      lines = mapPeriodClose({
+        outletId: session.user.outletId,
+        entryDate: lastDay,
+        periodLabel: `${period.periodYear}-${String(period.periodMonth).padStart(2, "0")}`,
+        balances: nominals,
+      }).map((l) => ({
+        accountCode: l.accountCode ?? "",
+        accountName: nameByCode.get(l.accountCode ?? "") ?? "",
+        debit: l.debit ?? 0,
+        credit: l.credit ?? 0,
+        description: l.description ?? null,
+      }));
+    } catch (e) {
+      return fail(
+        "VALIDATION",
+        logAndSanitize(e, "accounting", "Gagal menyusun pratinjau jurnal penutup"),
+      );
+    }
+  }
+
+  const [draftRow] = await db
+    .select({ c: sql<number>`COUNT(*)::int` })
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.periodId, periodId),
+        eq(journalEntries.status, "draft"),
+      ),
+    );
+  const draftCount = Number(draftRow?.c ?? 0);
+
+  /* Bulan lebih tua yang masih terbuka. Menutup bulan Agustus sementara Juli
+   * masih terbuka bukan kesalahan fatal (angkanya tetap per-bulan), tapi laba
+   * ditahan jadi terisi tidak berurutan dan mudah membingungkan — jadi
+   * ditampilkan sebagai peringatan. */
+  const olderOpen = await db
+    .select({
+      year: accountingPeriods.periodYear,
+      month: accountingPeriods.periodMonth,
+    })
+    .from(accountingPeriods)
+    .where(
+      and(
+        eq(accountingPeriods.outletId, session.user.outletId),
+        eq(accountingPeriods.status, "open"),
+        sql`(${accountingPeriods.periodYear} * 100 + ${accountingPeriods.periodMonth}) < ${period.periodYear * 100 + period.periodMonth}`,
+      ),
+    )
+    .orderBy(asc(accountingPeriods.periodYear), asc(accountingPeriods.periodMonth));
+  const earlierOpenPeriods = olderOpen.map((p) => periodLabelId(p.year, p.month));
+
+  let closingEntry: PeriodClosePreview["closingEntry"] = null;
+  if (period.closingEntryId) {
+    const [row] = await db
+      .select({
+        id: journalEntries.id,
+        entryNumber: journalEntries.entryNumber,
+        entryDate: journalEntries.entryDate,
+      })
+      .from(journalEntries)
+      .where(eq(journalEntries.id, period.closingEntryId))
+      .limit(1);
+    if (row) {
+      closingEntry = {
+        id: row.id,
+        entryNumber: row.entryNumber,
+        entryDate: String(row.entryDate),
+      };
+    }
+  }
+
+  const blockers: ClosingCheckItem[] = [];
+  const warnings: ClosingCheckItem[] = [];
+
+  if (period.status === "closed") {
+    blockers.push({
+      code: "ALREADY_CLOSED",
+      message: `${periodLabel} sudah tutup buku. Buka kembali dulu kalau masih ada yang perlu dibetulkan.`,
+    });
+  } else if (period.status === "locked") {
+    blockers.push({
+      code: "LOCKED",
+      message: `${periodLabel} sudah dikunci permanen — tidak bisa diubah lagi.`,
+    });
+  }
+  if (draftCount > 0) {
+    blockers.push({
+      code: "HAS_DRAFTS",
+      message: `${draftCount} jurnal masih berstatus draft. Posting atau hapus dulu — draft tidak ikut tersapu jurnal penutup.`,
+    });
+  }
+
+  const check = periodBalanceCheck(balances);
+  if (!check.balanced) {
+    warnings.push({
+      code: "UNBALANCED",
+      message: `Buku bulan ini timpang: debit ${check.totalDebit} vs kredit ${check.totalCredit}. Periksa Laporan Validasi dulu — tutup buku akan mengunci angka yang keliru.`,
+    });
+  }
+  if (earlierOpenPeriods.length > 0) {
+    warnings.push({
+      code: "EARLIER_OPEN",
+      message: `Bulan lebih tua masih terbuka: ${earlierOpenPeriods.join(", ")}. Sebaiknya tutup berurutan dari yang paling lama.`,
+    });
+  }
+  if (period.status === "open" && summary.accounts.length === 0) {
+    warnings.push({
+      code: "NOTHING_TO_CLOSE",
+      message: `Tidak ada saldo pendapatan / HPP / beban di ${periodLabel}. Periode akan ditandai tutup tanpa jurnal penutup.`,
+    });
+  }
+
+  return ok({
+    periodId: period.id,
+    periodYear: period.periodYear,
+    periodMonth: period.periodMonth,
+    periodLabel,
+    status: period.status,
+    firstDay,
+    lastDay,
+    accounts: summary.accounts,
+    revenueTotal: summary.revenueTotal,
+    contraRevenueTotal: summary.contraRevenueTotal,
+    cogsTotal: summary.cogsTotal,
+    expenseTotal: summary.expenseTotal,
+    netIncome: summary.netIncome,
+    lines,
+    draftCount,
+    earlierOpenPeriods,
+    blockers,
+    warnings,
+    closingEntry,
+  });
+}
+
 export async function closeAccountingPeriod(
   periodId: string,
 ): Promise<ApiResult<{ entryId: string; entryNumber: string }>> {
@@ -969,14 +1216,14 @@ export async function closeAccountingPeriod(
     );
   }
 
-  // Compute period bounds (last day of month untuk entry_date closing).
-  // Audit AE-186 — pakai UTC murni: versi lama `new Date(y, m, 0)` (local
-  // midnight) di-toISOString() bergeser ke hari sebelumnya pada server
-  // non-UTC (mis. run lokal WIB) → entry tanggal 31 lolos dari sapuan close.
-  const lastDay = new Date(Date.UTC(period.periodYear, period.periodMonth, 0))
-    .toISOString()
-    .slice(0, 10);
-  const firstDay = `${period.periodYear}-${String(period.periodMonth).padStart(2, "0")}-01`;
+  /* Batas periode (hari terakhir bulan = entry_date jurnal penutup).
+   * Sesi AE-211 — perhitungannya pindah ke `periodBounds` supaya layar
+   * pratinjau Tutup Buku memakai batas yang persis sama. Catatan UTC dari
+   * audit AE-186 ikut pindah ke sana. */
+  const { firstDay, lastDay } = periodBounds(
+    period.periodYear,
+    period.periodMonth,
+  );
 
   // Aggregate balances dalam period only (entry.entryDate dalam window).
   const balances = await getAccountBalances({
@@ -988,30 +1235,12 @@ export async function closeAccountingPeriod(
     excludeClosingEntries: true,
   });
 
-  // Filter ke revenue/cogs/expense saja, normalize balance per type.
-  const periodCloseBalances: PeriodCloseAccountBalance[] = [];
-  for (const b of balances) {
-    if (
-      b.type !== "revenue" &&
-      b.type !== "cogs" &&
-      b.type !== "expense"
-    ) {
-      continue;
-    }
-    let normalized = 0;
-    if (b.normalBalance === "debit") {
-      normalized = b.debitTotal - b.creditTotal;
-    } else {
-      normalized = b.creditTotal - b.debitTotal;
-    }
-    if (normalized === 0) continue;
-    periodCloseBalances.push({
-      code: b.code,
-      type: b.type,
-      balance: normalized,
-      accountId: b.accountId,
-    });
-  }
+  /* Sesi AE-211 — penyaringan akun nominal dipindah ke `collectPeriodCloseBalances`
+   * dan dipakai bersama layar pratinjau Tutup Buku. Satu fungsi = angka yang
+   * dilihat owner sebelum menekan tombol tidak mungkin beda dengan yang
+   * diposting. */
+  const periodCloseBalances: PeriodCloseAccountBalance[] =
+    collectPeriodCloseBalances(balances);
 
   if (periodCloseBalances.length === 0) {
     // Kalau period kosong, just mark closed without journal entry.
@@ -1425,6 +1654,266 @@ export async function saveManualJournal(
   });
 
   return ok({ ...result, status: input.status });
+}
+
+/* ============================================================
+ * Sesi AE-211 — Jurnal Penyesuaian (adjusting entry)
+ *
+ * Tiga jalan koreksi, tiga arti berbeda — jangan ditukar:
+ *
+ *   Edit Jurnal   `updateDraftJournalEntry` — mengubah entry yang SAMA.
+ *                 Hanya DRAFT manual. Begitu ter-post, angkanya sudah masuk
+ *                 laporan; mengubahnya di tempat menghapus jejak.
+ *   Reverse       `reverseJournalEntry` — entry lawan bernilai SAMA PERSIS,
+ *                 lalu keduanya ditandai `reversed` sehingga saling
+ *                 meniadakan. Untuk jurnal yang memang TIDAK BOLEH ADA.
+ *   Penyesuaian   fungsi di bawah ini — entry BARU berisi SELISIH-nya saja.
+ *                 Entry aslinya tetap `posted` dan tetap terhitung. Untuk
+ *                 jurnal yang benar tapi nilainya kurang/lebih, dan untuk
+ *                 penyesuaian akhir bulan (akrual, penyusutan, dibayar di
+ *                 muka, nilai stok).
+ * ============================================================ */
+
+export type PostAdjustingJournalInput = {
+  entryDate: string;
+  description: string;
+  /** Wajib, min 10 karakter — ikut ke metadata entry DAN audit log. */
+  reason: string;
+  adjustmentType: AdjustmentKind;
+  /** Opsional: jurnal yang sedang disesuaikan. Null = penyesuaian berdiri
+   * sendiri (mis. penyusutan bulanan) yang tidak menunjuk entry manapun. */
+  adjustsEntryId?: string | null;
+  lines: ManualJournalLineInput[];
+  status: "draft" | "posted";
+  receiptImageUrl?: string | null;
+};
+
+export async function postAdjustingJournal(
+  input: PostAdjustingJournalInput,
+): Promise<
+  ApiResult<{
+    entryId: string;
+    entryNumber: string;
+    status: string;
+    adjustsEntryNumber: string | null;
+  }>
+> {
+  const session = await requireSession();
+
+  if (input.status === "draft") {
+    if (!hasPermission(session.user.role, "accounting.journal.draft")) {
+      return fail("FORBIDDEN", "Tidak punya hak menyimpan draft penyesuaian");
+    }
+  } else {
+    if (!hasPermission(session.user.role, "accounting.journal.post")) {
+      return fail(
+        "FORBIDDEN",
+        "Hanya Owner yang dapat mem-posting jurnal penyesuaian",
+      );
+    }
+  }
+
+  if (!isAdjustmentKind(input.adjustmentType)) {
+    return fail("VALIDATION", "Jenis penyesuaian tidak dikenal");
+  }
+  /* Alasan itu inti pembeda penyesuaian dari jurnal manual biasa: jurnal ini
+   * mengoreksi angka yang SUDAH masuk laporan, jadi harus selalu bisa
+   * dijelaskan kenapa. Panjang minimumnya disamakan dengan reverse. */
+  const reason = (input.reason ?? "").trim();
+  if (reason.length < 10) {
+    return fail("VALIDATION", "Alasan penyesuaian minimal 10 karakter");
+  }
+  if (!input.description || input.description.trim().length < 3) {
+    return fail("VALIDATION", "Deskripsi minimal 3 karakter");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.entryDate ?? "")) {
+    return fail("VALIDATION", "Tanggal harus format YYYY-MM-DD");
+  }
+  if (!input.lines || input.lines.length < 2) {
+    return fail("VALIDATION", "Entry minimal 2 baris");
+  }
+  for (const l of input.lines) {
+    if (l.debit < 0 || l.credit < 0) {
+      return fail("VALIDATION", "Nilai debit/credit tidak boleh negatif");
+    }
+    if ((l.debit > 0 && l.credit > 0) || (l.debit === 0 && l.credit === 0)) {
+      return fail(
+        "VALIDATION",
+        "Setiap baris harus debit ATAU credit, bukan keduanya / kosong",
+      );
+    }
+  }
+
+  /* Jurnal yang disesuaikan (kalau ada) harus benar-benar berlaku. */
+  let target: JournalEntryWithLines | null = null;
+  if (input.adjustsEntryId) {
+    target = await getJournalEntryById(
+      session.user.outletId,
+      input.adjustsEntryId,
+    );
+    if (!target) {
+      return fail("NOT_FOUND", "Jurnal yang mau disesuaikan tidak ditemukan");
+    }
+    if (target.status === "reversed") {
+      return fail(
+        "INVALID_STATE",
+        `${target.entryNumber} sudah dibatalkan (reversed) — saldonya nol, tidak ada yang perlu disesuaikan.`,
+      );
+    }
+    if (target.status === "draft") {
+      return fail(
+        "INVALID_STATE",
+        `${target.entryNumber} masih draft — perbaiki langsung lewat Edit Draft, tidak perlu jurnal penyesuaian.`,
+      );
+    }
+  }
+
+  /* Audit AE-186 (pola yang sama dengan reverse) — periode TUJUAN penyesuaian
+   * wajib masih terbuka. Kalau bulannya sudah tutup buku, jurnal penutupnya
+   * sudah menyapu pendapatan/beban bulan itu ke laba ditahan; menambah entry
+   * baru sesudahnya membuat sapuan itu basi tanpa ada yang menghitung ulang.
+   * recordJournal sendiri hanya menolak periode 'locked', jadi penjagaan
+   * 'closed' harus di sini. */
+  const [adjYear, adjMonth] = input.entryDate.split("-").map(Number);
+  const [targetPeriod] = await db
+    .select({
+      status: accountingPeriods.status,
+    })
+    .from(accountingPeriods)
+    .where(
+      and(
+        eq(accountingPeriods.outletId, session.user.outletId),
+        eq(accountingPeriods.periodYear, adjYear),
+        eq(accountingPeriods.periodMonth, adjMonth),
+      ),
+    )
+    .limit(1);
+  if (targetPeriod && targetPeriod.status !== "open") {
+    return fail(
+      "PERIOD_LOCKED",
+      `Periode ${periodLabelId(adjYear, adjMonth)} sudah ${targetPeriod.status === "closed" ? "tutup buku" : "dikunci"} — buka kembali dulu di Akuntansi → Tutup Buku, atau pakai tanggal di bulan yang masih terbuka.`,
+    );
+  }
+
+  let result;
+  try {
+    result = await recordJournal({
+      outletId: session.user.outletId,
+      entryDate: input.entryDate,
+      description: input.description.trim(),
+      sourceType: "adjusting",
+      /* sourceId NULL disengaja — satu jurnal boleh disesuaikan berkali-kali,
+       * sedangkan ux_je_outlet_source_active hanya mengizinkan satu entry
+       * aktif per (sourceType, sourceId). Tautannya lewat metadata. */
+      sourceId: null,
+      lines: input.lines.map((l) => ({
+        accountId: l.accountId,
+        debit: l.debit,
+        credit: l.credit,
+        description: l.description ?? null,
+      })),
+      status: input.status,
+      receiptImageUrl: normalizeReceiptUrl(input.receiptImageUrl),
+      metadata: {
+        adjusting: {
+          kind: input.adjustmentType,
+          reason,
+          adjustsEntryId: target?.id ?? null,
+          adjustsEntryNumber: target?.entryNumber ?? null,
+          adjustsEntryDate: target ? String(target.entryDate) : null,
+        },
+      },
+      actorId: session.user.id,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.startsWith("PERIOD_LOCKED")) {
+      return fail(
+        "PERIOD_LOCKED",
+        `Periode ${periodLabelId(adjYear, adjMonth)} sudah dikunci permanen — pilih tanggal di bulan yang masih terbuka.`,
+      );
+    }
+    if (msg.startsWith("JOURNAL_IMBALANCED")) {
+      return fail("VALIDATION", "Debit tidak balance dengan credit");
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "accounting", "Operasi database gagal"),
+    );
+  }
+
+  await logAudit({
+    eventType:
+      input.status === "draft"
+        ? "journal_entry.adjust_draft"
+        : "journal_entry.adjust",
+    userId: session.user.id,
+    entityType: "journal_entry",
+    entityId: result.entryId,
+    payload: {
+      summary: `Jurnal penyesuaian ${result.entryNumber} (${adjustmentKindLabel(input.adjustmentType)})${target ? ` atas ${target.entryNumber}` : ""} — ${input.description.trim()}`,
+      context: {
+        reason,
+        adjustmentType: input.adjustmentType,
+        adjustsEntryId: target?.id ?? null,
+        adjustsEntryNumber: target?.entryNumber ?? null,
+      },
+    },
+  });
+
+  return ok({
+    entryId: result.entryId,
+    entryNumber: result.entryNumber,
+    status: input.status,
+    adjustsEntryNumber: target?.entryNumber ?? null,
+  });
+}
+
+/**
+ * Sesi AE-211 — berapa jurnal penyesuaian yang menempel pada tiap entry di
+ * halaman Jurnal. Dipakai untuk menandai entry asli dengan "Disesuaikan (n)"
+ * supaya owner tidak menyesuaikan hal yang sama dua kali.
+ *
+ * Tautannya di `metadata.adjusting.adjustsEntryId` (bukan kolom) karena satu
+ * entry boleh punya banyak penyesuaian — lihat catatan sourceId di atas.
+ */
+export async function fetchAdjustmentCounts(
+  entryIds: string[],
+): Promise<ApiResult<Record<string, number>>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.journal.view")) {
+    return fail("FORBIDDEN", "Tidak punya akses jurnal");
+  }
+  if (entryIds.length === 0) return ok({});
+
+  const rows = await db
+    .select({
+      targetId: sql<string>`${journalEntries.metadata}->'adjusting'->>'adjustsEntryId'`,
+      total: sql<number>`COUNT(*)::int`,
+    })
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.outletId, session.user.outletId),
+        eq(journalEntries.sourceType, "adjusting"),
+        sql`${journalEntries.status} <> 'reversed'`,
+        /* Sesi AE-76 (aturan repo) — JANGAN pakai sql`= ANY(${array})`:
+         * di Neon array-nya ter-interpolasi jadi banyak bind param dan
+         * Postgres menolaknya. Pakai helper inArray, yang juga menerima
+         * ekspresi SQL sebagai sisi kiri. */
+        inArray(
+          sql`${journalEntries.metadata}->'adjusting'->>'adjustsEntryId'`,
+          entryIds,
+        ),
+      ),
+    )
+    .groupBy(sql`${journalEntries.metadata}->'adjusting'->>'adjustsEntryId'`);
+
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    if (r.targetId) out[r.targetId] = Number(r.total);
+  }
+  return ok(out);
 }
 
 export async function reverseJournalEntry(
