@@ -230,6 +230,28 @@ export function OpeningBalanceEditor({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Sesi AE-212 — saldo awal cara lama: angkanya ditumpuk di atas
+              saldo berjalan, jadi saldo yang berlaku belum sama dengan yang
+              diketik. Angka di form ini sudah angka yang Bapak maksud —
+              tinggal disimpan sekali untuk benar-benar menerapkannya. */}
+          {data.needsRestate ? (
+            <div className="flex items-start gap-2 rounded-md border border-warning-500/50 bg-warning-100/50 px-3 py-2">
+              <AlertTriangle
+                className="mt-0.5 size-4 shrink-0 text-warning-500"
+                aria-hidden
+              />
+              <p className="text-xs leading-relaxed text-neutral-700">
+                <strong className="text-warning-500">
+                  Angka di bawah ini belum berlaku sebagai saldo awal.
+                </strong>{" "}
+                Saldo awal yang tersimpan dulu ditumpuk di atas saldo berjalan,
+                jadi yang terbaca di Buku Besar bukan angka ini. Isinya sudah
+                benar — cukup tekan <strong>Simpan Saldo Awal</strong> sekali,
+                dan saldo per tanggal itu langsung menjadi persis angka ini.
+              </p>
+            </div>
+          ) : null}
+
           {data.entryNumber ? (
             <p className="text-xs text-neutral-600">
               Saldo awal yang berlaku:{" "}

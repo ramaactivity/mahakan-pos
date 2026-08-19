@@ -637,6 +637,13 @@ export type OpeningBalanceEditorData = {
   retainedCode: string;
   /** Nilai 3301 sekarang (dihitung sistem, read-only di UI). */
   retainedAmount: number;
+  /**
+   * Sesi AE-212 — true kalau entry-nya masih cara lama (nilai absolut
+   * ditumpuk di atas saldo berjalan), sehingga saldo awal yang berlaku BELUM
+   * sama dengan angka yang diketik owner. Form sudah menampilkan angka yang
+   * dimaksud owner; tinggal Simpan sekali untuk menerapkannya.
+   */
+  needsRestate: boolean;
 };
 
 /**
@@ -692,6 +699,7 @@ export async function fetchOpeningBalanceEditor(): Promise<
       id: journalEntries.id,
       entryNumber: journalEntries.entryNumber,
       entryDate: journalEntries.entryDate,
+      metadata: journalEntries.metadata,
     })
     .from(journalEntries)
     .where(
@@ -712,6 +720,7 @@ export async function fetchOpeningBalanceEditor(): Promise<
       available,
       retainedCode: RETAINED_EARNINGS_CODE,
       retainedAmount: 0,
+      needsRestate: false,
     });
   }
 
@@ -748,12 +757,28 @@ export async function fetchOpeningBalanceEditor(): Promise<
   });
 
   const byId = new Map(available.map((a) => [a.accountId, a]));
-  const effective = new Map<string, number>(natural);
+  const effective = new Map<string, number>();
   for (const [accountId, net] of carriedNet) {
     const acc = byId.get(accountId);
     if (!acc) continue;
     const asNatural = acc.normalBalance === "debit" ? net : -net;
-    effective.set(accountId, (effective.get(accountId) ?? 0) + asNatural);
+    effective.set(accountId, asNatural);
+  }
+
+  /* Entry ber-basis "delta" isinya selisih → saldo berlaku = terbawa + entry.
+   * Entry lama (tanpa penanda) isinya nilai ABSOLUT yang diketik owner —
+   * angka itulah yang dia maksud sebagai saldo awal, jadi dipakai apa adanya
+   * dan menimpa saldo terbawa. Dengan begitu owner tidak perlu mengetik ulang:
+   * buka form, angkanya sudah benar, tekan Simpan sekali dan barulah angka itu
+   * benar-benar menjadi saldo awal. */
+  const meta = (entry.metadata ?? null) as { basis?: string } | null;
+  const needsRestate = meta?.basis !== "delta";
+  for (const [accountId, amount] of natural) {
+    if (needsRestate) {
+      effective.set(accountId, amount);
+    } else {
+      effective.set(accountId, (effective.get(accountId) ?? 0) + amount);
+    }
   }
 
   const filled: OpeningBalanceEditorAccount[] = [];
@@ -778,6 +803,7 @@ export async function fetchOpeningBalanceEditor(): Promise<
     available,
     retainedCode: RETAINED_EARNINGS_CODE,
     retainedAmount,
+    needsRestate,
   });
 }
 
@@ -955,6 +981,12 @@ export async function saveOpeningBalance(input: {
         retainedPlug: built.retainedPlug,
         reason: input.reason ?? null,
         setBy: "opening-balance-editor",
+        /* Sesi AE-212 — penanda cara hitung. Entry ber-basis "delta" isinya
+         * SELISIH terhadap saldo yang terbawa, jadi saldo per tanggal itu =
+         * carry-in + isi entry. Entry lama (tanpa penanda) isinya nilai
+         * ABSOLUT yang ditumpuk di atas saldo lama — dibaca berbeda saat
+         * form dibuka supaya angka yang owner ketik tidak hilang. */
+        basis: "delta",
       },
     });
   } catch (e) {
