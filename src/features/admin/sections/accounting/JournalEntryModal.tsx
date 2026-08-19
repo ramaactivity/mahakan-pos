@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Loader2,
   Paperclip,
+  RotateCcw,
   Scale,
   Sparkles,
   UploadCloud,
@@ -27,6 +28,7 @@ import {
   type ComboboxOption,
 } from "@/components/ui";
 import {
+  editPostedJournalEntry,
   fetchAccounts,
   postAdjustingJournal,
   saveManualJournal,
@@ -102,7 +104,9 @@ interface Props {
   /** Sesi AE-211 — "adjusting" = Jurnal Penyesuaian: entry BARU berisi
    * selisih, entry aslinya tetap berlaku. Beda dari edit draft (mengubah
    * entry yang sama) dan dari reverse (meniadakan keduanya). */
-  mode?: "manual" | "adjusting";
+  /** Sesi AE-212 — "repost" = Perbaiki jurnal terposting: entry lama
+   * dibatalkan lalu versi barunya diposting, dalam satu langkah. */
+  mode?: "manual" | "adjusting" | "repost";
   /** Sesi AE-211 — jurnal yang sedang disesuaikan. Kalau diisi, modal
    * menampilkan alat hitung "nilai seharusnya" per baris. Boleh kosong untuk
    * penyesuaian berdiri sendiri (mis. penyusutan bulanan). */
@@ -136,7 +140,11 @@ export function JournalEntryModal({
   mode = "manual",
   adjustTarget = null,
 }: Props) {
-  const isEdit = editEntry != null;
+  const isRepost = mode === "repost";
+  /* Draft-edit dan perbaikan sama-sama memakai `editEntry` untuk pre-fill,
+   * tapi jalur simpannya beda: draft menimpa entry yang sama, perbaikan
+   * membatalkan lalu memposting entry baru. */
+  const isEdit = editEntry != null && !isRepost;
   const isAdjusting = mode === "adjusting";
   const [accounts, setAccounts] = useState<AccountListRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -646,6 +654,12 @@ export function JournalEntryModal({
       setError("Deskripsi minimal 3 karakter");
       return;
     }
+    if (isRepost && reason.trim().length < 3) {
+      setError(
+        "Alasan perbaikan wajib diisi — jurnal lama akan dibatalkan, jadi harus ada catatan kenapa",
+      );
+      return;
+    }
     if (isAdjusting && reason.trim().length < 10) {
       setError(
         "Alasan penyesuaian minimal 10 karakter — jurnal ini mengoreksi angka yang sudah masuk laporan, jadi harus bisa dijelaskan",
@@ -681,7 +695,16 @@ export function JournalEntryModal({
       credit: Number(l.credit),
       description: l.description.trim() || null,
     }));
-    const res = isAdjusting
+    const res = isRepost
+      ? await editPostedJournalEntry({
+          entryId: editEntry!.id,
+          entryDate,
+          description: description.trim(),
+          reason: reason.trim(),
+          lines: inputLines,
+          receiptImageUrl: receiptUrl,
+        })
+      : isAdjusting
       ? await postAdjustingJournal({
           entryDate,
           description: description.trim(),
@@ -725,7 +748,9 @@ export function JournalEntryModal({
         : "";
       const suffix = tanggal ? ` — tanggal ${tanggal}` : "";
       toast.success(
-        isAdjusting
+        isRepost
+          ? `${editEntry!.entryNumber} diperbaiki → ${res.data.entryNumber}${suffix}`
+          : isAdjusting
           ? status === "posted"
             ? `Jurnal penyesuaian ${res.data.entryNumber} terposting${suffix}`
             : `Draft penyesuaian ${res.data.entryNumber} disimpan${suffix}`
@@ -748,7 +773,9 @@ export function JournalEntryModal({
       open={open}
       onClose={onClose}
       title={
-        isAdjusting
+        isRepost
+          ? `Perbaiki ${editEntry!.entryNumber}`
+          : isAdjusting
           ? adjustTarget
             ? `Jurnal Penyesuaian atas ${adjustTarget.entryNumber}`
             : "Jurnal Penyesuaian"
@@ -757,7 +784,9 @@ export function JournalEntryModal({
             : "Entry Jurnal Manual"
       }
       description={
-        isAdjusting
+        isRepost
+          ? "Ubah isinya lalu simpan. Jurnal lama dibatalkan dan versi barunya diposting sekaligus — jejaknya tetap lengkap."
+          : isAdjusting
           ? "Entry BARU berisi selisihnya saja. Jurnal yang lama tetap berlaku dan tetap terhitung — tidak dihapus, tidak diubah."
           : isEdit
             ? "Edit draft entry. Save changes sebagai draft, atau post langsung (Owner) sekalian."
@@ -796,20 +825,29 @@ export function JournalEntryModal({
             </Button>
             {/* Sesi AE-206 — jangan simpan selagi bukti masih naik ke Drive;
                 URL-nya belum ada, entry-nya jadi tanpa lampiran. */}
-            <Button
-              variant="outline"
-              onClick={() => submit("draft")}
-              disabled={submitting || uploadingReceipt}
-            >
-              Save Draft
-            </Button>
+            {/* Sesi AE-212 — perbaikan tidak punya bentuk draft: jurnal
+                lamanya sudah dibatalkan, jadi penggantinya harus langsung
+                terposting supaya buku tidak sempat kehilangan angkanya. */}
+            {isRepost ? null : (
+              <Button
+                variant="outline"
+                onClick={() => submit("draft")}
+                disabled={submitting || uploadingReceipt}
+              >
+                Save Draft
+              </Button>
+            )}
             {isOwner ? (
               <Button
                 onClick={() => submit("posted")}
                 loading={submitting}
                 disabled={submitting || uploadingReceipt || !balanced}
               >
-                {isAdjusting ? "Post Penyesuaian" : "Post Entry"}
+                {isRepost
+                  ? "Simpan Perbaikan"
+                  : isAdjusting
+                    ? "Post Penyesuaian"
+                    : "Post Entry"}
               </Button>
             ) : null}
           </div>
@@ -820,6 +858,44 @@ export function JournalEntryModal({
         {/* Sesi AE-211 — panel Jurnal Penyesuaian: apa bedanya dengan dua
             tombol koreksi yang lain, jenis penyesuaiannya apa, dan alasannya
             (wajib, ikut ke jejak audit). */}
+        {/* Sesi AE-212 — panel Perbaiki: apa yang akan terjadi + alasan wajib. */}
+        {isRepost ? (
+          <div className="space-y-3 rounded-md border border-warning-500/40 bg-warning-100/40 p-3">
+            <div className="flex items-start gap-2">
+              <RotateCcw
+                className="mt-0.5 size-4 shrink-0 text-warning-500"
+                aria-hidden
+              />
+              <div className="text-xs leading-relaxed text-neutral-700">
+                <span className="font-semibold text-warning-500">
+                  Jurnal {editEntry!.entryNumber} akan dibatalkan, lalu isian di
+                  bawah ini diposting sebagai jurnal baru.
+                </span>{" "}
+                Nomor jurnalnya berubah dan jejak pembatalannya tetap tersimpan,
+                jadi riwayat koreksinya bisa ditelusuri.
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-neutral-600">
+                  <li>
+                    Kalau cuma <em>nilainya</em> yang kurang/lebih dan jurnal
+                    lamanya tetap sah — pakai <strong>Sesuaikan</strong>.
+                  </li>
+                  <li>
+                    Kalau jurnalnya memang <em>tidak boleh ada</em> — pakai{" "}
+                    <strong>Reverse</strong>.
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <Input
+              label="Alasan perbaikan"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="mis. akun lawannya salah, harusnya Bank BRI"
+              hint="Wajib — tersimpan di jurnal pembatal & Audit Log."
+              maxLength={300}
+            />
+          </div>
+        ) : null}
+
         {isAdjusting ? (
           <div className="space-y-3 rounded-md border border-mahakan-green-500/40 bg-mahakan-green-50/50 p-3">
             <div className="flex items-start gap-2">

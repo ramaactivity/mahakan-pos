@@ -24,6 +24,18 @@ export type OpeningAccountInput = {
    * berlaku. Nilai minus ditempatkan di sisi BERLAWANAN dari arah normalnya.
    */
   amount: number;
+  /**
+   * Sesi AE-212 — saldo yang SUDAH terbawa ke tanggal ini dari jurnal-jurnal
+   * sebelumnya, dalam arah normal akun. Default 0.
+   *
+   * Ini yang membuat "Saldo Awal" benar-benar menjadi saldo awal. Owner
+   * mengetik nilai yang SEHARUSNYA berlaku per tanggal itu; yang diposting
+   * cuma selisihnya terhadap apa yang sudah terbawa. Tanpa ini, nilai yang
+   * diketik hanya ditumpuk di atas saldo lama — kejadian nyata 1 Agustus 2026:
+   * owner mengetik Kas Rp 354.000 padahal Juli menutup di −Rp 388.800, dan
+   * saldo Agustus jadi −Rp 34.800, bukan Rp 354.000.
+   */
+  carriedIn?: number;
 };
 
 export type OpeningLine = {
@@ -66,6 +78,7 @@ export function buildOpeningBalanceLines(
 
   const seen = new Set<string>();
   const lines: OpeningLine[] = [];
+  let anyNonZeroInput = false;
   let totalDebit = 0;
   let totalCredit = 0;
 
@@ -87,13 +100,18 @@ export function buildOpeningBalanceLines(
     }
     seen.add(a.accountId);
 
-    if (a.amount === 0) continue; // nol tidak perlu baris
+    /* Yang diposting adalah SELISIH terhadap saldo yang sudah terbawa. Kalau
+     * belum ada apa-apa yang terbawa (mis. saldo awal pertama saat cutover),
+     * selisih = nilai yang diketik, jadi perilakunya sama seperti dulu. */
+    if (a.amount !== 0) anyNonZeroInput = true;
+    const carriedIn = Math.round(Number(a.carriedIn) || 0);
+    const delta = a.amount - carriedIn;
+    if (delta === 0) continue; // sudah pas, tidak perlu baris
 
     /* Nilai minus mendarat di sisi BERLAWANAN dari arah normal akun. Dengan
-     * begitu satu rumus menangani keduanya, dan angka yang dibaca ulang lewat
-     * `linesToNaturalAmounts` persis sama dengan yang diketik. */
-    const onNormalSide = a.amount > 0;
-    const magnitude = Math.abs(a.amount);
+     * begitu satu rumus menangani keduanya. */
+    const onNormalSide = delta > 0;
+    const magnitude = Math.abs(delta);
     const putOnDebit =
       a.normalBalance === "debit" ? onNormalSide : !onNormalSide;
 
@@ -128,6 +146,13 @@ export function buildOpeningBalanceLines(
     });
   }
 
+  /* Bedakan dua kegagalan yang terasa sangat berbeda bagi owner: form yang
+   * memang belum diisi, versus form terisi yang kebetulan sudah pas. */
+  if (lines.length === 0 && anyNonZeroInput) {
+    throw new OpeningBalanceError(
+      "Tidak ada yang berubah — semua nilai sudah sama dengan saldo yang berlaku.",
+    );
+  }
   if (lines.length < 2) {
     throw new OpeningBalanceError(
       "Saldo awal butuh minimal 2 akun bernilai. Isi dulu kas/bank dan lawannya.",

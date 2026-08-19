@@ -113,6 +113,11 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
    * disesuaikan; null + `adjustOpen` = penyesuaian berdiri sendiri (mis.
    * penyusutan bulanan) yang tidak menunjuk jurnal manapun. */
   const [adjustOpen, setAdjustOpen] = useState(false);
+  /* Sesi AE-212 — jurnal terposting yang sedang diperbaiki (batal lalu
+   * posting ulang). Beda dari editEntry yang hanya untuk draft. */
+  const [repostEntry, setRepostEntry] = useState<JournalEntryWithLines | null>(
+    null,
+  );
   const [adjustTarget, setAdjustTarget] =
     useState<JournalEntryWithLines | null>(null);
   /* Berapa penyesuaian yang sudah menempel per entry — supaya jurnal yang
@@ -142,6 +147,10 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
   const canAdjust = hasPermission(viewerRole, "accounting.journal.draft");
   /* Sesi AE-185 — ubah tanggal memakai hak posting jurnal (owner). */
   const canEditDate = hasPermission(viewerRole, "accounting.journal.post");
+  /* Perbaikan = batalkan + posting ulang, jadi butuh KEDUA haknya. */
+  const canRepost =
+    hasPermission(viewerRole, "accounting.journal.post") &&
+    hasPermission(viewerRole, "accounting.journal.reverse");
 
   const [reverseTarget, setReverseTarget] =
     useState<JournalEntryWithLines | null>(null);
@@ -561,6 +570,10 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
             setAdjustOpen(true);
           }}
           canReverse={canReverse}
+          canRepost={canRepost}
+          onRepost={(e) => {
+            setRepostEntry(e);
+          }}
           canDeleteDraft={canDraft}
           canEditDraft={canDraft}
           canEditDate={canEditDate}
@@ -728,6 +741,20 @@ export function JournalView({ viewerRole }: { viewerRole: Role }) {
         />
       ) : null}
 
+      {repostEntry ? (
+        <JournalEntryModal
+          open={repostEntry != null}
+          mode="repost"
+          editEntry={repostEntry}
+          onClose={() => setRepostEntry(null)}
+          onSaved={() => {
+            setRepostEntry(null);
+            void load();
+          }}
+          isOwner={viewerRole === "owner"}
+        />
+      ) : null}
+
       {editEntry ? (
         <JournalEntryModal
           open={editEntry != null}
@@ -764,6 +791,8 @@ function RowList({
   canAdjust,
   onAdjust,
   canReverse,
+  canRepost,
+  onRepost,
   canDeleteDraft,
   canEditDraft,
   canEditDate,
@@ -777,6 +806,8 @@ function RowList({
   canAdjust: boolean;
   onAdjust: (e: JournalEntryWithLines) => void;
   canReverse: boolean;
+  canRepost: boolean;
+  onRepost: (e: JournalEntryWithLines) => void;
   canDeleteDraft: boolean;
   canEditDraft: boolean;
   canEditDate: boolean;
@@ -866,6 +897,26 @@ function RowList({
                   title="Jurnal penyesuaian (koreksi nilai tanpa membatalkan)"
                 >
                   <Scale className="size-3.5" />
+                </button>
+              ) : null}
+              {/* Sesi AE-212 — Perbaiki: entry lama dibatalkan lalu versi
+                  barunya diposting, dalam satu langkah. Hanya untuk jurnal
+                  MANUAL; jurnal yang lahir dari transaksi lain harus
+                  diperbaiki lewat modul asalnya. */}
+              {canRepost &&
+              entry.status === "posted" &&
+              entry.sourceType === "manual" ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onRepost(entry);
+                  }}
+                  className="inline-flex items-center gap-1 rounded p-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-mahakan-green-700"
+                  aria-label={`Perbaiki ${entry.entryNumber}`}
+                  title="Perbaiki jurnal (batalkan lalu posting ulang)"
+                >
+                  <Pencil className="size-3.5" />
                 </button>
               ) : null}
               {canReverse && entry.status === "posted" ? (

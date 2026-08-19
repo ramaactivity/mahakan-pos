@@ -15,6 +15,7 @@ import {
   createFixedAsset,
   type CreateFixedAssetInput,
 } from "@/features/accounting/fixed-assets-actions";
+import { fetchAccounts } from "@/features/accounting/actions";
 import { formatRupiah } from "@/lib/money";
 import { todayJakarta } from "@/lib/tz";
 
@@ -60,10 +61,35 @@ export function AssetFormModal({ open, onClose, onSaved }: Props) {
   const [accountPair, setAccountPair] = useState("1202|6502");
   const [capitalize, setCapitalize] = useState(true);
   const [paymentMethod, setPaymentMethod] = useState("transfer_bca");
+  /* Sesi AE-212 — akun lawan bebas. Kosong = pakai pemetaan bawaan dari
+   * "Bayar dari". Diisi = owner memilih sendiri akun yang dikredit, mis.
+   * Hutang Dagang untuk aset yang dibeli tempo, atau Hutang Internal untuk
+   * aset yang ditalangi pengelola. */
+  const [creditAccountCode, setCreditAccountCode] = useState("");
+  const [accounts, setAccounts] = useState<
+    Array<{ code: string; name: string; type: string }>
+  >([]);
   const [notes, setNotes] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /* Sesi AE-212 — daftar akun untuk memilih lawan jurnalnya sendiri. */
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void fetchAccounts().then((res) => {
+      if (cancelled || !res.ok) return;
+      setAccounts(
+        res.data
+          .filter((a) => a.isActive)
+          .map((a) => ({ code: a.code, name: a.name, type: a.type })),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -77,12 +103,41 @@ export function AssetFormModal({ open, onClose, onSaved }: Props) {
     setAccountPair("1202|6502");
     setCapitalize(true);
     setPaymentMethod("transfer_bca");
+    setCreditAccountCode("");
     setNotes("");
     setError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open]);
 
   const costNum = Number(cost) || 0;
+  /* Sesi AE-212 — label akun untuk pratinjau debit/kredit. */
+  const previewAssetCode = accountPair.split("|")[0] ?? "";
+  const previewDepCode = accountPair.split("|")[1] ?? "";
+  const accountLabel = (code: string, fallback: string) => {
+    const hit = accounts.find((a) => a.code === code);
+    return hit ? `${hit.code} · ${hit.name}` : fallback;
+  };
+  const debitAccountLabel = accountLabel(
+    previewAssetCode,
+    `${previewAssetCode} · Aset Tetap`,
+  );
+  const depreciationLabel = accountLabel(
+    previewDepCode,
+    `${previewDepCode} Beban Penyusutan`,
+  );
+  const fallbackCreditCode =
+    paymentMethod === "cash"
+      ? "1101"
+      : paymentMethod === "transfer_bca"
+        ? "1110"
+        : paymentMethod === "transfer_bri"
+          ? "1111"
+          : "1112";
+  const effectiveCreditCode = creditAccountCode || fallbackCreditCode;
+  const creditAccountLabel = accountLabel(
+    effectiveCreditCode,
+    `${effectiveCreditCode} · Kas/Bank`,
+  );
   const salvageNum = Number(salvage) || 0;
   const lifeNum = Number(usefulLife) || 0;
   const monthlyDep =
@@ -135,16 +190,25 @@ export function AssetFormModal({ open, onClose, onSaved }: Props) {
             | "transfer_bri"
             | "transfer_other")
         : undefined,
+      creditAccountCode: capitalize && creditAccountCode ? creditAccountCode : null,
       notes: notes.trim() || null,
     };
     const res = await createFixedAsset(input);
     setSubmitting(false);
     if (res.ok) {
-      toast.success(
-        capitalize
-          ? `Aset disimpan + journal capitalize posted`
-          : `Aset disimpan (no journal)`,
-      );
+      if (res.data.capitalizeError) {
+        /* Asetnya tersimpan tapi jurnalnya gagal — jangan bilang "berhasil"
+         * begitu saja, nanti dikira sudah masuk neraca. */
+        toast.error(
+          `Aset tersimpan, TAPI jurnalnya gagal: ${res.data.capitalizeError}. Buat jurnalnya manual di Akuntansi → Jurnal.`,
+        );
+      } else {
+        toast.success(
+          capitalize
+            ? "Aset disimpan + jurnal pengadaan terposting"
+            : "Aset disimpan (tanpa jurnal)",
+        );
+      }
       onSaved();
     } else {
       setError(res.error.message);
@@ -255,13 +319,71 @@ export function AssetFormModal({ open, onClose, onSaved }: Props) {
             </div>
           </label>
           {capitalize ? (
-            <div className="mt-3">
+            <div className="mt-3 space-y-3">
               <Select
                 label="Bayar dari"
                 options={PAYMENT_METHOD_OPTIONS}
                 value={paymentMethod}
-                onValueChange={setPaymentMethod}
+                onValueChange={(v) => {
+                  setPaymentMethod(v);
+                  /* Pilih metode bawaan = lepaskan akun lawan manual. */
+                  setCreditAccountCode("");
+                }}
+                disabled={creditAccountCode !== ""}
               />
+              {/* Sesi AE-212 — akun lawan bebas. Empat metode bawaan hanya
+                  menutup kas + tiga bank; aset yang dibeli tempo atau
+                  ditalangi pengelola tidak punya jalannya, dan jurnalnya
+                  terlanjur mengkredit bank yang uangnya tidak keluar. */}
+              <Select
+                label="Atau pilih sendiri akun lawannya (opsional)"
+                options={[
+                  { value: "", label: "— pakai pilihan “Bayar dari” di atas —" },
+                  ...accounts.map((a) => ({
+                    value: a.code,
+                    label: `${a.code} · ${a.name}`,
+                  })),
+                ]}
+                value={creditAccountCode}
+                onValueChange={setCreditAccountCode}
+              />
+
+              {/* Pratinjau jurnal — owner melihat debit & kreditnya sebelum
+                  menyimpan, bukan menebak apa yang dilakukan sistem. */}
+              <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Jurnal yang akan terbentuk
+                </p>
+                <table className="w-full text-xs tabular-nums">
+                  <thead>
+                    <tr className="text-neutral-500">
+                      <th className="text-left font-medium">Akun</th>
+                      <th className="w-28 text-right font-medium">Debit</th>
+                      <th className="w-28 text-right font-medium">Kredit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="py-1">{debitAccountLabel}</td>
+                      <td className="py-1 text-right font-medium">
+                        {formatRupiah(costNum > 0 ? costNum : 0)}
+                      </td>
+                      <td className="py-1 text-right text-neutral-400">—</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1">{creditAccountLabel}</td>
+                      <td className="py-1 text-right text-neutral-400">—</td>
+                      <td className="py-1 text-right font-medium">
+                        {formatRupiah(costNum > 0 ? costNum : 0)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p className="mt-2 text-[11px] leading-relaxed text-neutral-600">
+                  Penyusutan bulanannya dijurnal terpisah tiap akhir bulan:
+                  Debit {depreciationLabel}, Kredit 1290 Akumulasi Penyusutan.
+                </p>
+              </div>
             </div>
           ) : null}
         </div>

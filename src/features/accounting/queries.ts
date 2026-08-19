@@ -526,6 +526,11 @@ export async function getAccountLedgerEntries(args: {
         eq(journalEntries.status, "posted"),
         gte(journalEntries.entryDate, fromDate),
         lte(journalEntries.entryDate, args.toDate),
+        /* Sesi AE-212 — pasangan aturan di getAccountOpeningBalance: entry
+         * Saldo Awal bertanggal awal rentang sudah masuk kolom Saldo Awal,
+         * jadi jangan ditampilkan lagi sebagai baris mutasi (dobel hitung). */
+        sql`NOT (${journalEntries.entryDate} = ${fromDate}
+                 AND ${journalEntries.sourceType} = 'opening_balance')`,
       ),
     )
     .where(eq(journalLines.accountId, args.accountId))
@@ -741,11 +746,21 @@ export async function getAccountOpeningBalance(args: {
    * disembunyikan, jadi Buku Besar Juli mulai dari angka yang tak ada
    * penjelasannya di layar. */
   const cutoff = await getCutoffDate(args.outletId);
+  /* Sesi AE-212 — entry Saldo Awal yang bertanggal TEPAT di awal periode
+   * ikut dihitung sebagai saldo awal, bukan sebagai mutasi periode itu.
+   *
+   * Tanpa aturan ini, "Saldo Awal 2026-08-01" yang diisi owner tidak pernah
+   * muncul di kolom Saldo Awal Agustus — Buku Besar Agustus tetap dibuka
+   * dengan saldo penutup Juli (Kas −Rp 388.800) dan angka yang diketik owner
+   * baru menyusul sebagai baris mutasi. Persis keluhan "masih menjadi jurnal,
+   * bukan menjadi saldo awal". */
   const conds = [
     eq(journalEntries.id, journalLines.entryId),
     eq(journalEntries.outletId, args.outletId),
     eq(journalEntries.status, "posted"),
-    sql`${journalEntries.entryDate} < ${args.beforeDate}`,
+    sql`(${journalEntries.entryDate} < ${args.beforeDate}
+         OR (${journalEntries.entryDate} = ${args.beforeDate}
+             AND ${journalEntries.sourceType} = 'opening_balance'))`,
   ];
   if (cutoff) {
     conds.push(gte(journalEntries.entryDate, cutoff));
@@ -760,4 +775,45 @@ export async function getAccountOpeningBalance(args: {
     .where(eq(journalLines.accountId, args.accountId));
 
   return Number(r?.debitTotal ?? 0) - Number(r?.creditTotal ?? 0);
+}
+
+/**
+ * Sesi AE-212 — saldo per akun yang TERBAWA ke sebuah tanggal, dipakai
+ * editor Saldo Awal untuk menghitung selisih.
+ *
+ * Bedanya dengan `getAccountOpeningBalance`: ini mengembalikan seluruh akun
+ * sekaligus (satu query, bukan satu per akun) dan bisa mengecualikan satu
+ * entry — yaitu versi saldo awal yang sedang diganti, supaya nilainya tidak
+ * ikut terhitung sebagai "yang sudah terbawa".
+ *
+ * Nilainya NET debit−credit (belum dinormalkan ke arah akun).
+ */
+export async function getCarriedInBalances(args: {
+  outletId: string;
+  beforeDate: string;
+  excludeEntryId?: string | null;
+}): Promise<Map<string, number>> {
+  const cutoff = await getCutoffDate(args.outletId);
+  const conds = [
+    eq(journalEntries.id, journalLines.entryId),
+    eq(journalEntries.outletId, args.outletId),
+    eq(journalEntries.status, "posted"),
+    sql`${journalEntries.entryDate} < ${args.beforeDate}`,
+  ];
+  if (cutoff) conds.push(gte(journalEntries.entryDate, cutoff));
+  if (args.excludeEntryId) {
+    conds.push(sql`${journalEntries.id} <> ${args.excludeEntryId}`);
+  }
+  const rows = await db
+    .select({
+      accountId: journalLines.accountId,
+      net: sql<string>`COALESCE(SUM(${journalLines.debit} - ${journalLines.credit}), 0)`,
+    })
+    .from(journalLines)
+    .innerJoin(journalEntries, and(...conds))
+    .groupBy(journalLines.accountId);
+
+  const out = new Map<string, number>();
+  for (const r of rows) out.set(r.accountId, Number(r.net) || 0);
+  return out;
 }

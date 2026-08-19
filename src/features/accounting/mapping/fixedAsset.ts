@@ -33,6 +33,16 @@ export type CapitalizeAssetInput = {
   /** Pre-resolved chart_of_accounts.code for asset side (1201-1204). */
   assetAccountCode: string;
   paymentMethod: CapitalizeAssetPaymentMethod;
+  /**
+   * Sesi AE-212 — akun LAWAN (yang dikredit) kalau owner memilihnya sendiri.
+   *
+   * Empat metode bayar bawaan hanya menutup kas & tiga bank. Aset yang dibeli
+   * dengan tempo, ditalangi pengelola, atau dibayar dari rekening lain tidak
+   * punya jalannya — jurnalnya terlanjur mengkredit bank yang uangnya tidak
+   * pernah keluar. Kalau diisi, kode ini yang dipakai dan `paymentMethod`
+   * hanya jadi label deskripsi.
+   */
+  creditAccountCode?: string | null;
 };
 
 const CASH_BANK_CODE: Record<CapitalizeAssetPaymentMethod, string> = {
@@ -55,9 +65,11 @@ export function mapCapitalizeAsset(
       description: `Pengadaan ${input.assetName}`,
     },
     {
-      accountCode: CASH_BANK_CODE[input.paymentMethod],
+      accountCode: input.creditAccountCode || CASH_BANK_CODE[input.paymentMethod],
       credit: input.cost,
-      description: `Uang keluar ${labelMetodeBayar(input.paymentMethod)} — beli ${input.assetName}`,
+      description: input.creditAccountCode
+        ? `Lawan pengadaan ${input.assetName}`
+        : `Uang keluar ${labelMetodeBayar(input.paymentMethod)} — beli ${input.assetName}`,
     },
   ];
 }

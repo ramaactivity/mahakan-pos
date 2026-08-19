@@ -313,6 +313,10 @@ export const AUDIT_EVENT_TYPES = [
    * beda dari update_draft yang mengubah entry yang sama). Payload menyimpan
    * alasan + nomor jurnal yang disesuaikan. */
   "journal_entry.adjust",
+  /* Sesi AE-212 — edit jurnal terposting: entry lama DIBATALKAN lalu versi
+   * barunya diposting dalam satu langkah. Payload menyimpan nomor jurnal
+   * lama, nomor pembatalnya, dan alasan perbaikan. */
+  "journal_entry.repost",
   "journal_entry.adjust_draft",
   /* Sesi AE-185 — ubah tanggal jurnal yang sudah posted tanpa reverse.
    * Payload menyimpan tanggal & nomor lama supaya jejaknya utuh. */

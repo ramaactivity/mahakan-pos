@@ -277,3 +277,62 @@ describe("linesToNaturalAmounts — kebalikan dari build", () => {
     expect(m.get("a")).toBe(2500);
   });
 });
+
+/* Sesi AE-212 — "Saldo Awal" harus benar-benar MENJADIKAN saldonya segitu,
+ * bukan menumpuk angka baru di atas saldo lama. Kejadian nyata 1 Agu 2026:
+ * Juli menutup Kas di −Rp 388.800, owner mengetik Rp 354.000, dan saldo
+ * Agustus jadi −Rp 34.800. */
+describe("buildOpeningBalanceLines — selisih terhadap saldo terbawa", () => {
+  it("memposting selisihnya saja sehingga saldo akhir persis yang diketik", () => {
+    const res = buildOpeningBalanceLines(
+      [
+        { ...acc("1101", "debit", 354_000), carriedIn: -388_800 },
+        { ...acc("2101", "credit", 713_440), carriedIn: 713_440 },
+      ],
+      RETAINED_ID,
+    );
+    const kas = res.lines.find((l) => l.accountId === "acc-1101");
+    expect(kas?.debit).toBe(742_800);
+    /* Hutang sudah pas — tidak perlu baris sama sekali. */
+    expect(res.lines.find((l) => l.accountId === "acc-2101")).toBeUndefined();
+    expect(res.totalDebit).toBe(res.totalCredit);
+  });
+
+  it("tanpa saldo terbawa, hasilnya sama seperti dulu (cutover pertama)", () => {
+    const withCarry = buildOpeningBalanceLines(
+      [
+        { ...acc("1101", "debit", 1_000_000), carriedIn: 0 },
+        { ...acc("2101", "credit", 400_000), carriedIn: 0 },
+      ],
+      RETAINED_ID,
+    );
+    const legacy = buildOpeningBalanceLines(
+      [acc("1101", "debit", 1_000_000), acc("2101", "credit", 400_000)],
+      RETAINED_ID,
+    );
+    expect(withCarry.lines).toEqual(legacy.lines);
+    expect(withCarry.retainedPlug).toBe(legacy.retainedPlug);
+  });
+
+  it("saldo terbawa lebih besar dari target → koreksi ke sisi berlawanan", () => {
+    const res = buildOpeningBalanceLines(
+      [
+        { ...acc("1110", "debit", 1_000_000), carriedIn: 4_000_000 },
+        { ...acc("1101", "debit", 500_000), carriedIn: 0 },
+      ],
+      RETAINED_ID,
+    );
+    const bank = res.lines.find((l) => l.accountId === "acc-1110");
+    expect(bank?.credit).toBe(3_000_000);
+    expect(bank?.debit).toBe(0);
+  });
+
+  it("form terisi tapi semuanya sudah pas → ditolak dengan alasan yang jelas", () => {
+    expect(() =>
+      buildOpeningBalanceLines(
+        [{ ...acc("1101", "debit", 354_000), carriedIn: 354_000 }],
+        RETAINED_ID,
+      ),
+    ).toThrow(/tidak ada yang berubah/i);
+  });
+});

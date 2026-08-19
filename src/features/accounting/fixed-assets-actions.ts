@@ -162,12 +162,22 @@ export type CreateFixedAssetInput = {
   /** Capitalization payment method. Required kalau capitalize=true. */
   capitalize: boolean;
   paymentMethod?: CapitalizeAssetPaymentMethod;
+  /** Sesi AE-212 — akun lawan pilihan owner (dikredit). Kalau kosong, dipakai
+   * pemetaan bawaan dari `paymentMethod`. */
+  creditAccountCode?: string | null;
   notes?: string | null;
 };
 
 export async function createFixedAsset(
   input: CreateFixedAssetInput,
-): Promise<ApiResult<{ id: string; journalEntryId: string | null }>> {
+): Promise<
+  ApiResult<{
+    id: string;
+    journalEntryId: string | null;
+    /** Sesi AE-212 — terisi kalau aset tersimpan tapi jurnalnya gagal. */
+    capitalizeError: string | null;
+  }>
+> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "accounting.coa.manage")) {
     return fail("FORBIDDEN", "Hanya Owner yang dapat input aset tetap");
@@ -193,8 +203,11 @@ export async function createFixedAsset(
   if (!/^[1-6]\d{3}$/.test(input.assetAccountCode)) {
     return fail("VALIDATION", "Kode akun aset tidak valid");
   }
-  if (input.capitalize && !input.paymentMethod) {
-    return fail("VALIDATION", "Payment method wajib kalau capitalize=true");
+  if (input.capitalize && !input.paymentMethod && !input.creditAccountCode) {
+    return fail(
+      "VALIDATION",
+      "Pilih dulu akun lawannya (uangnya keluar dari mana) kalau aset ini dijurnal",
+    );
   }
 
   // Activate placeholder accounts on first adoption.
@@ -232,9 +245,10 @@ export async function createFixedAsset(
     .returning();
 
   let journalEntryId: string | null = null;
+  let capitalizeError: string | null = null;
 
   // Capitalize: create journal entry Dr asset Cr kas/bank.
-  if (input.capitalize && input.paymentMethod) {
+  if (input.capitalize && (input.paymentMethod || input.creditAccountCode)) {
     try {
       const lines = mapCapitalizeAsset({
         assetId: created.id,
@@ -243,7 +257,8 @@ export async function createFixedAsset(
         entryDate: created.acquiredDate as string,
         cost: Number(created.cost),
         assetAccountCode: created.assetAccountCode,
-        paymentMethod: input.paymentMethod,
+        paymentMethod: input.paymentMethod ?? "cash",
+        creditAccountCode: input.creditAccountCode ?? null,
       });
       const result = await recordJournal({
         outletId: session.user.outletId,
@@ -256,8 +271,13 @@ export async function createFixedAsset(
       });
       journalEntryId = result.entryId;
     } catch (e) {
-      // Capitalization journal failed — don't block asset creation, log only.
+      /* Sesi AE-212 — asetnya tetap dibuat (datanya sudah benar), TAPI
+       * kegagalan jurnalnya tidak lagi ditelan diam-diam. Sebelumnya hanya
+       * masuk console: aset terdaftar tanpa pernah masuk neraca, dan tidak ada
+       * satu pun tanda di layar. */
       console.error("[fixed_asset:capitalize]", e);
+      capitalizeError =
+        e instanceof Error ? e.message : "Jurnal pengadaan gagal dibuat";
     }
   }
 
@@ -273,7 +293,7 @@ export async function createFixedAsset(
     },
   });
 
-  return ok({ id: created.id, journalEntryId });
+  return ok({ id: created.id, journalEntryId, capitalizeError });
 }
 
 // ============================================================

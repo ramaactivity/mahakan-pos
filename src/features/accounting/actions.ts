@@ -26,6 +26,7 @@ import {
   getAccountById,
   getAccountLedgerEntries,
   getAccountOpeningBalance,
+  getCarriedInBalances,
   getCashFlowEntries,
   getCurrentPeriod,
   getJournalEntryById,
@@ -734,10 +735,30 @@ export async function fetchOpeningBalanceEditor(): Promise<
     })),
   );
 
+  /* Sesi AE-212 — yang ditampilkan adalah SALDO YANG BERLAKU per tanggal itu,
+   * yaitu saldo yang terbawa dari jurnal sebelumnya DITAMBAH isi entry saldo
+   * awal ini. Sebelumnya form hanya menampilkan isi entry-nya sendiri, jadi
+   * owner mengetik "Kas 354.000" sementara Juli menutup di −388.800 dan hasil
+   * akhirnya bukan 354.000. Angka di form kini = angka yang akan menjadi
+   * saldo awal, sehingga apa yang dilihat memang apa yang berlaku. */
+  const carriedNet = await getCarriedInBalances({
+    outletId,
+    beforeDate: String(entry.entryDate),
+    excludeEntryId: entry.id,
+  });
+
   const byId = new Map(available.map((a) => [a.accountId, a]));
+  const effective = new Map<string, number>(natural);
+  for (const [accountId, net] of carriedNet) {
+    const acc = byId.get(accountId);
+    if (!acc) continue;
+    const asNatural = acc.normalBalance === "debit" ? net : -net;
+    effective.set(accountId, (effective.get(accountId) ?? 0) + asNatural);
+  }
+
   const filled: OpeningBalanceEditorAccount[] = [];
   let retainedAmount = 0;
-  for (const [accountId, amount] of natural) {
+  for (const [accountId, amount] of effective) {
     const acc = byId.get(accountId);
     if (!acc) continue; // akun sudah dinonaktifkan/dihapus — jangan tawarkan
     if (acc.code === RETAINED_EARNINGS_CODE) {
@@ -840,6 +861,42 @@ export async function saveOpeningBalance(input: {
 
   const retained = accounts.find((a) => a.code === RETAINED_EARNINGS_CODE);
 
+  /* Sesi AE-212 — saldo yang sudah terbawa ke tanggal ini. Yang diposting
+   * hanya SELISIHNYA, supaya saldo per tanggal itu benar-benar menjadi angka
+   * yang diketik owner — bukan angka baru yang ditumpuk di atas saldo lama. */
+  const carriedNet = await getCarriedInBalances({
+    outletId,
+    beforeDate: input.entryDate,
+  });
+  const carriedNatural = (accountId: string, normal: "debit" | "credit") => {
+    const net = carriedNet.get(accountId) ?? 0;
+    return normal === "debit" ? net : -net;
+  };
+  for (const inp of inputs) {
+    inp.carriedIn = carriedNatural(inp.accountId, inp.normalBalance);
+  }
+
+  /* Akun neraca yang PUNYA saldo terbawa tapi tidak disebut di form berarti
+   * owner menyatakan saldonya nol. Tanpa baris penihil ini, akun tersebut
+   * diam-diam mempertahankan saldo lamanya dan hasil akhirnya tidak sama
+   * dengan yang tampil di form. */
+  const submitted = new Set(inputs.map((i) => i.accountId));
+  for (const acc of accounts) {
+    if (submitted.has(acc.id)) continue;
+    if (acc.code === RETAINED_EARNINGS_CODE) continue;
+    if (!["asset", "liability", "equity"].includes(acc.type)) continue;
+    const normal = acc.normalBalance as "debit" | "credit";
+    const carried = carriedNatural(acc.id, normal);
+    if (carried === 0) continue;
+    inputs.push({
+      accountId: acc.id,
+      code: acc.code,
+      normalBalance: normal,
+      amount: 0,
+      carriedIn: carried,
+    });
+  }
+
   let built;
   try {
     built = buildOpeningBalanceLines(inputs, retained?.id ?? "");
@@ -848,7 +905,12 @@ export async function saveOpeningBalance(input: {
     throw e;
   }
 
-  // Entry lama (kalau ada) dibatalkan dulu.
+  /* Entry saldo awal untuk TANGGAL YANG SAMA dibatalkan dulu.
+   *
+   * Sesi AE-212 — dibatasi ke tanggal yang sama, bukan "satu saldo awal
+   * seumur hidup". Saldo awal 1 Juli (cutover) dan koreksi saldo awal
+   * 1 Agustus adalah dua hal berbeda dan harus bisa hidup berdampingan;
+   * kalau yang Juli ikut dibatalkan, sejarah Juli ikut hilang. */
   const [existing] = await db
     .select({
       id: journalEntries.id,
@@ -859,6 +921,7 @@ export async function saveOpeningBalance(input: {
       and(
         eq(journalEntries.outletId, outletId),
         eq(journalEntries.sourceType, "opening_balance"),
+        eq(journalEntries.entryDate, input.entryDate),
         sql`${journalEntries.status} <> 'reversed'`,
       ),
     )
@@ -3075,4 +3138,176 @@ export async function fetchGeneralLedger(args: {
       entries,
     }),
   );
+}
+
+// ============================================================
+// Sesi AE-212 — EDIT JURNAL LANGSUNG (batal-otomatis lalu posting ulang)
+// ============================================================
+
+/**
+ * Perbaiki jurnal yang sudah terposting dalam satu langkah.
+ *
+ * Sebelum ini owner harus melakukannya sendiri dalam dua langkah terpisah:
+ * reverse dulu, lalu mengetik ulang seluruh jurnalnya dari nol. Dua langkah
+ * itu gampang putus di tengah — jurnal pembatalnya jadi, penggantinya lupa
+ * dibuat, dan buku tinggal kehilangan angkanya tanpa ada yang sadar.
+ *
+ * Yang dilakukan: entry lama dibatalkan (pasangan reverse, jejak audit utuh),
+ * lalu versi barunya diposting. Pola yang sama sudah dipakai koreksi metode
+ * bayar hutang (AE-199) dan koreksi rekening gaji (AE-210).
+ *
+ * BUKAN untuk entry sistem. Jurnal yang lahir dari penjualan, pembelian, gaji,
+ * dan sejenisnya harus diperbaiki lewat sumbernya — kalau diubah di sini,
+ * angka jurnalnya tidak lagi cocok dengan dokumen yang melahirkannya dan
+ * tidak ada yang akan memberi tahu.
+ */
+export async function editPostedJournalEntry(input: {
+  entryId: string;
+  entryDate: string;
+  description: string;
+  reason: string;
+  lines: Array<{
+    accountId: string;
+    debit: number;
+    credit: number;
+    description?: string | null;
+  }>;
+  receiptImageUrl?: string | null;
+}): Promise<
+  ApiResult<{
+    entryId: string;
+    entryNumber: string;
+    reversedEntryNumber: string;
+  }>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "accounting.journal.post")) {
+    return fail("FORBIDDEN", "Hanya Owner yang dapat memperbaiki jurnal terposting");
+  }
+  if (!hasPermission(session.user.role, "accounting.journal.reverse")) {
+    return fail("FORBIDDEN", "Hanya Owner yang dapat membatalkan jurnal lama");
+  }
+
+  const reason = (input.reason ?? "").trim();
+  if (reason.length < 3) {
+    return fail("VALIDATION", "Alasan perbaikan wajib diisi (minimal 3 karakter)");
+  }
+  if (!input.description || input.description.trim().length < 3) {
+    return fail("VALIDATION", "Deskripsi minimal 3 karakter");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.entryDate ?? "")) {
+    return fail("VALIDATION", "Tanggal harus format YYYY-MM-DD");
+  }
+  if (!input.lines || input.lines.length < 2) {
+    return fail("VALIDATION", "Entry minimal 2 baris");
+  }
+  for (const l of input.lines) {
+    if (l.debit < 0 || l.credit < 0) {
+      return fail("VALIDATION", "Nilai debit/credit tidak boleh negatif");
+    }
+    if ((l.debit > 0 && l.credit > 0) || (l.debit === 0 && l.credit === 0)) {
+      return fail(
+        "VALIDATION",
+        "Setiap baris harus debit ATAU credit, bukan keduanya / kosong",
+      );
+    }
+  }
+
+  const original = await getJournalEntryById(session.user.outletId, input.entryId);
+  if (!original) return fail("NOT_FOUND", "Entry tidak ditemukan");
+  if (original.status === "draft") {
+    return fail(
+      "INVALID_STATE",
+      "Entry ini masih draft — pakai Edit Draft, tidak perlu dibatalkan dulu.",
+    );
+  }
+  if (original.status !== "posted") {
+    return fail(
+      "INVALID_STATE",
+      `Entry status ${original.status} — hanya entry terposting yang bisa diperbaiki.`,
+    );
+  }
+  if (original.sourceType !== "manual") {
+    return fail(
+      "INVALID_STATE",
+      "Jurnal ini lahir dari transaksi lain (penjualan/pembelian/gaji). Perbaiki lewat modul asalnya supaya angkanya tetap cocok dengan dokumennya.",
+    );
+  }
+
+  /* Batalkan dulu. Kalau periodenya terkunci/tutup buku, pesan dari reverse
+   * yang paling berguna — teruskan apa adanya. */
+  const reversed = await reverseJournalEntry(
+    input.entryId,
+    `Diperbaiki — ${reason}`,
+  );
+  if (!reversed.ok) return reversed as ApiResult<never>;
+
+  let result;
+  try {
+    result = await recordJournal({
+      outletId: session.user.outletId,
+      entryDate: input.entryDate,
+      description: input.description.trim(),
+      sourceType: "manual",
+      sourceId: null,
+      lines: input.lines.map((l) => ({
+        accountId: l.accountId,
+        debit: l.debit,
+        credit: l.credit,
+        description: l.description ?? null,
+      })),
+      status: "posted",
+      receiptImageUrl: normalizeReceiptUrl(input.receiptImageUrl),
+      actorId: session.user.id,
+      metadata: {
+        repost: {
+          replacesEntryId: original.id,
+          replacesEntryNumber: original.entryNumber,
+          reversalEntryNumber: reversed.data.reverseEntryNumber,
+          reason,
+        },
+      },
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.startsWith("PERIOD_LOCKED")) {
+      return fail(
+        "PERIOD_LOCKED",
+        `Periode ${msg.split(":")[1] ?? ""} sudah dikunci — buka kuncinya dulu di Akuntansi → Periode. Jurnal lama sudah terlanjur dibatalkan, jadi posting ulang perbaikannya setelah periode dibuka.`,
+      );
+    }
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "accounting", "Gagal memposting jurnal perbaikan"),
+    );
+  }
+
+  await logAudit({
+    eventType: "journal_entry.repost",
+    userId: session.user.id,
+    entityType: "journal_entry",
+    entityId: result.entryId,
+    payload: {
+      summary: `${original.entryNumber} diperbaiki → ${result.entryNumber} — ${reason}`,
+      before: {
+        entryNumber: original.entryNumber,
+        entryDate: String(original.entryDate),
+        description: original.description,
+        lineCount: original.lines.length,
+      },
+      after: {
+        entryNumber: result.entryNumber,
+        entryDate: input.entryDate,
+        description: input.description.trim(),
+        lineCount: input.lines.length,
+      },
+      context: { reason, reversalEntryNumber: reversed.data.reverseEntryNumber },
+    },
+  });
+
+  return ok({
+    entryId: result.entryId,
+    entryNumber: result.entryNumber,
+    reversedEntryNumber: reversed.data.reverseEntryNumber,
+  });
 }
