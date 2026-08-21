@@ -16,6 +16,11 @@ import {
   type ComponentPropsWithoutRef,
 } from "react";
 import { cn } from "@/lib/utils";
+import {
+  decodeSelectValue,
+  encodeSelectValue,
+  hasEmptyOption,
+} from "./select-empty-value";
 
 export interface SelectOption {
   value: string;
@@ -110,10 +115,17 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(function Select
     </RadixSelect.Trigger>
   );
 
+  /* Sesi AE-213 — opsi bernilai "" (mis. "— pakai bawaan —") membuat Radix
+   * MELEMPAR error, bahkan saat dropdown-nya tertutup, dan errornya
+   * menjatuhkan seluruh layar. Nilainya diterjemahkan ke sentinel di sini
+   * dan dikembalikan ke "" saat dipilih — pemanggil tetap bekerja dengan "".
+   * Lihat select-empty-value.ts. */
+  const emptyOptionPresent = hasEmptyOption(options, groups);
+
   const renderOption = (opt: SelectOption) => (
     <RadixSelect.Item
-      key={opt.value}
-      value={opt.value}
+      key={opt.value || "__empty__"}
+      value={encodeSelectValue(opt.value)}
       disabled={opt.disabled}
       className={cn(
         "relative flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-neutral-900 outline-none select-none",
@@ -151,9 +163,22 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(function Select
       ) : null}
       <RadixSelect.Root
         name={name}
-        value={value}
-        defaultValue={defaultValue}
-        onValueChange={onValueChange}
+        /* Terjemahkan HANYA kalau opsi kosong itu memang ada. Di layar lain
+         * `value=""` berarti "belum memilih" dan itulah yang memunculkan
+         * placeholder Radix — jangan diusik. */
+        value={
+          emptyOptionPresent && value !== undefined
+            ? encodeSelectValue(value)
+            : value
+        }
+        defaultValue={
+          emptyOptionPresent && defaultValue !== undefined
+            ? encodeSelectValue(defaultValue)
+            : defaultValue
+        }
+        onValueChange={
+          onValueChange ? (v) => onValueChange(decodeSelectValue(v)) : undefined
+        }
         disabled={disabled || loading}
         {...rest}
       >

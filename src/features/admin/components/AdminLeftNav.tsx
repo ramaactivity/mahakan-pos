@@ -303,3 +303,17 @@ function NavLink({
     </button>
   );
 }
+
+/**
+ * Sesi AE-213 — label menu yang dipakai penahan error per-bagian
+ * (`SectionErrorBoundary`) supaya pesannya menyebut nama menu yang owner
+ * lihat di sidebar, bukan kode internalnya ("accounting").
+ */
+export function adminSectionLabel(section: AdminSection): string {
+  for (const group of NAV_GROUPS) {
+    for (const item of group.items) {
+      if (item.key === section) return item.label;
+    }
+  }
+  return section;
+}

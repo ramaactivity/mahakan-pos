@@ -6,6 +6,7 @@ import {
   AdminLeftNav,
   type AdminSection,
 } from "@/features/admin/components/AdminLeftNav";
+import { SectionErrorBoundary } from "@/features/admin/components/SectionErrorBoundary";
 import { cn } from "@/lib/utils";
 /* Sesi AE-63 phase2 P2.1 — DashboardHome eager (entry point most-visited).
  * 21 section lain di-lazy-load supaya initial bundle parse jauh lebih ringan
@@ -355,6 +356,15 @@ export function AdminShell() {
        * judul section. Di tablet+ no extra padding (sidebar visible,
        * no hamburger). */}
       <main className="flex-1 overflow-y-auto pt-14 md:pt-0">
+        {/* Sesi AE-213 — penahan error per-menu. Sebelumnya satu section
+         * yang melempar error menjatuhkan seluruh back office ke
+         * `(admin)/error.tsx`: sidebar ikut hilang sehingga owner tidak
+         * bisa pindah ke menu lain yang sehat, dan pesannya tidak
+         * menyebut menu mana yang rusak. */}
+        <SectionErrorBoundary
+          section={section}
+          onBackToDashboard={() => setSection("dashboard")}
+        >
         {section === "dashboard" ? (
           <DashboardHome user={session.user} onNavigate={setSection} />
         ) : (
@@ -421,6 +431,7 @@ export function AdminShell() {
             ) : null}
           </Suspense>
         )}
+        </SectionErrorBoundary>
       </main>
     </div>
   );
