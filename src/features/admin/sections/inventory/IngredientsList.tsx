@@ -156,10 +156,7 @@ export function IngredientsList() {
     null,
   );
 
-  const {
-    data: ingredientsData,
-    isLoading: ingredientsLoading,
-  } = useQuery({
+  const { data: ingredientsData, isLoading: ingredientsLoading } = useQuery({
     queryKey: [
       "admin",
       "inventory",
@@ -274,7 +271,8 @@ export function IngredientsList() {
     : sortedLowStock.slice(0, 12);
 
   const filtered = useMemo(
-    () => (lowOnly ? ingredients.filter((i) => lowStockIds.has(i.id)) : ingredients),
+    () =>
+      lowOnly ? ingredients.filter((i) => lowStockIds.has(i.id)) : ingredients,
     [ingredients, lowStockIds, lowOnly],
   );
 
@@ -324,154 +322,185 @@ export function IngredientsList() {
 
   return (
     <div className="space-y-4">
-      {/* Sesi AE-52 — header redesign: title compact + Tambah Bahan
-       * right-aligned, paragraph description di-collapse jadi 1-line ringkas. */}
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold text-neutral-900">
-            Bahan Baku
-          </h2>
-          <p className="text-xs text-neutral-500">
-            Raw ingredient (atomik). Preparation di tab Preparations. Stok
-            update via Terima / Adjust / Waste, otomatis terkurang dari sales.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Sesi AE-58 — view mode toggle Snapshot ↔ Pergerakan Bulan */}
-          <div
-            role="tablist"
-            aria-label="Tampilan tabel"
-            className="inline-flex rounded-md border border-neutral-200 bg-white p-0.5 text-xs"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={viewMode === "snapshot"}
-              onClick={() => setViewMode("snapshot")}
-              className={cn(
-                "rounded px-2.5 py-1 font-medium transition-colors",
-                viewMode === "snapshot"
-                  ? "bg-mahakan-green-700 text-white"
-                  : "text-neutral-600 hover:bg-neutral-100",
-              )}
+      {/* Sesi AE-215 — header dirapikan.
+       *
+       * Sebelumnya judul "Bahan Baku" + deskripsi duduk sebagai kolom
+       * `flex-1 min-w-0` bersebelahan dengan TUJUH tombol. Toolbar-nya
+       * butuh ~1550px, jadi kolom judul menyusut ke ~140px dan teksnya
+       * pecah satu kata per baris — sekitar 400px tinggi pita kosong yang
+       * mendorong kartu statistik jauh ke bawah.
+       *
+       * Yang diperbaiki:
+       *  - Judul "Bahan Baku" DIHAPUS: tab di atasnya sudah bernama
+       *    "Bahan", jadi itu sekadar mengulang.
+       *  - Deskripsi jadi satu baris selebar penuh (tidak lagi berebut
+       *    ruang dengan tombol) dan penunjuk tab-nya dibetulkan: halaman
+       *    Preparations ada di menu MENU, bukan di Inventory — teks lama
+       *    mengirim staff mencari tab yang tidak ada di sini.
+       *  - Tujuh tombol dikelompokkan: empat tombol ekspor/impor jadi satu
+       *    strip tersegmentasi (bahasa visual sama dengan pengalih
+       *    tampilan), menyisakan satu aksi utama.
+       *  - Toolbar `shrink-0` supaya kalau layar sempit barisnya TURUN,
+       *    bukan menggencet judul seperti dulu. */}
+      <header className="space-y-2">
+        <p className="max-w-[70ch] text-xs text-neutral-500">
+          Stok berkurang otomatis dari penjualan. Ubah manual lewat Terima,
+          Adjust, atau Waste. Bahan olahan (resep setengah jadi) diatur di Menu
+          → Preparations.
+        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* Kiri — kendali tampilan tabel (menentukan APA yang dilihat). */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Sesi AE-58 — view mode toggle Snapshot ↔ Pergerakan Bulan */}
+            <div
+              role="tablist"
+              aria-label="Tampilan tabel"
+              className="inline-flex rounded-md border border-neutral-200 bg-white p-0.5 text-xs"
             >
-              <LayoutGrid className="mr-1 inline size-3" />
-              Snapshot
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={viewMode === "monthly"}
-              onClick={() => setViewMode("monthly")}
-              className={cn(
-                "rounded px-2.5 py-1 font-medium transition-colors",
-                viewMode === "monthly"
-                  ? "bg-mahakan-green-700 text-white"
-                  : "text-neutral-600 hover:bg-neutral-100",
-              )}
-            >
-              <TrendingUp className="mr-1 inline size-3" />
-              Pergerakan Bulan
-            </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewMode === "snapshot"}
+                onClick={() => setViewMode("snapshot")}
+                className={cn(
+                  "rounded px-2.5 py-1 font-medium transition-colors",
+                  viewMode === "snapshot"
+                    ? "bg-mahakan-green-700 text-white"
+                    : "text-neutral-600 hover:bg-neutral-100",
+                )}
+              >
+                <LayoutGrid className="mr-1 inline size-3" />
+                Snapshot
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewMode === "monthly"}
+                onClick={() => setViewMode("monthly")}
+                className={cn(
+                  "rounded px-2.5 py-1 font-medium transition-colors",
+                  viewMode === "monthly"
+                    ? "bg-mahakan-green-700 text-white"
+                    : "text-neutral-600 hover:bg-neutral-100",
+                )}
+              >
+                <TrendingUp className="mr-1 inline size-3" />
+                Pergerakan Bulan
+              </button>
+            </div>
+            {viewMode === "monthly" ? (
+              <>
+                <div className="flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
+                  <CalendarDays className="size-3 text-neutral-500" />
+                  <input
+                    type="month"
+                    value={monthYmd}
+                    onChange={(e) =>
+                      setMonthYmd(e.target.value || currentJakartaMonth())
+                    }
+                    className="bg-transparent outline-none"
+                  />
+                </div>
+                {monthlyFlow && monthlyFlow.length > 0 ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const csv = buildCogsCsv(monthlyFlow, monthYmd);
+                      downloadCsv(`cogs-${monthYmd}.csv`, csv);
+                      toast.success(`Export COGS ${monthYmd}`);
+                    }}
+                  >
+                    <Download className="size-3.5" /> CSV
+                  </Button>
+                ) : null}
+              </>
+            ) : null}
           </div>
-          {viewMode === "monthly" ? (
-            <>
-              <div className="flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
-                <CalendarDays className="size-3 text-neutral-500" />
-                <input
-                  type="month"
-                  value={monthYmd}
-                  onChange={(e) =>
-                    setMonthYmd(e.target.value || currentJakartaMonth())
-                  }
-                  className="bg-transparent outline-none"
-                />
-              </div>
-              {monthlyFlow && monthlyFlow.length > 0 ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const csv = buildCogsCsv(monthlyFlow, monthYmd);
-                    downloadCsv(`cogs-${monthYmd}.csv`, csv);
-                    toast.success(`Export COGS ${monthYmd}`);
-                  }}
-                >
-                  <Download className="size-3.5" /> CSV
-                </Button>
-              ) : null}
-            </>
-          ) : null}
+          {/* Kanan — aksi. `shrink-0` supaya saat layar sempit barisnya
+           * TURUN, bukan menggencet konten kiri. */}
           {canCreate ? (
-            <>
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  setExportingCsv(true);
-                  try {
-                    const res = await exportIngredientsCsv();
-                    if (!isOk(res)) {
-                      toast.error(res.error.message);
-                      return;
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {/* Empat aksi ekspor/impor jadi SATU strip tersegmentasi.
+               * Dulu empat tombol outline penuh berjajar dan itulah yang
+               * memakan lebar sampai judul tergencet. Penjelasan panjang
+               * tiap aksi tetap hidup di tooltip. */}
+              <div className="inline-flex items-center rounded-md border border-neutral-200 bg-white p-0.5">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setExportingCsv(true);
+                    try {
+                      const res = await exportIngredientsCsv();
+                      if (!isOk(res)) {
+                        toast.error(res.error.message);
+                        return;
+                      }
+                      downloadCsv(res.data.filename, res.data.csv);
+                      toast.success(`Download CSV: ${res.data.rowCount} bahan`);
+                    } finally {
+                      setExportingCsv(false);
                     }
-                    downloadCsv(res.data.filename, res.data.csv);
-                    toast.success(
-                      `Download CSV: ${res.data.rowCount} bahan`,
-                    );
-                  } finally {
-                    setExportingCsv(false);
-                  }
-                }}
-                disabled={exportingCsv}
-                title="Download semua bahan sebagai CSV (untuk bulk edit di Sheets)"
-              >
-                <Download className="size-4" aria-hidden /> Download CSV
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setCsvImportOpen(true)}
-                title="Upload CSV hasil edit (bulk update)"
-              >
-                <PackagePlus className="size-4" aria-hidden /> Upload CSV
-              </Button>
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  setExportingTpl(true);
-                  try {
-                    const res = await exportKelolaBahanTemplate();
-                    if (!isOk(res)) {
-                      toast.error(res.error.message);
-                      return;
+                  }}
+                  disabled={exportingCsv}
+                  title="Download semua bahan sebagai CSV (untuk bulk edit di Sheets)"
+                  className="inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-50"
+                >
+                  <Download className="size-3.5" aria-hidden /> Ekspor CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCsvImportOpen(true)}
+                  title="Upload CSV hasil edit (bulk update)"
+                  className="inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-100"
+                >
+                  <PackagePlus className="size-3.5" aria-hidden /> Impor CSV
+                </button>
+                <span className="mx-0.5 h-4 w-px bg-neutral-200" aria-hidden />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setExportingTpl(true);
+                    try {
+                      const res = await exportKelolaBahanTemplate();
+                      if (!isOk(res)) {
+                        toast.error(res.error.message);
+                        return;
+                      }
+                      downloadBase64Xlsx(res.data.filename, res.data.base64);
+                      toast.success("Template Kelola Bahan ter-download");
+                    } finally {
+                      setExportingTpl(false);
                     }
-                    downloadBase64Xlsx(res.data.filename, res.data.base64);
-                    toast.success("Template Kelola Bahan ter-download");
-                  } finally {
-                    setExportingTpl(false);
-                  }
-                }}
-                disabled={exportingTpl}
-                title="Download template Excel Kelola Bahan (terisi data sekarang) untuk diedit massal"
-              >
-                <Download className="size-4" aria-hidden /> Template Bahan
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setTplImportOpen(true)}
-                title="Upload template Kelola Bahan yang sudah diedit → update massal"
-              >
-                <PackagePlus className="size-4" aria-hidden /> Import Template
-              </Button>
+                  }}
+                  disabled={exportingTpl}
+                  title="Download template Excel Kelola Bahan (terisi data sekarang) untuk diedit massal"
+                  className="inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-50"
+                >
+                  <Download className="size-3.5" aria-hidden /> Ekspor Template
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTplImportOpen(true)}
+                  title="Upload template Kelola Bahan yang sudah diedit → update massal"
+                  className="inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-100"
+                >
+                  <PackagePlus className="size-3.5" aria-hidden /> Impor
+                  Template
+                </button>
+              </div>
               <Button onClick={() => setCreateOpen(true)}>
                 <Plus className="size-4" aria-hidden /> Tambah Bahan
               </Button>
-            </>
+            </div>
           ) : null}
         </div>
       </header>
 
       {/* Sesi AE-58 — partial baseline banner (monthly mode) */}
-      {viewMode === "monthly" && monthlyTotals && monthlyTotals.partialCount > 0 ? (
+      {viewMode === "monthly" &&
+      monthlyTotals &&
+      monthlyTotals.partialCount > 0 ? (
         <div className="flex items-start gap-2 rounded-md border border-warning-500/40 bg-warning-100/30 p-3 text-sm text-warning-500">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
           <div className="flex-1">
@@ -480,8 +509,8 @@ export function IngredientsList() {
               belum punya opname awal bulan
             </p>
             <p className="text-xs">
-              Pergerakan jadi perkiraan — Stok Akhir pakai stok saat ini
-              (bukan opname). Buat opname akhir bulan ini agar angka HPP akurat.
+              Pergerakan jadi perkiraan — Stok Akhir pakai stok saat ini (bukan
+              opname). Buat opname akhir bulan ini agar angka HPP akurat.
             </p>
           </div>
         </div>
@@ -550,9 +579,7 @@ export function IngredientsList() {
               <table className="w-full text-xs">
                 <thead className="border-b border-warning-500/20 bg-warning-100/40 text-[10px] uppercase tracking-wider text-warning-500">
                   <tr>
-                    <th className="px-3 py-1.5 text-left font-medium">
-                      Bahan
-                    </th>
+                    <th className="px-3 py-1.5 text-left font-medium">Bahan</th>
                     <th
                       className="px-3 py-1.5 text-right font-medium"
                       title="Sisa stok saat ini dibanding stok minimum"
@@ -644,10 +671,7 @@ export function IngredientsList() {
                               }
                               aria-label={`Terima stok ${i.name}`}
                             >
-                              <PackagePlus
-                                className="size-3.5"
-                                aria-hidden
-                              />{" "}
+                              <PackagePlus className="size-3.5" aria-hidden />{" "}
                               Terima
                             </Button>
                           </td>
@@ -721,7 +745,11 @@ export function IngredientsList() {
         </CardHeader>
         <CardContent className="px-0">
           {loading ? (
-            <div className="space-y-2 p-4" role="status" aria-label="Memuat bahan">
+            <div
+              className="space-y-2 p-4"
+              role="status"
+              aria-label="Memuat bahan"
+            >
               {Array.from({ length: 5 }).map((_, i) => (
                 <Skeleton key={i} className="h-12 w-full" />
               ))}
@@ -781,7 +809,9 @@ export function IngredientsList() {
                           }
                           onChange={(e) =>
                             e.target.checked
-                              ? setSelectedIds(new Set(visible.map((i) => i.id)))
+                              ? setSelectedIds(
+                                  new Set(visible.map((i) => i.id)),
+                                )
                               : clearSelection()
                           }
                           className="size-4 rounded border-neutral-300 text-mahakan-green-700 focus:ring-mahakan-green-700"
@@ -1050,16 +1080,16 @@ export function IngredientsList() {
         ingredient={movementsTarget}
         monthYmd={monthYmd}
         flowRow={
-          movementsTarget ? (monthlyByIng.get(movementsTarget.id) ?? null) : null
+          movementsTarget
+            ? (monthlyByIng.get(movementsTarget.id) ?? null)
+            : null
         }
         onClose={() => setMovementsTarget(null)}
       />
 
       {canBulkAssign && selectedIds.size > 0 ? (
         <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full bg-mahakan-green-900 px-4 py-2 text-sm text-white shadow-lg">
-          <span className="font-medium">
-            {selectedIds.size} bahan dipilih
-          </span>
+          <span className="font-medium">{selectedIds.size} bahan dipilih</span>
           <Button
             size="sm"
             onClick={() => setBulkOpen(true)}
@@ -1132,10 +1162,8 @@ function InventoryStat({
 }) {
   const toneClasses: Record<typeof tone, string> = {
     neutral: "border-neutral-200 bg-white text-neutral-900",
-    warning:
-      "border-warning-500/40 bg-warning-100/30 text-warning-500",
-    danger:
-      "border-danger-500/40 bg-danger-100/30 text-danger-500",
+    warning: "border-warning-500/40 bg-warning-100/30 text-warning-500",
+    danger: "border-danger-500/40 bg-danger-100/30 text-danger-500",
   };
   const activeRing = active ? "ring-2 ring-mahakan-green-700" : "";
   const interactive = onClick
@@ -1202,7 +1230,11 @@ function MonthlyFlowTable({
 }) {
   if (monthlyLoading) {
     return (
-      <div className="space-y-2 p-4" role="status" aria-label="Memuat pergerakan">
+      <div
+        className="space-y-2 p-4"
+        role="status"
+        aria-label="Memuat pergerakan"
+      >
         {Array.from({ length: 5 }).map((_, i) => (
           <Skeleton key={i} className="h-12 w-full" />
         ))}
