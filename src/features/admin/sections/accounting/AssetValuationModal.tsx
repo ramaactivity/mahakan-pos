@@ -341,7 +341,7 @@ export function AssetValuationModal({ open, assetId, onClose, onSaved }: Props) 
                   {preview.blockers.map((b, i) => (
                     <p
                       key={i}
-                      className="flex items-start gap-2 text-sm text-danger-700"
+                      className="flex items-start gap-2 text-sm text-danger-600"
                     >
                       <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                       {b}
@@ -390,12 +390,12 @@ export function AssetValuationModal({ open, assetId, onClose, onSaved }: Props) 
                       </span>
                     ) : null}
                     {preview.plLoss > 0 ? (
-                      <span className="text-danger-700">
+                      <span className="text-danger-600">
                         Masuk rugi: {formatRupiah(preview.plLoss)}
                       </span>
                     ) : null}
                     {preview.plGain > 0 ? (
-                      <span className="text-success-700">
+                      <span className="text-success-500">
                         Masuk pendapatan: {formatRupiah(preview.plGain)}
                       </span>
                     ) : null}
@@ -420,7 +420,7 @@ export function AssetValuationModal({ open, assetId, onClose, onSaved }: Props) 
           ) : null}
 
           {error ? (
-            <div className="rounded-md border border-danger-500/50 bg-danger-100/40 p-3 text-sm text-danger-700">
+            <div className="rounded-md border border-danger-500/50 bg-danger-100/40 p-3 text-sm text-danger-600">
               {error}
             </div>
           ) : null}

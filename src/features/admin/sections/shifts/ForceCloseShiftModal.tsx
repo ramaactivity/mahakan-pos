@@ -95,8 +95,8 @@ export function ForceCloseShiftModal({
       }
     >
       <div className="space-y-3">
-        <div className="flex items-start gap-2 rounded-md border border-warning-300 bg-warning-100/40 p-3 text-xs text-neutral-700">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning-600" />
+        <div className="flex items-start gap-2 rounded-md border border-warning-500/35 bg-warning-100/40 p-3 text-xs text-neutral-700">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning-500" />
           <p>
             Pakai ini untuk shift yang lupa ditutup (nginep). Hitung dulu kas
             fisik di laci — selisih akan dihitung & dijurnal jujur seperti
@@ -134,7 +134,7 @@ export function ForceCloseShiftModal({
             disabled={submitting}
           />
           {!reasonValid && reason.length > 0 ? (
-            <p className="mt-1 text-[11px] text-danger-700">
+            <p className="mt-1 text-[11px] text-danger-600">
               Minimal 3 karakter
             </p>
           ) : null}

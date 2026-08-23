@@ -2,7 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowRight, Eye, Receipt, ShieldCheck } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Eye,
+  Lock,
+  Receipt,
+  ShieldCheck,
+} from "lucide-react";
 import {
   Badge,
   Button,
@@ -299,17 +306,30 @@ export function ShiftsSection({ viewerRole }: ShiftsSectionProps) {
                           )}
                         </td>
                         <td className="px-3 py-3">
-                          <div className="flex justify-end gap-1">
+                          <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
                             {/* Audit POS E2E 2026-06-12 — tutup paksa shift
                                 nginep dari backoffice (owner). Guard open-bill
-                                + approval tetap berlaku di server. */}
+                                + approval tetap berlaku di server.
+
+                                Sesi AE-215 — dirapikan: `whitespace-nowrap`
+                                supaya labelnya tidak patah dua baris dan
+                                tingginya sejajar tombol Detail di sebelahnya.
+                                Warnanya dipindah ke danger-500 (dengan
+                                transparansi) + danger-100 karena tema HANYA
+                                punya danger-100/500/600 — `border-danger-300`
+                                dan `hover:bg-danger-50` yang dipakai
+                                sebelumnya tidak menghasilkan apa pun, jadi
+                                tombolnya tidak punya umpan balik hover sama
+                                sekali. */}
                             {canForceClose && shift.status === "open" ? (
                               <Button
                                 size="sm"
                                 variant="outline"
                                 onClick={() => setForceCloseTarget(shift)}
-                                className="border-danger-300 text-danger-500 hover:bg-danger-50"
+                                title="Tutup shift yang lupa ditutup (hitung kas fisik dulu)"
+                                className="border-danger-500/35 text-danger-500 hover:border-danger-500/60 hover:bg-danger-100/60 active:bg-danger-100"
                               >
+                                <Lock className="size-3.5" aria-hidden />
                                 Tutup Paksa
                               </Button>
                             ) : null}
