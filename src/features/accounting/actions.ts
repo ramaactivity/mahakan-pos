@@ -2301,6 +2301,13 @@ export async function updateJournalEntryDate(input: {
     "period_reopen",
     "opening_balance",
     "cogs_period_close",
+    /* Sesi AE-214 — jurnal penilaian ulang aset terikat ke baris riwayat
+     * penilaian yang menyimpan tanggal berlakunya DAN bulan mulai basis
+     * penyusutan baru. Memindahkan tanggalnya dari layar Jurnal membuat
+     * jurnalnya bertanggal lain daripada riwayat & basisnya, tanpa ada yang
+     * menghitung ulang. Batalkan dari modul Aset Tetap, lalu input ulang. */
+    "asset_revaluation",
+    "asset_impairment",
   ] as const;
   if (
     (STRUCTURAL_SOURCE_TYPES as readonly string[]).includes(

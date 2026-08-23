@@ -69,6 +69,8 @@ const DEFAULTS: DefaultAccount[] = [
   { code: "1203", name: "Peralatan Bar", type: "asset", normalBalance: "debit", parentCode: "1200", isSystem: false, isActiveOnSeed: false, displayOrder: 52, notes: "Sesi W" },
   { code: "1204", name: "Peralatan IT (POS, printer, tablet)", type: "asset", normalBalance: "debit", parentCode: "1200", isSystem: false, isActiveOnSeed: false, displayOrder: 53, notes: "Sesi W" },
   { code: "1290", name: "Akumulasi Penyusutan", type: "asset", normalBalance: "credit", parentCode: "1200", isContra: true, isSystem: false, isActiveOnSeed: false, displayOrder: 60, notes: "Kontra-asset, sesi W (depresiasi otomatis bulanan)" },
+  /* Sesi AE-214 — revaluasi & penurunan nilai aset tetap. */
+  { code: "1291", name: "Akumulasi Penurunan Nilai Aset", type: "asset", normalBalance: "credit", parentCode: "1200", isContra: true, isSystem: false, isActiveOnSeed: false, displayOrder: 61, notes: "Sesi AE-214: kontra-asset PSAK 48. Cr saat penurunan nilai diakui, Dr saat dipulihkan atau saat asetnya direvaluasi (metode eliminasi)." },
 
   // ============ 2xxx KEWAJIBAN ============
   { code: "2101", name: "Hutang Dagang (TOP Supplier)", type: "liability", normalBalance: "credit", parentCode: "2100", isSystem: true, displayOrder: 1, notes: "Auto-credit saat purchase TOP confirm; auto-debit saat mark-paid" },
@@ -88,6 +90,9 @@ const DEFAULTS: DefaultAccount[] = [
   { code: "3302", name: "Laba Rugi Berjalan", type: "equity", normalBalance: "credit", parentCode: "3300", isSystem: true, displayOrder: 21, notes: "Net income period berjalan, auto-transfer ke 3301 saat period close" },
   /* Sesi AE-80 — Treasury stock untuk company buyback share investor. */
   { code: "3401", name: "Treasury Stock (Buyback Saham)", type: "equity", normalBalance: "debit", parentCode: "3400", isContra: true, isSystem: true, displayOrder: 30, notes: "Sesi AE-80: Kontra-equity. Dr saat outlet beli kembali share dari investor (share_transactions kind='company_buyback'). Mengurangi total ekuitas." },
+  /* Sesi AE-214 — kenaikan revaluasi TIDAK boleh lewat laba rugi (labanya
+   * belum terwujud, asetnya belum dijual), jadi mendarat di ekuitas sini. */
+  { code: "3501", name: "Surplus Revaluasi Aset Tetap", type: "equity", normalBalance: "credit", parentCode: "3500", isSystem: false, isActiveOnSeed: false, displayOrder: 35, notes: "Sesi AE-214 (PSAK 16 par. 39-40): Cr saat nilai wajar aset naik; Dr saat aset yang sama turun nilainya kembali (sampai habis) sebelum sisanya jadi rugi." },
 
   // ============ 4xxx PENDAPATAN ============
   { code: "4101", name: "Penjualan Makanan", type: "revenue", normalBalance: "credit", parentCode: "4100", isSystem: true, displayOrder: 1, notes: "Sum subtotal items kategori makanan (ricebowl/bakmie/snack default)" },
@@ -99,6 +104,7 @@ const DEFAULTS: DefaultAccount[] = [
   { code: "4201", name: "Pendapatan Lain-lain", type: "revenue", normalBalance: "credit", parentCode: "4200", isSystem: true, displayOrder: 20, notes: "Default fallback untuk incomes table kalau accountId tidak diset" },
   { code: "4202", name: "Pendapatan Sewa Ruang", type: "revenue", normalBalance: "credit", parentCode: "4200", isSystem: false, displayOrder: 21, notes: "Sesi AE-71 — customer sewa Mahakan untuk event (komunitas, fotografi, dll). Beda dengan 6201 Sewa Tempat (expense, Mahakan bayar landlord)." },
   { code: "4203", name: "Pendapatan Titip Jual", type: "revenue", normalBalance: "credit", parentCode: "4200", isSystem: false, displayOrder: 22, notes: "Sesi AE-71 — komisi/markup dari titip jual produk pihak ketiga (UMKM, dll)" },
+  { code: "4204", name: "Pemulihan Rugi Penurunan Nilai Aset", type: "revenue", normalBalance: "credit", parentCode: "4200", isSystem: false, isActiveOnSeed: false, displayOrder: 23, notes: "Sesi AE-214 (PSAK 48 par. 117): Cr saat penurunan nilai yang dulu diakui dipulihkan, dan saat kenaikan revaluasi memulihkan rugi revaluasi yang pernah dibebankan. Dibatasi sebesar yang pernah diakui sebagai rugi." },
   { code: "4301", name: "Pendapatan Bunga Bank", type: "revenue", normalBalance: "credit", parentCode: "4300", isSystem: false, displayOrder: 30, notes: "Manual entry akhir bulan" },
 
   // ============ 5xxx HARGA POKOK PENJUALAN ============
@@ -140,6 +146,11 @@ const DEFAULTS: DefaultAccount[] = [
   { code: "6502", name: "Beban Penyusutan Peralatan Dapur", type: "expense", normalBalance: "debit", parentCode: "6500", isSystem: false, isActiveOnSeed: false, displayOrder: 41, notes: "Sesi W" },
   { code: "6503", name: "Beban Penyusutan Peralatan Bar", type: "expense", normalBalance: "debit", parentCode: "6500", isSystem: false, isActiveOnSeed: false, displayOrder: 42, notes: "Sesi W" },
   { code: "6504", name: "Beban Penyusutan Peralatan IT", type: "expense", normalBalance: "debit", parentCode: "6500", isSystem: false, isActiveOnSeed: false, displayOrder: 43, notes: "Sesi W" },
+  /* Sesi AE-214 — dua akun rugi yang sengaja DIPISAH: penurunan nilai (PSAK 48,
+   * asetnya memang tidak lagi bernilai segitu) beda sebab dengan rugi revaluasi
+   * (PSAK 16, harga pasarnya turun di bawah nilai buku setelah surplus habis). */
+  { code: "6505", name: "Rugi Penurunan Nilai Aset Tetap", type: "expense", normalBalance: "debit", parentCode: "6500", isSystem: false, isActiveOnSeed: false, displayOrder: 44, notes: "Sesi AE-214 (PSAK 48): Dr saat nilai terpulihkan aset < nilai tercatat. Lawannya 1291." },
+  { code: "6506", name: "Rugi Revaluasi Aset Tetap", type: "expense", normalBalance: "debit", parentCode: "6500", isSystem: false, isActiveOnSeed: false, displayOrder: 45, notes: "Sesi AE-214 (PSAK 16 par. 40): Dr sisa penurunan revaluasi setelah surplus revaluasi aset yang sama habis terpakai." },
 
   // ============ 66xx CSR & Sosial (sesi AE-63 phase4) ============
   /* Sesi AE-63 phase4 — staff finance request: "Request penambahan akun

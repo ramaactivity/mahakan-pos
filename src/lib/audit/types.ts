@@ -346,6 +346,11 @@ export const AUDIT_EVENT_TYPES = [
   "fixed_asset.create",
   "fixed_asset.deactivate",
   "fixed_asset.depreciation",
+  /* Sesi AE-214 — revaluasi & penurunan nilai (impairment). */
+  "fixed_asset.revaluation",
+  "fixed_asset.impairment",
+  "fixed_asset.impairment_reversal",
+  "fixed_asset.valuation_cancel",
   // Bank Accounts master (Sesi AE-13) — owner CRUD untuk dropdown setoran.
   "bank_account.create",
   "bank_account.update",

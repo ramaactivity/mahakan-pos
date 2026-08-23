@@ -73,6 +73,9 @@ const SOURCE_TYPE_OPTIONS = [
   /* Sesi AE-211 — jurnal penyesuaian punya sumbernya sendiri supaya owner
    * bisa memisahkan koreksi akhir bulan dari jurnal manual biasa. */
   { value: "adjusting", label: "Jurnal Penyesuaian" },
+  /* Sesi AE-214 — penilaian ulang aset tetap. */
+  { value: "asset_revaluation", label: "Revaluasi Aset" },
+  { value: "asset_impairment", label: "Penurunan Nilai Aset" },
   { value: "opening_balance", label: "Jurnal Pembukaan" },
   { value: "pos_sale", label: "POS Sale" },
   /* Sesi AE-193 — ringkasan penjualan harian. */

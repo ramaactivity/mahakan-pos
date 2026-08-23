@@ -311,6 +311,19 @@ export const journalEntries = pgTable(
          * satu entry aktif per (sourceType, sourceId). Tautan ke jurnal yang
          * disesuaikan disimpan di `metadata.adjusting.adjustsEntryId`. */
         "adjusting",
+        /* Sesi AE-214 — penilaian ulang aset tetap.
+         *
+         * 'asset_revaluation' = nilai wajar (naik → ekuitas 3501, turun →
+         * gerus surplus dulu lalu rugi 6506). 'asset_impairment' menampung
+         * penurunan nilai DAN pemulihannya (arahnya terbaca dari barisnya;
+         * jenis persisnya ada di metadata.valuation.kind).
+         *
+         * sourceId = fixed_asset_valuations.id, BUKAN id asetnya — satu aset
+         * boleh dinilai ulang berkali-kali sedangkan
+         * `ux_je_outlet_source_active` cuma mengizinkan satu entry aktif per
+         * (sourceType, sourceId). */
+        "asset_revaluation",
+        "asset_impairment",
       ],
     }).notNull(),
 

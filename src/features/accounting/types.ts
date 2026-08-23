@@ -96,7 +96,12 @@ export type JournalSourceType =
   /* Sesi AE-211 — Jurnal Penyesuaian: entry baru berisi selisih, entry
    * aslinya tetap berlaku. Lihat `adjusting-pure.ts` untuk bedanya dengan
    * Edit Jurnal & Reverse Jurnal. */
-  | "adjusting";
+  | "adjusting"
+  /* Sesi AE-214 — penilaian ulang aset tetap. sourceId = id baris
+   * fixed_asset_valuations (BUKAN id asetnya), supaya satu aset boleh dinilai
+   * ulang berkali-kali. Lihat `fixed-asset-valuation-pure.ts`. */
+  | "asset_revaluation"
+  | "asset_impairment";
 
 export type JournalEntryStatus = "draft" | "posted" | "reversed";
 

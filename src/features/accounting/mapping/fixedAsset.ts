@@ -90,6 +90,16 @@ export type DepreciationLineInput = {
   /** Bulan ke berapa di-depreciate (1-indexed dari acquired month). Caller
    * compute via lastDepreciatedMonth + targetMonth. */
   monthIndex: number;
+  /**
+   * Sesi AE-214 — nilai penyusutan yang sudah dihitung pemanggil.
+   *
+   * Aset yang pernah direvaluasi / turun nilai tidak lagi disusutkan dari
+   * harga perolehan: dasarnya nilai tercatat baru dibagi SISA umur manfaat
+   * (lihat `fixed-asset-schedule.ts`). Rumus di bawah tidak tahu soal itu,
+   * jadi pemanggil yang tahu basisnya mengirim angkanya langsung. Kalau tidak
+   * diisi, perilakunya persis seperti sebelumnya.
+   */
+  amount?: number;
 };
 
 export type MonthlyDepreciationInput = {
@@ -151,12 +161,15 @@ export function mapMonthlyDepreciation(
   let totalDep = 0;
 
   for (const asset of input.assets) {
-    const amount = computeMonthlyDepreciation({
-      cost: asset.cost,
-      salvageValue: asset.salvageValue,
-      usefulLifeMonths: asset.usefulLifeMonths,
-      monthIndex: asset.monthIndex,
-    });
+    const amount =
+      asset.amount !== undefined
+        ? asset.amount
+        : computeMonthlyDepreciation({
+            cost: asset.cost,
+            salvageValue: asset.salvageValue,
+            usefulLifeMonths: asset.usefulLifeMonths,
+            monthIndex: asset.monthIndex,
+          });
     if (amount === 0) continue;
     const key = `${asset.depreciationAccountCode}|${asset.accumulatedDepreciationAccountCode}`;
     if (!buckets[key]) {

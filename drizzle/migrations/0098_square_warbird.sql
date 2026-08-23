@@ -1,0 +1,1 @@
+ALTER TABLE "fixed_asset_valuations" ADD CONSTRAINT "ck_fav_kind_valid" CHECK ("fixed_asset_valuations"."kind" IN ('revaluation', 'impairment', 'impairment_reversal'));

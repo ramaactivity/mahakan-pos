@@ -15,9 +15,15 @@ import { todayJakarta } from "@/lib/tz";
 import {
   mapCapitalizeAsset,
   mapMonthlyDepreciation,
-  computeMonthlyDepreciation,
   type CapitalizeAssetPaymentMethod,
 } from "./mapping";
+import {
+  accumulatedDepreciationThrough,
+  firstDayOfMonthIso,
+  monthlyDepreciationFor,
+  monthsBetweenIso,
+  type DepreciationSchedule,
+} from "./fixed-asset-schedule";
 import { recordJournal } from "./posting";
 import {
   fail,
@@ -74,6 +80,17 @@ export type FixedAssetRow = {
   netBookValue: number;
   /** Computed: months since acquired. */
   monthsElapsed: number;
+  /* ===== Sesi AE-214 — revaluasi & penurunan nilai ===== */
+  /** Nilai bruto di buku besar. Sama dengan `cost` selama belum pernah direvaluasi. */
+  grossAmount: number;
+  accumulatedImpairment: number;
+  revaluationSurplus: number;
+  /** Terisi kalau aset ini pernah dinilai ulang (basis penyusutan berubah). */
+  basisAmount: number | null;
+  basisMonth: string | null;
+  basisRemainingMonths: number | null;
+  /** Sisa umur manfaat yang berlaku sekarang (bulan). */
+  remainingLifeMonths: number;
 };
 
 // ============================================================
@@ -102,19 +119,23 @@ export async function listFixedAssets(): Promise<
   const todayWib = todayJakarta();
   const result: FixedAssetRow[] = rows.map((r) => {
     const monthsElapsed = monthsBetween(r.acquiredDate as string, todayWib);
-    const monthsDepreciatedFromLastDate = r.lastDepreciatedMonth
-      ? monthsBetween(r.acquiredDate as string, r.lastDepreciatedMonth as string) + 1
-      : 0;
-    // Cumulative depreciation: sum monthly amounts up to monthsDepreciatedFromLastDate.
-    let acc = 0;
-    for (let i = 1; i <= monthsDepreciatedFromLastDate; i++) {
-      acc += computeMonthlyDepreciation({
-        cost: Number(r.cost),
-        salvageValue: Number(r.salvageValue),
-        usefulLifeMonths: r.usefulLifeMonths,
-        monthIndex: i,
-      });
-    }
+    /* Sesi AE-214 — akumulasi & nilai buku sekarang lewat jadwal yang sadar
+     * basis. Untuk aset yang tidak pernah dinilai ulang hasilnya identik
+     * dengan rumus lama (basisMonth null → jalur legacy). */
+    const sched = scheduleOfRow(r);
+    const acc = accumulatedDepreciationThrough(
+      sched,
+      (r.lastDepreciatedMonth as string | null) ?? null,
+    );
+    const gross = grossOfRow(r);
+    const impairment = Number(r.accumulatedImpairment ?? 0);
+    const remainingLife = sched.basisMonth && sched.basisRemainingMonths
+      ? Math.max(
+          0,
+          sched.basisRemainingMonths -
+            monthsBetweenIso(sched.basisMonth, firstDayOfMonthIso(todayWib)),
+        )
+      : Math.max(0, r.usefulLifeMonths - monthsElapsed);
 
     return {
       id: r.id,
@@ -130,8 +151,15 @@ export async function listFixedAssets(): Promise<
       lastDepreciatedMonth: r.lastDepreciatedMonth as string | null,
       notes: r.notes,
       accumulatedDepreciation: acc,
-      netBookValue: Number(r.cost) - acc,
+      netBookValue: gross - acc - impairment,
       monthsElapsed,
+      grossAmount: gross,
+      accumulatedImpairment: impairment,
+      revaluationSurplus: Number(r.revaluationSurplus ?? 0),
+      basisAmount: r.basisAmount === null ? null : Number(r.basisAmount),
+      basisMonth: (r.basisMonth as string | null) ?? null,
+      basisRemainingMonths: r.basisRemainingMonths ?? null,
+      remainingLifeMonths: remainingLife,
     };
   });
 
@@ -142,6 +170,32 @@ function monthsBetween(fromIso: string, toIso: string): number {
   const [fy, fm] = fromIso.split("-").map(Number);
   const [ty, tm] = toIso.split("-").map(Number);
   return (ty - fy) * 12 + (tm - fm);
+}
+
+type FixedAssetDbRow = typeof fixedAssets.$inferSelect;
+
+/**
+ * Sesi AE-214 — jadwal penyusutan sebuah baris aset. Satu tempat, dipakai
+ * daftar aset, pratinjau depresiasi, dan postingnya, supaya ketiganya tidak
+ * mungkin memakai dasar hitung yang berbeda.
+ */
+function scheduleOfRow(r: FixedAssetDbRow): DepreciationSchedule {
+  return {
+    acquiredDate: r.acquiredDate as string,
+    cost: Number(r.cost),
+    salvageValue: Number(r.salvageValue),
+    usefulLifeMonths: r.usefulLifeMonths,
+    basisAmount: r.basisAmount === null ? null : Number(r.basisAmount),
+    basisMonth: (r.basisMonth as string | null) ?? null,
+    basisAccumulated: Number(r.basisAccumulated ?? 0),
+    basisRemainingMonths: r.basisRemainingMonths ?? null,
+  };
+}
+
+/** Nilai bruto di buku. Aset lama (sebelum AE-214) punya 0 → pakai `cost`. */
+function grossOfRow(r: FixedAssetDbRow): number {
+  const g = Number(r.grossAmount ?? 0);
+  return g > 0 ? g : Number(r.cost);
 }
 
 // ============================================================
@@ -562,15 +616,14 @@ export async function previewMonthlyDepreciation(
     // Skip kalau acquired month > target month (asset belum exist).
     if (ymOf(a.acquiredDate as string) > targetYearMonth) continue;
 
-    // monthIndex = number of months from acquisition (1-indexed).
-    // Jika acquired 2026-06-15, untuk target 2026-06 → monthIndex=1.
-    // Jika acquired 2026-06, untuk target 2026-07 → monthIndex=2.
-    const monthIndex = monthsBetween(
-      a.acquiredDate as string,
-      targetMonth,
-    ) + 1;
-
-    if (monthIndex > a.usefulLifeMonths) continue;
+    /* Sesi AE-214 — nomor bulan dihitung terhadap basis yang berlaku. Untuk
+     * aset yang pernah dinilai ulang, "bulan ke-3" berarti bulan ketiga sejak
+     * nilai barunya berlaku, bukan sejak dibeli — kalau tidak, angka di layar
+     * tidak nyambung dengan jumlah yang dijurnal. */
+    const sched = scheduleOfRow(a);
+    const monthIndex = sched.basisMonth
+      ? monthsBetweenIso(sched.basisMonth, targetMonth) + 1
+      : monthsBetween(a.acquiredDate as string, targetMonth) + 1;
 
     const alreadyDepreciatedThisMonth =
       a.lastDepreciatedMonth !== null &&
@@ -587,12 +640,7 @@ export async function previewMonthlyDepreciation(
       continue;
     }
 
-    const monthly = computeMonthlyDepreciation({
-      cost: Number(a.cost),
-      salvageValue: Number(a.salvageValue),
-      usefulLifeMonths: a.usefulLifeMonths,
-      monthIndex,
-    });
+    const monthly = monthlyDepreciationFor(sched, targetMonth);
     if (monthly === 0) continue;
 
     previewItems.push({
@@ -681,6 +729,12 @@ export async function postMonthlyDepreciation(
         accumulatedDepreciationAccountCode:
           a.accumulatedDepreciationAccountCode,
         monthIndex: preview.monthIndex,
+        /* Sesi AE-214 — nilai yang DIPOSTING diambil dari pratinjau, bukan
+         * dihitung ulang di mapper. Aset yang pernah dinilai ulang punya dasar
+         * hitung berbeda (nilai baru ÷ sisa umur); menghitungnya dua kali di
+         * dua tempat adalah cara paling gampang membuat angka yang dilihat
+         * owner beda dengan angka yang masuk buku. */
+        amount: preview.monthlyAmount,
       };
     }),
   });
