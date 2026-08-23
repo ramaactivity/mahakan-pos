@@ -29,6 +29,8 @@ import {
 } from "@/features/purchase-requests/group-items-pure";
 import { fetchLastFinalizedOpname } from "@/features/stock-opname/queries";
 import { planGrMirror } from "./gr-mirror-pure";
+/* Sesi AE-216 — uang satu baris pembelian = Total Bayar dari nota. */
+import { isLineTotalConsistent, resolveLineTotal } from "./line-total";
 import { toJakartaDateOnly } from "@/lib/date";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
@@ -470,9 +472,23 @@ export async function createPurchase(
       // Sesi AE-43 — totalCost tetap pakai raw qty × raw unitCost supaya
       // rupiah identik dengan apa yang owner liat di nota; conversion
       // hanya dipakai untuk stock + cost master.
+      /* Sesi AE-216 — total dihitung dari TOTAL BAYAR tiap baris, bukan
+       * `qty × harga`. Harga satuan wajib rupiah bulat, jadi mengalikannya
+       * balik membuang sisa pembulatan dan nota Rp 227.000 tercatat
+       * Rp 226.880 — kas & jurnal ikut meleset dari struk.
+       *
+       * Rem kewajaran dijalankan DULU untuk semua baris: `totalCost` yang
+       * tidak berpasangan dengan qty × harga di barisnya sendiri ditolak,
+       * supaya kolom uang tidak bisa diisi angka sembarang. */
+      for (const item of v.items) {
+        if (!isLineTotalConsistent(item)) {
+          const ing = ingById.get(item.ingredientId);
+          throw new Error(`LINE_TOTAL_MISMATCH:${ing?.name ?? "bahan"}`);
+        }
+      }
       let total = 0;
       for (const item of v.items) {
-        total += Math.round(item.qty * item.unitCost);
+        total += resolveLineTotal(item);
       }
 
       /* Sesi AE-130 — anti-double-count detection (Anisa feedback).
@@ -582,7 +598,10 @@ export async function createPurchase(
         sectionSnapshot: string | null;
       }> = [];
       for (const { item, ing, res } of resolved) {
-        const totalCost = Math.round(item.qty * item.unitCost);
+        /* Sesi AE-216 — uang baris ini = Total Bayar dari nota (lihat
+         * line-total.ts). Cost master & WAC di bawah tetap memakai
+         * `unitCostMaster`, jadi HPP tidak ikut bergeser. */
+        const totalCost = resolveLineTotal(item);
         const qtyDecimalStr = item.qty.toFixed(4); // raw input
         const unitOverride = item.unit?.trim() || null;
 
@@ -946,6 +965,15 @@ export async function createPurchase(
       const ingName = sep > 0 ? rest.slice(0, sep) : "?";
       const userMsg = sep > 0 ? rest.slice(sep + 1) : rest;
       return fail("VALIDATION_ERROR", `Bahan "${ingName}": ${userMsg}`);
+    }
+    /* Sesi AE-216 — Total Bayar yang tidak berpasangan dengan qty × harga
+     * di barisnya sendiri. Biasanya salah ketik (mis. kelebihan nol). */
+    if (msg.startsWith("LINE_TOTAL_MISMATCH:")) {
+      const ingName = msg.slice("LINE_TOTAL_MISMATCH:".length);
+      return fail(
+        "VALIDATION_ERROR",
+        `Bahan "${ingName}": Total Bayar tidak cocok dengan QTY × harga satuan. Cek lagi angkanya.`,
+      );
     }
     /* Sesi AE-57 — PR-linked errors */
     if (msg === "PR_ITEM_NOT_FOUND") {
@@ -2310,8 +2338,16 @@ export async function createPurchaseOrder(
         }
       }
 
+      /* Sesi AE-216 — sama dengan createPurchase: uang PO diambil dari
+       * Total Bayar tiap baris, dengan rem kewajaran lebih dulu. */
+      for (const item of v.items) {
+        if (!isLineTotalConsistent(item)) {
+          const ing = ingById.get(item.ingredientId);
+          throw new Error(`LINE_TOTAL_MISMATCH:${ing?.name ?? "bahan"}`);
+        }
+      }
       let total = 0;
-      for (const item of v.items) total += Math.round(item.qty * item.unitCost);
+      for (const item of v.items) total += resolveLineTotal(item);
 
       const urlsRaw = v.receiptImageUrls ?? null;
       const legacyUrl = v.receiptImageUrl ?? null;
@@ -2355,7 +2391,8 @@ export async function createPurchaseOrder(
           qty: Math.max(1, Math.round(item.qty)),
           qtyDecimal: item.qty.toFixed(4),
           unitCost: item.unitCost,
-          totalCost: Math.round(item.qty * item.unitCost),
+          /* Sesi AE-216 — Total Bayar dari nota, bukan hasil kali ulang. */
+          totalCost: resolveLineTotal(item),
           movementId: null,
           ingredientNameSnapshot: ing.name,
           unitSnapshot: ing.unit,
@@ -2374,6 +2411,14 @@ export async function createPurchaseOrder(
       return fail("NOT_FOUND", "Salah satu bahan tidak ditemukan / non-aktif");
     if (msg === "OUTLET_MISMATCH")
       return fail("FORBIDDEN", "Bahan dari outlet lain — kontak admin");
+    /* Sesi AE-216 — Total Bayar tidak berpasangan dengan qty × harga. */
+    if (msg.startsWith("LINE_TOTAL_MISMATCH:")) {
+      const ingName = msg.slice("LINE_TOTAL_MISMATCH:".length);
+      return fail(
+        "VALIDATION_ERROR",
+        `Bahan "${ingName}": Total Bayar tidak cocok dengan QTY × harga satuan. Cek lagi angkanya.`,
+      );
+    }
     /* Feedback Cacil 2026-06-12 — validasi PR + anti dobel-tarik di PO. */
     if (msg === "PR_ITEM_NOT_FOUND")
       return fail("NOT_FOUND", "Item Permintaan Belanja tidak ditemukan");

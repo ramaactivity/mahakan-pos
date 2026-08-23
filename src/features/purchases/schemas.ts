@@ -33,6 +33,24 @@ const purchaseItemSchema = z.object({
     .int()
     .nonnegative("Harga tidak boleh negatif")
     .max(999_999_999, "Harga terlalu besar"),
+  /* Sesi AE-216 — TOTAL BAYAR baris ini, apa adanya dari nota.
+   *
+   * Harga satuan wajib rupiah bulat, jadi `qty × unitCost` tidak selalu
+   * kembali ke angka yang benar-benar dibayar (530 gr seharga Rp 16.000 →
+   * harga Rp 30/gr → 530 × 30 = Rp 15.900). Arahan owner: total pembelian
+   * dihitung dari TOTAL BAYAR, karena itulah uang yang keluar.
+   *
+   * Opsional: kalau staff mengetik harga satuan, totalnya memang turunan
+   * dan field ini boleh kosong — klien lama pun tetap jalan seperti dulu.
+   * Kewajaran nilainya divalidasi terpisah (`isLineTotalConsistent`)
+   * supaya angka nyasar tidak bisa tersimpan sebagai uang. */
+  totalCost: z
+    .number()
+    .int()
+    .nonnegative("Total bayar tidak boleh negatif")
+    .max(999_999_999_999, "Total bayar terlalu besar")
+    .nullable()
+    .optional(),
   // Sesi AE — per-line unit override. NULL/undefined = pakai master
   // ingredient unit. Snapshot text-only, no server-side conversion.
   unit: z

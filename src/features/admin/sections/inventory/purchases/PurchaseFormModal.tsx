@@ -221,6 +221,26 @@ function parseTotalSafe(s: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/* Sesi AE-216 — UANG SATU BARIS, satu sumber untuk seluruh layar.
+ *
+ * Kalau staff mengetik Total Bayar (`inputMode="total"`), angka itulah yang
+ * dipakai apa adanya — harga satuan cuma turunan yang dibulatkan, jadi
+ * mengalikannya balik akan membuang sisa pembulatan (530 gr seharga
+ * Rp 16.000 → harga Rp 30/gr → 530 × 30 = Rp 15.900, meleset Rp 100).
+ * Kalau staff mengetik harga satuan, totalnya memang turunan dan dihitung
+ * seperti biasa. Dipakai bareng oleh rincian per baris, Total Pembelian,
+ * dan nilai yang dikirim ke server — jadi ketiganya mustahil berbeda. */
+function effectiveLineTotal(r: ItemRow): number {
+  const qty = parseQtyDecimal(r.qty);
+  if (!Number.isFinite(qty) || qty <= 0) return 0;
+  if (r.inputMode === "total") {
+    const typed = parseTotalSafe(r.total);
+    if (typed > 0) return typed;
+  }
+  const cost = parseRupiahSafe(r.unitCost);
+  return cost >= 0 ? Math.round(qty * cost) : 0;
+}
+
 function formatQtyForDisplay(n: number): string {
   // Tampilan: integer tanpa decimal, decimal dipotong trailing zero.
   if (Number.isInteger(n)) return String(n);
@@ -484,17 +504,16 @@ export function PurchaseFormModal({
     return m;
   }, [ingredientList]);
 
-  const total = useMemo(() => {
-    let t = 0;
-    for (const r of items) {
-      const qty = parseQtyDecimal(r.qty);
-      const cost = parseRupiahSafe(r.unitCost);
-      if (Number.isFinite(qty) && qty > 0 && cost >= 0) {
-        t += Math.round(qty * cost);
-      }
-    }
-    return t;
-  }, [items]);
+  /* Sesi AE-216 — Total Pembelian dijumlahkan dari TOTAL BAYAR tiap baris.
+   *
+   * Sebelumnya dihitung ulang `qty × harga`. Karena harga satuan wajib
+   * rupiah bulat, hasil kali itu membuang sisa pembulatan: nota Rp 227.000
+   * tampil Rp 226.880. Uang yang benar-benar dibayar ke pedagang adalah
+   * kebenarannya, jadi itu yang dijumlahkan. */
+  const total = useMemo(
+    () => items.reduce((sum, r) => sum + effectiveLineTotal(r), 0),
+    [items],
+  );
 
   /* Sesi AE-130 — backdate detection (Anisa anti-double-count).
    * Re-classify saat user ganti tanggal belanja atau modal baru fetch
@@ -603,42 +622,6 @@ export function PurchaseFormModal({
           };
         }
         return { ...r, qty: newQty };
-      }),
-    );
-  }
-
-  /* Sesi AE-214 — TOTALAN TIDAK SINKRON DENGAN ANGKA YANG DIKETIK.
-   *
-   * Harga satuan wajib rupiah BULAT (server: unitCost integer). Saat staff
-   * mengetik Total, harga satuan diturunkan lewat pembagian lalu dibulatkan:
-   *   harga = bulatkan(total ÷ qty)
-   * Kalau pembagiannya tidak pas, `qty × harga` tidak lagi sama dengan total
-   * yang diketik — dan SEMUA angka sesudahnya (rincian per baris, Total
-   * Pembelian, dan nilai yang disimpan server) dihitung dari `qty × harga`,
-   * sementara kotak Total Bayar tetap memajang angka ketikan. Itu yang
-   * bikin totalan kelihatan tidak nyambung. Contoh: 3 Pcs, ketik 10.000 →
-   * harga 3.333 → yang tersimpan 9.999.
-   *
-   * Keputusan owner (2026-08-23): HARGA SATUAN yang jadi patokan. Jadi
-   * kotak Total-nya yang dirapikan ke `qty × harga`, supaya yang dilihat
-   * staff persis sama dengan yang dijumlahkan dan yang disimpan.
-   *
-   * WAJIB dipanggil saat blur, JANGAN saat mengetik. Merapikan per-ketukan
-   * bikin field berkelahi dengan jari staff: qty=2, ketik "45000" → di
-   * ketukan "45" harga jadi 23 → total ditulis balik jadi "46" → ketukan
-   * berikutnya menempel di angka itu dan nilainya jadi ngawur. */
-  function snapLineTotal(id: string) {
-    setItems((prev) =>
-      prev.map((r) => {
-        if (r.id !== id) return r;
-        /* Mode "unit" sudah selalu sinkron — total-nya memang turunan. */
-        if (r.inputMode !== "total") return r;
-        const qtyN = parseQtyDecimal(r.qty);
-        const costN = parseRupiahSafe(r.unitCost);
-        if (!Number.isFinite(qtyN) || qtyN <= 0 || costN < 0) return r;
-        const exact = String(Math.round(qtyN * costN));
-        if (exact === r.total) return r;
-        return { ...r, total: exact };
       }),
     );
   }
@@ -806,6 +789,9 @@ export function PurchaseFormModal({
       qty: number;
       unitCost: number;
       unit: string | null;
+      /* Sesi AE-216 — Total Bayar dari nota. Server memakai ini sebagai
+       * uang resmi baris, bukan menghitung ulang `qty × harga`. */
+      totalCost: number;
     }> = [];
     for (const r of items) {
       if (!r.ingredientId && r.qty.trim() === "" && r.unitCost.trim() === "") {
@@ -837,6 +823,7 @@ export function PurchaseFormModal({
         qty,
         unitCost: cost,
         unit: unitOverride,
+        totalCost: effectiveLineTotal(r),
       });
     }
     if (validItems.length === 0) {
@@ -1265,8 +1252,8 @@ export function PurchaseFormModal({
                 const qtyN = parseQtyDecimal(row.qty);
                 const costN = parseRupiahSafe(row.unitCost);
                 const hasQty = Number.isFinite(qtyN) && qtyN > 0;
-                const lineTotal =
-                  hasQty && costN >= 0 ? Math.round(qtyN * costN) : 0;
+                /* Sesi AE-216 — satu sumber dengan Total Pembelian. */
+                const lineTotal = effectiveLineTotal(row);
                 const ingredientPacks =
                   (ing?.packConversions ??
                     null) as IngredientPackConversion[] | null;
@@ -1361,10 +1348,6 @@ export function PurchaseFormModal({
                         inputMode="decimal"
                         value={row.qty}
                         onChange={(e) => setQty(row.id, e.target.value)}
-                        /* Sesi AE-214 — ganti qty juga menggeser harga
-                         * satuan (mode total), jadi kotak Total ikut
-                         * dirapikan begitu staff pindah field. */
-                        onBlur={() => snapLineTotal(row.id)}
                       />
                       <Select
                         ariaLabel={`Satuan baris ${idx + 1}`}
@@ -1418,11 +1401,6 @@ export function PurchaseFormModal({
                           inputMode="numeric"
                           value={row.total}
                           onChange={(e) => setTotal(row.id, e.target.value)}
-                          /* Sesi AE-214 — rapikan ke `qty × harga` begitu
-                           * staff selesai mengetik, supaya angka di kotak
-                           * ini sama persis dengan Total Pembelian dan
-                           * dengan yang tersimpan. */
-                          onBlur={() => snapLineTotal(row.id)}
                           className={cn(
                             "pr-16",
                             row.inputMode === "unit" &&
