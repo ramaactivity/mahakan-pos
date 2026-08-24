@@ -52,7 +52,11 @@ import {
   type IngredientPackConversion,
   type PackInfo,
 } from "@/lib/unit-conversion";
-import { applyUnitChange, dueDateLabel } from "./purchase-line-helpers";
+import {
+  applyUnitChange,
+  dueDateLabel,
+  effectiveLineTotal,
+} from "./purchase-line-helpers";
 import { cn } from "@/lib/utils";
 
 interface PurchaseFormModalProps {
@@ -221,25 +225,6 @@ function parseTotalSafe(s: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/* Sesi AE-216 — UANG SATU BARIS, satu sumber untuk seluruh layar.
- *
- * Kalau staff mengetik Total Bayar (`inputMode="total"`), angka itulah yang
- * dipakai apa adanya — harga satuan cuma turunan yang dibulatkan, jadi
- * mengalikannya balik akan membuang sisa pembulatan (530 gr seharga
- * Rp 16.000 → harga Rp 30/gr → 530 × 30 = Rp 15.900, meleset Rp 100).
- * Kalau staff mengetik harga satuan, totalnya memang turunan dan dihitung
- * seperti biasa. Dipakai bareng oleh rincian per baris, Total Pembelian,
- * dan nilai yang dikirim ke server — jadi ketiganya mustahil berbeda. */
-function effectiveLineTotal(r: ItemRow): number {
-  const qty = parseQtyDecimal(r.qty);
-  if (!Number.isFinite(qty) || qty <= 0) return 0;
-  if (r.inputMode === "total") {
-    const typed = parseTotalSafe(r.total);
-    if (typed > 0) return typed;
-  }
-  const cost = parseRupiahSafe(r.unitCost);
-  return cost >= 0 ? Math.round(qty * cost) : 0;
-}
 
 function formatQtyForDisplay(n: number): string {
   // Tampilan: integer tanpa decimal, decimal dipotong trailing zero.

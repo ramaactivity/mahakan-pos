@@ -24,6 +24,7 @@ import {
   type PaymentMethod,
   type PurchaseDetail,
 } from "@/features/purchases";
+import { isLineTotalConsistent } from "@/features/purchases/line-total";
 import {
   listAtomicIngredients,
   isOk as inventoryIsOk,
@@ -55,6 +56,8 @@ import {
   parsePurchaseQty,
   parseRupiahSafe,
   todayJakartaIso,
+  effectiveLineTotal,
+  parseTotalRupiah,
 } from "./purchase-line-helpers";
 import { cn } from "@/lib/utils";
 
@@ -123,6 +126,29 @@ function rowsFromDetail(detail: PurchaseDetail): EditRow[] {
   return detail.items.map((it) => {
     const qtyValue = Number(it.qtyDecimal ?? it.qty);
     const qty = Number.isFinite(qtyValue) ? qtyValue : it.qty;
+
+    /* Sesi AE-217 — muat kembali TOTAL BAYAR yang benar-benar tersimpan.
+     *
+     * Sebelumnya baris selalu dimuat sebagai `qty × harga` dalam mode "unit",
+     * jadi PO yang totalnya diketik dari nota diam-diam kehilangan sisa
+     * pembulatan begitu layar ini dibuka lalu disimpan lagi — tanpa ada
+     * seorang pun mengubah angkanya.
+     *
+     * Mode "total" dipasang HANYA kalau nilai tersimpan memang berbeda dari
+     * hasil kali DAN masih berpasangan wajar. Data lama yang di luar toleransi
+     * sengaja jatuh balik ke perilaku lama supaya layar ini tidak berubah jadi
+     * pintu yang menolak PO yang kemarin masih bisa diedit. */
+    const derived = Math.round(qty * it.unitCost);
+    const stored = Number(it.totalCost);
+    const fromNota =
+      Number.isFinite(stored) &&
+      stored !== derived &&
+      isLineTotalConsistent({
+        qty,
+        unitCost: it.unitCost,
+        totalCost: stored,
+      });
+
     return {
       itemId: it.id,
       key: it.id,
@@ -132,8 +158,8 @@ function rowsFromDetail(detail: PurchaseDetail): EditRow[] {
       unit: it.unitOverride ?? it.unitSnapshot,
       originalUnitOverride: it.unitOverride ?? null,
       unitCost: String(it.unitCost),
-      total: String(Math.round(qty * it.unitCost)),
-      inputMode: "unit" as const,
+      total: String(fromNota ? stored : derived),
+      inputMode: (fromNota ? "total" : "unit") as "unit" | "total",
       purchaseRequestItemId: it.purchaseRequestItemId ?? null,
     };
   });
@@ -234,17 +260,12 @@ export function PurchaseOrderEditModal({
     return m;
   }, [ingredientList]);
 
-  const total = useMemo(() => {
-    let t = 0;
-    for (const r of rows) {
-      const qty = parsePurchaseQty(r.qty);
-      const cost = parseRupiahSafe(r.unitCost);
-      if (Number.isFinite(qty) && qty > 0 && cost >= 0) {
-        t += Math.round(qty * cost);
-      }
-    }
-    return t;
-  }, [rows]);
+  /* Sesi AE-217 — satu sumber dengan rincian per baris & angka yang dikirim
+   * ke server: uang baris ikut TOTAL BAYAR kalau staff mengetiknya. */
+  const total = useMemo(
+    () => rows.reduce((sum, r) => sum + effectiveLineTotal(r), 0),
+    [rows],
+  );
 
   /* Sesi AE-190 — tanggal jatuh tempo hasil tempo yang sedang diketik. */
   const dueLabel = useMemo(
@@ -290,6 +311,9 @@ export function PurchaseOrderEditModal({
       qty: number;
       unitCost: number;
       unit: string | null;
+      /* Sesi AE-217 — Total Bayar dari nota. Server memakai ini sebagai uang
+       * resmi baris, bukan menghitung ulang `qty × harga`. */
+      totalCost: number;
       purchaseRequestItemId: string | null;
     }> = [];
     for (const r of rows) {
@@ -324,6 +348,7 @@ export function PurchaseOrderEditModal({
         ingredientId: r.ingredientId,
         qty,
         unitCost: cost,
+        totalCost: effectiveLineTotal(r),
         /* Simpan override hanya kalau beda dari master — sama dengan
          * Catat Pembelian, supaya tampilan jatuh ke unitSnapshot historis. */
         unit:
@@ -554,7 +579,8 @@ export function PurchaseOrderEditModal({
                 const qtyN = parsePurchaseQty(row.qty);
                 const costN = parseRupiahSafe(row.unitCost);
                 const hasQty = Number.isFinite(qtyN) && qtyN > 0;
-                const lineTotal = hasQty && costN >= 0 ? Math.round(qtyN * costN) : 0;
+                /* Sesi AE-217 — satu sumber dengan Total Pembelian. */
+                const lineTotal = effectiveLineTotal(row);
                 const ingredientPacks = (ing?.packConversions ??
                   null) as IngredientPackConversion[] | null;
                 const { options: unitOptions, value: unit } =
@@ -711,12 +737,26 @@ export function PurchaseOrderEditModal({
                       </Button>
                     </div>
                     {hasQty ? (
-                      <p className="mt-1.5 pr-12 text-right font-mono text-xs text-neutral-700">
-                        {formatPurchaseQty(qtyN)} {unit || "unit"} ×{" "}
-                        {formatRupiah(costN)} ={" "}
-                        <strong className="text-mahakan-green-900">
-                          {formatRupiah(lineTotal)}
-                        </strong>
+                      <p className="mt-1.5 flex flex-wrap items-center justify-end gap-x-3 pr-12 text-right font-mono text-xs text-neutral-700">
+                        <span>
+                          {formatPurchaseQty(qtyN)} {unit || "unit"} ×{" "}
+                          {formatRupiah(costN)} ={" "}
+                          <strong className="text-mahakan-green-900">
+                            {formatRupiah(lineTotal)}
+                          </strong>
+                        </span>
+                        {/* Sesi AE-217 — mode total: tunjukkan arah hitungan
+                          * yang sebenarnya (Total ÷ QTY = Harga), sama persis
+                          * dengan layar Catat Pembelian. Tanpa ini baris di
+                          * atas terbaca meleset, karena harga satuan memang
+                          * hasil pembagian yang dibulatkan. */}
+                        {row.inputMode === "total" ? (
+                          <span className="text-[11px] text-neutral-500">
+                            ({formatRupiah(parseTotalRupiah(row.total))} ÷{" "}
+                            {formatPurchaseQty(qtyN)} = {formatRupiah(costN)}/
+                            {unit || "unit"})
+                          </span>
+                        ) : null}
                       </p>
                     ) : null}
                   </div>

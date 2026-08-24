@@ -4,6 +4,7 @@ import {
   lineTotalTolerance,
   resolveLineTotal,
 } from "@/features/purchases/line-total";
+import { effectiveLineTotal } from "@/features/admin/sections/inventory/purchases/purchase-line-helpers";
 
 /**
  * Sesi AE-216 — TOTAL PEMBELIAN DIHITUNG DARI TOTAL BAYAR.
@@ -105,5 +106,112 @@ describe("isLineTotalConsistent — rem angka nyasar (AE-216)", () => {
     expect(
       isLineTotalConsistent({ qty: 0.25, unitCost: 40_000, totalCost: 10_000 }),
     ).toBe(true);
+  });
+});
+
+/* ======================================================================
+ * Sesi AE-217 — EDIT PO ikut TOTAL BAYAR.
+ *
+ * Sebelum ini jalur edit sendirian masih menghitung `qty × harga`, jadi PO
+ * yang totalnya sudah benar diam-diam meleset lagi begitu dibuka dan
+ * disimpan ulang — tanpa ada seorang pun mengubah angkanya.
+ * ==================================================================== */
+
+/** Baris seperti yang dimuat ulang oleh layar Edit PO dari data tersimpan. */
+function barisDimuatUlang(it: { qty: number; unitCost: number; totalCost: number }) {
+  const derived = Math.round(it.qty * it.unitCost);
+  const fromNota =
+    it.totalCost !== derived &&
+    isLineTotalConsistent({
+      qty: it.qty,
+      unitCost: it.unitCost,
+      totalCost: it.totalCost,
+    });
+  return {
+    qty: String(it.qty),
+    unitCost: String(it.unitCost),
+    total: String(fromNota ? it.totalCost : derived),
+    inputMode: (fromNota ? "total" : "unit") as "unit" | "total",
+  };
+}
+
+describe("Edit PO — membuka lalu menyimpan ulang tidak menggerus uang (AE-217)", () => {
+  it("baris ber-Total Bayar dimuat apa adanya, bukan qty x harga", () => {
+    // Bawang Merah 530 gr, nota Rp 16.000 → harga turunan Rp 30/gr.
+    const tersimpan = { qty: 530, unitCost: 30, totalCost: 16_000 };
+    const baris = barisDimuatUlang(tersimpan);
+
+    expect(baris.inputMode).toBe("total");
+    expect(effectiveLineTotal(baris)).toBe(16_000);
+    // Cara lama akan mengembalikan 15.900 — inilah kebocorannya.
+    expect(effectiveLineTotal(baris)).not.toBe(15_900);
+  });
+
+  it("seluruh nota owner tetap Rp 227.000 setelah dibuka-tutup di Edit PO", () => {
+    const tersimpan = NOTA.map((r) => ({
+      qty: r.qty,
+      unitCost: r.unitCost,
+      totalCost: r.totalCost,
+    }));
+    const setelahEdit = tersimpan
+      .map(barisDimuatUlang)
+      .reduce((s, b) => s + effectiveLineTotal(b), 0);
+    expect(setelahEdit).toBe(227_000);
+  });
+
+  it("baris lama yang totalnya memang qty x harga tetap mode harga satuan", () => {
+    const baris = barisDimuatUlang({ qty: 2, unitCost: 22_500, totalCost: 45_000 });
+    expect(baris.inputMode).toBe("unit");
+    expect(effectiveLineTotal(baris)).toBe(45_000);
+  });
+
+  it("data lama di luar toleransi jatuh balik ke perilaku lama, bukan ditolak", () => {
+    // Kalau baris seperti ini dimuat sebagai "total", server akan menolaknya
+    // dan PO yang kemarin masih bisa diedit mendadak buntu.
+    const baris = barisDimuatUlang({ qty: 2, unitCost: 10_000, totalCost: 99_000 });
+    expect(baris.inputMode).toBe("unit");
+    expect(effectiveLineTotal(baris)).toBe(20_000);
+    expect(isLineTotalConsistent({ qty: 2, unitCost: 10_000, totalCost: 20_000 })).toBe(
+      true,
+    );
+  });
+});
+
+describe("effectiveLineTotal — pasangan klien dari resolveLineTotal (AE-217)", () => {
+  it("mode harga satuan: total = qty x harga", () => {
+    expect(
+      effectiveLineTotal({
+        qty: "3",
+        unitCost: "10000",
+        total: "999",
+        inputMode: "unit",
+      }),
+    ).toBe(30_000);
+  });
+
+  it("mode total: angka yang diketik menang", () => {
+    expect(
+      effectiveLineTotal({
+        qty: "530",
+        unitCost: "30",
+        total: "16000",
+        inputMode: "total",
+      }),
+    ).toBe(16_000);
+  });
+
+  it("qty kosong / tidak masuk akal = 0, bukan NaN", () => {
+    expect(
+      effectiveLineTotal({ qty: "", unitCost: "10000", total: "", inputMode: "unit" }),
+    ).toBe(0);
+    expect(
+      effectiveLineTotal({ qty: "0", unitCost: "10000", total: "", inputMode: "unit" }),
+    ).toBe(0);
+  });
+
+  it("mode total tapi total kosong: jatuh ke qty x harga", () => {
+    expect(
+      effectiveLineTotal({ qty: "2", unitCost: "5000", total: "", inputMode: "total" }),
+    ).toBe(10_000);
   });
 });

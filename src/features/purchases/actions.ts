@@ -2863,9 +2863,26 @@ export async function updatePurchaseOrder(
 
       /* purchase_items.id final per baris input — dipakai penyelarasan GR. */
       const finalItemIds = new Map<(typeof v.items)[number], string>();
+
+      /* Sesi AE-217 — Edit PO ikut memakai TOTAL BAYAR, sama dengan
+       * createPurchase & createPurchaseOrder.
+       *
+       * Sebelum ini jalur edit sendirian masih menghitung `qty × harga`,
+       * jadi PO yang totalnya sudah benar diam-diam kembali meleset begitu
+       * dibuka dan disimpan ulang — nota Rp 227.000 balik jadi Rp 226.880
+       * tanpa ada yang mengubah angkanya. Rem kewajaran dijalankan lebih
+       * dulu untuk SEMUA baris supaya satu angka nyasar tidak keburu
+       * menulis sebagian baris. */
+      for (const item of v.items) {
+        if (!isLineTotalConsistent(item)) {
+          const ingMismatch = ingById.get(item.ingredientId);
+          throw new Error(`LINE_TOTAL_MISMATCH:${ingMismatch?.name ?? "bahan"}`);
+        }
+      }
+
       let total = 0;
       for (const item of v.items) {
-        const lineTotal = Math.round(item.qty * item.unitCost);
+        const lineTotal = resolveLineTotal(item);
         total += lineTotal;
         const ing = ingById.get(item.ingredientId)!;
         if (item.id && existingById.has(item.id)) {
@@ -3431,6 +3448,14 @@ export async function updatePurchaseOrder(
       return fail("NOT_FOUND", "Salah satu bahan tidak ditemukan / non-aktif");
     if (msg === "OUTLET_MISMATCH")
       return fail("FORBIDDEN", "Bahan dari outlet lain — kontak admin");
+    /* Sesi AE-217 — Total Bayar tidak berpasangan dengan qty × harga. */
+    if (msg.startsWith("LINE_TOTAL_MISMATCH:")) {
+      const ingName = msg.slice("LINE_TOTAL_MISMATCH:".length);
+      return fail(
+        "VALIDATION_ERROR",
+        `Bahan "${ingName}": Total Bayar tidak cocok dengan QTY × harga satuan. Cek lagi angkanya.`,
+      );
+    }
     if (msg === "PR_ITEM_NOT_FOUND")
       return fail("NOT_FOUND", "Item Permintaan Belanja tidak ditemukan");
     if (msg === "PR_NOT_FOUND")

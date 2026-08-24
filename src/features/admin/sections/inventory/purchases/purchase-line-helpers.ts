@@ -219,6 +219,29 @@ function pick(row: SmartMathRow): SmartMathRow {
   };
 }
 
+/**
+ * Sesi AE-217 — UANG SATU BARIS DI LAYAR, satu sumber untuk semua form
+ * pembelian (Catat Pembelian, Buat PO, dan Edit PO).
+ *
+ * Pasangan klien dari `resolveLineTotal()` di features/purchases/line-total.ts:
+ * kalau staff mengetik TOTAL BAYAR, angka itulah uangnya apa adanya — harga
+ * satuan cuma turunan yang dibulatkan, jadi mengalikannya balik membuang sisa
+ * pembulatan (530 gr seharga Rp 16.000 → Rp 30/gr → 530 × 30 = Rp 15.900).
+ *
+ * Dipakai bersama supaya rincian per baris, Total Pembelian di kaki layar, dan
+ * angka yang dikirim ke server tidak pernah berbeda satu sama lain.
+ */
+export function effectiveLineTotal(row: SmartMathRow): number {
+  const qty = parsePurchaseQty(row.qty);
+  if (!Number.isFinite(qty) || qty <= 0) return 0;
+  if (row.inputMode === "total") {
+    const typed = parseTotalRupiah(row.total);
+    if (typed > 0) return typed;
+  }
+  const cost = parseRupiahSafe(row.unitCost);
+  return cost >= 0 ? Math.round(qty * cost) : 0;
+}
+
 /** Recompute row saat user ganti unitCost (mode = unit). */
 export function applyUnitCostChange(
   row: SmartMathRow,
