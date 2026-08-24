@@ -5,6 +5,7 @@ export type {
   OpenShiftInput,
   Paginated,
   Shift,
+  ShiftDayGateState,
   ShiftStatus,
   ShiftSummary,
   ShiftWithOpener,
@@ -16,12 +17,24 @@ export {
   correctOpeningCash,
   forceCloseShift,
   getActiveShift,
+  getShiftDayGate,
   getLastClosedShiftAtOutlet,
   getShift,
   getShiftPettyBreakdown,
   getStandardOpeningCash,
   listShifts,
   openShift,
+  updateShiftDayGate,
   updateStandardOpeningCash,
 } from "./actions";
+export {
+  DEFAULT_SHIFT_GATE_THRESHOLDS,
+  parseShiftGateThresholds,
+  resolveGateDecision,
+} from "./day-gate-pure";
+export type {
+  ShiftGateLevel,
+  ShiftGateReason,
+  ShiftGateThresholds,
+} from "./day-gate-pure";
 export type { ShiftPettyBreakdown } from "./queries";

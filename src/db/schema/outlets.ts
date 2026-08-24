@@ -112,6 +112,43 @@ export type OutletSettings = {
      * tiap hari. Dipakai OpenShiftModal sebagai prefill + tombol 1-tap
      * "Pakai Standar" untuk cegah salah ketik. Default 200000 kalau unset. */
     standardOpeningCash?: number;
+    /** Sesi AE-217 — ambang rem anti-lupa-tutup-shift. Semua jam WIB "HH:mm".
+     * Dibiarkan di settings (bukan di kode) supaya owner bisa melonggarkan
+     * saat ada acara sampai dini hari tanpa deploy. Kolom yang kosong atau
+     * rusak jatuh ke DEFAULT_SHIFT_GATE_THRESHOLDS satu per satu — lihat
+     * features/shifts/day-gate-pure.ts. */
+    dayGate?: {
+      /** Toast pengingat halus, shift masih hari yang sama. Default "23:30". */
+      remindAt?: string;
+      /** Popup menutupi layar tapi masih bisa ditunda. Default "00:00". */
+      softLockAt?: string;
+      /** POS dikunci total, tombol tunda hilang. Default "01:00". */
+      hardLockAt?: string;
+      /** Jatah penundaan kasir sebelum langsung dikunci. Default 3. */
+      maxSnoozes?: number;
+      /** Lama satu penundaan (menit). Default 15. */
+      snoozeMinutes?: number;
+    };
+    /**
+     * Sesi AE-217 — izin SEKALI PAKAI membuka shift kedua di hari WIB yang
+     * sama, diterbitkan otomatis saat shift lintas tengah malam ditutup.
+     *
+     * Tanpa ini, rem tengah malam justru mematikan outlet: shift semalam
+     * ditutup pukul 00:05, kasir buka shift pengganti 00:10, lalu shift
+     * pagi hari yang sama ditolak DAILY_LIMIT ("1x shift per hari per user")
+     * — dan kasir tidak bisa berjualan sama sekali.
+     *
+     * Outlet-scoped (bukan per user) karena yang menutup dan yang membuka
+     * besok pagi sering orang berbeda. Habis dipakai sekali, dihapus.
+     */
+    rolloverGrant?: {
+      /** Tanggal WIB berlakunya izin, "YYYY-MM-DD". */
+      wibDate: string;
+      /** ISO instant saat izin diterbitkan. */
+      grantedAt: string;
+      /** Shift lintas hari yang memicu izin ini. */
+      closedShiftId: string;
+    } | null;
   };
   /** Sesi AE-53 — Schedule shift templates editable per outlet.
    * HR pakai untuk quick-fill jam saat edit schedule (Pagi/Siang/Sore/Full).

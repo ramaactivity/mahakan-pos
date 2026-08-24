@@ -18,6 +18,11 @@ const APPROVER_ACTIONS: ReadonlyArray<Permission> = [
   "pos.transaction.refund",
   "pos.discount.apply",
   "shift.opening_cash.correct",
+  /* Sesi AE-217 — jalan darurat rem shift: Owner memberi PIN langsung di
+   * tablet POS supaya shift kemarin yang mengunci layar bisa ditutup paksa
+   * tanpa harus membuka Back Office. Hanya Owner yang punya izin ini, jadi
+   * PIN Manager otomatis ditolak oleh cek hasPermission di bawah. */
+  "shift.force_close",
 ];
 
 const bodySchema = z.object({

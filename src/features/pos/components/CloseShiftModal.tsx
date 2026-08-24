@@ -29,6 +29,8 @@ import {
   type CloseShiftResult,
   type Shift,
 } from "@/features/shifts";
+import { daysBetweenIso } from "@/features/shifts/day-gate-pure";
+import { toJakartaDateOnly } from "@/lib/date";
 import {
   buildShiftCloseSummaryText,
   normalizePhoneForWa,
@@ -463,10 +465,28 @@ export function CloseShiftModal({
     Math.abs(qrisVariance) +
     Math.abs(edcVariance);
 
+  /* Sesi AE-217 — berapa hari kalender WIB yang dilewati shift ini. Dipakai
+   * hanya untuk peringatan + catatan wajib, BUKAN untuk mengunci apa pun,
+   * jadi menghitungnya dari jam tablet di sini masih aman. */
+  const crossDays = daysBetweenIso(
+    toJakartaDateOnly(shift.openedAt),
+    toJakartaDateOnly(new Date()),
+  );
+
   async function onSubmit() {
     if (submitting || !summary) return;
     if (parsedCash < 0) {
       setError("Kas aktual tidak boleh negatif");
+      return;
+    }
+    /* Sesi AE-217 — shift yang melewati pergantian hari menutup kas DUA hari
+     * atau lebih sekaligus, jadi selisihnya hampir pasti besar dan tidak bisa
+     * ditelusuri lagi enam bulan kemudian. Catatan diwajibkan supaya yang
+     * tersimpan adalah keterangan, bukan misteri. */
+    if (crossDays >= 1 && notes.trim().length < 3) {
+      setError(
+        "Shift ini melewati pergantian hari — tulis dulu catatan kenapa baru ditutup sekarang.",
+      );
       return;
     }
     setSubmitting(true);
@@ -759,6 +779,20 @@ export function CloseShiftModal({
                 onChangeBank={setDepositBank}
                 onChangeNotes={setDepositNotes}
               />
+              {crossDays >= 1 ? (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-900">
+                  <p className="font-semibold">
+                    Shift ini dibuka{" "}
+                    {crossDays === 1 ? "kemarin" : `${crossDays} hari lalu`}.
+                  </p>
+                  <p className="mt-1">
+                    Angka &ldquo;Kas Harusnya&rdquo; di bawah mencakup{" "}
+                    {crossDays + 1} hari sekaligus, jadi selisih yang besar itu
+                    wajar. Hitung laci apa adanya dan tulis keterangannya di
+                    catatan — jangan disesuaikan supaya pas.
+                  </p>
+                </div>
+              ) : null}
               <NotesAndHandoverSection
                 notes={notes}
                 handoverMessage={handoverMessage}

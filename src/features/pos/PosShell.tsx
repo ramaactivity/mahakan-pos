@@ -1,6 +1,14 @@
 "use client";
 
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowLeft,
   Banknote,
@@ -212,7 +220,16 @@ import {
   type TransactionWithItems,
 } from "@/features/transactions";
 import { getOwnOutlet } from "@/features/outlets";
-import { getActiveShift, type Shift } from "@/features/shifts";
+import {
+  getActiveShift,
+  getShiftDayGate,
+  resolveGateDecision,
+  type Shift,
+  type ShiftDayGateState,
+} from "@/features/shifts";
+import { ShiftDayGateScreen } from "./components/ShiftDayGateScreen";
+import { EmergencyCloseShiftModal } from "./components/EmergencyCloseShiftModal";
+import { useOnlineStatus } from "@/lib/useOnlineStatus";
 import { queuePendingTransaction } from "@/lib/offline/queue";
 import { usePendingSync } from "@/lib/offline/usePendingSync";
 import {
@@ -409,6 +426,17 @@ export function PosShell() {
   } | null>(null);
   const [openShiftOpen, setOpenShiftOpen] = useState(false);
   const [closeShiftOpen, setCloseShiftOpen] = useState(false);
+  /* Sesi AE-217 — rem anti-lupa-tutup-shift. Seluruh keputusan mengunci
+   * dihitung SERVER (getShiftDayGate) supaya jam tablet yang salah — atau
+   * sengaja diubah — tidak bisa melewati gerbang. */
+  const [gate, setGate] = useState<ShiftDayGateState | null>(null);
+  const [gateSnoozeCount, setGateSnoozeCount] = useState(0);
+  const [gateSnoozeUntil, setGateSnoozeUntil] = useState(0);
+  const [gateBillsOpen, setGateBillsOpen] = useState(false);
+  const [gateEmergencyOpen, setGateEmergencyOpen] = useState(false);
+  /** Shift yang terakhir kali sudah dapat toast pengingat, supaya tidak spam. */
+  const gateRemindedRef = useRef<string | null>(null);
+  const online = useOnlineStatus();
   const [historyDetailId, setHistoryDetailId] = useState<string | null>(null);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
 
@@ -441,6 +469,59 @@ export function PosShell() {
       cancelled = true;
     };
   }, [session]);
+
+  /* ====================================================================
+   * Sesi AE-217 — REM ANTI-LUPA-TUTUP-SHIFT
+   *
+   * Mahakan memakai SATU shift bersama per outlet, jadi shift yang lupa
+   * ditutup TIDAK memunculkan error apa pun keesokan harinya: staff yang
+   * login besok diam-diam menempel ke shift kemarin dan terus berjualan di
+   * sana. Gerbang ini yang menghentikannya.
+   *
+   * Semua ambang dihitung di server; klien hanya menggambar. Kegagalan
+   * jaringan sengaja MEMPERTAHANKAN keadaan terakhir yang terverifikasi —
+   * POS tidak boleh dikunci (atau dibuka) berdasarkan tebakan.
+   * ================================================================== */
+  const refreshGate = useCallback(async () => {
+    try {
+      const res = await getShiftDayGate();
+      if (isOk(res)) setGate(res.data);
+    } catch {
+      /* Offline / server tidak terjangkau — pertahankan keadaan terakhir. */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    /* Satu-satunya cara mengetahui keadaan gerbang adalah bertanya ke server,
+     * jadi pengambilan pertama memang harus terjadi di sini. Disalin ke dalam
+     * effect hanya untuk memuaskan lint justru akan menggandakan logikanya. */
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refreshGate();
+    const id = window.setInterval(() => void refreshGate(), 60_000);
+    function onVisible() {
+      if (document.visibilityState === "visible") void refreshGate();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [session, refreshGate]);
+
+  /* Tingkat "remind" tidak menutupi layar — cukup satu toast per shift
+   * supaya poll 60 detik tidak berubah jadi alarm yang diabaikan orang. */
+  useEffect(() => {
+    if (!gate || gate.level !== "remind" || !gate.shift) return;
+    const key = `${gate.shift.id}:${gate.reason}`;
+    if (gateRemindedRef.current === key) return;
+    gateRemindedRef.current = key;
+    toast.warning(
+      gate.daysStale >= 1
+        ? "Shift kemarin masih terbuka. Tutup begitu tamu terakhir selesai."
+        : `Sebentar lagi ganti hari — jangan lupa tutup shift sebelum ${gate.thresholds.softLockAt} WIB.`,
+    );
+  }, [gate]);
 
   // Sesi Z #3: pre-warm Bluetooth printer connection so the first print
   // after sit-idle doesn't pay the 1-3s reconnect cost in front of the
@@ -575,6 +656,14 @@ export function PosShell() {
   // close current shift) so a fresh shift gets fresh warnings.
   useEffect(() => {
     firedShiftWarningsRef.current = new Set();
+    /* Sesi AE-217 — jatah tunda gerbang ikut disegarkan: shift baru berhak
+     * atas penundaannya sendiri, dan sisa error tutup yang lama tidak boleh
+     * menempel di layar shift berikutnya. */
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setGateSnoozeCount(0);
+    setGateSnoozeUntil(0);
+    setGateBillsOpen(false);
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [shift?.id]);
 
   useEffect(() => {
@@ -1230,6 +1319,155 @@ export function PosShell() {
   }
 
   // ==================== Render ====================
+
+  /* Sesi AE-217 — keputusan mengunci. Tingkat "hard" datang dari server, jadi
+   * menekan tunda berkali-kali atau memuat ulang halaman tidak menggesernya. */
+  const gateDecision = gate
+    ? resolveGateDecision({
+        level: gate.level,
+        snoozeCount: gateSnoozeCount,
+        snoozeUntilMs: gateSnoozeUntil,
+        nowMs: Date.now(),
+        maxSnoozes: gate.thresholds.maxSnoozes,
+      })
+    : { blocking: false, canSnooze: false };
+
+  /* Gerbang dirender MENGGANTI seluruh POS, bukan sebagai lapisan di atasnya.
+   * Kalau kasir + keranjang tetap ter-mount, satu tombol yang lolos dari
+   * lapisan sudah cukup untuk memasukkan penjualan hari ini ke shift kemarin
+   * — persis kerusakan yang sedang dicegah. */
+  /* Satu pengecualian yang disengaja: jangan merebut layar di tengah
+   * pembayaran. `paymentSubmitting` itu panggilan jaringan yang sedang
+   * berjalan — durasinya terbatas, jadi menundanya tidak membuka celah. Panel
+   * "paying" yang masih terbuka hanya ditunggu pada tingkat soft (yang memang
+   * bisa ditunda); pada tingkat hard layar tetap direbut supaya panel yang
+   * dibiarkan menganga tidak jadi lubang untuk melewati kunci. */
+  const gateDeferredForPayment =
+    paymentSubmitting ||
+    (gate?.level === "soft" && rightPanel.kind === "paying");
+
+  if (gate && gateDecision.blocking && !gateDeferredForPayment) {
+    return (
+      <div
+        data-pos-kiosk
+        className="flex h-[calc(100dvh-4rem)] w-full max-w-full overflow-hidden bg-neutral-900 touch:h-[calc(100dvh-3.5rem)]"
+      >
+        {gateBillsOpen ? (
+          <div className="flex h-full w-full flex-col bg-neutral-50">
+            <div className="flex items-center gap-3 border-b border-neutral-200 bg-white px-4 py-2.5">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setGateBillsOpen(false)}
+              >
+                <ArrowLeft className="size-4" aria-hidden /> Kembali
+              </Button>
+              <p className="min-w-0 text-sm font-semibold text-neutral-900">
+                Bayar atau batalkan bill ini dulu, baru shift bisa ditutup
+              </p>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <Suspense fallback={<PanelFallback />}>
+                <OpenBillPanel
+                  cashierName={session.user.name}
+                  receiptConfig={receiptConfig}
+                  refreshKey={historyRefreshKey}
+                  onOpenSettings={() =>
+                    toast.info("Pengaturan tidak bisa dibuka selagi shift terkunci.")
+                  }
+                  /* Edit isi bill butuh keranjang, dan keranjang sengaja tidak
+                   * ter-mount di sini. Bayar + batalkan sudah cukup sebagai
+                   * jalan keluar; keduanya ada di panel ini. */
+                  onEditBill={() =>
+                    toast.info(
+                      "Selagi shift terkunci, bill hanya bisa dibayar atau dibatalkan.",
+                    )
+                  }
+                  onCountChange={(n) => {
+                    setOpenBillsCount(n);
+                    if (n === 0) {
+                      setGateBillsOpen(false);
+                      void refreshGate();
+                    }
+                  }}
+                  onBillPaid={() => {
+                    setHistoryRefreshKey((k) => k + 1);
+                    void refreshGate();
+                  }}
+                />
+              </Suspense>
+            </div>
+          </div>
+        ) : (
+          <ShiftDayGateScreen
+            state={gate}
+            canSnooze={gateDecision.canSnooze}
+            snoozeRemaining={Math.max(
+              0,
+              gate.thresholds.maxSnoozes - gateSnoozeCount,
+            )}
+            closeError={
+              online
+                ? null
+                : "Tablet sedang offline. Menutup shift butuh koneksi — sambungkan WiFi dulu, layar ini lanjut sendiri setelah tersambung."
+            }
+            onRequestCloseShift={() => setCloseShiftOpen(true)}
+            onOpenBills={() => setGateBillsOpen(true)}
+            onSnooze={() => {
+              setGateSnoozeCount((n) => n + 1);
+              setGateSnoozeUntil(
+                Date.now() + gate.thresholds.snoozeMinutes * 60_000,
+              );
+            }}
+            onEmergency={() => setGateEmergencyOpen(true)}
+            onLogout={handleLogout}
+          />
+        )}
+
+        {shift ? (
+          <Suspense fallback={null}>
+            <CloseShiftModal
+              open={closeShiftOpen}
+              shift={shift}
+              userId={session.user.id}
+              cashierName={session.user.name ?? "Kasir"}
+              receiptConfig={receiptConfig}
+              varianceThreshold={varianceThreshold}
+              onClose={() => setCloseShiftOpen(false)}
+              onClosed={async () => {
+                setCloseShiftOpen(false);
+                const res = await getActiveShift();
+                if (isOk(res)) setShift(res.data);
+                await refreshGate();
+                /* Gerbang selesai — langsung tawarkan shift hari ini supaya
+                 * kasir tidak perlu mencari tab Shift sendiri. */
+                setOpenShiftOpen(true);
+              }}
+              onOpenSettings={() =>
+                toast.info("Pengaturan tidak bisa dibuka selagi shift terkunci.")
+              }
+            />
+          </Suspense>
+        ) : null}
+
+        {gate.shift ? (
+          <EmergencyCloseShiftModal
+            open={gateEmergencyOpen}
+            shiftId={gate.shift.id}
+            canForceCloseDirectly={gate.canForceCloseDirectly}
+            onClose={() => setGateEmergencyOpen(false)}
+            onClosed={async () => {
+              setGateEmergencyOpen(false);
+              const res = await getActiveShift();
+              if (isOk(res)) setShift(res.data);
+              await refreshGate();
+              setOpenShiftOpen(true);
+            }}
+          />
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div

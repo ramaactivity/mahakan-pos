@@ -20,7 +20,10 @@ type ApproverActionType =
   | "pos.transaction.void"
   | "pos.transaction.refund"
   | "pos.discount.apply"
-  | "shift.opening_cash.correct";
+  | "shift.opening_cash.correct"
+  /* Sesi AE-217 — tutup paksa shift dari layar POS (jalan darurat rem
+   * anti-lupa-tutup-shift). Owner-only di server. */
+  | "shift.force_close";
 
 interface ApproverOverrideModalProps {
   open: boolean;

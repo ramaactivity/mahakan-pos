@@ -192,6 +192,8 @@ export const AUDIT_EVENT_TYPES = [
    * shift nginep oleh owner dari backoffice. */
   "shift.open",
   "shift.force_close",
+  /* Sesi AE-217 — rem anti-lupa-tutup-shift: pengaturan ambang jam. */
+  "outlet.shift_day_gate.update",
   /* Sesi AE-62ag — mobile PIN endpoint audit. PIN-only auth tanpa session,
    * jadi userId NULL — context cukup pakai entityId / payload.summary. */
   "attendance_mobile.pin_invalid",

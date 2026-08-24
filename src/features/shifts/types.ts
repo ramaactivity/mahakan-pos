@@ -104,3 +104,42 @@ export interface CloseShiftResult {
   shift: Shift;
   summary: ShiftSummary;
 }
+
+/* ======================================================================
+ * Sesi AE-217 — REM ANTI-LUPA-TUTUP-SHIFT
+ * ==================================================================== */
+
+/**
+ * Potret gerbang shift menurut SERVER. Klien tidak boleh menghitung sendiri
+ * dari jam tablet: tablet kasir sering salah jam (dan staff bisa mengubahnya),
+ * sedangkan pengunciannya harus jujur.
+ */
+export interface ShiftDayGateState {
+  /** Tingkat eskalasi hasil hitungan server. */
+  level: import("./day-gate-pure").ShiftGateLevel;
+  reason: import("./day-gate-pure").ShiftGateReason;
+  /** 0 = shift dibuka hari ini, 1 = kemarin, dst. */
+  daysStale: number;
+  /** Ambang yang berlaku (sudah bersih dari nilai rusak). */
+  thresholds: import("./day-gate-pure").ShiftGateThresholds;
+  /** Waktu server (ISO) — dipakai klien untuk mengoreksi jam tablet. */
+  serverNow: string;
+  /** Tanggal WIB hari ini menurut server. */
+  todayWib: string;
+  /** Shift terbuka di outlet ini, kalau ada. */
+  shift: {
+    id: string;
+    userId: string;
+    openedAt: string;
+    /** Tanggal WIB saat shift dibuka, "YYYY-MM-DD". */
+    openedWib: string;
+    openingCash: number;
+    openedByName: string | null;
+    /** true kalau shift ini dibuka oleh yang sedang melihat. */
+    isOwnShift: boolean;
+  } | null;
+  /** Bill belum dibayar di shift itu — penghalang tutup yang harus dibereskan. */
+  openBillCount: number;
+  /** true kalau yang melihat boleh menutup paksa tanpa PIN (owner). */
+  canForceCloseDirectly: boolean;
+}

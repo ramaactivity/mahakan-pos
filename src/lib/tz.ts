@@ -27,6 +27,17 @@ export function todayJakarta(): string {
 }
 
 /**
+ * Menit sejak 00:00 WIB untuk instant `d` (0..1439).
+ *
+ * Sengaja TIDAK memakai `getHours()` dari Date yang sudah digeser: itu membaca
+ * zona waktu mesin, yang di Vercel = UTC. Teknik sama dengan jakartaDateOf.
+ */
+export function jakartaMinutesOf(d: Date): number {
+  const wib = new Date(d.getTime() + 7 * 60 * 60 * 1000);
+  return wib.getUTCHours() * 60 + wib.getUTCMinutes();
+}
+
+/**
  * Geser tanggal kalender YYYY-MM-DD sebanyak `days` hari (boleh negatif).
  *
  * Dihitung lewat UTC murni supaya zona waktu mesin (peramban staff, runner CI,

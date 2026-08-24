@@ -11,6 +11,11 @@ import {
   updateThresholds,
   type Outlet,
 } from "@/features/outlets";
+import {
+  DEFAULT_SHIFT_GATE_THRESHOLDS,
+  parseShiftGateThresholds,
+  updateShiftDayGate,
+} from "@/features/shifts";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +50,8 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     footerText: outlet.settings?.receipt?.footerText ?? "Terima kasih, sampai jumpa!",
     showQrRating: outlet.settings?.receipt?.showQrRating ?? false,
     variance: outlet.settings?.thresholds?.shiftVarianceAlert ?? 10_000,
+    /* Sesi AE-217 — ambang rem anti-lupa-tutup-shift. */
+    gate: parseShiftGateThresholds(outlet.settings?.shift?.dayGate),
     showHpp: outlet.settings?.features?.showHppToStaff ?? false,
     accountingAutoJournal:
       outlet.settings?.features?.accounting_auto_journal ?? false,
@@ -69,6 +76,15 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
   const [footer, setFooter] = useState(initial.footerText);
   const [showQr, setShowQr] = useState(initial.showQrRating);
   const [variance, setVariance] = useState(String(initial.variance));
+  const [gateRemindAt, setGateRemindAt] = useState(initial.gate.remindAt);
+  const [gateSoftAt, setGateSoftAt] = useState(initial.gate.softLockAt);
+  const [gateHardAt, setGateHardAt] = useState(initial.gate.hardLockAt);
+  const [gateMaxSnoozes, setGateMaxSnoozes] = useState(
+    String(initial.gate.maxSnoozes),
+  );
+  const [gateSnoozeMinutes, setGateSnoozeMinutes] = useState(
+    String(initial.gate.snoozeMinutes),
+  );
   const [showHpp, setShowHpp] = useState(initial.showHpp);
   const [accountingAutoJournal, setAccountingAutoJournal] = useState(
     initial.accountingAutoJournal,
@@ -106,6 +122,11 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setFooter(initial.footerText);
     setShowQr(initial.showQrRating);
     setVariance(String(initial.variance));
+    setGateRemindAt(initial.gate.remindAt);
+    setGateSoftAt(initial.gate.softLockAt);
+    setGateHardAt(initial.gate.hardLockAt);
+    setGateMaxSnoozes(String(initial.gate.maxSnoozes));
+    setGateSnoozeMinutes(String(initial.gate.snoozeMinutes));
     setShowHpp(initial.showHpp);
     setAccountingAutoJournal(initial.accountingAutoJournal);
     setDeductStockOnSale(initial.deductStockOnSale);
@@ -341,6 +362,39 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
       last = r4.data;
     }
 
+    /* Sesi AE-217 — rem shift. Disimpan lewat action-nya sendiri supaya
+     * validasi jam + jejak audit ikut jalan; server menolak format ngawur
+     * dengan berisik, bukan diam-diam jatuh ke default. */
+    const gateChanged =
+      gateRemindAt !== initial.gate.remindAt ||
+      gateSoftAt !== initial.gate.softLockAt ||
+      gateHardAt !== initial.gate.hardLockAt ||
+      Number(gateMaxSnoozes) !== initial.gate.maxSnoozes ||
+      Number(gateSnoozeMinutes) !== initial.gate.snoozeMinutes;
+    if (gateChanged) {
+      const r5 = await updateShiftDayGate({
+        remindAt: gateRemindAt,
+        softLockAt: gateSoftAt,
+        hardLockAt: gateHardAt,
+        maxSnoozes: Number(gateMaxSnoozes),
+        snoozeMinutes: Number(gateSnoozeMinutes),
+      });
+      if (!isOk(r5)) {
+        setError(r5.error.message);
+        setSubmitting(false);
+        return;
+      }
+      /* updateShiftDayGate mengembalikan ambangnya, bukan baris outlet —
+       * kalau tidak ada perubahan lain, tutup saja supaya parent memuat
+       * ulang outlet dari sumbernya. */
+      if (!last) {
+        setSubmitting(false);
+        toast.success("Settings tersimpan");
+        onClose();
+        return;
+      }
+    }
+
     if (last) {
       toast.success("Settings tersimpan");
       onSaved(last);
@@ -405,6 +459,74 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
                 : "Angka non-negatif"
             }
           />
+        </section>
+
+        {/* Sesi AE-217 — rem anti-lupa-tutup-shift. Ambangnya di settings,
+          * bukan di kode, supaya owner bisa melonggarkan saat ada acara
+          * sampai dini hari tanpa perlu deploy. */}
+        <section>
+          <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-mahakan-green-900">
+            Rem Tutup Shift
+          </h3>
+          <p className="mb-3 text-xs leading-relaxed text-neutral-600">
+            Kalau shift belum ditutup padahal hari sudah ganti, POS kasir
+            diingatkan lalu dikunci sampai shift lama diselesaikan. Kosongkan
+            jarak antara jam popup dan jam kunci kalau ingin langsung keras.
+            Default: {DEFAULT_SHIFT_GATE_THRESHOLDS.remindAt} /{" "}
+            {DEFAULT_SHIFT_GATE_THRESHOLDS.softLockAt} /{" "}
+            {DEFAULT_SHIFT_GATE_THRESHOLDS.hardLockAt}.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Input
+              label="Jam pengingat"
+              type="text"
+              inputMode="numeric"
+              placeholder="23:30"
+              value={gateRemindAt}
+              onChange={(e) => setGateRemindAt(e.target.value)}
+              hint="Toast halus, POS tetap jalan."
+            />
+            <Input
+              label="Jam popup"
+              type="text"
+              inputMode="numeric"
+              placeholder="00:00"
+              value={gateSoftAt}
+              onChange={(e) => setGateSoftAt(e.target.value)}
+              hint="Menutupi layar, masih bisa ditunda."
+            />
+            <Input
+              label="Jam kunci"
+              type="text"
+              inputMode="numeric"
+              placeholder="01:00"
+              value={gateHardAt}
+              onChange={(e) => setGateHardAt(e.target.value)}
+              hint="POS terkunci total."
+            />
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <Input
+              label="Jatah tunda (kali)"
+              type="text"
+              inputMode="numeric"
+              value={gateMaxSnoozes}
+              onChange={(e) =>
+                setGateMaxSnoozes(e.target.value.replace(/[^\d]/g, ""))
+              }
+              hint="0 = tidak boleh menunda sama sekali."
+            />
+            <Input
+              label="Lama satu tunda (menit)"
+              type="text"
+              inputMode="numeric"
+              value={gateSnoozeMinutes}
+              onChange={(e) =>
+                setGateSnoozeMinutes(e.target.value.replace(/[^\d]/g, ""))
+              }
+              hint="1–120 menit."
+            />
+          </div>
         </section>
 
         <section>

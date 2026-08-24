@@ -22,6 +22,14 @@ import { consumeApproverToken } from "@/lib/auth/approver";
 import { logAudit } from "@/lib/audit/logger";
 import { logAndSanitize } from "@/lib/server-error";
 import { todayWibRangeUtc, toJakartaDateOnly } from "@/lib/date";
+import { jakartaMinutesOf } from "@/lib/tz";
+import {
+  computeShiftGateVerdict,
+  hhmmToMinutes,
+  parseShiftGateThresholds,
+  shouldIssueRolloverGrant,
+  type ShiftGateThresholds,
+} from "./day-gate-pure";
 import {
   fetchActiveShiftForOutlet,
   fetchActiveShiftForUser,
@@ -45,6 +53,7 @@ import {
   type OpenShiftInput,
   type Paginated,
   type Shift,
+  type ShiftDayGateState,
   type ShiftWithOpener,
 } from "./types";
 
@@ -225,10 +234,21 @@ export async function openShift(
     )
     .limit(1);
   if (todayShifts.length > 0) {
-    return fail(
-      "DAILY_LIMIT",
-      `Shift hari ini (${wibToday}) sudah pernah dibuka. Hanya 1× shift per hari per user.`,
+    /* Sesi AE-217 — malam yang melewati tengah malam memakan dua siklus
+     * shift. Tanpa pintu keluar ini, rem tengah malam justru mematikan
+     * outlet: shift semalam ditutup 00:05, kasir buka pengganti 00:10, lalu
+     * shift pagi hari yang sama ditolak dan tidak ada yang bisa berjualan. */
+    const granted = await consumeRolloverGrant(
+      session.user.outletId,
+      wibToday,
+      session.user.id,
     );
+    if (!granted) {
+      return fail(
+        "DAILY_LIMIT",
+        `Shift hari ini (${wibToday}) sudah pernah dibuka. Hanya 1× shift per hari per user.`,
+      );
+    }
   }
 
   try {
@@ -587,6 +607,27 @@ export async function closeShift(
     .where(eq(shifts.id, current.id))
     .returning();
 
+  /* Sesi AE-217 — shift ini melewati pergantian hari WIB, jadi malam ini
+   * outlet terpaksa memakai dua siklus shift. Terbitkan izin sekali pakai
+   * supaya shift berikutnya di hari yang sama tidak ditolak DAILY_LIMIT.
+   *
+   * SENGAJA di-await, bukan fire-and-forget: di serverless promise yang
+   * dilepas begitu saja bisa mati saat respons dikirim (pelajaran mahal dari
+   * jurnal yang hilang senyap, sesi 2026-08-04) — dan izin yang hilang
+   * berarti kasir tidak bisa membuka shift pagi berikutnya. Satu UPDATE
+   * ringan; kegagalannya ditelan supaya tetap tidak menggagalkan penutupan
+   * shift kasir (owner masih punya jalan Tutup Paksa). */
+  {
+    const closedWib = toJakartaDateOnly(updated.closedAt ?? new Date());
+    if (shouldIssueRolloverGrant(toJakartaDateOnly(current.openedAt), closedWib)) {
+      try {
+        await issueRolloverGrant(current.outletId, closedWib, updated.id);
+      } catch (e) {
+        console.error("[shift rolloverGrant issue]", e);
+      }
+    }
+  }
+
   // Sesi T — Accounting auto-journal hook (shift variance ≠ 0).
   if (variance !== 0) {
     const { fireJournalHook, postJournalForShiftVariance } = await import(
@@ -751,10 +792,37 @@ export async function forceCloseShift(input: {
   shiftId: string;
   actualCash: number;
   reason: string;
+  /**
+   * Sesi AE-217 — jalan darurat dari LAYAR POS. Kalau shift kemarin mengunci
+   * POS dan kasir tidak tahu kas fisiknya, Owner yang berdiri di samping
+   * tablet cukup memasukkan PIN-nya di sini — tidak perlu membuka laptop
+   * Back Office dulu. Tanpa pintu ini, satu outlet bisa berhenti berjualan
+   * seharian hanya karena Owner sedang tidak di depan komputer.
+   */
+  approverToken?: string | null;
 }): Promise<ApiResult<CloseShiftResult>> {
   const session = await requireSession();
+  let approverId: string | null = null;
   if (!hasPermission(session.user.role, "shift.force_close")) {
-    return fail("FORBIDDEN", "Hanya Owner yang bisa tutup paksa shift");
+    if (!input.approverToken) {
+      return fail(
+        "APPROVAL_REQUIRED",
+        "Butuh persetujuan Owner (PIN) untuk tutup paksa shift",
+      );
+    }
+    try {
+      const consumed = await consumeApproverToken(
+        input.approverToken,
+        "shift.force_close",
+        input.shiftId,
+      );
+      approverId = consumed.approverId;
+    } catch {
+      return fail(
+        "APPROVAL_INVALID",
+        "Persetujuan tidak valid / kadaluarsa — minta PIN Owner ulang",
+      );
+    }
   }
   const reason = input.reason.trim();
   if (reason.length < 3) {
@@ -778,11 +846,14 @@ export async function forceCloseShift(input: {
     entityType: "shift",
     entityId: input.shiftId,
     payload: {
-      summary: `Tutup paksa shift — ${reason} (variance ${(res.data.shift.variance ?? 0).toLocaleString("id-ID")})`,
+      summary:
+        `Tutup paksa shift — ${reason} (variance ${(res.data.shift.variance ?? 0).toLocaleString("id-ID")})` +
+        (approverId ? ` [PIN Owner ${approverId.slice(0, 8)} di POS]` : ""),
       after: {
         actualCash: Math.round(input.actualCash),
         variance: res.data.shift.variance,
         reason,
+        approverId,
       },
     },
     metadata: { outletId: session.user.outletId, actorRole: session.user.role },
@@ -1019,4 +1090,232 @@ export async function correctOpeningCash(input: {
       logAndSanitize(e, "shift.correct-opening-cash", "Operasi database gagal"),
     );
   }
+}
+
+// =========================================================================
+// Sesi AE-217 — REM ANTI-LUPA-TUTUP-SHIFT
+//
+// Dua rem yang diminta owner dilayani satu tangga eskalasi yang sama
+// (lihat day-gate-pure.ts): gerbang "tutup shift kemarin dulu" saat kasir
+// membuka POS keesokan harinya, dan popup tengah malam yang menutupi layar.
+// Semua ambang waktu dihitung di SERVER — jam tablet kasir tidak dipercaya.
+// =========================================================================
+
+/** Baca ambang gerbang dari settings outlet (sudah bersih dari nilai rusak). */
+async function readGateThresholds(
+  outletId: string,
+): Promise<ShiftGateThresholds> {
+  const [row] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, outletId))
+    .limit(1);
+  return parseShiftGateThresholds(row?.settings?.shift?.dayGate);
+}
+
+/**
+ * Terbitkan izin sekali pakai untuk membuka shift kedua di hari WIB `wibDate`.
+ * Menimpa izin lama yang belum terpakai — satu malam lintas hari hanya berhak
+ * atas satu siklus tambahan, bukan menumpuk jatah.
+ */
+async function issueRolloverGrant(
+  outletId: string,
+  wibDate: string,
+  closedShiftId: string,
+): Promise<void> {
+  const [row] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, outletId))
+    .limit(1);
+  const current: OutletSettings = row?.settings ?? {};
+  const next: OutletSettings = {
+    ...current,
+    shift: {
+      ...(current.shift ?? {}),
+      rolloverGrant: {
+        wibDate,
+        grantedAt: new Date().toISOString(),
+        closedShiftId,
+      },
+    },
+  };
+  await db.update(outlets).set({ settings: next }).where(eq(outlets.id, outletId));
+}
+
+/**
+ * Pakai izin rollover kalau ada dan masih untuk hari ini. Mengembalikan true
+ * kalau izin dipakai (dan langsung dihapus supaya tidak bisa dipakai dua kali).
+ */
+async function consumeRolloverGrant(
+  outletId: string,
+  wibDate: string,
+  actorId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, outletId))
+    .limit(1);
+  const current: OutletSettings = row?.settings ?? {};
+  const grant = current.shift?.rolloverGrant;
+  if (!grant || grant.wibDate !== wibDate) return false;
+
+  const next: OutletSettings = {
+    ...current,
+    shift: { ...(current.shift ?? {}), rolloverGrant: null },
+  };
+  await db.update(outlets).set({ settings: next }).where(eq(outlets.id, outletId));
+
+  logAudit({
+    eventType: "shift.open",
+    userId: actorId,
+    entityType: "outlet",
+    entityId: outletId,
+    payload: {
+      summary:
+        `Buka shift kedua hari ${wibDate} memakai izin lintas tengah malam ` +
+        `(shift ${grant.closedShiftId.slice(0, 8)} melewati pergantian hari)`,
+      after: { rolloverGrantUsed: grant },
+    },
+    metadata: { outletId },
+  }).catch((e) => console.error("[audit rolloverGrant consume]", e));
+
+  return true;
+}
+
+/**
+ * Potret gerbang shift untuk layar POS. Dipanggil saat POS dibuka lalu
+ * di-poll berkala. Ringan: satu baris shift + satu COUNT bill + settings.
+ */
+export async function getShiftDayGate(): Promise<ApiResult<ShiftDayGateState>> {
+  const session = await requireSession();
+  const outletId = session.user.outletId;
+
+  const now = new Date();
+  const todayWib = toJakartaDateOnly(now);
+  const nowWibMinutes = jakartaMinutesOf(now);
+
+  const [thresholds, shift] = await Promise.all([
+    readGateThresholds(outletId),
+    fetchActiveShiftForOutlet(outletId),
+  ]);
+
+  const openedWib = shift ? toJakartaDateOnly(shift.openedAt) : null;
+  const verdict = computeShiftGateVerdict({
+    openedWibDate: openedWib,
+    todayWibDate: todayWib,
+    nowWibMinutes,
+    thresholds,
+  });
+
+  /* Bill terbuka hanya dihitung kalau gerbangnya memang akan tampil —
+   * di jam normal query ini tidak perlu dibayar sama sekali. */
+  let openBillCount = 0;
+  if (shift && verdict.level !== "none") {
+    const rows = await db
+      .select({ id: transactions.id })
+      .from(transactions)
+      .where(
+        and(eq(transactions.shiftId, shift.id), eq(transactions.status, "open")),
+      );
+    openBillCount = rows.length;
+  }
+
+  return ok({
+    level: verdict.level,
+    reason: verdict.reason,
+    daysStale: verdict.daysStale,
+    thresholds,
+    serverNow: now.toISOString(),
+    todayWib,
+    shift: shift
+      ? {
+          id: shift.id,
+          userId: shift.userId,
+          openedAt: shift.openedAt.toISOString(),
+          openedWib: openedWib!,
+          openingCash: shift.openingCash,
+          openedByName: shift.openedByName,
+          isOwnShift: shift.userId === session.user.id,
+        }
+      : null,
+    openBillCount,
+    canForceCloseDirectly: hasPermission(session.user.role, "shift.force_close"),
+  });
+}
+
+/** Atur ambang rem shift (owner/manager). Jam WIB format "HH:mm". */
+export async function updateShiftDayGate(input: {
+  remindAt: string;
+  softLockAt: string;
+  hardLockAt: string;
+  maxSnoozes: number;
+  snoozeMinutes: number;
+}): Promise<ApiResult<ShiftGateThresholds>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "shift.close_any")) {
+    return fail("FORBIDDEN", "Hanya Owner/Manager yang bisa atur rem shift");
+  }
+
+  /* parseShiftGateThresholds membuang nilai rusak diam-diam — untuk INPUT
+   * owner kita justru harus berisik, supaya salah ketik tidak tersimpan
+   * sebagai default tanpa dia sadari. */
+  for (const [label, value] of [
+    ["Jam pengingat", input.remindAt],
+    ["Jam popup", input.softLockAt],
+    ["Jam kunci", input.hardLockAt],
+  ] as const) {
+    if (hhmmToMinutes(value) === null) {
+      return fail("VALIDATION", `${label} harus format jam 24 jam, misal 23:30`);
+    }
+  }
+  const maxSnoozes = Math.round(input.maxSnoozes);
+  const snoozeMinutes = Math.round(input.snoozeMinutes);
+  if (!Number.isFinite(maxSnoozes) || maxSnoozes < 0 || maxSnoozes > 20) {
+    return fail("VALIDATION", "Jatah tunda harus 0–20 kali");
+  }
+  if (!Number.isFinite(snoozeMinutes) || snoozeMinutes < 1 || snoozeMinutes > 120) {
+    return fail("VALIDATION", "Lama tunda harus 1–120 menit");
+  }
+
+  const next: ShiftGateThresholds = {
+    remindAt: input.remindAt.trim(),
+    softLockAt: input.softLockAt.trim(),
+    hardLockAt: input.hardLockAt.trim(),
+    maxSnoozes,
+    snoozeMinutes,
+  };
+
+  const [row] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  const current: OutletSettings = row?.settings ?? {};
+  await db
+    .update(outlets)
+    .set({
+      settings: {
+        ...current,
+        shift: { ...(current.shift ?? {}), dayGate: next },
+      },
+    })
+    .where(eq(outlets.id, session.user.outletId));
+
+  logAudit({
+    eventType: "outlet.shift_day_gate.update",
+    userId: session.user.id,
+    entityType: "outlet",
+    entityId: session.user.outletId,
+    payload: {
+      summary:
+        `Rem shift: ingatkan ${next.remindAt}, popup ${next.softLockAt}, ` +
+        `kunci ${next.hardLockAt} (tunda ${next.maxSnoozes}× ${next.snoozeMinutes} menit)`,
+      after: next,
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  }).catch((e) => console.error("[audit shift_day_gate.update]", e));
+
+  return ok(next);
 }
