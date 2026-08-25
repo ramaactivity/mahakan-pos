@@ -287,6 +287,12 @@ function playShiftAlertTone(): void {
   }
 }
 
+/* Sesi AE-218 — satu kalimat yang sama di SEMUA jalur yang butuh shift.
+ * Sebelumnya tiap jalur berhenti tanpa suara, jadi tombol-tombolnya terasa
+ * mati begitu shift ditutup. Kasir tidak perlu menebak; katakan langkahnya. */
+const NO_SHIFT_HINT =
+  'Belum ada shift terbuka. Buka shift dulu di tab "Shift" — pesanan ini tetap tersimpan.';
+
 export function PosShell() {
   const { session, logout } = useSession();
   // Watch online status + pending offline queue; auto-sync when reconnected.
@@ -436,6 +442,8 @@ export function PosShell() {
   const [gateEmergencyOpen, setGateEmergencyOpen] = useState(false);
   /** Shift yang terakhir kali sudah dapat toast pengingat, supaya tidak spam. */
   const gateRemindedRef = useRef<string | null>(null);
+  /** Identitas shift yang sedang dipegang layar, dibaca oleh poll gerbang. */
+  const shiftIdRef = useRef<string | null>(null);
   const online = useOnlineStatus();
   const [historyDetailId, setHistoryDetailId] = useState<string | null>(null);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
@@ -485,7 +493,22 @@ export function PosShell() {
   const refreshGate = useCallback(async () => {
     try {
       const res = await getShiftDayGate();
-      if (isOk(res)) setGate(res.data);
+      if (!isOk(res)) return;
+      setGate(res.data);
+
+      /* Sesi AE-218 — samakan juga identitas shift yang dipegang layar ini.
+       *
+       * Sebelumnya `shift` HANYA diambil sekali saat POS dibuka. Kalau shift
+       * ditutup dari tempat lain — laptop owner, Back Office, tablet kedua,
+       * atau gerbang di sesi lain — tablet ini tetap memegang id shift yang
+       * sudah mati, lalu setiap pembayaran ditolak server "Shift sudah
+       * ditutup" tanpa kasir tahu sebabnya dan tanpa jalan keluar. Poll 60
+       * detik ini sekarang menyembuhkannya sendiri. */
+      const serverShiftId = res.data.shift?.id ?? null;
+      if (serverShiftId !== shiftIdRef.current) {
+        const full = await getActiveShift();
+        if (isOk(full)) setShift(full.data);
+      }
     } catch {
       /* Offline / server tidak terjangkau — pertahankan keadaan terakhir. */
     }
@@ -508,6 +531,32 @@ export function PosShell() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [session, refreshGate]);
+
+  /* Sesi AE-218 — shift menghilang di bawah kaki kasir.
+   *
+   * Kejadian 25 Agustus: sesudah gerbang memaksa menutup shift kemarin, POS
+   * kembali dengan panel pembayaran yang MASIH terbuka dari sebelumnya. Kasir
+   * menekan "Sudah Lunas" dan tidak terjadi apa-apa — `handleProcessPayment`
+   * diam-diam berhenti karena tidak ada shift, sementara pesan merah "Shift
+   * sudah ditutup" dari percobaan sebelumnya masih menempel di layar. Dari
+   * kursi kasir itu terbaca sebagai aplikasi yang rusak, dan satu penjualan
+   * Rp 96.000 hilang.
+   *
+   * Sekarang layar mundur sendiri ke keranjang (isi pesanan TIDAK dibuang),
+   * pesan basi dibersihkan, dan kasir diberi tahu langkah berikutnya. */
+  useEffect(() => {
+    const prev = shiftIdRef.current;
+    const next = shift?.id ?? null;
+    shiftIdRef.current = next;
+    if (!prev || next) return;
+    setPaymentError(null);
+    setRightPanel((cur) =>
+      cur.kind === "paying" ? { kind: "cart", draftId: cur.draftId } : cur,
+    );
+    toast.warning(
+      "Shift sudah ditutup. Buka shift baru dulu sebelum menerima pembayaran — pesanan di keranjang tetap tersimpan.",
+    );
+  }, [shift?.id]);
 
   /* Tingkat "remind" tidak menutupi layar — cukup satu toast per shift
    * supaya poll 60 detik tidak berubah jadi alarm yang diabaikan orang. */
@@ -976,7 +1025,11 @@ export function PosShell() {
   }
 
   async function handleSaveAsOpenBill() {
-    if (!activeDraft || !shift || !session) return;
+    if (!activeDraft || !session) return;
+    if (!shift) {
+      toast.error(NO_SHIFT_HINT);
+      return;
+    }
     if (activeDraft.items.length === 0) return;
     // C-2 #4: for CREATE path, require customerName before commit so
     // kasir can find the bill in Bill Aktif. EDIT path skips the modal
@@ -1002,7 +1055,11 @@ export function PosShell() {
    * sudah punya "Bayar" langsung di kasir (tanpa save open bill dulu).
    */
   async function handleUpdateBillAndPay() {
-    if (!activeDraft || !shift || !session) return;
+    if (!activeDraft || !session) return;
+    if (!shift) {
+      toast.error(NO_SHIFT_HINT);
+      return;
+    }
     if (activeDraft.items.length === 0) return;
     if (!activeDraft.editingBillId) return;
     await commitSaveAsOpenBill({ proceedToPay: true });
@@ -1010,7 +1067,11 @@ export function PosShell() {
 
   async function commitSaveAsOpenBill(opts?: { proceedToPay?: boolean }) {
     if (paymentInFlightRef.current) return;
-    if (!activeDraft || !shift || !session) return;
+    if (!activeDraft || !session) return;
+    if (!shift) {
+      toast.error(NO_SHIFT_HINT);
+      return;
+    }
     if (activeDraft.items.length === 0) return;
     paymentInFlightRef.current = true;
     setPaymentSubmitting(true);
@@ -1125,7 +1186,11 @@ export function PosShell() {
     splits: import("@/features/transactions").CreateTransactionSplitInput[],
   ) {
     if (paymentInFlightRef.current) return;
-    if (!activeDraft || !shift) return;
+    if (!activeDraft) return;
+    if (!shift) {
+      setPaymentError(NO_SHIFT_HINT);
+      return;
+    }
     paymentInFlightRef.current = true;
     setPaymentSubmitting(true);
     setPaymentError(null);
@@ -1189,7 +1254,14 @@ export function PosShell() {
 
   async function handleProcessPayment() {
     if (paymentInFlightRef.current) return;
-    if (!activeDraft || !shift) return;
+    if (!activeDraft) return;
+    /* Sesi AE-218 — dulu baris ini ikut `!shift` dan berhenti TANPA SUARA.
+     * Tombol bayar jadi tombol mati: ditekan berkali-kali, tidak ada reaksi,
+     * tidak ada penjelasan. Katakan apa yang harus dilakukan. */
+    if (!shift) {
+      setPaymentError(NO_SHIFT_HINT);
+      return;
+    }
     if (!cashSufficient) {
       setPaymentError("Uang yang diterima kurang dari total");
       return;
