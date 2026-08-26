@@ -134,6 +134,13 @@ export type CashlessMdrConfig = {
   mdrEdcBniPct: number;
   mdrEdcBriPct: number;
   mdrEdcOtherPct: number;
+  /**
+   * Sesi AE-219 — rekening tujuan pencairan per channel (kode akun). Channel
+   * yang tidak diatur tidak muncul di sini; layar menampilkan tebakan
+   * bawaannya sebagai placeholder supaya owner tahu ke mana uangnya sekarang
+   * dicatat.
+   */
+  bankAccountByChannel: Record<string, string>;
 };
 
 /** Sesi AE-165 — hasil generate settlement QRIS/EDC dari POS. */

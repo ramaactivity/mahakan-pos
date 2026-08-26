@@ -324,6 +324,11 @@ export const journalEntries = pgTable(
          * (sourceType, sourceId). */
         "asset_revaluation",
         "asset_impairment",
+        /* Sesi AE-219 — reklasifikasi rekening tujuan settlement. sourceId
+         * NULL: satu entry merangkum banyak settlement dalam satu bulan,
+         * jadi tidak ada satu baris sumber yang bisa ditunjuk. Tautannya di
+         * metadata.settlement_reclass. */
+        "settlement_reclass",
       ],
     }).notNull(),
 

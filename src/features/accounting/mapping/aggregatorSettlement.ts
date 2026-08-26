@@ -58,7 +58,8 @@ export function isPiutangChannel(channel: AggregatorChannel): boolean {
 /**
  * Sesi AE-182 — rekening tujuan default per channel. Mesin EDC bank X
  * menyetor ke rekening bank X; QRIS + kartu lain jatuh ke BCA (rekening
- * utama). Dipakai kalau settlement tidak menyimpan bankAccountId eksplisit.
+ * utama). Dipakai kalau settlement tidak menyimpan bankAccountId eksplisit
+ * DAN outlet belum mengatur pemetaannya sendiri.
  */
 export function defaultBankCodeForChannel(channel: AggregatorChannel): string {
   switch (channel) {
@@ -70,6 +71,63 @@ export function defaultBankCodeForChannel(channel: AggregatorChannel): string {
       return "1110"; // Bank BCA
   }
 }
+
+/**
+ * Sesi AE-219 — pemetaan rekening tujuan yang DIATUR OWNER, per channel.
+ *
+ * Tebakan bawaan di atas ("mesin EDC bank X menyetor ke rekening bank X")
+ * tidak berlaku universal: QRIS Mahakan justru cair ke BNI, sementara
+ * jurnalnya bertahun-tahun mendebit BCA. Salahnya tidak pernah memunculkan
+ * error apa pun — cuma saldo BCA yang membengkak dan saldo BNI yang kurang,
+ * dan baru ketahuan saat rekening koran dicocokkan.
+ *
+ * Karena itu tujuan settlement kini dapat diatur per channel dan disimpan di
+ * `outlets.settings.cashless.bankAccountByChannel`. Ganti mesin EDC atau ganti
+ * bank akuisisi cukup mengubah pengaturannya, tanpa deploy.
+ *
+ * Urutan penentuan, dari yang paling khusus:
+ *   1. `bankAccountId` di baris settlement itu sendiri (kasus khusus, mis.
+ *      satu pencairan yang memang masuk ke rekening lain),
+ *   2. pemetaan outlet per channel (yang diatur owner),
+ *   3. tebakan bawaan per channel.
+ */
+export type SettlementBankMapping = Partial<
+  Record<AggregatorChannel, string | undefined>
+>;
+
+export function resolveSettlementBankCode(
+  channel: AggregatorChannel,
+  mapping?: SettlementBankMapping | null,
+  explicitCode?: string | null,
+): string {
+  if (explicitCode) return explicitCode;
+  const mapped = mapping?.[channel];
+  if (mapped && mapped.trim().length > 0) return mapped.trim();
+  return defaultBankCodeForChannel(channel);
+}
+
+/** Semua channel yang bisa diatur rekening tujuannya (urutan tampilan). */
+export const SETTLEMENT_CHANNELS: AggregatorChannel[] = [
+  "qris",
+  "edc_bca",
+  "edc_bni",
+  "edc_bri",
+  "edc_other",
+  "gofood",
+  "grabfood",
+  "shopeefood",
+];
+
+export const SETTLEMENT_CHANNEL_LABEL: Record<AggregatorChannel, string> = {
+  qris: "QRIS",
+  edc_bca: "EDC BCA",
+  edc_bni: "EDC BNI",
+  edc_bri: "EDC BRI",
+  edc_other: "EDC Lainnya",
+  gofood: "GoFood",
+  grabfood: "GrabFood",
+  shopeefood: "ShopeeFood",
+};
 
 /**
  * Map channel ke piutang account code.

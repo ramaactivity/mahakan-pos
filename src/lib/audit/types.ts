@@ -353,6 +353,8 @@ export const AUDIT_EVENT_TYPES = [
   "fixed_asset.impairment",
   "fixed_asset.impairment_reversal",
   "fixed_asset.valuation_cancel",
+  /* Sesi AE-219 — pindah rekening tujuan jurnal settlement. */
+  "aggregator_settlement.bank_reclass",
   // Bank Accounts master (Sesi AE-13) — owner CRUD untuk dropdown setoran.
   "bank_account.create",
   "bank_account.update",

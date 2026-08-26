@@ -101,7 +101,11 @@ export type JournalSourceType =
    * fixed_asset_valuations (BUKAN id asetnya), supaya satu aset boleh dinilai
    * ulang berkali-kali. Lihat `fixed-asset-valuation-pure.ts`. */
   | "asset_revaluation"
-  | "asset_impairment";
+  | "asset_impairment"
+  /* Sesi AE-219 — pindah rekening tujuan settlement yang terlanjur salah.
+   * Satu entry per (channel, bulan): Dr rekening benar / Cr rekening salah.
+   * Lihat features/finance/settlement-reclass-actions.ts. */
+  | "settlement_reclass";
 
 export type JournalEntryStatus = "draft" | "posted" | "reversed";
 

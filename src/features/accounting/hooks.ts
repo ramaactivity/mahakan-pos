@@ -746,7 +746,12 @@ export async function postJournalForAggregatorSettlement(args: {
   if (!(await isAutoJournalEnabled(args.outletId))) return;
 
   /* Sesi AE-182 — default rekening mengikuti channel (EDC BNI → 1113,
-   * EDC BRI → 1111, sisanya BCA 1110), bukan lagi selalu BCA. */
+   * EDC BRI → 1111, sisanya BCA 1110), bukan lagi selalu BCA.
+   *
+   * Sesi AE-219 — pemanggil normal (fireSettlementJournalHook) sudah
+   * menyelesaikan pemetaan milik outlet, jadi `bankAccountCode` biasanya
+   * terisi. Tebakan bawaan di bawah tinggal jaring pengaman untuk pemanggil
+   * lama yang belum mengirim apa-apa. */
   const code = args.bankAccountCode ?? defaultBankCodeForChannel(args.channel);
   const periodLabel = `${args.periodFrom} → ${args.periodTo}`;
 

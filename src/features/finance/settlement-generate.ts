@@ -19,6 +19,10 @@ import { db } from "@/db";
 import { aggregatorSettlements, chartOfAccounts, outlets } from "@/db/schema";
 import { logAudit } from "@/lib/audit/logger";
 import { jakartaDateOf } from "@/lib/tz";
+import {
+  resolveSettlementBankCode,
+  type AggregatorChannel,
+} from "@/features/accounting/mapping/aggregatorSettlement";
 import { getPosCashlessGrossByDay, hasSettlementForDay } from "./queries";
 import type { PosCashlessGross } from "./queries";
 import type {
@@ -59,6 +63,7 @@ export async function resolveMdrConfig(
     mdrEdcBniPct: c?.mdrEdcBniPct ?? DEFAULT_MDR_EDC_BNI_PCT,
     mdrEdcBriPct: c?.mdrEdcBriPct ?? DEFAULT_MDR_EDC_BRI_PCT,
     mdrEdcOtherPct: c?.mdrEdcOtherPct ?? DEFAULT_MDR_EDC_OTHER_PCT,
+    bankAccountByChannel: c?.bankAccountByChannel ?? {},
   };
 }
 
@@ -89,15 +94,28 @@ export async function fireSettlementJournalHook(
   const { fireJournalHook, postJournalForAggregatorSettlement } = await import(
     "@/features/accounting/hooks"
   );
-  let bankAccountCode: string | null = null;
+  let explicitCode: string | null = null;
   if (row.bankAccountId) {
     const [bankAcc] = await db
       .select({ code: chartOfAccounts.code })
       .from(chartOfAccounts)
       .where(eq(chartOfAccounts.id, row.bankAccountId))
       .limit(1);
-    bankAccountCode = bankAcc?.code ?? null;
+    explicitCode = bankAcc?.code ?? null;
   }
+  /* Sesi AE-219 — rekening tujuan mengikuti pengaturan outlet, bukan tebakan
+   * dari nama channel. Baris settlement yang menyimpan rekeningnya sendiri
+   * tetap menang (kasus khusus satu pencairan). */
+  const [outletRow] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, outletId))
+    .limit(1);
+  const bankAccountCode = resolveSettlementBankCode(
+    row.channel as AggregatorChannel,
+    outletRow?.settings?.cashless?.bankAccountByChannel,
+    explicitCode,
+  );
   /* Sesi AE-182 — fallback ke periodTo (hari settlement-nya), BUKAN hari ini.
    * Dulu pakai `new Date()`: untuk cron harian itu wajar (uang masuk bank
    * H+1), tapi begitu dipakai untuk mengejar backlog, settlement bulan Mei

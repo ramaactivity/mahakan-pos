@@ -105,6 +105,21 @@ export type OutletSettings = {
     mdrEdcBniPct?: number;
     mdrEdcBriPct?: number;
     mdrEdcOtherPct?: number;
+    /**
+     * Sesi AE-219 — rekening tujuan pencairan per channel, sebagai KODE akun
+     * bagan akun (mis. { qris: "1113", edc_bca: "1110" }).
+     *
+     * Sebelumnya tujuannya ditebak dari nama channel ("EDC BNI → rekening
+     * BNI"), dan tebakan itu meleset untuk QRIS Mahakan yang justru cair ke
+     * BNI sementara jurnalnya mendebit BCA — salah yang tidak memunculkan
+     * error apa pun, cuma saldo dua bank yang sama-sama meleset. Channel yang
+     * tidak diisi tetap memakai tebakan bawaan.
+     *
+     * Kuncinya sengaja `string` supaya file skema tidak perlu mengimpor tipe
+     * channel dari lapisan akuntansi. Nilai yang sah = AggregatorChannel di
+     * features/accounting/mapping/aggregatorSettlement.ts.
+     */
+    bankAccountByChannel?: Record<string, string>;
   };
   /** Sesi AE-167 — pengaturan shift. */
   shift?: {

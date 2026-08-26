@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowLeftRight,
   ArrowRight,
   Bike,
   CreditCard,
@@ -34,13 +35,27 @@ import {
   Button,
   Card,
   CardContent,
+  DatePicker,
   DateRangePicker,
   EmptyCard,
   Input,
   Modal,
+  Select,
   Skeleton,
   toast,
 } from "@/components/ui";
+import { fetchAccounts } from "@/features/accounting/actions";
+import {
+  defaultBankCodeForChannel,
+  SETTLEMENT_CHANNEL_LABEL,
+  SETTLEMENT_CHANNELS,
+  type AggregatorChannel as SettlementChannel,
+} from "@/features/accounting/mapping/aggregatorSettlement";
+import {
+  postSettlementBankReclass,
+  previewSettlementBankReclass,
+  type SettlementReclassPreview,
+} from "@/features/finance/settlement-reclass-actions";
 import {
   fetchAggregatorSettlements,
   generateCashlessSettlementFromPos,
@@ -152,6 +167,8 @@ export function AggregatorOnlineSection() {
   /* Sesi AE-165 — auto-generate QRIS/EDC dari POS + config MDR. */
   const [generating, setGenerating] = useState(false);
   const [mdrOpen, setMdrOpen] = useState(false);
+  /* Sesi AE-219 — alat pindah rekening jurnal settlement. */
+  const [reclassOpen, setReclassOpen] = useState(false);
 
   async function onGenerateFromPos() {
     if (generating) return;
@@ -284,9 +301,20 @@ export function AggregatorOnlineSection() {
             variant="outline"
             size="sm"
             onClick={() => setMdrOpen(true)}
-            aria-label="Atur rate MDR"
+            aria-label="Atur MDR & rekening tujuan"
           >
-            <Settings2 className="size-4" aria-hidden /> Rate MDR
+            <Settings2 className="size-4" aria-hidden /> MDR &amp; Rekening
+          </Button>
+          {/* Sesi AE-219 — perbaiki jurnal settlement yang terlanjur mendarat
+              di rekening yang salah (QRIS Mahakan cair ke BNI, jurnalnya
+              mendebit BCA). */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setReclassOpen(true)}
+            aria-label="Pindah rekening jurnal settlement"
+          >
+            <ArrowLeftRight className="size-4" aria-hidden /> Pindah Rekening
           </Button>
           <Button size="sm" onClick={onGenerateFromPos} disabled={generating}>
             {generating ? (
@@ -661,6 +689,10 @@ export function AggregatorOnlineSection() {
         onSaved={onWizardSaved}
       />
       <CashlessMdrModal open={mdrOpen} onClose={() => setMdrOpen(false)} />
+      <SettlementReclassModal
+        open={reclassOpen}
+        onClose={() => setReclassOpen(false)}
+      />
     </div>
   );
 }
@@ -680,6 +712,13 @@ function CashlessMdrModal({
   const [edc, setEdc] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  /* Sesi AE-219 — rekening tujuan pencairan per channel. Kosong = pakai
+   * tebakan bawaan, dan tebakan itulah yang ditampilkan sebagai placeholder
+   * supaya owner tahu ke mana uangnya SEKARANG dicatat. */
+  const [bankMap, setBankMap] = useState<Record<string, string>>({});
+  const [accounts, setAccounts] = useState<
+    Array<{ code: string; name: string }>
+  >([]);
 
   useEffect(() => {
     if (!open) return;
@@ -687,11 +726,28 @@ function CashlessMdrModal({
     /* eslint-disable react-hooks/set-state-in-effect */
     setLoading(true);
     void (async () => {
-      const res = await getCashlessMdrConfig();
+      const [res, accRes] = await Promise.all([
+        getCashlessMdrConfig(),
+        fetchAccounts(),
+      ]);
       if (cancelled) return;
-      const cfg = res.ok ? res.data : { mdrQrisPct: 0.7, mdrEdcBcaPct: 0 };
+      const cfg = res.ok
+        ? res.data
+        : { mdrQrisPct: 0.7, mdrEdcBcaPct: 0, bankAccountByChannel: {} };
       setQris(String(cfg.mdrQrisPct));
       setEdc(String(cfg.mdrEdcBcaPct));
+      setBankMap(cfg.bankAccountByChannel ?? {});
+      if (accRes.ok) {
+        /* Hanya akun kas/bank (11xx aktif) — settlement tidak mungkin cair ke
+         * akun beban atau persediaan. */
+        setAccounts(
+          accRes.data
+            .filter(
+              (a) => a.isActive && a.type === "asset" && a.code.startsWith("11"),
+            )
+            .map((a) => ({ code: a.code, name: a.name })),
+        );
+      }
       setLoading(false);
     })();
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -715,6 +771,7 @@ function CashlessMdrModal({
     const res = await updateCashlessMdrConfig({
       mdrQrisPct: q,
       mdrEdcBcaPct: e,
+      bankAccountByChannel: bankMap,
     });
     setSaving(false);
     if (!res.ok) {
@@ -729,9 +786,9 @@ function CashlessMdrModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Rate MDR — QRIS & EDC BCA"
-      description="Potongan provider (persen dari gross). Dipakai saat auto-generate settlement dari POS: Net = Gross − (Gross × rate)."
-      size="md"
+      title="Pengaturan Cashless — MDR & Rekening Tujuan"
+      description="Potongan provider (persen dari gross) dan ke rekening mana uang tiap channel benar-benar cair."
+      size="lg"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={saving}>
@@ -769,6 +826,44 @@ function CashlessMdrModal({
             Default kalau belum diatur: QRIS 0,7% · EDC BCA 0%. Contoh: gross
             Rp 1.000.000, MDR QRIS 0,7% → fee Rp 7.000, net Rp 993.000.
           </p>
+
+          {/* Sesi AE-219 — rekening tujuan per channel. Sebelum ini tujuannya
+              ditebak dari nama channel ("EDC BNI → rekening BNI"), dan tebakan
+              itu meleset untuk QRIS Mahakan yang cair ke BNI sementara
+              jurnalnya mendebit BCA. Salah begini tidak memunculkan error apa
+              pun — cuma saldo dua bank yang sama-sama meleset. */}
+          <div className="col-span-2 mt-1 border-t border-neutral-200 pt-3">
+            <p className="text-sm font-medium text-neutral-900">
+              Uang tiap channel cair ke rekening mana?
+            </p>
+            <p className="mt-0.5 text-[11px] text-neutral-500">
+              Dipakai saat jurnal settlement dibuat. Kosongkan kalau mau
+              memakai bawaan. Ganti mesin EDC nanti cukup ubah di sini.
+            </p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {SETTLEMENT_CHANNELS.map((ch) => (
+                <Select
+                  key={ch}
+                  label={SETTLEMENT_CHANNEL_LABEL[ch]}
+                  size="sm"
+                  options={[
+                    {
+                      value: "",
+                      label: `— bawaan: ${defaultBankCodeForChannel(ch)} —`,
+                    },
+                    ...accounts.map((a) => ({
+                      value: a.code,
+                      label: `${a.code} · ${a.name}`,
+                    })),
+                  ]}
+                  value={bankMap[ch] ?? ""}
+                  onValueChange={(v) =>
+                    setBankMap((prev) => ({ ...prev, [ch]: v }))
+                  }
+                />
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </Modal>
@@ -827,3 +922,310 @@ function KpiCard({
 
 /* Unused for now but kept for future per-channel column. */
 export { ExternalLink };
+
+/**
+ * Sesi AE-219 — pindahkan jurnal settlement yang terlanjur mendarat di
+ * rekening yang salah.
+ *
+ * Kejadian nyata: QRIS cair ke BNI, tapi 98 jurnal settlement mendebit Bank
+ * BCA karena tujuannya dulu ditebak dari nama channel. Layar ini menunjukkan
+ * DULU berapa yang mendarat di rekening mana per bulan, baru owner memutuskan
+ * mana yang dipindah — termasuk sejak kapan, karena bank akuisisi bisa saja
+ * memang baru berganti di tengah jalan.
+ */
+function SettlementReclassModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [channel, setChannel] = useState<SettlementChannel>("qris");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [toCode, setToCode] = useState("");
+  const [reason, setReason] = useState("");
+  const [accounts, setAccounts] = useState<
+    Array<{ code: string; name: string }>
+  >([]);
+  const [preview, setPreview] = useState<SettlementReclassPreview | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [posting, setPosting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    const today = todayJakarta();
+    setChannel("qris");
+    setFrom(addDaysJakarta(today, -365));
+    setTo(today);
+    setToCode("");
+    setReason("");
+    setPreview(null);
+    setError(null);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    void (async () => {
+      const res = await fetchAccounts();
+      if (cancelled || !res.ok) return;
+      setAccounts(
+        res.data
+          .filter(
+            (a) => a.isActive && a.type === "asset" && a.code.startsWith("11"),
+          )
+          .map((a) => ({ code: a.code, name: a.name })),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  async function onPreview() {
+    if (!toCode || !from || !to) {
+      setError("Pilih rekening tujuan dan rentang tanggalnya dulu.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    const res = await previewSettlementBankReclass({
+      channel,
+      from,
+      to,
+      toCode,
+    });
+    setLoading(false);
+    if (res.ok) setPreview(res.data);
+    else {
+      setPreview(null);
+      setError(res.error.message);
+    }
+  }
+
+  async function onPost() {
+    if (!preview || posting) return;
+    const postable = preview.rows.filter((r) => r.blockedReason === null);
+    if (postable.length === 0) {
+      setError("Tidak ada bulan yang bisa dipindah.");
+      return;
+    }
+    if (reason.trim().length < 10) {
+      setError("Alasan pemindahan minimal 10 karakter.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Pindahkan ${formatRupiah(preview.postableAmount)} dari rekening lama ke ${preview.toCode} ${preview.toName}?\n\n${postable.length} jurnal pemindahan akan dibuat (satu per bulan).`,
+      )
+    ) {
+      return;
+    }
+    setPosting(true);
+    const res = await postSettlementBankReclass({
+      channel,
+      from,
+      to,
+      toCode,
+      reason: reason.trim(),
+    });
+    setPosting(false);
+    if (!res.ok) {
+      setError(res.error.message);
+      return;
+    }
+    toast.success(
+      `${res.data.posted.length} jurnal pemindahan dibuat — total ${formatRupiah(res.data.totalMoved)}.`,
+    );
+    if (res.data.skipped.length > 0) {
+      toast.error(
+        `${res.data.skipped.length} bulan dilewati: ${res.data.skipped[0].reason}`,
+      );
+    }
+    void onPreview();
+    setReason("");
+  }
+
+  const blockedRows = preview?.rows.filter((r) => r.blockedReason !== null) ?? [];
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Pindah Rekening Jurnal Settlement"
+      description="Untuk settlement yang sudah terlanjur dijurnal ke rekening yang salah. Jurnal aslinya tidak diusik — saldonya dipindah lewat satu jurnal per bulan, supaya saldo tiap bulan ikut benar."
+      size="2xl"
+      footer={
+        <div className="flex w-full items-center justify-between gap-3">
+          <div className="text-xs text-neutral-500">
+            {preview
+              ? `${preview.rows.length} bulan ditemukan · bisa dipindah ${formatRupiah(preview.postableAmount)}`
+              : "Pilih channel + rekening tujuan, lalu Lihat Rincian"}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={posting}>
+              Tutup
+            </Button>
+            <Button variant="outline" onClick={onPreview} loading={loading}>
+              Lihat Rincian
+            </Button>
+            <Button
+              onClick={onPost}
+              loading={posting}
+              disabled={
+                posting ||
+                !preview ||
+                preview.rows.filter((r) => r.blockedReason === null).length === 0
+              }
+            >
+              <ArrowLeftRight className="size-4" aria-hidden /> Pindahkan
+            </Button>
+          </div>
+        </div>
+      }
+    >
+      <div className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Select
+            label="Channel"
+            options={SETTLEMENT_CHANNELS.map((c) => ({
+              value: c,
+              label: SETTLEMENT_CHANNEL_LABEL[c],
+            }))}
+            value={channel}
+            onValueChange={(v) => {
+              setChannel(v as SettlementChannel);
+              setPreview(null);
+            }}
+          />
+          <Select
+            label="Rekening tujuan yang benar"
+            options={accounts.map((a) => ({
+              value: a.code,
+              label: `${a.code} · ${a.name}`,
+            }))}
+            value={toCode}
+            onValueChange={(v) => {
+              setToCode(v);
+              setPreview(null);
+            }}
+            placeholder="— pilih rekening —"
+          />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <DatePicker
+            label="Dari tanggal"
+            value={from}
+            onChange={(v) => {
+              setFrom(v ?? "");
+              setPreview(null);
+            }}
+          />
+          <DatePicker
+            label="Sampai tanggal"
+            value={to}
+            onChange={(v) => {
+              setTo(v ?? "");
+              setPreview(null);
+            }}
+          />
+        </div>
+        <p className="text-[11px] text-neutral-500">
+          Kalau bank akuisisinya memang baru berganti di tengah jalan, sempitkan
+          rentangnya — yang di luar rentang tidak akan disentuh.
+        </p>
+
+        {preview ? (
+          preview.rows.length === 0 ? (
+            <div className="rounded-md border border-dashed border-neutral-200 bg-neutral-50 p-6 text-center text-sm text-neutral-600">
+              Semua jurnal settlement {preview.channelLabel} di rentang itu
+              sudah mendarat di {preview.toCode} {preview.toName}. Tidak ada
+              yang perlu dipindah.
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-md border border-neutral-200">
+              <table className="min-w-full text-xs">
+                <thead className="bg-neutral-50 text-neutral-500">
+                  <tr>
+                    <th className="px-3 py-1.5 text-left font-medium">Bulan</th>
+                    <th className="px-3 py-1.5 text-left font-medium">
+                      Tercatat di
+                    </th>
+                    <th className="px-3 py-1.5 text-right font-medium">
+                      Jumlah
+                    </th>
+                    <th className="px-3 py-1.5 text-center font-medium">
+                      Settlement
+                    </th>
+                    <th className="px-3 py-1.5 text-left font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {preview.rows.map((r) => (
+                    <tr key={`${r.month}-${r.fromCode}`}>
+                      <td className="px-3 py-1.5">{r.monthLabel}</td>
+                      <td className="px-3 py-1.5 font-mono">
+                        {r.fromCode} {r.fromName}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono">
+                        {formatRupiah(r.amount)}
+                      </td>
+                      <td className="px-3 py-1.5 text-center text-neutral-500">
+                        {r.entryCount}
+                      </td>
+                      <td className="px-3 py-1.5">
+                        {r.blockedReason ? (
+                          <span className="text-danger-600">
+                            {r.blockedReason}
+                          </span>
+                        ) : (
+                          <Badge variant="success">Siap dipindah</Badge>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : null}
+
+        {preview && preview.configuredCode !== preview.toCode ? (
+          <div className="rounded-md border border-warning-500/40 bg-warning-100/40 p-3 text-xs text-neutral-700">
+            <AlertTriangle
+              className="mr-1.5 inline size-3.5 text-warning-500"
+              aria-hidden
+            />
+            Settlement BARU untuk {preview.channelLabel} masih akan masuk ke
+            akun <b>{preview.configuredCode}</b>. Kalau {preview.toCode} yang
+            benar, ubah juga di <b>MDR &amp; Rekening</b> — kalau tidak,
+            masalahnya berulang bulan depan.
+          </div>
+        ) : null}
+
+        {preview && preview.rows.length > 0 ? (
+          <Input
+            label="Alasan pemindahan (wajib)"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="mis. QRIS cair ke rekening BNI, jurnalnya terlanjur mendebit BCA"
+          />
+        ) : null}
+
+        {blockedRows.length > 0 ? (
+          <p className="text-[11px] text-neutral-500">
+            {blockedRows.length} bulan tidak bisa dipindah karena periodenya
+            sudah tutup buku / terkunci. Buka dulu di Akuntansi → Periode kalau
+            memang mau dibetulkan.
+          </p>
+        ) : null}
+
+        {error ? (
+          <div className="rounded-md border border-danger-500/50 bg-danger-100/40 p-3 text-sm text-danger-600">
+            {error}
+          </div>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}

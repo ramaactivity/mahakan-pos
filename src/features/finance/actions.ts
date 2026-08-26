@@ -1,6 +1,6 @@
 "use server";
 
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { db } from "@/db";
 import {
   aggregatorSettlements,
@@ -936,6 +936,7 @@ export async function getCashlessMdrConfig(): Promise<
     mdrEdcBniPct: c?.mdrEdcBniPct ?? DEFAULT_MDR_EDC_BNI_PCT,
     mdrEdcBriPct: c?.mdrEdcBriPct ?? DEFAULT_MDR_EDC_BRI_PCT,
     mdrEdcOtherPct: c?.mdrEdcOtherPct ?? DEFAULT_MDR_EDC_OTHER_PCT,
+    bankAccountByChannel: c?.bankAccountByChannel ?? {},
   });
 }
 
@@ -943,6 +944,8 @@ export async function getCashlessMdrConfig(): Promise<
 export async function updateCashlessMdrConfig(input: {
   mdrQrisPct: number;
   mdrEdcBcaPct: number;
+  /** Sesi AE-219 — rekening tujuan per channel (kode akun). "" = pakai bawaan. */
+  bankAccountByChannel?: Record<string, string>;
 }): Promise<ApiResult<CashlessMdrConfig>> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "aggregator_settlement.create")) {
@@ -958,12 +961,79 @@ export async function updateCashlessMdrConfig(input: {
     .where(eq(outlets.id, session.user.outletId))
     .limit(1);
   const current: OutletSettings = row?.settings ?? {};
+
+  /* Sesi AE-219 — rekening tujuan wajib benar-benar ada, aktif, dan bertipe
+   * aset. Kode yang salah ketik tidak akan gagal di sini melainkan nanti saat
+   * jurnal settlement dibuat — di jalur fire-and-forget, yang artinya
+   * settlement tercatat tanpa jurnal dan tidak ada satu pun tanda di layar. */
+  let bankMapping = current.cashless?.bankAccountByChannel ?? {};
+  if (parsed.data.bankAccountByChannel) {
+    const wanted = Object.entries(parsed.data.bankAccountByChannel).filter(
+      ([, code]) => code.trim().length > 0,
+    );
+    if (wanted.length > 0) {
+      const rows = await db
+        .select({
+          code: chartOfAccounts.code,
+          name: chartOfAccounts.name,
+          type: chartOfAccounts.type,
+          isActive: chartOfAccounts.isActive,
+        })
+        .from(chartOfAccounts)
+        .where(
+          and(
+            eq(chartOfAccounts.outletId, session.user.outletId),
+            inArray(
+              chartOfAccounts.code,
+              wanted.map(([, code]) => code.trim()),
+            ),
+            isNull(chartOfAccounts.deletedAt),
+          ),
+        );
+      const byCode = new Map(rows.map((r) => [r.code, r]));
+      for (const [channel, raw] of wanted) {
+        const code = raw.trim();
+        const acc = byCode.get(code);
+        if (!acc) {
+          return fail(
+            "VALIDATION",
+            `Akun ${code} untuk ${channel} tidak ada di Bagan Akun.`,
+          );
+        }
+        if (!acc.isActive) {
+          return fail(
+            "VALIDATION",
+            `Akun ${code} ${acc.name} sedang non-aktif — aktifkan dulu di Bagan Akun.`,
+          );
+        }
+        if (acc.type !== "asset") {
+          return fail(
+            "VALIDATION",
+            `Akun ${code} ${acc.name} bukan akun aset — rekening tujuan settlement harus akun kas/bank.`,
+          );
+        }
+      }
+    }
+    /* Channel yang dikosongkan dihapus dari pemetaan supaya kembali ke
+     * tebakan bawaan, bukan tersimpan sebagai string kosong. */
+    const merged: Record<string, string> = { ...bankMapping };
+    for (const [channel, raw] of Object.entries(
+      parsed.data.bankAccountByChannel,
+    )) {
+      const code = raw.trim();
+      if (code.length === 0) delete merged[channel];
+      else merged[channel] = code;
+    }
+    bankMapping = merged;
+  }
+
   const next: OutletSettings = {
     ...current,
     cashless: {
       ...(current.cashless ?? {}),
       mdrQrisPct: parsed.data.mdrQrisPct,
       mdrEdcBcaPct: parsed.data.mdrEdcBcaPct,
+      bankAccountByChannel: bankMapping,
       /* Field EDC lain opsional — kalau form tidak mengirim, nilai lama
        * dipertahankan lewat spread di atas. */
       ...(parsed.data.mdrEdcBniPct !== undefined
@@ -999,6 +1069,7 @@ export async function updateCashlessMdrConfig(input: {
     mdrEdcBniPct: merged.mdrEdcBniPct ?? DEFAULT_MDR_EDC_BNI_PCT,
     mdrEdcBriPct: merged.mdrEdcBriPct ?? DEFAULT_MDR_EDC_BRI_PCT,
     mdrEdcOtherPct: merged.mdrEdcOtherPct ?? DEFAULT_MDR_EDC_OTHER_PCT,
+    bankAccountByChannel: merged.bankAccountByChannel ?? {},
   });
 }
 

@@ -162,4 +162,9 @@ export const updateCashlessMdrSchema = z.object({
   mdrEdcBniPct: z.number().min(0).max(10).optional(),
   mdrEdcBriPct: z.number().min(0).max(10).optional(),
   mdrEdcOtherPct: z.number().min(0).max(10).optional(),
+  /* Sesi AE-219 — rekening tujuan per channel (kode akun 4 digit). Nilai
+   * kosong berarti "pakai tebakan bawaan", bukan "hapus channelnya". */
+  bankAccountByChannel: z
+    .record(z.string(), z.string().regex(/^\d{4}$/).or(z.literal("")))
+    .optional(),
 });
