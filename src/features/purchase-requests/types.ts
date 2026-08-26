@@ -120,6 +120,9 @@ export interface LowStockIngredient {
 export interface RequestableIngredient extends LowStockIngredient {
   /** true kalau `reorderThreshold` terisi DAN stok sudah <= ambang. */
   isLowStock: boolean;
+  /** Sesi AE-220 — nama sehari-hari staff untuk bahan ini ("pembersih
+   * lantai" → Sabun Lantai Cargloss). Dipakai pencocokan daftar tempelan. */
+  aliases: string[];
 }
 
 export type ApiResult<T> =

@@ -24,6 +24,8 @@ export interface PasteCandidate {
   unit: string;
   /** Label satuan lain yang sah untuk bahan ini (satuan belanja + pack). */
   packLabels: string[];
+  /** Sesi AE-220 — nama sehari-hari staff untuk bahan ini. */
+  aliases?: string[] | null;
 }
 
 export type PasteMatch =
@@ -163,13 +165,50 @@ function splitQtyUnit(chunk: string): { qty: number | null; unit: string | null 
 
 /* --------------------------------------------------------------- cocok ---- */
 
+/**
+ * Ejaan sehari-hari yang menunjuk kata yang sama. Sengaja pendek dan konkret
+ * — tiap baris di sini berasal dari daftar belanja nyata staff Mahakan, bukan
+ * tebakan. Menambah pasangan yang tidak terbukti hanya memperbesar risiko dua
+ * bahan berbeda tercampur jadi satu.
+ */
+const WORD_FOLDS: Record<string, string> = {
+  saos: "saus",
+  sauce: "saus",
+  sause: "saus",
+  cabe: "cabai",
+  telor: "telur",
+  keripik: "kripik",
+};
+
+function foldWord(w: string): string {
+  return WORD_FOLDS[w] ?? w;
+}
+
 /** Normalisasi nama untuk pembanding: huruf kecil, tanpa tanda baca ganda. */
 export function normalizeName(s: string): string {
   return s
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .split(" ")
+    .map(foldWord)
+    .join(" ");
+}
+
+/** Kata-kata penyusun nama, sudah dinormalisasi. */
+export function nameTokens(s: string): string[] {
+  return normalizeName(s).split(" ").filter(Boolean);
+}
+
+/** Nama tanpa spasi — menangkap "Gula ku" vs "Gulaku". */
+function squash(s: string): string {
+  return normalizeName(s).replace(/\s/g, "");
+}
+
+function isSubset(a: string[], b: string[]): boolean {
+  const set = new Set(b);
+  return a.length > 0 && a.every((t) => set.has(t));
 }
 
 export function matchIngredient(
@@ -178,33 +217,88 @@ export function matchIngredient(
 ): PasteMatch {
   const q = normalizeName(name);
   if (!q) return { kind: "none" };
+  const qTokens = nameTokens(name);
+  const qSquashed = squash(name);
 
-  const exact = catalog.filter((c) => normalizeName(c.name) === q);
-  if (exact.length === 1) {
-    return { kind: "exact", ingredientId: exact[0].id, name: exact[0].name };
-  }
-  if (exact.length > 1) {
-    return {
-      kind: "ambiguous",
-      options: exact.map((c) => ({ id: c.id, name: c.name })),
-    };
-  }
+  /* Sesi AE-220 — tiap bahan dinilai lewat SEMUA namanya: nama resmi di
+   * master plus nama sehari-hari yang didaftarkan owner. Tanpa ini,
+   * "pembersih lantai" tidak akan pernah menemukan "Sabun Lantai Cargloss"
+   * dan akhirnya tercatat sebagai bahan baru yang memecah stok. */
+  const namesOf = (c: PasteCandidate): string[] => [
+    c.name,
+    ...((c.aliases ?? []).filter((a) => typeof a === "string" && a.trim())),
+  ];
+  const anyName = (c: PasteCandidate, pred: (n: string) => boolean): boolean =>
+    namesOf(c).some(pred);
 
-  /* Cocok sebagian dua arah: "sendok plastik" menemukan "Sendok Plastik
-   * Takeaway", dan "ayam fillet paha" menemukan "Ayam Fillet". */
-  const partial = catalog.filter((c) => {
-    const n = normalizeName(c.name);
-    return n.includes(q) || q.includes(n);
-  });
-  if (partial.length === 1) {
-    return { kind: "partial", ingredientId: partial[0].id, name: partial[0].name };
-  }
-  if (partial.length > 1) {
-    return {
-      kind: "ambiguous",
-      options: partial.map((c) => ({ id: c.id, name: c.name })),
-    };
-  }
+  const decide = (
+    hits: PasteCandidate[],
+    kind: "exact" | "partial",
+  ): PasteMatch | null => {
+    if (hits.length === 1) {
+      return { kind, ingredientId: hits[0].id, name: hits[0].name };
+    }
+    if (hits.length > 1) {
+      return {
+        kind: "ambiguous",
+        options: hits.map((c) => ({ id: c.id, name: c.name })),
+      };
+    }
+    return null;
+  };
+
+  /* Bertingkat dari yang paling meyakinkan ke yang paling longgar. Tingkat
+   * pertama yang membuahkan hasil dipakai, supaya kecocokan kuat tidak
+   * tenggelam oleh kecocokan lemah yang kebetulan lebih banyak. */
+
+  // 1. Nama persis sama.
+  const byExact = decide(
+    catalog.filter((c) => anyName(c, (n) => normalizeName(n) === q)),
+    "exact",
+  );
+  if (byExact) return byExact;
+
+  // 2. Sama kalau spasinya diabaikan — "Gula ku" vs "Gulaku".
+  const bySquash = decide(
+    catalog.filter((c) => anyName(c, (n) => squash(n) === qSquashed)),
+    "exact",
+  );
+  if (bySquash) return bySquash;
+
+  // 3. Kata-katanya sama, urutannya saja yang beda — "daun bawang" vs
+  //    "Bawang Daun", "Sause caramel" vs "Caramel Sauce".
+  const byTokenSet = decide(
+    catalog.filter((c) =>
+      anyName(c, (n) => {
+        const t = nameTokens(n);
+        return t.length === qTokens.length && isSubset(qTokens, t);
+      }),
+    ),
+    "exact",
+  );
+  if (byTokenSet) return byTokenSet;
+
+  // 4. Semua kata staff ada di nama master — "saus mclewis" menemukan
+  //    "Saos Cabai Mclewis", "tulang" menemukan "Tulang Ayam".
+  const bySubset = decide(
+    catalog.filter((c) => anyName(c, (n) => isSubset(qTokens, nameTokens(n)))),
+    "partial",
+  );
+  if (bySubset) return bySubset;
+
+  /* 5. Cocok sebagian dua arah: "sendok plastik" menemukan "Sendok Plastik
+   *    Takeaway", dan "ayam fillet paha" menemukan "Ayam Fillet". */
+  const byContains = decide(
+    catalog.filter((c) =>
+      anyName(c, (raw) => {
+        const n = normalizeName(raw);
+        return n.includes(q) || q.includes(n);
+      }),
+    ),
+    "partial",
+  );
+  if (byContains) return byContains;
+
   return { kind: "none" };
 }
 

@@ -31,6 +31,7 @@ import {
   displayUnit,
   mergePackConversions,
 } from "@/lib/unit-conversion";
+import { matchIngredient, normalizeName } from "./paste-list-pure";
 import {
   indexMasterByName,
   matchManualItemToMaster,
@@ -217,6 +218,7 @@ async function fetchRequestableIngredients(
       packConversions: ingredients.packConversions,
       unitBelanja: ingredients.unitBelanja,
       unitBelanjaPerCogs: ingredients.unitBelanjaPerCogs,
+      aliases: ingredients.aliases,
     })
     .from(ingredients)
     .where(
@@ -255,6 +257,8 @@ async function fetchRequestableIngredients(
         : [],
       unitBelanja: r.unitBelanja,
       unitBelanjaPerCogs: r.unitBelanjaPerCogs,
+      /* Sesi AE-220 — nama sehari-hari staff, dipakai pencocokan tempelan. */
+      aliases: Array.isArray(r.aliases) ? (r.aliases as string[]) : [],
     } satisfies RequestableIngredient;
   });
 
@@ -348,9 +352,118 @@ export async function listLowStockIngredients(): Promise<
   );
 }
 
+/** Rapikan nama tulisan staff jadi bentuk master ("saus tomat" → "Saus Tomat"). */
+function toTitleCase(raw: string): string {
+  return raw
+    .trim()
+    .replace(/\s+/g, " ")
+    .split(" ")
+    .map((w) => (w.length > 0 ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
+/** Batas pengaman: satu permintaan tidak boleh melahirkan lebih dari ini. */
+const MAX_AUTO_CREATED_INGREDIENTS = 10;
+
+/**
+ * Sesi AE-220 — RENCANA untuk tiap item manual: tautkan ke master, biarkan
+ * manual, atau buatkan bahan baru.
+ *
+ * Arahan owner (2026-08-26): bahan yang belum ada di sistem saat diketik
+ * manual harus otomatis tersimpan ke master, supaya belanja berikutnya
+ * tinggal dipilih. Ini MEMBALIK arahan lama "PR jangan sentuh master
+ * ingredients" (sesi AE-177) — pembalikan yang disengaja.
+ *
+ * Rem yang membuatnya aman: pembuatan bahan baru hanya terjadi kalau
+ * pencocokan bertingkat (nama persis, tanpa spasi, urutan kata, ejaan
+ * saus/saos, dan NAMA LAIN yang didaftarkan owner) tidak menemukan apa pun.
+ * Nama yang cocok ke BEBERAPA bahan sengaja dibiarkan manual — menebak
+ * "gula" jadi Gula Aren padahal maksudnya Gula Pasir akan salah tanpa ada
+ * yang menyadarinya, dan bahan kembar memecah stok serta HPP.
+ */
+async function planManualItems(
+  items: CreatePurchaseRequestInput["items"],
+  outletId: string,
+): Promise<
+  Map<
+    number,
+    | { kind: "link"; ing: RequestableIngredient }
+    | { kind: "create"; name: string; unit: string }
+  >
+> {
+  const out = new Map<
+    number,
+    | { kind: "link"; ing: RequestableIngredient }
+    | { kind: "create"; name: string; unit: string }
+  >();
+
+  const manual = items
+    .map((item, index) => ({ item, index }))
+    .filter(
+      ({ item }) =>
+        !item.ingredientId && (item.ingredientNameSnapshot ?? "").trim(),
+    );
+  if (manual.length === 0) return out;
+
+  const master = await fetchRequestableIngredients(outletId);
+  const byId = new Map(master.map((m) => [m.id, m]));
+  const kandidat = master.map((m) => ({
+    id: m.id,
+    name: m.name,
+    unit: displayUnit(m.unit),
+    packLabels: [
+      m.unitBelanja ?? "",
+      ...(m.packConversions ?? []).map((p) => p.unitLabel),
+    ].filter(Boolean),
+    aliases: m.aliases,
+  }));
+
+  /* Nama baru yang sudah direncanakan dalam permintaan yang SAMA — supaya
+   * dua baris "saus tomat" tidak melahirkan dua bahan kembar sekaligus. */
+  const direncanakan = new Set<string>();
+  let dibuat = 0;
+
+  for (const { item, index } of manual) {
+    const nama = (item.ingredientNameSnapshot ?? "").trim();
+    const cocok = matchIngredient(nama, kandidat);
+
+    if (cocok.kind === "exact" || cocok.kind === "partial") {
+      const ing = byId.get(cocok.ingredientId);
+      if (ing) {
+        out.set(index, { kind: "link", ing });
+        continue;
+      }
+    }
+    if (cocok.kind === "ambiguous") continue; // manusia yang memutuskan
+
+    /* Benar-benar belum ada di master. */
+    if (nama.length < 3) continue;
+    const key = normalizeName(nama);
+    if (direncanakan.has(key)) continue;
+    if (dibuat >= MAX_AUTO_CREATED_INGREDIENTS) continue;
+    direncanakan.add(key);
+    dibuat++;
+    out.set(index, {
+      kind: "create",
+      name: toTitleCase(nama),
+      unit: displayUnit((item.unitSnapshot ?? "").trim() || "Pcs"),
+    });
+  }
+
+  return out;
+}
+
 export async function createPurchaseRequest(
   input: CreatePurchaseRequestInput,
-): Promise<ApiResult<{ id: string; itemCount: number }>> {
+): Promise<
+  ApiResult<{
+    id: string;
+    itemCount: number;
+    /** Sesi AE-220 — bahan yang otomatis ditambahkan ke master dari
+     * permintaan ini, supaya layar bisa memberi tahu staff. */
+    createdIngredients: Array<{ id: string; name: string; unit: string }>;
+  }>
+> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "purchase_request.create")) {
     return fail("FORBIDDEN", "Tidak punya hak buat permintaan belanja");
@@ -422,6 +535,11 @@ export async function createPurchaseRequest(
     input.items,
     session.user.outletId,
   );
+  /* Sesi AE-220 — item manual yang belum tertaut: cocokkan lebih longgar
+   * (urutan kata, ejaan, nama lain), dan kalau memang belum ada di master,
+   * buatkan bahannya. */
+  const plan = await planManualItems(input.items, session.user.outletId);
+  const bahanBaru: Array<{ id: string; name: string; unit: string }> = [];
 
   const result = await db.transaction(async (tx) => {
     const [request] = await tx
@@ -435,12 +553,74 @@ export async function createPurchaseRequest(
       })
       .returning({ id: purchaseRequests.id });
 
+    /* Bahan baru dibuat DI DALAM transaksi yang sama dengan permintaannya.
+     * Kalau permintaannya gagal disimpan, bahannya ikut batal — tidak ada
+     * bahan yatim yang muncul di Kelola Bahan tanpa asal-usul. */
+    const bahanBaruByKey = new Map<string, { id: string; name: string; unit: string }>();
+    for (const p of plan.values()) {
+      if (p.kind !== "create") continue;
+      const key = normalizeName(p.name);
+      if (bahanBaruByKey.has(key)) continue;
+      const [row] = await tx
+        .insert(ingredients)
+        .values({
+          outletId: session.user.outletId,
+          name: p.name,
+          unit: p.unit,
+          /* section sengaja NULL — UI Kelola Bahan sudah menandainya
+           * "Belum diset" supaya owner tahu ada yang perlu dilengkapi.
+           * Menebak section berarti menebak akun persediaan mana yang
+           * di-debit saat barangnya diterima. */
+          section: null,
+          notes:
+            `Dibuat otomatis dari Permintaan Belanja oleh ${session.user.name ?? "staff"}. ` +
+            `Lengkapi section, harga, satuan belanja, dan Stok Minimum di Kelola Bahan.`,
+          createdBy: session.user.id,
+        })
+        .returning({
+          id: ingredients.id,
+          name: ingredients.name,
+          unit: ingredients.unit,
+        });
+      bahanBaruByKey.set(key, row);
+      bahanBaru.push(row);
+    }
+
     let order = 0;
     for (let idx = 0; idx < input.items.length; idx++) {
       const item = input.items[idx];
       // Linked: pakai master snapshot. Manual: pakai input (atau hasil
       // auto-link nama, sesi AE-190).
-      const linked = autoLink.get(idx);
+      let linked = autoLink.get(idx);
+      if (!linked) {
+        const p = plan.get(idx);
+        if (p?.kind === "create") {
+          const row = bahanBaruByKey.get(normalizeName(p.name));
+          if (row) {
+            /* Satuan bahan baru = satuan yang staff tulis, jadi qty-nya
+             * memang sudah dalam satuan dasar. Tidak ada yang dikonversi. */
+            linked = {
+              id: row.id,
+              name: row.name,
+              unit: row.unit,
+              qtyMaster: item.requestedQty,
+            };
+          }
+        } else if (p?.kind === "link") {
+          const conv = matchManualItemToMaster(
+            {
+              name: p.ing.name,
+              unit: item.unitSnapshot ?? "",
+              qty: item.requestedQty,
+            },
+            indexMasterByName([p.ing]),
+            { displayUnit, convertQtyWithIngredientPacks, mergePackConversions },
+          );
+          /* Gagal konversi = biarkan manual. PR tetap tercatat apa adanya;
+           * lebih baik daripada menyimpan angka dalam satuan yang salah. */
+          if (conv) linked = conv;
+        }
+      }
       const ing = item.ingredientId ? byId.get(item.ingredientId) : linked;
       const nameSnapshot = ing
         ? ing.name
@@ -489,6 +669,26 @@ export async function createPurchaseRequest(
     },
   }).catch((e) => console.error("[audit purchase_request.create]", e));
 
+  /* Sesi AE-220 — bahan yang lahir dari permintaan ini dicatat satu per satu,
+   * supaya owner bisa menelusuri dari mana asalnya saat melengkapi section
+   * dan harganya di Kelola Bahan. */
+  for (const b of bahanBaru) {
+    logAudit({
+      eventType: "inventory.ingredient.create",
+      userId: session.user.id,
+      entityType: "ingredient",
+      entityId: b.id,
+      payload: {
+        summary: `Bahan "${b.name}" (${b.unit}) dibuat otomatis dari Permintaan Belanja — section & harga belum diisi`,
+        after: { name: b.name, unit: b.unit, source: "purchase_request" },
+      },
+      metadata: {
+        outletId: session.user.outletId,
+        actorRole: session.user.role,
+      },
+    }).catch((e) => console.error("[audit ingredient auto-create]", e));
+  }
+
   /* Sesi AE-124 — push notif ke user yang subscribed kategori "inventory"
    * di outlet (default: Cacil, plus Rama+Sekal). Honor quiet hours + snooze.
    * Fire-and-forget. */
@@ -512,7 +712,7 @@ export async function createPurchaseRequest(
     }
   })();
 
-  return ok(result);
+  return ok({ ...result, createdIngredients: bahanBaru });
 }
 
 /**

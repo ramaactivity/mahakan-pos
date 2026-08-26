@@ -229,3 +229,105 @@ _Konfirmasi approval atau pertanyaan: balas pesan ini_`;
     expect(parsePasteList("\n\n───\n\n", MASTER)).toHaveLength(0);
   });
 });
+
+/* ======================================================================
+ * Sesi AE-220 — pencocokan bertingkat + nama lain (alias).
+ *
+ * Semua contoh di bawah diambil dari daftar belanja NYATA staff Mahakan
+ * Agustus 2026. Sebelum ini kelimanya berakhir sebagai "item manual" dan
+ * akan menjadi bahan kembar kalau disimpan apa adanya ke master.
+ * ==================================================================== */
+
+const MASTER2: PasteCandidate[] = [
+  { id: "a1", name: "Bawang Daun", unit: "gr", packLabels: [] },
+  { id: "a2", name: "Gulaku", unit: "gr", packLabels: ["Kg"] },
+  { id: "a3", name: "Saos Tomat", unit: "gr", packLabels: [] },
+  { id: "a4", name: "Saos Cabai Mclewis", unit: "gr", packLabels: [] },
+  { id: "a5", name: "Saos Cabai Belibis", unit: "gr", packLabels: [] },
+  { id: "a6", name: "Caramel Sauce", unit: "ml", packLabels: [] },
+  {
+    id: "a7",
+    name: "Sabun Lantai Cargloss",
+    unit: "ml",
+    packLabels: [],
+    aliases: ["pembersih lantai"],
+  },
+  {
+    id: "a8",
+    name: "Trash Bag 90 X 120",
+    unit: "Pcs",
+    packLabels: [],
+    aliases: ["trash bag besar"],
+  },
+  {
+    id: "a9",
+    name: "Trash Bag 60 X 100",
+    unit: "Pcs",
+    packLabels: [],
+    aliases: ["trash bag kecil"],
+  },
+];
+
+describe("matchIngredient — urutan kata & ejaan (AE-220)", () => {
+  it('"daun bawang" menemukan "Bawang Daun" walau urutannya terbalik', () => {
+    expect(matchIngredient("daun bawang", MASTER2)).toMatchObject({
+      kind: "exact",
+      ingredientId: "a1",
+    });
+  });
+
+  it('"Gula ku" menemukan "Gulaku" walau ada spasi nyasar', () => {
+    expect(matchIngredient("Gula ku", MASTER2)).toMatchObject({
+      kind: "exact",
+      ingredientId: "a2",
+    });
+  });
+
+  it('ejaan "saus" vs "saos" dianggap sama', () => {
+    expect(matchIngredient("saus tomat", MASTER2)).toMatchObject({
+      kind: "exact",
+      ingredientId: "a3",
+    });
+    expect(matchIngredient("saus mclewis", MASTER2)).toMatchObject({
+      kind: "partial",
+      ingredientId: "a4",
+    });
+  });
+
+  it('"Sause caramel" menemukan "Caramel Sauce" (urutan + ejaan)', () => {
+    expect(matchIngredient("Sause caramel", MASTER2)).toMatchObject({
+      kind: "exact",
+      ingredientId: "a6",
+    });
+  });
+
+  it("kecocokan kuat tidak tenggelam oleh yang lemah", () => {
+    // "saus tomat" persis = Saos Tomat. Kalau tingkatannya tidak berurutan,
+    // tiga bahan ber-"saos" akan membuatnya ambigu dan menghambat staff.
+    expect(matchIngredient("saus tomat", MASTER2).kind).toBe("exact");
+  });
+});
+
+describe("matchIngredient — nama lain yang didaftarkan owner (AE-220)", () => {
+  it('"pembersih lantai" menemukan Sabun Lantai Cargloss lewat alias', () => {
+    expect(matchIngredient("pembersih lantai", MASTER2)).toMatchObject({
+      kind: "exact",
+      ingredientId: "a7",
+    });
+  });
+
+  it("besar & kecil menunjuk trash bag yang berbeda", () => {
+    expect(matchIngredient("trash bag besar", MASTER2)).toMatchObject({
+      ingredientId: "a8",
+    });
+    expect(matchIngredient("trash bag kecil", MASTER2)).toMatchObject({
+      ingredientId: "a9",
+    });
+  });
+
+  it("tanpa alias, keduanya akan ambigu — inilah gunanya alias", () => {
+    const tanpaAlias = MASTER2.map((c) => ({ ...c, aliases: null }));
+    expect(matchIngredient("trash bag besar", tanpaAlias).kind).toBe("none");
+    expect(matchIngredient("pembersih lantai", tanpaAlias).kind).toBe("none");
+  });
+});

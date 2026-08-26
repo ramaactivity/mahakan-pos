@@ -193,7 +193,14 @@ function PoView() {
   const matchedIngredients = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return catalog.filter((i) => i.isLowStock);
-    return catalog.filter((i) => i.name.toLowerCase().includes(q));
+    /* Sesi AE-220 — cari juga lewat nama sehari-hari, supaya staff yang
+     * mengetik "pembersih lantai" menemukan "Sabun Lantai Cargloss" alih-alih
+     * menyimpulkan bahannya belum ada lalu menulisnya manual. */
+    return catalog.filter(
+      (i) =>
+        i.name.toLowerCase().includes(q) ||
+        (i.aliases ?? []).some((a) => a.toLowerCase().includes(q)),
+    );
   }, [catalog, search]);
 
   /* Layar HP — batasi baris yang dirender biar kueri pendek (mis. "a") tidak
@@ -267,6 +274,8 @@ function PoView() {
         c.unitBelanja ?? "",
         ...(c.packConversions ?? []).map((p) => p.unitLabel),
       ].filter(Boolean),
+      /* Sesi AE-220 — nama sehari-hari ("pembersih lantai") ikut dicari. */
+      aliases: c.aliases,
     }));
 
     const baris = parsePasteList(pasteText, kandidat);
@@ -497,6 +506,17 @@ function PoView() {
       waLink,
     });
     toast.success("Permintaan belanja tersimpan");
+    /* Sesi AE-220 — bahan yang belum ada di master kini ikut tercatat, jadi
+     * belanja berikutnya tinggal dipilih. Katakan ke staff supaya mereka tahu
+     * tidak perlu mengetiknya manual lagi. */
+    const baru = res.data.createdIngredients ?? [];
+    if (baru.length > 0) {
+      toast.info(
+        `${baru.length} bahan baru ditambahkan ke daftar: ${baru
+          .map((b) => b.name)
+          .join(", ")}. Lain kali tinggal dicari.`,
+      );
+    }
   }
 
   if (loading) {

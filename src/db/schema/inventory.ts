@@ -52,6 +52,21 @@ export const ingredients = pgTable(
     }),
     reorderThreshold: bigint("reorder_threshold", { mode: "number" }),
     notes: text("notes"),
+    /**
+     * Sesi AE-220 — NAMA LAIN yang dipakai staff sehari-hari.
+     *
+     * Master memakai nama formal/merek ("Sabun Lantai Cargloss", "Trash Bag
+     * 90 X 120"), sementara daftar belanja staff memakai kata sehari-hari
+     * ("pembersih lantai", "trash bag besar"). Pencocokan otomatis bisa
+     * menangani beda urutan kata dan ejaan, tapi TIDAK bisa menebak bahwa
+     * "pembersih lantai" itu Cargloss — itu pengetahuan manusia.
+     *
+     * Tanpa daftar ini, tiap kata sehari-hari yang tak dikenali akan menjadi
+     * bahan BARU dan memecah stok serta HPP bahan yang sebenarnya sudah ada.
+     *
+     * Bentuk: array string. NULL / [] = tidak punya nama lain.
+     */
+    aliases: jsonb("aliases"),
     isActive: boolean("is_active").notNull().default(true),
 
     // Phase 2 Tier 1.2 (M23) — preparation flag + yield.
