@@ -19,6 +19,12 @@ import {
   listPurchaseRequests,
   listRequestableIngredients,
 } from "@/features/purchase-requests/actions";
+import { markWhatsappSent } from "@/features/purchase-requests/actions";
+import {
+  parsePasteList,
+  resolveUnitForCandidate,
+  type PasteCandidate,
+} from "@/features/purchase-requests/paste-list-pure";
 import {
   isOk,
   type PurchaseRequestWithItems,
@@ -114,10 +120,15 @@ function PoView() {
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<{
+    id: string;
     requestNumber: string;
     waLink: string;
   } | null>(null);
   const [search, setSearch] = useState("");
+  /* Sesi AE-219 — tempel daftar belanja. Staff sudah terbiasa menulis
+   * daftarnya sebagai teks di WhatsApp; terima teks itu apa adanya. */
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
   // Sesi AE-15 — own PR history (staff scope).
   const [tab, setTab] = useState<"buat" | "riwayat">("buat");
   const [history, setHistory] = useState<PurchaseRequestWithItems[]>([]);
@@ -154,6 +165,17 @@ function PoView() {
       cancelled = true;
     };
   }, [historyKey]);
+
+  /* Sesi AE-219 — baris mana yang masih bermasalah. Ditandai di tempatnya,
+   * bukan lewat toast yang menghilang. */
+  const rowIssues = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const it of items) {
+      const r = resolveRow(it);
+      if (!r.ok) m.set(it.id, r.message);
+    }
+    return m;
+  }, [items]);
 
   const lowStockCount = useMemo(
     () => catalog.filter((i) => i.isLowStock).length,
@@ -227,6 +249,103 @@ function PoView() {
     ]);
   }
 
+  /**
+   * Sesi AE-219 — baca daftar tempelan jadi baris-baris item.
+   *
+   * Boleh menempel SELURUH pesan WhatsApp: kepala ("No. PR", "Tanggal") dan
+   * kakinya disaring sendiri. Baris yang namanya cocok ke lebih dari satu
+   * bahan TIDAK ditebak — dicatat sebagai item manual supaya staff yang
+   * memutuskan, karena menebak "gula" jadi Gula Aren padahal maksudnya Gula
+   * Pasir akan salah tanpa ada yang menyadarinya.
+   */
+  function handleParsePaste() {
+    const kandidat: PasteCandidate[] = catalog.map((c) => ({
+      id: c.id,
+      name: c.name,
+      unit: displayUnit(c.unit),
+      packLabels: [
+        c.unitBelanja ?? "",
+        ...(c.packConversions ?? []).map((p) => p.unitLabel),
+      ].filter(Boolean),
+    }));
+
+    const baris = parsePasteList(pasteText, kandidat);
+    if (baris.length === 0) {
+      toast.error("Tidak ada baris bahan yang terbaca dari teks itu.");
+      return;
+    }
+
+    const catalogById = new Map(catalog.map((c) => [c.id, c]));
+    const ambigu: string[] = [];
+    let cocok = 0;
+    let manual = 0;
+
+    setItems((prev) => {
+      const next = [...prev];
+      for (const b of baris) {
+        const tertaut =
+          b.match.kind === "exact" || b.match.kind === "partial"
+            ? catalogById.get(b.match.ingredientId)
+            : undefined;
+
+        if (b.match.kind === "ambiguous") {
+          ambigu.push(b.name);
+        }
+
+        if (tertaut) {
+          const master = displayUnit(tertaut.unit);
+          const kand = kandidat.find((k) => k.id === tertaut.id)!;
+          const satuan = resolveUnitForCandidate(b.unit, kand) ?? master;
+          const sudahAda = next.find((it) => it.ingredientId === tertaut.id);
+          if (sudahAda) {
+            /* Baris kembar dalam satu tempelan: perbarui qty, jangan
+             * menggandakan barisnya. */
+            sudahAda.qty = b.qty !== null ? String(b.qty) : sudahAda.qty;
+            sudahAda.unit = satuan;
+            continue;
+          }
+          cocok++;
+          next.push({
+            id: `master-${tertaut.id}`,
+            ingredientId: tertaut.id,
+            ingredientName: tertaut.name,
+            unit: satuan,
+            masterUnit: master,
+            qty: b.qty !== null ? String(b.qty) : "",
+            notes: "",
+            fromMaster: true,
+            packConversions: tertaut.packConversions,
+            unitBelanja: tertaut.unitBelanja,
+            unitBelanjaPerCogs: tertaut.unitBelanjaPerCogs,
+          });
+        } else {
+          manual++;
+          next.push({
+            id: `paste-${next.length}-${b.name.slice(0, 12)}`,
+            ingredientName: b.name,
+            unit: b.unit ?? "Pcs",
+            masterUnit: null,
+            qty: b.qty !== null ? String(b.qty) : "",
+            notes: "",
+            fromMaster: false,
+          });
+        }
+      }
+      return next;
+    });
+
+    setPasteText("");
+    setPasteOpen(false);
+    toast.success(
+      `${baris.length} baris terbaca — ${cocok} cocok ke master, ${manual} dicatat manual.`,
+    );
+    if (ambigu.length > 0) {
+      toast.warning(
+        `${ambigu.join(", ")}: cocok ke beberapa bahan. Dicatat manual — ganti sendiri lewat pencarian kalau perlu yang tertaut master.`,
+      );
+    }
+  }
+
   function updateItem(id: string, patch: Partial<ItemDraft>) {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
   }
@@ -235,10 +354,87 @@ function PoView() {
     setItems((prev) => prev.filter((it) => it.id !== id));
   }
 
+  /**
+   * Sesi AE-219 — periksa SATU baris. Dipakai bersama oleh tampilan (untuk
+   * menandai baris yang bermasalah) dan oleh pengiriman, supaya keduanya
+   * tidak pernah berbeda pendapat.
+   *
+   * Dulu pemeriksaan hanya hidup di dalam handleSubmit dan satu baris cacat
+   * MEMBATALKAN SELURUH pengiriman lewat toast yang lalu hilang. Untuk daftar
+   * satu-dua item itu masih tertahankan; untuk sepuluh baris tempelan, itu
+   * jalan buntu yang tidak kelihatan sebabnya.
+   */
+  function resolveRow(it: ItemDraft):
+    | {
+        ok: true;
+        value: {
+          ingredientId: string | null;
+          ingredientName: string;
+          unit: string;
+          requestedQty: number;
+          notes: string | null;
+        };
+      }
+    | { ok: false; message: string } {
+    const name = it.ingredientName.trim();
+    if (!name) return { ok: false, message: "Nama bahan belum diisi" };
+
+    /* Sesi AE-136 — strict Indonesian parser. */
+    const qty = parseIndonesianNumber(it.qty);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return {
+        ok: false,
+        message: "Qty belum diisi / tidak valid (pakai koma untuk desimal, mis. 0,5)",
+      };
+    }
+
+    /* Sesi AE-177d — kalau staff pilih satuan ≠ master (linked item),
+     * konversi qty ke master pakai packConversions yg sama dgn Opname.
+     * Hasil disimpan dalam satuan MASTER supaya alur PR→PO→GR konsisten. */
+    let finalQty = qty;
+    let finalUnit = it.unit.trim() || "pcs";
+    const master = it.masterUnit ? displayUnit(it.masterUnit) : null;
+    if (it.ingredientId && master) {
+      const chosen = displayUnit(it.unit);
+      if (chosen && chosen !== master) {
+        const merged = mergePackConversions(
+          (it.packConversions ?? []) as IngredientPackConversion[],
+          it.unitBelanja && it.unitBelanjaPerCogs
+            ? [
+                {
+                  unitLabel: it.unitBelanja,
+                  qtyPerBase: parseFloat(it.unitBelanjaPerCogs),
+                },
+              ]
+            : [],
+        );
+        const conv = convertQtyWithIngredientPacks(qty, chosen, master, merged);
+        if (!conv.ok || conv.qtyMaster === null || conv.qtyMaster <= 0) {
+          return {
+            ok: false,
+            message: `Satuan ${chosen} belum punya konversi ke ${master}. Pilih satuan lain, atau minta owner set Konversi Pack di Kelola Bahan.`,
+          };
+        }
+        finalQty = conv.qtyMaster;
+      }
+      finalUnit = master;
+    }
+
+    return {
+      ok: true,
+      value: {
+        ingredientId: it.ingredientId ?? null,
+        ingredientName: name,
+        unit: finalUnit,
+        requestedQty: finalQty,
+        notes: it.notes.trim() || null,
+      },
+    };
+  }
+
   async function handleSubmit() {
     if (submitting) return;
 
-    // Validate items
     const validatedItems: Array<{
       ingredientId: string | null;
       ingredientName: string;
@@ -247,59 +443,16 @@ function PoView() {
       notes: string | null;
     }> = [];
     for (const it of items) {
-      const name = it.ingredientName.trim();
-      if (!name) {
-        toast.error("Nama bahan tidak boleh kosong");
-        return;
-      }
-      /* Sesi AE-136 — strict Indonesian parser. */
-      const qty = parseIndonesianNumber(it.qty);
-      if (!Number.isFinite(qty) || qty <= 0) {
+      const r = resolveRow(it);
+      if (!r.ok) {
+        /* Baris bermasalah sudah ditandai merah di layar; toast di sini cuma
+         * mengarahkan mata staff ke sana. */
         toast.error(
-          `Qty untuk ${name} invalid. Pakai koma untuk desimal (mis. 0,5).`,
+          `${it.ingredientName.trim() || "Satu baris"}: ${r.message}`,
         );
         return;
       }
-      /* Sesi AE-177d — kalau staff pilih satuan ≠ master (linked item),
-       * konversi qty ke master pakai packConversions yg sama dgn Opname.
-       * Hasil disimpan dalam satuan MASTER supaya alur PR→PO→GR konsisten
-       * (Tarik PR akan baca outstanding dalam master + tampilkan di satuan
-       * belanja owner). Manual item: kirim apa adanya. */
-      let finalQty = qty;
-      let finalUnit = it.unit.trim() || "pcs";
-      const master = it.masterUnit ? displayUnit(it.masterUnit) : null;
-      if (it.ingredientId && master) {
-        const chosen = displayUnit(it.unit);
-        if (chosen && chosen !== master) {
-          const merged = mergePackConversions(
-            (it.packConversions ?? []) as IngredientPackConversion[],
-            it.unitBelanja && it.unitBelanjaPerCogs
-              ? [
-                  {
-                    unitLabel: it.unitBelanja,
-                    qtyPerBase: parseFloat(it.unitBelanjaPerCogs),
-                  },
-                ]
-              : [],
-          );
-          const conv = convertQtyWithIngredientPacks(qty, chosen, master, merged);
-          if (!conv.ok || conv.qtyMaster === null || conv.qtyMaster <= 0) {
-            toast.error(
-              `${name}: tidak bisa konversi ${chosen} ke ${master}. Pilih satuan lain atau minta owner set Konversi Pack di Kelola Bahan.`,
-            );
-            return;
-          }
-          finalQty = conv.qtyMaster;
-        }
-        finalUnit = master;
-      }
-      validatedItems.push({
-        ingredientId: it.ingredientId ?? null,
-        ingredientName: name,
-        unit: finalUnit,
-        requestedQty: finalQty,
-        notes: it.notes.trim() || null,
-      });
+      validatedItems.push(r.value);
     }
 
     if (validatedItems.length === 0) {
@@ -339,6 +492,7 @@ function PoView() {
     const waLink = buildWaLink(message);
 
     setSubmitResult({
+      id: res.data.id,
       requestNumber: `REQ-${res.data.id.slice(0, 8).toUpperCase()}`,
       waLink,
     });
@@ -380,6 +534,14 @@ function PoView() {
           href={submitResult.waLink}
           target="_blank"
           rel="noopener noreferrer"
+          /* Sesi AE-219 — sebelumnya tautan ini cuma <a> polos, jadi 0 dari 36
+           * PR sebulan terakhir pernah tercatat "dikirim ke WA". Owner tidak
+           * punya cara membedakan permintaan yang sudah disampaikan dari yang
+           * masih mengendap. Fire-and-forget: gagal mencatat tidak boleh
+           * menghalangi staff membuka WhatsApp. */
+          onClick={() => {
+            void markWhatsappSent(submitResult.id);
+          }}
           className="block rounded-md bg-success-500 px-5 py-3 text-center text-base font-medium text-white transition-colors hover:bg-success-500/90 active:scale-95"
         >
           Buka WhatsApp
@@ -408,12 +570,18 @@ function PoView() {
         <div className="flex items-center gap-2">
           <ClipboardList className="size-5 text-mahakan-green-700" aria-hidden />
           <h1 className="text-lg font-bold text-mahakan-green-900">
-            Purchase Order
+            Daftar Belanja
           </h1>
         </div>
+        {/* Sesi AE-219 — dulu judulnya "Purchase Order" dan ajakannya "pilih
+          * bahan low-stock", jadi layar ini terbaca sebagai alat saran stok
+          * menipis. Akibatnya daftar belanja yang sebenarnya tetap hidup di
+          * WhatsApp dan dashboard owner tidak pernah lengkap: 39 dari 82 PR
+          * dua bulan terakhir cuma berisi SATU item. */}
         <p className="text-sm text-neutral-700">
-          Pilih bahan low-stock atau tambah manual. Kirim ke Owner via
-          WhatsApp setelah submit.
+          Tulis <strong>semua</strong> yang perlu dibeli — bahan apa pun boleh,
+          tidak harus yang stoknya menipis. Sudah punya daftarnya di WhatsApp?
+          Tempel saja sekaligus.
         </p>
       </header>
 
@@ -463,13 +631,59 @@ function PoView() {
 
       {tab !== "buat" ? null : (
       <>
+      {/* Sesi AE-219 — TEMPEL DAFTAR SEKALIGUS.
+        *
+        * Mengetik sepuluh bahan satu per satu di layar HP itu berat, dan
+        * staff sudah punya kebiasaan yang jalan: menulis daftarnya sebagai
+        * teks. Daripada melawan kebiasaan itu, terima teksnya. */}
+      <section className="rounded-xl border border-mahakan-green-200 bg-mahakan-green-50 p-3">
+        <button
+          type="button"
+          onClick={() => setPasteOpen((v) => !v)}
+          className="flex w-full items-center justify-between gap-2 text-left"
+        >
+          <span className="flex items-center gap-2 text-sm font-semibold text-mahakan-green-900">
+            <ClipboardList className="size-4" aria-hidden />
+            Tempel daftar sekaligus
+          </span>
+          <span className="text-[11px] font-medium text-mahakan-green-700">
+            {pasteOpen ? "Tutup" : "Buka"}
+          </span>
+        </button>
+        {pasteOpen ? (
+          <div className="mt-2 space-y-2">
+            <p className="text-[11px] leading-relaxed text-neutral-700">
+              Tulis satu bahan per baris, misal{" "}
+              <span className="font-mono">gula - 1 kg</span>. Boleh juga
+              menempel seluruh pesan WhatsApp — nomor urut, judul, dan bagian
+              bawahnya diabaikan sendiri.
+            </p>
+            <textarea
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              rows={6}
+              placeholder={"1. sendok plastik - 2 pck\n2. gula - 1 kg\n3. ayam fillet paha - 1 kg"}
+              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 font-mono text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-mahakan-green-700 focus:outline-none"
+            />
+            <Button
+              size="lg"
+              fullWidth
+              onClick={handleParsePaste}
+              disabled={!pasteText.trim()}
+            >
+              Baca Daftar
+            </Button>
+          </div>
+        ) : null}
+      </section>
+
       {/* Sesi AE-190 — pemilih bahan dari SELURUH master. Section ini selalu
        *  dirender: dulu digerbangi `lowStock.length > 0`, jadi saat tidak ada
        *  bahan low-stock kotak pencariannya ikut hilang total. */}
       <section>
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-600">
-            {search.trim() ? "Hasil Pencarian" : "Stok Menipis — Saran Otomatis"}
+            {search.trim() ? "Hasil Pencarian" : "Saran: Stok Menipis"}
           </h2>
           <span className="text-[11px] text-neutral-600">
             {items.filter((i) => i.fromMaster).length} dipilih
@@ -480,16 +694,15 @@ function PoView() {
           size="lg"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder={`Cari dari ${catalog.length} bahan…`}
+          placeholder={`Cari bahan apa saja (${catalog.length} bahan)…`}
           leadingIcon={<Search className="size-4" aria-hidden />}
           className="mb-2"
         />
         {!search.trim() ? (
           <p className="mb-2 text-[11px] text-neutral-600">
-            {lowStockCount > 0
-              ? `${lowStockCount} bahan stoknya menipis. `
-              : "Belum ada bahan yang stoknya menipis. "}
-            Bahan lain tetap bisa diminta — ketik namanya di kotak pencarian.
+            Ini cuma saran{lowStockCount > 0 ? ` (${lowStockCount} bahan menipis)` : ""}
+            , bukan batasan. Bahan apa pun boleh diminta — ketik namanya di
+            kotak pencarian di atas.
           </p>
         ) : null}
         <ul className="space-y-2">
@@ -588,7 +801,12 @@ function PoView() {
             {items.map((it) => (
               <li
                 key={it.id}
-                className="rounded-lg border border-neutral-200 bg-white p-3"
+                className={cn(
+                  "rounded-lg border bg-white p-3",
+                  rowIssues.has(it.id)
+                    ? "border-danger-500"
+                    : "border-neutral-200",
+                )}
               >
                 <div className="flex items-start justify-between gap-2">
                   {it.fromMaster ? (
@@ -663,6 +881,11 @@ function PoView() {
                     dikonversi)
                   </p>
                 ) : null}
+                {rowIssues.get(it.id) ? (
+                  <p className="mt-1.5 rounded-md bg-danger-100 px-2 py-1.5 text-[11px] font-medium leading-relaxed text-danger-500">
+                    {rowIssues.get(it.id)}
+                  </p>
+                ) : null}
                 <input
                   type="text"
                   value={it.notes}
@@ -703,11 +926,13 @@ function PoView() {
         fullWidth
         onClick={handleSubmit}
         loading={submitting}
-        disabled={submitting || items.length === 0}
+        disabled={submitting || items.length === 0 || rowIssues.size > 0}
       >
         {submitting
           ? "Menyimpan…"
-          : `Submit ${items.length > 0 ? `(${items.length} item)` : ""}`}
+          : rowIssues.size > 0
+            ? `${rowIssues.size} baris perlu dibetulkan`
+            : `Kirim Permintaan ${items.length > 0 ? `(${items.length} item)` : ""}`}
       </Button>
       </>
       )}
