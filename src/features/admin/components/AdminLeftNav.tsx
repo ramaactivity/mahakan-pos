@@ -104,9 +104,13 @@ interface NavGroup {
  * Sesi AE-222 — owner directive 2026-08-29: Finance naik ke posisi 2 (tepat
  * setelah Operasi) karena itu menu yang paling sering dibuka owner; Inventaris
  * + Menu digabung jadi satu group; Cashflow dan Modal & Dividen dilebur MASUK
- * Finance. Karena Finance jadi 12 item, isinya dipecah pakai sub-label
- * (Kas & Setoran / Pembukuan / Modal & Dividen) — group tetap satu, cuma
- * dikasih titik istirahat visual.
+ * Finance. Karena isinya jadi 12 item, dipecah pakai sub-label — group tetap
+ * satu, cuma dikasih titik istirahat visual.
+ *
+ * AE-222b — sub "Pembukuan" dibubarkan: akuntansi, rekonsiliasi, dan antrian
+ * jurnal adalah inti group ini, jadi naik ke badan utama dan headingnya jadi
+ * "Finance & Accounting". Online & Cashless pindah ke Kas & Setoran — yang
+ * dilihat owner di situ uang masuk per channel, bukan jurnalnya.
  */
 const NAV_GROUPS: NavGroup[] = [
   {
@@ -121,11 +125,16 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    heading: "Finance",
+    heading: "Finance & Accounting",
     items: [
       { key: "finance", label: "Keuangan", Icon: Banknote },
       { key: "balance_account", label: "Saldo Akun", Icon: WalletIcon },
       { key: "reports", label: "Laporan", Icon: BarChart3 },
+      { key: "accounting", label: "Akuntansi", Icon: BookOpen },
+      { key: "reconciliation", label: "Rekonsiliasi", Icon: History },
+      /* Sesi AE-62w — antrian retry untuk failed journal hooks.
+       * Owner trigger retry / abandon. Manager view-only (via RBAC). */
+      { key: "journal_retry", label: "Antrian Jurnal", Icon: AlertTriangle },
       {
         key: "setoran_tunai",
         label: "Setoran Tunai",
@@ -136,19 +145,11 @@ const NAV_GROUPS: NavGroup[] = [
       /* Sesi AE-132 — Arsip foto nota staff (dokumentasi murni, tidak
        * terikat finance). Ikut Kas & Setoran karena overlap konseptual. */
       { key: "nota_archive", label: "Arsip Nota", Icon: FileText },
-      {
-        key: "accounting",
-        label: "Akuntansi",
-        Icon: BookOpen,
-        sub: "Pembukuan",
-      },
       /* Sesi AE-77 — Laporan online order (GoFood/GrabFood/ShopeeFood)
-       * + cashless (QRIS/EDC). Drilldown per-order kalau import CSV. */
+       * + cashless (QRIS/EDC). Drilldown per-order kalau import CSV.
+       * AE-222b — masuk Kas & Setoran (owner directive): ini soal uang
+       * masuk per channel, bukan pembukuannya. */
       { key: "aggregator_online", label: "Online & Cashless", Icon: Bike },
-      { key: "reconciliation", label: "Rekonsiliasi", Icon: History },
-      /* Sesi AE-62w — antrian retry untuk failed journal hooks.
-       * Owner trigger retry / abandon. Manager view-only (via RBAC). */
-      { key: "journal_retry", label: "Antrian Jurnal", Icon: AlertTriangle },
       /* Sesi AE-63 — Investor + Pengelola + distribusi dividen bulanan. */
       {
         key: "investors",
