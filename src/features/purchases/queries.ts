@@ -43,10 +43,54 @@ export async function fetchPurchases(
   if (opts.paymentMethod)
     conds.push(eq(purchases.paymentMethod, opts.paymentMethod));
   // Sesi AE-207 — daftar Pembelian mulai dari batas buku.
-  const dateFrom = clampFromDate(opts.dateFrom, await getCutoffDate(outletId));
-  if (dateFrom) conds.push(gte(purchases.purchaseDate, dateFrom));
-  if (opts.dateTo)
-    conds.push(lte(purchases.purchaseDate, opts.dateTo));
+  const cutoff = await getCutoffDate(outletId);
+  const dateFrom = clampFromDate(opts.dateFrom, cutoff);
+
+  /**
+   * Sesi AE-219b — PO yang masih TERBUKA tidak ikut disembunyikan.
+   *
+   * Aturannya sudah dipakai riwayat hutang TOP sejak AE-207 ("hutang hidup
+   * tidak boleh disembunyikan, yang disembunyikan hanya riwayat yang sudah
+   * beres") — tapi daftar Pembelian belum ikut, sehingga PO Cargloss 25 Juni
+   * yang belum diterima DAN belum lunas lenyap di balik batas buku 1 Juli.
+   * Tidak ada error, tidak ada tanda: pesanannya sekadar tidak pernah muncul
+   * lagi, jadi tidak pernah bisa diselesaikan.
+   *
+   * "Terbuka" = belum diterima (ordered/partial) ATAU belum lunas. Yang sudah
+   * diterima dan sudah lunas tetap tersembunyi — itu memang riwayat.
+   */
+  const stillOpen = sql`(${purchases.receiptStatus} IN ('ordered','partial')
+      OR ${purchases.status} = 'pending_payment')`;
+
+  /* Batas bawah tanggal yang BERLAKU untuk owner: filter yang dia ketik, atau
+   * batas buku kalau dia tidak memfilter. Dipakai juga untuk menandai baris
+   * yang muncul dari luar rentang. */
+  const effectiveFrom = opts.dateFrom ?? cutoff;
+  /* Lantainya datang dari batas buku, bukan dari filter yang diketik owner? */
+  const flooredByCutoff =
+    cutoff !== null && (!opts.dateFrom || opts.dateFrom < cutoff);
+
+  const rangeConds = [];
+  if (dateFrom) rangeConds.push(gte(purchases.purchaseDate, dateFrom));
+  if (opts.dateTo) rangeConds.push(lte(purchases.purchaseDate, opts.dateTo));
+
+  if (rangeConds.length > 0) {
+    /* PO terbuka boleh menembus rentang kalau (a) lantainya cuma batas buku —
+     * kalau tidak, pesanannya lenyap selamanya, atau (b) pemanggil memang
+     * minta (tab PO sebagai daftar kerja). Filter tanggal yang diketik owner
+     * sendiri tidak ditembus diam-diam: kasus (b) menandai barisnya. */
+    const openMayBypass = opts.includeOpenOutsideRange === true || flooredByCutoff;
+    if (openMayBypass) {
+      /* Sisi atas tetap dihormati — pesanan bertanggal setelah rentang tidak
+       * ikut melompat masuk. */
+      const openSide = opts.dateTo
+        ? sql`(${stillOpen} AND ${purchases.purchaseDate} <= ${opts.dateTo})`
+        : stillOpen;
+      conds.push(sql`(${and(...rangeConds)} OR ${openSide})`);
+    } else {
+      conds.push(...rangeConds);
+    }
+  }
 
   const rows = await db
     .select({
@@ -72,6 +116,10 @@ export async function fetchPurchases(
     ...r.purchase,
     supplierName: r.supplierName,
     itemCount: r.itemCount,
+    /* Muncul karena masih terbuka, bukan karena masuk rentang yang dipilih. */
+    outsideRange: Boolean(
+      effectiveFrom && String(r.purchase.purchaseDate) < effectiveFrom,
+    ),
   }));
 }
 

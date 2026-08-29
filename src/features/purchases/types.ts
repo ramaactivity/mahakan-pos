@@ -120,6 +120,13 @@ export function isOk<T>(
 export interface PurchaseListItem extends Purchase {
   supplierName: string | null;
   itemCount: number;
+  /**
+   * Sesi AE-219b — baris ini muncul karena masih terbuka, padahal tanggalnya
+   * di luar rentang yang sedang dilihat. Ditandai supaya layar bisa bilang
+   * apa adanya; kalau tidak, angkanya terlihat seperti bagian dari bulan yang
+   * sedang dibuka.
+   */
+  outsideRange?: boolean;
 }
 
 export interface PurchaseDetail extends Purchase {
@@ -143,6 +150,18 @@ export interface ListPurchasesOptions {
   dateTo?: string;
   limit?: number;
   offset?: number;
+  /**
+   * Sesi AE-219b — ikut sertakan PO yang MASIH TERBUKA (belum diterima /
+   * belum lunas) walaupun tanggalnya di luar rentang yang dipilih.
+   *
+   * Tab PO itu daftar kerja, bukan arsip: pesanan yang belum diterima dan
+   * nota yang belum lunas adalah pekerjaan yang belum selesai. Menyembunyikan-
+   * nya hanya karena bulan yang sedang dilihat berbeda membuatnya tidak pernah
+   * bisa diselesaikan — persis yang terjadi pada PO Cargloss 25 Juni.
+   * Barisnya ditandai `outsideRange` supaya layar bisa menjelaskannya, bukan
+   * memunculkannya diam-diam.
+   */
+  includeOpenOutsideRange?: boolean;
 }
 
 export interface TopOutstandingItem {

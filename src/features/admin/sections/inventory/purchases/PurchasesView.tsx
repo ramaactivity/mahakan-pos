@@ -213,6 +213,11 @@ export function PurchasesView({
           supplierId: supplierFilter ?? undefined,
           dateFrom: dateRange.from || undefined,
           dateTo: dateRange.to || undefined,
+          /* Sesi AE-219b — pesanan yang belum diterima / belum lunas ikut
+           * ditarik walau tanggalnya di luar rentang. Tab ini daftar KERJA:
+           * PO Cargloss 25 Juni sempat lenyap di balik batas buku 1 Juli dan
+           * jadi tidak bisa diselesaikan sama sekali. Barisnya ditandai. */
+          includeOpenOutsideRange: true,
         }),
         listSuppliers({ activeOnly: false }),
       ]);
@@ -440,6 +445,13 @@ export function PurchasesView({
                     <tr key={p.id} className="hover:bg-neutral-50">
                       <td className="px-4 py-3 font-mono text-xs">
                         {p.purchaseDate}
+                        {/* Sesi AE-219b — jangan biarkan baris dari luar
+                            rentang terlihat seperti bagian bulan ini. */}
+                        {p.outsideRange ? (
+                          <span className="mt-0.5 block font-sans text-[10px] font-medium text-warning-500">
+                            di luar rentang · masih terbuka
+                          </span>
+                        ) : null}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
