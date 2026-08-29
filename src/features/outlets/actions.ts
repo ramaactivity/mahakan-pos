@@ -301,6 +301,9 @@ const scheduleTemplatesSchema = z.object({
         label: z.string().trim().min(1).max(20),
         start: timeHHmm,
         end: timeHHmm,
+        /* Sesi AE-222 — kelompok template (Weekday/Weekend). Optional:
+         * template lama tanpa group tetap valid, di UI masuk "Lainnya". */
+        group: z.enum(["weekday", "weekend"]).optional(),
       }),
     )
     .min(1, "Minimal 1 template")

@@ -173,6 +173,9 @@ export type OutletSettings = {
     label: string;
     start: string; // HH:mm
     end: string; // HH:mm
+    /** Sesi AE-222 — kelompok template; undefined = template lama
+     * (ditampilkan di kelompok "Lainnya"). */
+    group?: "weekday" | "weekend";
   }>;
   /** Payroll formula auto-fill (Sesi E). When set, computePayrollLines
    * derives late_deduction + overtime_pay from these rates × the

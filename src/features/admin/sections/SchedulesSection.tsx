@@ -63,20 +63,103 @@ const DAYS_OF_WEEK = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 /* Sesi AE-51/53 — template shift untuk percepat input HR. Defaults
  * jadi fallback kalau outlet belum custom templates di Settings.
  * AE-53: defaults disesuaikan dengan jam operasional Mahakan owner ask. */
-export const DEFAULT_SHIFT_TEMPLATES: ReadonlyArray<{
+export type ShiftTemplateGroup = "weekday" | "weekend";
+
+export type ShiftTemplate = {
   label: string;
   start: string;
   end: string;
-}> = [
-  /* Sesi AE-62ae — defaults disesuaikan ops Mahakan owner directive 2026-05-18.
-   *   - Weekday: buka 14:00-22:00, staff masuk 13:00 (prep 1 jam).
-   *   - Weekend: buka 09:00-23:00 dengan 3 shift (Pagi/Siang/Full=double).
+  /* Sesi AE-222 — owner directive: template dipilih 2 tingkat (pilih
+   * Weekday/Weekend dulu, baru shift-nya). Template lama yang belum punya
+   * group tetap kepakai, masuk kelompok "Lainnya". */
+  group?: ShiftTemplateGroup;
+};
+
+export const DEFAULT_SHIFT_TEMPLATES: ReadonlyArray<ShiftTemplate> = [
+  /* Sesi AE-222 — jam ops Mahakan per owner directive 2026-08-29.
    * Owner edit lewat Settings → Template Shift kalau outlet beda jam ops. */
-  { label: "Weekday", start: "13:00", end: "22:00" },
-  { label: "Pagi", start: "08:00", end: "17:00" },
-  { label: "Siang", start: "13:00", end: "23:00" },
-  { label: "Full / Double", start: "08:00", end: "23:00" },
+  { group: "weekday", label: "Shift 1", start: "08:00", end: "17:00" },
+  { group: "weekday", label: "Shift 2", start: "13:00", end: "22:00" },
+  { group: "weekday", label: "Fullday", start: "08:00", end: "22:00" },
+  { group: "weekend", label: "Shift 1", start: "08:00", end: "17:00" },
+  { group: "weekend", label: "Shift 2", start: "14:00", end: "23:00" },
+  { group: "weekend", label: "Fullday", start: "08:00", end: "23:00" },
 ];
+
+/* Sesi AE-222 — bucket template per kelompok. Index asli ikut dibawa supaya
+ * pemanggil yang menyimpan `templateIdx` (Bulk Assign) tetap valid. */
+type ShiftTemplateBucket = {
+  key: ShiftTemplateGroup | "other";
+  label: string;
+  items: Array<{ tpl: ShiftTemplate; idx: number }>;
+};
+
+function groupShiftTemplates(
+  templates: ReadonlyArray<ShiftTemplate>,
+): ShiftTemplateBucket[] {
+  const buckets: ShiftTemplateBucket[] = [
+    { key: "weekday", label: "Weekday", items: [] },
+    { key: "weekend", label: "Weekend", items: [] },
+    { key: "other", label: "Lainnya", items: [] },
+  ];
+  templates.forEach((tpl, idx) => {
+    const bucket =
+      tpl.group === "weekday"
+        ? buckets[0]!
+        : tpl.group === "weekend"
+          ? buckets[1]!
+          : buckets[2]!;
+    bucket.items.push({ tpl, idx });
+  });
+  return buckets.filter((b) => b.items.length > 0);
+}
+
+/** Sabtu/Minggu = weekend. `date` = YYYY-MM-DD. */
+function isWeekendDate(date: string): boolean {
+  const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
+  return dow === 0 || dow === 6;
+}
+
+/* Sesi AE-222 — tab kelompok template (Weekday / Weekend / Lainnya).
+ * Disembunyikan kalau cuma ada 1 kelompok supaya tidak jadi UI mati. */
+function ShiftTemplateGroupTabs({
+  groups,
+  activeKey,
+  onSelect,
+  disabled,
+}: {
+  groups: ShiftTemplateBucket[];
+  activeKey: string;
+  onSelect: (bucket: ShiftTemplateBucket) => void;
+  disabled?: boolean;
+}) {
+  if (groups.length <= 1) return null;
+  return (
+    <div className="mb-2 inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5">
+      {groups.map((g) => {
+        const active = g.key === activeKey;
+        return (
+          <button
+            key={g.key}
+            type="button"
+            onClick={() => onSelect(g)}
+            disabled={disabled}
+            aria-pressed={active}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-xs font-semibold transition-all",
+              active
+                ? "bg-white text-mahakan-green-900 shadow-sm ring-1 ring-mahakan-green-700/30"
+                : "text-neutral-600 hover:text-neutral-900",
+              disabled && "opacity-50 cursor-not-allowed",
+            )}
+          >
+            {g.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -229,9 +312,7 @@ export function SchedulesSection() {
       return res.data;
     },
   });
-  const shiftTemplates = useMemo<
-    ReadonlyArray<{ label: string; start: string; end: string }>
-  >(() => {
+  const shiftTemplates = useMemo<ReadonlyArray<ShiftTemplate>>(() => {
     const fromSettings =
       outletQuery.data?.settings?.scheduleTemplates ?? null;
     return fromSettings && fromSettings.length > 0
@@ -1674,7 +1755,7 @@ function BulkAssignDialog({
   onSaved,
 }: {
   employees: ActiveEmployee[];
-  templates: ReadonlyArray<{ label: string; start: string; end: string }>;
+  templates: ReadonlyArray<ShiftTemplate>;
   weekStart: Date;
   onClose: () => void;
   onSaved: () => void;
@@ -1695,6 +1776,15 @@ function BulkAssignDialog({
     () => new Set([0, 1, 2, 3, 4, 5, 6]),
   );
   const [templateIdx, setTemplateIdx] = useState(0);
+  /* Sesi AE-222 — kelompok template aktif; templateIdx tetap index ke array
+   * flat `templates` supaya payload bulk assign tidak berubah. */
+  const templateGroups = useMemo(
+    () => groupShiftTemplates(templates),
+    [templates],
+  );
+  const [groupKey, setGroupKey] = useState<string>(
+    () => groupShiftTemplates(templates)[0]?.key ?? "weekday",
+  );
   const [markOff, setMarkOff] = useState(false);
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -1739,6 +1829,8 @@ function BulkAssignDialog({
   }
 
   const tpl = templates[templateIdx];
+  const activeTemplateGroup =
+    templateGroups.find((g) => g.key === groupKey) ?? templateGroups[0];
 
   function toggleEmployee(id: string) {
     setSelectedEmployees((prev) => {
@@ -1984,12 +2076,25 @@ function BulkAssignDialog({
             </span>
           </label>
           {!markOff ? (
-            <div className="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-              {templates.map((t, i) => {
+            <div className="mt-1.5">
+              <ShiftTemplateGroupTabs
+                groups={templateGroups}
+                activeKey={activeTemplateGroup?.key ?? ""}
+                onSelect={(g) => {
+                  setGroupKey(g.key);
+                  /* Pindah kelompok = pilihan lama tidak lagi kelihatan,
+                   * jadi langsung arahkan ke shift pertama kelompok itu. */
+                  const first = g.items[0];
+                  if (first) setTemplateIdx(first.idx);
+                }}
+                disabled={submitting}
+              />
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+              {(activeTemplateGroup?.items ?? []).map(({ tpl: t, idx: i }) => {
                 const active = templateIdx === i;
                 return (
                   <button
-                    key={t.label}
+                    key={i}
                     type="button"
                     onClick={() => setTemplateIdx(i)}
                     className={cn(
@@ -2006,6 +2111,7 @@ function BulkAssignDialog({
                   </button>
                 );
               })}
+              </div>
             </div>
           ) : null}
         </section>
@@ -2036,20 +2142,17 @@ function EditTemplatesDialog({
   onClose,
   onSaved,
 }: {
-  current: ReadonlyArray<{ label: string; start: string; end: string }>;
+  current: ReadonlyArray<ShiftTemplate>;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [items, setItems] = useState(
+  const [items, setItems] = useState<ShiftTemplate[]>(
     current.map((t) => ({ ...t })),
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function updateItem(
-    idx: number,
-    patch: Partial<{ label: string; start: string; end: string }>,
-  ) {
+  function updateItem(idx: number, patch: Partial<ShiftTemplate>) {
     setItems((prev) =>
       prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)),
     );
@@ -2058,7 +2161,7 @@ function EditTemplatesDialog({
     if (items.length >= 10) return;
     setItems((prev) => [
       ...prev,
-      { label: "Baru", start: "09:00", end: "17:00" },
+      { group: "weekday", label: "Baru", start: "09:00", end: "17:00" },
     ]);
   }
   function removeItem(idx: number) {
@@ -2090,6 +2193,7 @@ function EditTemplatesDialog({
         label: t.label.trim(),
         start: t.start,
         end: t.end,
+        ...(t.group ? { group: t.group } : {}),
       })),
     });
     setSubmitting(false);
@@ -2106,7 +2210,7 @@ function EditTemplatesDialog({
       open
       onClose={onClose}
       title="Edit Template Shift"
-      description="Atur jam preset (Pagi/Siang/Sore/Full atau custom). Dipakai di Edit Schedule + Bulk Assign."
+      description="Atur jam preset per kelompok (Weekday / Weekend). Dipakai di Edit Schedule + Bulk Assign."
       size="md"
       footer={
         <div className="flex w-full justify-between gap-2">
@@ -2128,14 +2232,56 @@ function EditTemplatesDialog({
        * lebih rapih + jelas mana name/start/end. */}
       <div className="space-y-2.5">
         <p className="text-xs text-neutral-600">
-          Atur jam preset shift untuk outlet. Template muncul sebagai tombol
-          quick-fill di Edit Schedule dan Bulk Assign.
+          Atur jam preset shift untuk outlet. Tiap template masuk kelompok
+          Weekday atau Weekend; di Edit Schedule dan Bulk Assign kelompoknya
+          dipilih dulu, baru shift-nya.
         </p>
         {items.map((t, idx) => (
           <div
             key={idx}
             className="rounded-lg border border-neutral-200 bg-white p-3"
           >
+            {/* Sesi AE-222 — kelompok template. "Lainnya" = template lama
+             * yang belum di-assign; sengaja tetap bisa dipilih supaya data
+             * outlet lama tidak dipaksa pindah. */}
+            <div className="mb-2 flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                Kelompok
+              </span>
+              {(
+                [
+                  { key: "weekday", label: "Weekday" },
+                  { key: "weekend", label: "Weekend" },
+                  { key: "other", label: "Lainnya" },
+                ] as const
+              ).map((g) => {
+                const active = (t.group ?? "other") === g.key;
+                return (
+                  <button
+                    key={g.key}
+                    type="button"
+                    onClick={() =>
+                      updateItem(idx, {
+                        group:
+                          g.key === "other"
+                            ? undefined
+                            : (g.key as ShiftTemplateGroup),
+                      })
+                    }
+                    disabled={submitting}
+                    aria-pressed={active}
+                    className={cn(
+                      "rounded-md border px-2.5 py-1 text-[11px] font-medium transition-all",
+                      active
+                        ? "border-mahakan-green-700 bg-mahakan-green-50 text-mahakan-green-900"
+                        : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50",
+                    )}
+                  >
+                    {g.label}
+                  </button>
+                );
+              })}
+            </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end">
               <div className="space-y-1">
                 <label
@@ -2151,7 +2297,7 @@ function EditTemplatesDialog({
                   onChange={(e) =>
                     updateItem(idx, { label: e.target.value })
                   }
-                  placeholder="mis. Pagi"
+                  placeholder="mis. Shift 1"
                   className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
                   maxLength={20}
                 />
@@ -2307,7 +2453,7 @@ function ScheduleEditDialog({
   /** Sesi AE-53 — templates dari outlet settings; fallback defaults
    * kalau owner belum custom. Pass dari parent supaya 1× fetch per
    * SchedulesSection lifecycle (di-share antara modal + bulk assign). */
-  templates: ReadonlyArray<{ label: string; start: string; end: string }>;
+  templates: ReadonlyArray<ShiftTemplate>;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -2317,18 +2463,35 @@ function ScheduleEditDialog({
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /* Sesi AE-222 — kelompok template yang sedang dibuka (Weekday/Weekend). */
+  const [groupKey, setGroupKey] = useState<string>("weekday");
+
+  const groups = useMemo(() => groupShiftTemplates(templates), [templates]);
 
   useEffect(() => {
     if (!editing) return;
+    const start = editing.existing?.startTime?.slice(0, 5) ?? "09:00";
+    const end = editing.existing?.endTime?.slice(0, 5) ?? "17:00";
+    /* Kelompok yang dibuka: kalau jadwal lama cocok ke salah satu template,
+     * buka kelompok itu supaya tombolnya kelihatan aktif. Kalau tidak, ikut
+     * hari tanggalnya (Sabtu/Minggu → Weekend). */
+    const matched = groups.find((g) =>
+      g.items.some((it) => it.tpl.start === start && it.tpl.end === end),
+    );
+    const preferred = isWeekendDate(editing.date) ? "weekend" : "weekday";
+    const fallback = groups.find((g) => g.key === preferred) ?? groups[0];
     /* eslint-disable react-hooks/set-state-in-effect */
     setDayOff(editing.existing?.dayOff ?? false);
-    setStartTime(editing.existing?.startTime?.slice(0, 5) ?? "09:00");
-    setEndTime(editing.existing?.endTime?.slice(0, 5) ?? "17:00");
+    setStartTime(start);
+    setEndTime(end);
     setNotes(editing.existing?.notes ?? "");
+    setGroupKey((matched ?? fallback)?.key ?? "weekday");
     setError(null);
     setSubmitting(false);
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [editing]);
+  }, [editing, groups]);
+
+  const activeGroup = groups.find((g) => g.key === groupKey) ?? groups[0];
 
   if (!editing) return null;
 
@@ -2419,19 +2582,26 @@ function ScheduleEditDialog({
         {!dayOff ? (
           <>
             {/* Sesi AE-51 — quick template shift untuk percepat input HR.
-             * Tap template = auto-fill startTime + endTime. Staff Mahakan
-             * biasa pakai 4 pola: Pagi/Siang/Sore/Full Day. */}
+             * Tap template = auto-fill startTime + endTime.
+             * AE-222 — dua tingkat: pilih Weekday/Weekend dulu, baru
+             * shift-nya (Shift 1 / Shift 2 / Fullday). */}
             <div>
               <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-500">
                 Template Cepat
               </p>
-              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-                {templates.map((tpl) => {
+              <ShiftTemplateGroupTabs
+                groups={groups}
+                activeKey={activeGroup?.key ?? ""}
+                onSelect={(g) => setGroupKey(g.key)}
+                disabled={submitting}
+              />
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+                {(activeGroup?.items ?? []).map(({ tpl, idx }) => {
                   const active =
                     startTime === tpl.start && endTime === tpl.end;
                   return (
                     <button
-                      key={tpl.label}
+                      key={idx}
                       type="button"
                       onClick={() => {
                         setStartTime(tpl.start);
