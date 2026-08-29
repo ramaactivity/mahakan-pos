@@ -89,7 +89,14 @@ export async function fetchIngredientIntake(
       supplierName: suppliers.name,
       ingredientId: goodsReceiptItems.ingredientId,
       ingredientName: goodsReceiptItems.ingredientNameSnapshot,
-      unit: goodsReceiptItems.unitSnapshot,
+      /* Sesi AE-222 — JEBAKAN AE-177f. Baris GR hanya menyimpan satuan MASTER
+       * (gr/ml), padahal `received_qty` dicatat dalam SATUAN BELI yang dipilih
+       * saat memesan — server sendiri mengkonversinya pakai
+       * `unitOverride ?? unitSnapshot` (lihat receiveGoods). Tanpa join ini
+       * layar menulis "Susu Omela 60 ml" untuk 60 LITER: angkanya benar,
+       * satuannya bohong, tanpa error apa pun. 593 dari 636 baris GR di
+       * produksi terkena. */
+      unit: sql<string>`coalesce(${purchaseItems.unitOverride}, ${goodsReceiptItems.unitSnapshot})`,
       qty: goodsReceiptItems.receivedQty,
       qtyDecimal: goodsReceiptItems.receivedQtyDecimal,
       unitCost: goodsReceiptItems.unitCost,
@@ -109,6 +116,10 @@ export async function fetchIngredientIntake(
       eq(goodsReceipts.id, goodsReceiptItems.goodsReceiptId),
     )
     .innerJoin(purchases, eq(purchases.id, goodsReceipts.purchaseId))
+    .leftJoin(
+      purchaseItems,
+      eq(purchaseItems.id, goodsReceiptItems.purchaseItemId),
+    )
     .leftJoin(suppliers, eq(suppliers.id, purchases.supplierId))
     .leftJoin(users, eq(users.id, goodsReceipts.createdBy))
     .where(and(...grConds))
