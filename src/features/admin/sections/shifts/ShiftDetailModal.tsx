@@ -147,6 +147,24 @@ export function ShiftDetailModal({
         t.paymentMethod !== "split",
     )
     .reduce((s, t) => s + netTotal(t), 0);
+
+  /* Sesi AE-221 — RINCIAN EDC PER BANK.
+   *
+   * Kartu "Kartu Semua Bank" dulu satu angka gabungan, jadi saat mencocokkan
+   * dengan rekening koran tidak ketahuan mesin bank mana yang menyetor —
+   * padahal tiap EDC cair ke rekening yang berbeda. Sekarang dipecah.
+   *
+   * Hanya bank yang benar-benar dipakai di shift ini yang ditampilkan:
+   * memajang lima baris nol di tiap shift cuma jadi bising, karena satu
+   * shift lazimnya cuma memakai satu mesin. */
+  const cardByBank = EDC_METHODS.map(({ method, label }) => {
+    const rows = paid.filter((t) => t.paymentMethod === method);
+    return {
+      label,
+      amount: rows.reduce((s, t) => s + netTotal(t), 0),
+      count: rows.length,
+    };
+  }).filter((r) => r.count > 0);
   const refundedCashSum = refunded
     .filter((t) => t.paymentMethod === "cash")
     .reduce((s, t) => s + t.refundedAmount, 0);
@@ -335,10 +353,18 @@ export function ShiftDetailModal({
             value={formatRupiah(paidQris)}
             sub={`${paid.filter((t) => t.paymentMethod === "qris").length} trx`}
           />
+          {/* Sesi AE-221 — EDC dipecah per bank supaya bisa dicocokkan
+            * dengan rekening koran masing-masing. */}
           <SummaryCard
-            label="Kartu Semua Bank"
+            label="EDC / Kartu"
             value={formatRupiah(paidCard)}
-            sub={`${paid.filter((t) => t.paymentMethod !== "cash" && t.paymentMethod !== "qris" && t.paymentMethod !== "split").length} trx`}
+            sub={
+              cardByBank.length > 0
+                ? cardByBank
+                    .map((b) => `${b.label} ${formatRupiah(b.amount)} (${b.count})`)
+                    .join(" · ")
+                : "tidak ada transaksi kartu"
+            }
           />
           <SummaryCard
             label="Total Transaksi"
@@ -712,6 +738,17 @@ function SettlementCard({
     </div>
   );
 }
+
+/* Sesi AE-221 — mesin EDC yang bisa dipakai kasir, berikut urutannya di
+ * rincian. Sengaja sejajar dengan enum `transactions.payment_method`
+ * supaya tidak ada metode yang diam-diam tidak terhitung. */
+const EDC_METHODS: Array<{ method: string; label: string }> = [
+  { method: "card_bca", label: "BCA" },
+  { method: "card_bni", label: "BNI" },
+  { method: "card_bri", label: "BRI" },
+  { method: "card_mandiri", label: "Mandiri" },
+  { method: "card_other", label: "Bank lain" },
+];
 
 function SummaryCard({
   label,
