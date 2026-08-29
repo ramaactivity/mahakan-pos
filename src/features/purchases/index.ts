@@ -62,3 +62,37 @@ export {
   updatePurchasePaymentDate,
   updatePurchasePaymentMethod,
 } from "./actions";
+
+/* Sesi AE-222 — Rekap Pembelanjaan (rupiah). */
+export type {
+  SpendDateBasis,
+  SpendDimension,
+  SpendFilterOption,
+  SpendFilters,
+  SpendGroupRow,
+  SpendLine,
+  SpendPaymentMethod,
+  SpendPaymentStatus,
+  SpendRecapResult,
+  SpendSection,
+  SpendSummary,
+} from "./spend-recap-pure";
+
+export {
+  formatDayLabel,
+  formatMonthLabel,
+  formatRangeLabel,
+  inclusiveDays,
+  previousRangeOf,
+  spendDeltaPercent,
+  SPEND_DIMENSION_LABELS,
+  SPEND_PAYMENT_LABELS,
+  SPEND_SECTION_LABELS,
+  SPEND_SECTION_ORDER,
+  SUPPLIER_NONE,
+} from "./spend-recap-pure";
+
+export {
+  getPurchaseSpendRecap,
+  listPurchaseSpendDetail,
+} from "./spend-actions";

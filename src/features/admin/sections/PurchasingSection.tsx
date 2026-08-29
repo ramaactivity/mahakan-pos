@@ -8,8 +8,9 @@ import { PurchasesView } from "./inventory/purchases/PurchasesView";
 import { TopTrackerView } from "./inventory/purchases/TopTrackerView";
 import { GoodsReceiptModal } from "./inventory/purchases/GoodsReceiptModal";
 import { GoodsReceiptsList } from "./inventory/purchases/GoodsReceiptsList";
+import { SpendRecapView } from "./inventory/purchases/SpendRecapView";
 
-type PurchasingTab = "pr" | "po" | "gr" | "top";
+type PurchasingTab = "pr" | "po" | "gr" | "top" | "rekap";
 
 /**
  * Sesi AE-173 — halaman Purchasing terpusat (gaya Little Sindbad), alur
@@ -37,7 +38,8 @@ export function PurchasingSection() {
           </h1>
           <p className="text-sm text-neutral-700">
             Alur belanja terpusat: Permintaan (PR) → Pesan (PO) → Terima Barang
-            (GR). Plus pantau Hutang Dagang (TOP supplier).
+            (GR). Plus pantau Hutang Dagang (TOP supplier) dan Rekap Belanja
+            dalam rupiah.
           </p>
         </header>
         <TabList ariaLabel="Purchasing tabs">
@@ -45,6 +47,7 @@ export function PurchasingSection() {
           <Tab value="po">PO</Tab>
           <Tab value="gr">GR</Tab>
           <Tab value="top">Hutang Dagang</Tab>
+          <Tab value="rekap">Rekap Belanja</Tab>
         </TabList>
       </div>
 
@@ -88,6 +91,12 @@ export function PurchasingSection() {
       <TabPanel value="top">
         <div className="p-6">
           <TopTrackerView />
+        </div>
+      </TabPanel>
+      {/* Sesi AE-222 — rekap rupiah belanja bahan baku (totalan + rincian). */}
+      <TabPanel value="rekap">
+        <div className="p-6">
+          <SpendRecapView />
         </div>
       </TabPanel>
 
