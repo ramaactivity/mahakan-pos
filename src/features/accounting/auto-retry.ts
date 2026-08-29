@@ -35,6 +35,7 @@ import {
   expenses,
   journalEntries,
   journalRetryQueue,
+  outlets,
   purchases,
   transactionItems,
   transactions,
@@ -51,6 +52,12 @@ import {
   isRetryableHookLabel,
   type RetryQueueHookLabel,
 } from "./retry-queue-types";
+/* Sesi AE-221 — sapuan WAJIB memakai pemetaan rekening yang sama dengan
+ * jalur normal; lihat alasannya di blok sebelum pemakaiannya. */
+import {
+  resolveSettlementBankCode,
+  type AggregatorChannel,
+} from "./mapping/aggregatorSettlement";
 import { postJournalForPosDailySales } from "./daily-sales";
 import { fetchDatesWithSales } from "./daily-sales-queries";
 import { getDailyJournalSince } from "./flag";
@@ -587,15 +594,35 @@ async function sweepMissingSettlements(
       continue;
     }
     try {
-      let bankAccountCode: string | null = null;
+      /* Sesi AE-221 — REKENING TUJUAN DI SAPUAN WAJIB IKUT PENGATURAN.
+       *
+       * Sapuan ini dulu cuma melihat `bankAccountId` di baris settlement.
+       * Kalau kosong (kasus normal), `bankAccountCode` dikirim null dan hook
+       * jatuh ke tebakan bawaan per channel — QRIS ke Bank BCA. Jadi
+       * settlement yang jurnalnya kebetulan dibuat lewat sapuan (bukan jalur
+       * normal) diam-diam mendarat di rekening yang salah lagi, walaupun
+       * owner sudah menyetel QRIS → BNI. Persis bug yang baru saja ditutup,
+       * lewat pintu belakang. Urutannya kini sama persis dengan
+       * settlement-generate.ts: rekening baris → pemetaan outlet → bawaan. */
+      let explicitCode: string | null = null;
       if (row.bankAccountId) {
         const [acc] = await db
           .select({ code: chartOfAccounts.code })
           .from(chartOfAccounts)
           .where(eq(chartOfAccounts.id, row.bankAccountId))
           .limit(1);
-        bankAccountCode = acc?.code ?? null;
+        explicitCode = acc?.code ?? null;
       }
+      const [outletRow] = await db
+        .select({ settings: outlets.settings })
+        .from(outlets)
+        .where(eq(outlets.id, row.outletId))
+        .limit(1);
+      const bankAccountCode = resolveSettlementBankCode(
+        row.channel as AggregatorChannel,
+        outletRow?.settings?.cashless?.bankAccountByChannel,
+        explicitCode,
+      );
       const actorId =
         row.createdBy ?? (await resolveSweepActor(row.outletId, null));
       if (!actorId) {
@@ -608,12 +635,10 @@ async function sweepMissingSettlements(
       await postJournalForAggregatorSettlement({
         outletId: row.outletId,
         settlementId: row.id,
-        channel: row.channel as
-          | "edc_bca"
-          | "gofood"
-          | "grabfood"
-          | "shopeefood"
-          | "qris",
+        /* Sesi AE-221 — pakai tipe channel yang lengkap. Daftar lama di sini
+         * tidak menyebut edc_bni/edc_bri/edc_other, jadi channel itu lolos
+         * lewat cast tanpa pernah diperiksa. */
+        channel: row.channel as AggregatorChannel,
         grossAmount: Number(row.grossAmount),
         feeAmount: Number(row.feeAmount),
         netAmount: Number(row.netAmount),
