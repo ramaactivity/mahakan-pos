@@ -30,6 +30,7 @@ import {
   Wallet as WalletIcon,
   type LucideIcon,
 } from "lucide-react";
+import { Fragment } from "react";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/lib/auth";
 
@@ -81,6 +82,11 @@ interface NavItem {
   Icon: LucideIcon;
   /** If true, only Owner can see. */
   ownerOnly?: boolean;
+  /** Sesi AE-222 — sub-label kecil yang dirender di atas item ini, sebagai
+   * pemisah di dalam group yang isinya banyak (mis. Finance). Hanya muncul
+   * kalau item ini yang pertama membawa sub-label tsb setelah difilter role,
+   * jadi tidak pernah ada judul menggantung tanpa isi. */
+  sub?: string;
 }
 
 interface NavGroup {
@@ -92,8 +98,15 @@ interface NavGroup {
 
 /**
  * Phase 9.1 (sesi AB) — group sidebar items per kategori sesuai spec owner
- * (sesi AA handover). 19 items dalam 8 group untuk visual hierarchy yang
- * jelas, mengurangi cognitive load saat owner/manager scan menu.
+ * (sesi AA handover). Group memberi visual hierarchy supaya owner/manager
+ * tidak perlu memindai 25 item datar.
+ *
+ * Sesi AE-222 — owner directive 2026-08-29: Finance naik ke posisi 2 (tepat
+ * setelah Operasi) karena itu menu yang paling sering dibuka owner; Inventaris
+ * + Menu digabung jadi satu group; Cashflow dan Modal & Dividen dilebur MASUK
+ * Finance. Karena Finance jadi 12 item, isinya dipecah pakai sub-label
+ * (Kas & Setoran / Pembukuan / Modal & Dividen) — group tetap satu, cuma
+ * dikasih titik istirahat visual.
  */
 const NAV_GROUPS: NavGroup[] = [
   {
@@ -108,28 +121,55 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    heading: "Inventaris",
+    heading: "Finance",
     items: [
-      { key: "inventory", label: "Inventory", Icon: Package },
-      { key: "suppliers", label: "Supplier", Icon: Truck },
-      { key: "purchasing", label: "Purchasing", Icon: ShoppingCart },
-    ],
-  },
-  {
-    heading: "Menu",
-    items: [
-      { key: "menu", label: "Menu", Icon: Coffee },
-      { key: "cogs_variance", label: "Persediaan Bahan Baku", Icon: Package },
-    ],
-  },
-  {
-    heading: "Cashflow",
-    items: [
-      { key: "setoran_tunai", label: "Setoran Tunai", Icon: Landmark },
+      { key: "finance", label: "Keuangan", Icon: Banknote },
+      { key: "balance_account", label: "Saldo Akun", Icon: WalletIcon },
+      { key: "reports", label: "Laporan", Icon: BarChart3 },
+      {
+        key: "setoran_tunai",
+        label: "Setoran Tunai",
+        Icon: Landmark,
+        sub: "Kas & Setoran",
+      },
       { key: "cash", label: "Kas", Icon: Wallet },
       /* Sesi AE-132 — Arsip foto nota staff (dokumentasi murni, tidak
-       * terikat finance). Cashflow group karena overlap konseptual. */
+       * terikat finance). Ikut Kas & Setoran karena overlap konseptual. */
       { key: "nota_archive", label: "Arsip Nota", Icon: FileText },
+      {
+        key: "accounting",
+        label: "Akuntansi",
+        Icon: BookOpen,
+        sub: "Pembukuan",
+      },
+      /* Sesi AE-77 — Laporan online order (GoFood/GrabFood/ShopeeFood)
+       * + cashless (QRIS/EDC). Drilldown per-order kalau import CSV. */
+      { key: "aggregator_online", label: "Online & Cashless", Icon: Bike },
+      { key: "reconciliation", label: "Rekonsiliasi", Icon: History },
+      /* Sesi AE-62w — antrian retry untuk failed journal hooks.
+       * Owner trigger retry / abandon. Manager view-only (via RBAC). */
+      { key: "journal_retry", label: "Antrian Jurnal", Icon: AlertTriangle },
+      /* Sesi AE-63 — Investor + Pengelola + distribusi dividen bulanan. */
+      {
+        key: "investors",
+        label: "Investor",
+        Icon: HandCoins,
+        ownerOnly: false,
+        sub: "Modal & Dividen",
+      },
+      /* Sesi AE-180 — Hutang Internal (Talangan Owner/Pengelola). Halaman
+       * terpisah dari Investor (owner directive). */
+      { key: "internal_debts", label: "Hutang Internal", Icon: Landmark },
+    ],
+  },
+  {
+    heading: "Inventaris & Menu",
+    items: [
+      { key: "inventory", label: "Inventory", Icon: Package },
+      { key: "cogs_variance", label: "Persediaan Bahan Baku", Icon: Package },
+      { key: "purchasing", label: "Purchasing", Icon: ShoppingCart },
+      { key: "suppliers", label: "Supplier", Icon: Truck },
+      { key: "menu", label: "Menu", Icon: Coffee },
     ],
   },
   {
@@ -145,32 +185,6 @@ const NAV_GROUPS: NavGroup[] = [
         label: "Checklist Operasional",
         Icon: CheckSquare,
       },
-    ],
-  },
-  {
-    heading: "Finance",
-    items: [
-      { key: "finance", label: "Keuangan", Icon: Banknote },
-      { key: "balance_account", label: "Saldo Akun", Icon: WalletIcon },
-      { key: "accounting", label: "Akuntansi", Icon: BookOpen },
-      { key: "reports", label: "Laporan", Icon: BarChart3 },
-      /* Sesi AE-77 — Laporan online order (GoFood/GrabFood/ShopeeFood)
-       * + cashless (QRIS/EDC). Drilldown per-order kalau import CSV. */
-      { key: "aggregator_online", label: "Online & Cashless", Icon: Bike },
-      { key: "reconciliation", label: "Rekonsiliasi", Icon: History },
-      /* Sesi AE-62w — antrian retry untuk failed journal hooks.
-       * Owner trigger retry / abandon. Manager view-only (via RBAC). */
-      { key: "journal_retry", label: "Antrian Jurnal", Icon: AlertTriangle },
-    ],
-  },
-  {
-    heading: "Modal & Dividen",
-    items: [
-      /* Sesi AE-63 — Investor + Pengelola + distribusi dividen bulanan. */
-      { key: "investors", label: "Investor", Icon: HandCoins, ownerOnly: false },
-      /* Sesi AE-180 — Hutang Internal (Talangan Owner/Pengelola). Halaman
-       * terpisah dari Investor (owner directive). */
-      { key: "internal_debts", label: "Hutang Internal", Icon: Landmark },
     ],
   },
   {
@@ -222,9 +236,9 @@ export function AdminLeftNav({
           <p className="text-xs text-neutral-500">Back Office</p>
         </div>
       </div>
-      {/* Scrollable items — 19 section dengan tablet kecil bisa overflow.
-       * Section headers (Operasi/Inventaris/dll) bantu kasih visual rest +
-       * cognitive grouping. */}
+      {/* Scrollable items — 25 section, di tablet kecil pasti overflow.
+       * Heading group + sub-label di dalam Finance kasih visual rest supaya
+       * daftar panjang tetap bisa dipindai. */}
       <div className="flex-1 overflow-y-auto px-3 py-1">
         {visibleGroups.map((group, gi) => (
           <div
@@ -237,21 +251,40 @@ export function AdminLeftNav({
             <p className="px-3 text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
               {group.heading}
             </p>
-            {group.items.map((item) => (
-              <NavLink
-                key={item.key}
-                label={item.label}
-                Icon={item.Icon}
-                active={active === item.key}
-                badge={badges?.[item.key]}
-                onClick={() => onChange(item.key)}
-              />
-            ))}
+            {group.items.map((item, ii) => {
+              /* Sesi AE-222 — sub-label dirender saat berganti dari item
+               * sebelumnya. Dihitung SESUDAH filter role, jadi kalau item
+               * pertama sebuah sub disembunyikan RBAC, judulnya pindah ke
+               * item berikutnya — bukan jadi judul kosong. */
+              const prevSub = ii > 0 ? group.items[ii - 1]?.sub : undefined;
+              const showSub = item.sub && item.sub !== prevSub;
+              return (
+                <Fragment key={item.key}>
+                  {showSub ? (
+                    <p className="px-3 pb-0.5 pt-2 text-[10px] font-medium uppercase tracking-wide text-neutral-400/90">
+                      {item.sub}
+                    </p>
+                  ) : null}
+                  <NavLink
+                    label={item.label}
+                    Icon={item.Icon}
+                    active={active === item.key}
+                    badge={badges?.[item.key]}
+                    onClick={() => onChange(item.key)}
+                  />
+                </Fragment>
+              );
+            })}
           </div>
         ))}
       </div>
       <div className="shrink-0 border-t border-neutral-100 px-3 pt-2">
-        <NavLink label="Keluar" Icon={LogOut} active={false} onClick={onLogout} />
+        <NavLink
+          label="Keluar"
+          Icon={LogOut}
+          active={false}
+          onClick={onLogout}
+        />
       </div>
     </nav>
   );
