@@ -15,14 +15,7 @@ import {
   RefreshCw,
   Wallet,
 } from "lucide-react";
-import {
-  Badge,
-  Button,
-  Input,
-  Modal,
-  Spinner,
-  toast,
-} from "@/components/ui";
+import { Badge, Button, Input, Modal, Spinner, toast } from "@/components/ui";
 import {
   isOk,
   closeShift,
@@ -46,9 +39,11 @@ import type { LowStockIngredient } from "@/features/purchase-requests/types";
 import { getOwnOutlet } from "@/features/outlets";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import {
+  printShiftClose,
   printTickets,
   type ReceiptConfig,
 } from "@/lib/printer/print-transaction";
+import { buildShiftCloseReceiptData } from "@/features/shifts/close-receipt-data";
 import { cn } from "@/lib/utils";
 import { BelanjaSubmissionModal } from "./BelanjaSubmissionModal";
 import { CloseOpenBillModal } from "./CloseOpenBillModal";
@@ -82,12 +77,7 @@ interface SummaryPreview {
 // Sesi AE-62n — tambah "qris" sebagai primary verification channel.
 // Order: 3 channel utama (kas/qris/edc) di kiri tabs, aggregator di kanan.
 type ActiveField =
-  | "kas"
-  | "qris"
-  | "edc"
-  | "gofood"
-  | "grabfood"
-  | "shopeefood";
+  "kas" | "qris" | "edc" | "gofood" | "grabfood" | "shopeefood";
 
 interface FieldConfig {
   key: ActiveField;
@@ -217,6 +207,13 @@ export function CloseShiftModal({
   /* Audit POS E2E 2026-06-12 — step Ringkasan Tutup Shift setelah close
    * sukses: kasir bisa kirim WA owner / salin sebelum lanjut popup belanja.
    * Sebelumnya tidak ada jejak ringkasan sama sekali (cuma toast). */
+  /* Sesi AE-223 — nominal setoran yang dipakai struk closing. Disimpan saat
+   * submit karena field-nya bisa saja dikosongkan setelah shift tertutup. */
+  const [closedDeposit, setClosedDeposit] = useState<{
+    amount: number | null;
+    destination: string | null;
+  }>({ amount: null, destination: null });
+  const [printingClose, setPrintingClose] = useState(false);
   const [closedResult, setClosedResult] = useState<CloseShiftResult | null>(
     null,
   );
@@ -371,14 +368,11 @@ export function CloseShiftModal({
   }, [actualCash]);
 
   const variance = summary ? parsedCash - summary.expectedCash : 0;
-  const varianceFlag =
-    Math.abs(variance) > VARIANCE_THRESHOLD ? "warn" : "ok";
+  const varianceFlag = Math.abs(variance) > VARIANCE_THRESHOLD ? "warn" : "ok";
 
   const parsedDepositPreview = useMemo(() => {
     try {
-      return depositAmount.trim().length > 0
-        ? parseRupiah(depositAmount)
-        : 0;
+      return depositAmount.trim().length > 0 ? parseRupiah(depositAmount) : 0;
     } catch {
       return 0;
     }
@@ -461,9 +455,7 @@ export function CloseShiftModal({
   const edcVariance = summary ? parsedEdc - summary.paid.cardBca : 0;
   // Total |variance| across 3 channels — pakai untuk warning banner.
   const totalVarianceAbs =
-    Math.abs(variance) +
-    Math.abs(qrisVariance) +
-    Math.abs(edcVariance);
+    Math.abs(variance) + Math.abs(qrisVariance) + Math.abs(edcVariance);
 
   /* Sesi AE-217 — berapa hari kalender WIB yang dilewati shift ini. Dipakai
    * hanya untuk peringatan + catatan wajib, BUKAN untuk mengunci apa pun,
@@ -559,7 +551,58 @@ export function CloseShiftModal({
     /* Audit POS E2E 2026-06-12 — tampilkan step Ringkasan dulu (WA/salin),
      * popup belanja menyusul dari tombol Lanjut. */
     setClosedResult(res.data);
+    setClosedDeposit({
+      amount: parsedDeposit,
+      destination: depositBank.trim() || null,
+    });
     setSubmitting(false);
+
+    /* Sesi AE-223 — cetak struk closing otomatis. Best-effort dan SESUDAH
+     * shift benar-benar tertutup: printer yang mati atau belum di-pair tidak
+     * boleh menahan atau menggagalkan penutupan shift. Kalau gagal, kasir
+     * dikasih tahu dan bisa ulang lewat tombol Cetak Closing. */
+    void doPrintClose(res.data, {
+      amount: parsedDeposit,
+      destination: depositBank.trim() || null,
+    });
+  }
+
+  /* Satu jalur cetak untuk otomatis maupun tombol, supaya lembar cetak-ulang
+   * tidak pernah beda isi dari lembar pertama. */
+  async function doPrintClose(
+    result: CloseShiftResult,
+    deposit: { amount: number | null; destination: string | null },
+    reprint = false,
+  ) {
+    if (printingClose) return;
+    setPrintingClose(true);
+    try {
+      const outcome = await printShiftClose(
+        buildShiftCloseReceiptData({
+          shift: result.shift,
+          summary: result.summary,
+          cashierName,
+          outletName: receiptConfig?.outletName ?? "Mahakan",
+          outletAddress: receiptConfig?.outletAddress ?? null,
+          depositAmount: deposit.amount,
+          depositDestination: deposit.destination,
+          reprint,
+        }),
+      );
+      if (outcome.ok) {
+        if (reprint) toast.success("Struk closing dicetak");
+        return;
+      }
+      /* Printer belum di-pair bukan kesalahan kasir dan bukan kegagalan tutup
+       * shift — jadi peringatan, bukan error merah. */
+      if (outcome.reason === "not_paired") {
+        toast.info("Struk closing belum tercetak — printer belum di-pair.");
+      } else {
+        toast.warning(`Gagal cetak struk closing: ${outcome.message}`);
+      }
+    } finally {
+      setPrintingClose(false);
+    }
   }
 
   /* Selesai dari step Ringkasan: kalau ada stok menipis dan belum lewat
@@ -705,6 +748,10 @@ export function CloseShiftModal({
               cashierName,
             })}
             ownerPhone={ownerPhone}
+            printing={printingClose}
+            onPrintClose={() =>
+              void doPrintClose(closedResult, closedDeposit, true)
+            }
           />
         ) : loading ? (
           <div className="flex h-full items-center justify-center">
@@ -979,8 +1026,8 @@ function SummarySection({
           </span>
         </div>
         <p className="mt-1 text-[10px] text-neutral-500">
-          Formula: Kas Awal + Penjualan Tunai − Refund Tunai − Petty
-          Pengeluaran Cash + Petty Pemasukan Cash
+          Formula: Kas Awal + Penjualan Tunai − Refund Tunai − Petty Pengeluaran
+          Cash + Petty Pemasukan Cash
         </p>
       </div>
     </section>
@@ -1127,7 +1174,9 @@ function BalanceVerificationPanel(props: {
                 <p
                   className={cn(
                     "font-mono font-medium",
-                    r.inputEmpty ? "italic text-warning-700" : "text-neutral-900",
+                    r.inputEmpty
+                      ? "italic text-warning-700"
+                      : "text-neutral-900",
                   )}
                 >
                   {r.inputEmpty ? "kosong" : formatRupiah(r.counted)}
@@ -1160,9 +1209,9 @@ function BalanceVerificationPanel(props: {
       </div>
       {props.totalVarianceAbs > VARIANCE_THRESHOLD ? (
         <p className="mt-2 rounded-md bg-warning-100/60 p-2 text-[11px] text-warning-700">
-          ⚠ Ada selisih lebih dari {formatRupiah(VARIANCE_THRESHOLD)} —
-          recheck atau jelaskan di Catatan. Owner bisa setujui as-is
-          (akan tercatat di audit log).
+          ⚠ Ada selisih lebih dari {formatRupiah(VARIANCE_THRESHOLD)} — recheck
+          atau jelaskan di Catatan. Owner bisa setujui as-is (akan tercatat di
+          audit log).
         </p>
       ) : null}
     </section>
@@ -1235,16 +1284,11 @@ function VarianceIndicator({
   );
 }
 
-function PettyCashSection({
-  petty,
-}: {
-  petty: SummaryPreview["petty"];
-}) {
+function PettyCashSection({ petty }: { petty: SummaryPreview["petty"] }) {
   /* Sesi AE-49 — pisah display cash vs non-cash. Cash AFFECT Kas Harusnya
    * (sudah dihitung di formula expectedCash di SummarySection). Non-cash
    * (transfer/other) info-only — tidak affect drawer fisik. */
-  const hasCash =
-    petty.expenseCashCount > 0 || petty.incomeCashCount > 0;
+  const hasCash = petty.expenseCashCount > 0 || petty.incomeCashCount > 0;
   const hasNonCash =
     petty.expenseNonCashCount > 0 || petty.incomeNonCashCount > 0;
 
@@ -1473,9 +1517,7 @@ function NotesAndHandoverSection({
         </div>
         <textarea
           value={handoverMessage}
-          onChange={(e) =>
-            onChangeHandover(e.target.value.slice(0, 500))
-          }
+          onChange={(e) => onChangeHandover(e.target.value.slice(0, 500))}
           maxLength={500}
           rows={3}
           placeholder="Misal: kopi house blend habis, supplier pesan besok pagi"
@@ -1732,7 +1774,11 @@ function ActiveFieldPanel({
           disabled={submitting}
           variant="muted"
         />
-        <NumKey label="0" onPress={() => onAppendDigit("0")} disabled={submitting} />
+        <NumKey
+          label="0"
+          onPress={() => onAppendDigit("0")}
+          disabled={submitting}
+        />
         <NumKey
           label="⌫"
           onPress={onBackspace}
@@ -1810,9 +1856,7 @@ function BlockedByOpenBillsView({
                   ) : null}
                 </span>
                 <span className="text-[11px] text-neutral-600">
-                  {b.customerName?.trim()
-                    ? `${b.customerName.trim()} · `
-                    : ""}
+                  {b.customerName?.trim() ? `${b.customerName.trim()} · ` : ""}
                   <span className="font-mono font-semibold text-neutral-900">
                     {formatRupiah(b.total)}
                   </span>
@@ -1993,9 +2037,13 @@ function NumKey({
 function ClosedSummaryView({
   text,
   ownerPhone,
+  printing,
+  onPrintClose,
 }: {
   text: string;
   ownerPhone: string | null;
+  printing: boolean;
+  onPrintClose: () => void;
 }) {
   return (
     <div
@@ -2004,12 +2052,24 @@ function ClosedSummaryView({
     >
       <div className="flex items-center gap-2 rounded-md border border-mahakan-green-200 bg-mahakan-green-50 p-3 text-sm font-medium text-mahakan-green-900">
         <CheckCircle2 className="size-5 shrink-0" />
-        Shift berhasil ditutup. Ringkasan di bawah siap dikirim ke owner.
+        Shift berhasil ditutup. Struk closing dicetak otomatis — ringkasan di
+        bawah siap dikirim ke owner.
       </div>
       <pre className="whitespace-pre-wrap rounded-md border border-neutral-200 bg-white p-4 font-mono text-xs leading-relaxed text-neutral-800">
         {text}
       </pre>
       <div className="flex flex-wrap gap-2">
+        {/* Sesi AE-223 — cetak ulang kalau kertas habis / printer mati saat
+         * cetak otomatis tadi. Ditaruh paling kiri karena inilah yang paling
+         * sering dibutuhkan kasir di detik-detik serah terima. */}
+        <Button
+          variant="outline"
+          size="lg"
+          onClick={onPrintClose}
+          loading={printing}
+        >
+          <Printer className="size-4" /> Cetak Closing
+        </Button>
         <Button
           variant="outline"
           size="lg"
@@ -2018,7 +2078,9 @@ function ClosedSummaryView({
               await navigator.clipboard.writeText(text);
               toast.success("Ringkasan disalin");
             } catch {
-              toast.error("Gagal menyalin — blok teks di atas lalu salin manual");
+              toast.error(
+                "Gagal menyalin — blok teks di atas lalu salin manual",
+              );
             }
           }}
         >

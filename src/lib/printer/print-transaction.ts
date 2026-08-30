@@ -1,6 +1,10 @@
 import { getPrinterClient } from "./bluetooth";
 import { concat } from "./esc-pos";
 import { buildReceipt } from "./receipt-builder";
+import {
+  buildShiftCloseReceipt,
+  type ShiftCloseReceiptData,
+} from "./shift-close-builder";
 import { categoryToStation } from "./station-mapping";
 import { buildPrepTicket } from "./ticket-builder";
 import type { TransactionWithItems } from "@/features/transactions";
@@ -41,9 +45,7 @@ export interface StationCoverage {
  * Inspect transaction items to figure out which prep-station tickets are
  * applicable. Used by UI to enable/disable per-station print buttons.
  */
-export function getStationCoverage(
-  trx: TransactionWithItems,
-): StationCoverage {
+export function getStationCoverage(trx: TransactionWithItems): StationCoverage {
   let hasKitchen = false;
   let hasBar = false;
   for (const item of trx.items) {
@@ -224,22 +226,50 @@ export async function printTickets(
   }
 }
 
+/**
+ * Sesi AE-223 — cetak struk tutup shift.
+ *
+ * Jalur terpisah dari printTickets karena isinya bukan transaksi: tidak ada
+ * item, tidak ada station. Penanganan printer-belum-pair dibuat sama supaya
+ * pemanggil bisa memperlakukan hasilnya identik.
+ */
+export async function printShiftClose(
+  data: ShiftCloseReceiptData,
+): Promise<PrintOutcome> {
+  const printer = getPrinterClient();
+  if (!printer.isPaired()) {
+    return {
+      ok: false,
+      reason: "not_paired",
+      message: "Printer belum di-pair. Buka Settings → Thermal Printer.",
+    };
+  }
+  try {
+    await printer.send(buildShiftCloseReceipt(data));
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "send_failed",
+      message: e instanceof Error ? e.message : "Gagal kirim ke printer",
+    };
+  }
+}
+
 /** Convert outlet DB row into ReceiptConfig consumed by printTickets. */
 export function outletToReceiptConfig(outlet: {
   name: string;
   address: string | null;
   phone: string | null;
-  settings?:
-    | {
-        receipt?: {
-          footerText?: string;
-          headerLines?: string[];
-          wifiSsid?: string;
-          wifiPassword?: string;
-          extraFooterLines?: string[];
-        };
-      }
-    | null;
+  settings?: {
+    receipt?: {
+      footerText?: string;
+      headerLines?: string[];
+      wifiSsid?: string;
+      wifiPassword?: string;
+      extraFooterLines?: string[];
+    };
+  } | null;
 }): ReceiptConfig {
   const r = outlet.settings?.receipt ?? {};
   return {
