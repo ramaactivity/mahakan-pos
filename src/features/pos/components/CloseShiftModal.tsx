@@ -214,6 +214,13 @@ export function CloseShiftModal({
     destination: string | null;
   }>({ amount: null, destination: null });
   const [printingClose, setPrintingClose] = useState(false);
+  /* Sesi AE-223b — hasil cetak terakhir ditampilkan MENETAP di layar
+   * Ringkasan. Sebelumnya cuma toast: kalau kasir sedang menghitung uang dan
+   * tidak melihat layar, kegagalan cetak lewat begitu saja tanpa jejak. */
+  const [printCloseStatus, setPrintCloseStatus] = useState<{
+    kind: "ok" | "fail";
+    message: string;
+  } | null>(null);
   const [closedResult, setClosedResult] = useState<CloseShiftResult | null>(
     null,
   );
@@ -590,11 +597,22 @@ export function CloseShiftModal({
         }),
       );
       if (outcome.ok) {
+        setPrintCloseStatus({
+          kind: "ok",
+          message: reprint
+            ? "Struk closing dicetak ulang."
+            : "Struk closing tercetak.",
+        });
         if (reprint) toast.success("Struk closing dicetak");
         return;
       }
       /* Printer belum di-pair bukan kesalahan kasir dan bukan kegagalan tutup
        * shift — jadi peringatan, bukan error merah. */
+      const message =
+        outcome.reason === "not_paired"
+          ? "Struk closing BELUM tercetak — printer belum di-pair. Buka Settings → Thermal Printer, lalu tekan Cetak Closing."
+          : `Struk closing BELUM tercetak: ${outcome.message}`;
+      setPrintCloseStatus({ kind: "fail", message });
       if (outcome.reason === "not_paired") {
         toast.info("Struk closing belum tercetak — printer belum di-pair.");
       } else {
@@ -697,7 +715,21 @@ export function CloseShiftModal({
         disableEscClose={submitting}
         footer={
           closedResult ? (
-            <div className="flex w-full items-center justify-end gap-3">
+            /* Sesi AE-223b — Cetak Closing WAJIB di footer sticky. Waktu ada
+             * di badan modal yang bisa di-scroll, tombolnya jatuh di bawah
+             * lipatan layar tablet: kasir lapor "tidak ada tombol print". */
+            <div className="flex w-full items-center justify-between gap-3">
+              <Button
+                variant="outline"
+                size="xl"
+                className="!h-12"
+                onClick={() =>
+                  void doPrintClose(closedResult, closedDeposit, true)
+                }
+                loading={printingClose}
+              >
+                <Printer className="size-4" /> Cetak Closing
+              </Button>
               <Button
                 onClick={handleSummaryDone}
                 size="xl"
@@ -748,10 +780,7 @@ export function CloseShiftModal({
               cashierName,
             })}
             ownerPhone={ownerPhone}
-            printing={printingClose}
-            onPrintClose={() =>
-              void doPrintClose(closedResult, closedDeposit, true)
-            }
+            printStatus={printCloseStatus}
           />
         ) : loading ? (
           <div className="flex h-full items-center justify-center">
@@ -2037,13 +2066,11 @@ function NumKey({
 function ClosedSummaryView({
   text,
   ownerPhone,
-  printing,
-  onPrintClose,
+  printStatus,
 }: {
   text: string;
   ownerPhone: string | null;
-  printing: boolean;
-  onPrintClose: () => void;
+  printStatus: { kind: "ok" | "fail"; message: string } | null;
 }) {
   return (
     <div
@@ -2052,24 +2079,32 @@ function ClosedSummaryView({
     >
       <div className="flex items-center gap-2 rounded-md border border-mahakan-green-200 bg-mahakan-green-50 p-3 text-sm font-medium text-mahakan-green-900">
         <CheckCircle2 className="size-5 shrink-0" />
-        Shift berhasil ditutup. Struk closing dicetak otomatis — ringkasan di
-        bawah siap dikirim ke owner.
+        Shift berhasil ditutup. Ringkasan di bawah siap dikirim ke owner.
       </div>
+      {/* Sesi AE-223b — hasil cetak ditampilkan menetap, bukan toast: kalau
+       * printer bermasalah, kasir harus tetap melihatnya walau baru menoleh
+       * ke layar semenit kemudian. */}
+      {printStatus ? (
+        <div
+          className={cn(
+            "flex items-start gap-2 rounded-md border p-3 text-sm font-medium",
+            printStatus.kind === "ok"
+              ? "border-neutral-200 bg-neutral-50 text-neutral-700"
+              : "border-warning-500/40 bg-warning-500/10 text-neutral-900",
+          )}
+        >
+          {printStatus.kind === "ok" ? (
+            <Printer className="size-5 shrink-0" />
+          ) : (
+            <AlertTriangle className="size-5 shrink-0 text-warning-500" />
+          )}
+          <span>{printStatus.message}</span>
+        </div>
+      ) : null}
       <pre className="whitespace-pre-wrap rounded-md border border-neutral-200 bg-white p-4 font-mono text-xs leading-relaxed text-neutral-800">
         {text}
       </pre>
       <div className="flex flex-wrap gap-2">
-        {/* Sesi AE-223 — cetak ulang kalau kertas habis / printer mati saat
-         * cetak otomatis tadi. Ditaruh paling kiri karena inilah yang paling
-         * sering dibutuhkan kasir di detik-detik serah terima. */}
-        <Button
-          variant="outline"
-          size="lg"
-          onClick={onPrintClose}
-          loading={printing}
-        >
-          <Printer className="size-4" /> Cetak Closing
-        </Button>
         <Button
           variant="outline"
           size="lg"
