@@ -78,6 +78,20 @@ export type OutletSettings = {
      * Owner/Manager available can forward to staff. Empty = fallback to
      * first active Owner's user.email. */
     notifyEmails?: string[];
+    /**
+     * Sesi AE-221 — PIN STATIS untuk compliment (100% gratis).
+     *
+     * Arahan owner 2026-08-26: compliment tidak lagi lewat kode 6 digit yang
+     * dikirim ke email/HP owner, cukup satu PIN tetap yang dipegang tim.
+     * Ini MEMBALIK kontrol AE-195 — konsekuensinya disengaja owner: siapa pun
+     * yang tahu PIN-nya bisa menggratiskan tagihan, dan jejaknya tidak lagi
+     * menunjukkan siapa yang mengizinkan, hanya siapa yang menjalankan.
+     *
+     * Disimpan sebagai HASH bcrypt, bukan angka apa adanya: `settings` ikut
+     * terkirim ke perangkat kasir lewat getOwnOutlet, jadi PIN polos di sini
+     * sama saja dengan menempelkannya di layar. Verifikasi WAJIB di server.
+     */
+    complimentPinHash?: string;
   };
   /** HR attendance config (Sesi D + Phase 4 sesi AB). */
   attendance?: {

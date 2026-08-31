@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, getTableColumns, gte, inArray, lt, ne, or, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   approvalCodes,
@@ -15,10 +15,8 @@ import {
   transactionItems,
   transactions,
 } from "@/db/schema";
-import {
-  checkComplimentApproval,
-  requiresPinApprover,
-} from "@/features/approval-codes/compliment-guard";
+import { requiresPinApprover } from "@/features/approval-codes/compliment-guard";
+import { verifyComplimentPinForOutlet } from "@/features/approval-codes/compliment-pin";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { consumeApproverToken } from "@/lib/auth/approver";
@@ -43,7 +41,6 @@ import {
 import {
   consumeApprovalCode,
   isOk as isApprovalOk,
-  type ApprovalActionType,
 } from "@/features/approval-codes";
 import {
   fireJournalHook,
@@ -513,15 +510,13 @@ export async function createTransaction(
   // Sesi AE-62v — validate token presence early, DEFER consume ke INSIDE tx.
   // Sebelumnya consume di sini → kalau menu check / DB insert later gagal,
   // token jadi orphan (staff harus minta PIN baru tanpa transaksi terjadi).
-  /* Sesi AE-208 — compliment TIDAK lewat PIN approver.
+  /* Sesi AE-208 — compliment TIDAK lewat gerbang PIN APPROVER.
    *
-   * Sejak AE-195 compliment disetujui lewat KODE 6 digit dari Owner, bukan
-   * PIN approver. Tapi gerbang diskon di bawah masih menuntut PIN untuk
-   * SEMUA diskon staff, jadi kasir yang sudah memegang kode owner tetap
-   * ditolak APPROVER_REQUIRED — compliment mustahil diselesaikan kasir.
-   * Compliment dijaga oleh checkComplimentApproval beberapa baris di bawah
-   * (kode, outlet, kasir, alasan, dan nilai keranjang), jadi PIN di sini
-   * bukan kontrol tambahan, cuma jalan buntu. */
+   * Compliment punya gerbangnya sendiri beberapa baris di bawah (PIN
+   * compliment, sesi AE-221). Kalau gerbang diskon di sini ikut menuntut PIN
+   * approver untuk SEMUA diskon staff, kasir yang PIN compliment-nya sudah
+   * benar tetap ditolak APPROVER_REQUIRED — compliment jadi mustahil
+   * diselesaikan, persis kejadian yang ditambal di AE-208. */
   const isComplimentTrx = (v.discountReason ?? "").startsWith("Compliment:");
 
   const needsPinApprover = requiresPinApprover({
@@ -551,51 +546,28 @@ export async function createTransaction(
     }
   }
 
-  /* Sesi AE-195 — COMPLIMENT wajib kode approval owner.
+  /* Sesi AE-221 — COMPLIMENT dijaga PIN STATIS (menggantikan kode owner
+   * AE-195, atas permintaan owner).
    *
-   * Ditegakkan di SERVER, bukan cuma di layar POS: sebelumnya compliment
-   * hanya dijaga modal PIN di klien, jadi siapa pun yang bisa memanggil
-   * action ini bisa menggratiskan transaksi tanpa jejak persetujuan.
+   * Tetap ditegakkan di SERVER, bukan cuma di layar POS: kalau hanya modal
+   * yang memeriksa, siapa pun yang bisa memanggil action ini menggratiskan
+   * transaksi tanpa gerbang apa pun.
    *
-   * Owner dikecualikan — dialah yang seharusnya menyetujui, jadi meminta
-   * dirinya sendiri mengetik kode dari emailnya sendiri tidak menambah
-   * kontrol apa pun (pola sama dengan direct-approve di Pusat Persetujuan).
+   * Owner dikecualikan — dialah pemilik keputusannya, jadi memintanya
+   * mengetik PIN-nya sendiri tidak menambah kontrol (pola sama dengan
+   * direct-approve di Pusat Persetujuan).
    */
-  let complimentCodeRow: { id: string; reason: string } | null = null;
   if (isComplimentTrx && session.user.role !== "owner") {
-    if (!v.complimentApprovalCodeId) {
+    const pinOk = await verifyComplimentPinForOutlet(
+      session.user.outletId,
+      v.complimentPin,
+    );
+    if (!pinOk) {
       return fail(
-        "COMPLIMENT_APPROVAL_REQUIRED",
-        "Compliment butuh kode approval dari Owner",
+        "COMPLIMENT_PIN_INVALID",
+        "PIN compliment salah atau belum diatur Owner",
       );
     }
-    const [row] = await db
-      .select({
-        id: approvalCodes.id,
-        reason: approvalCodes.reason,
-        outletId: approvalCodes.outletId,
-        consumedByUserId: approvalCodes.consumedByUserId,
-        usedForTransactionId: approvalCodes.usedForTransactionId,
-        approvedAmount: approvalCodes.approvedAmount,
-      })
-      .from(approvalCodes)
-      .where(
-        and(
-          eq(approvalCodes.id, v.complimentApprovalCodeId),
-          eq(approvalCodes.actionType, "pos.compliment"),
-        ),
-      )
-      .limit(1);
-
-    const verdict = checkComplimentApproval({
-      row: row ?? null,
-      outletId: session.user.outletId,
-      userId: session.user.id,
-      discountReason: v.discountReason ?? "",
-      subtotal: v.subtotal,
-    });
-    if (!verdict.ok) return fail(verdict.code, verdict.message);
-    complimentCodeRow = { id: row!.id, reason: row!.reason };
   }
 
   // Menu existence check
@@ -818,25 +790,6 @@ export async function createTransaction(
         })
         .returning();
 
-      /* Sesi AE-195 — tautkan kode compliment ke transaksinya. CAS pada
-       * `used_for_transaction_id IS NULL`: dua checkout paralel yang membawa
-       * id kode sama hanya boleh diloloskan satu. Di dalam tx supaya kalau
-       * transaksinya batal, kodenya kembali bisa dipakai. */
-      if (complimentCodeRow) {
-        const linked = await tx
-          .update(approvalCodes)
-          .set({ usedForTransactionId: insertedTrx.id })
-          .where(
-            and(
-              eq(approvalCodes.id, complimentCodeRow.id),
-              isNull(approvalCodes.usedForTransactionId),
-            ),
-          )
-          .returning({ id: approvalCodes.id });
-        if (linked.length === 0) {
-          throw new Error("COMPLIMENT_APPROVAL_ALREADY_USED");
-        }
-      }
 
       // Sesi K — when discount sourced from a master promo, record the
       // usage + bump currentUses. Both inside the same DB tx so a rollback
@@ -2322,46 +2275,21 @@ export async function editOpenBill(
   const shiftCheck = await assertShiftOpen(current.shiftId);
   if (!shiftCheck.ok) return fail(shiftCheck.code, shiftCheck.message);
 
-  /* Sesi AE-195 — compliment di OPEN BILL ikut wajib kode approval owner.
+  /* Sesi AE-221 — compliment di OPEN BILL ikut dijaga PIN statis.
    * Tanpa ini ada celah: kasir menyimpan bill biasa, lalu meng-edit-nya jadi
    * compliment 100% — createTransaction sudah dijaga, jalur edit belum. */
   const editIsCompliment = (v.discountReason ?? "").startsWith("Compliment:");
-  let editComplimentCodeId: string | null = null;
   if (editIsCompliment && session.user.role !== "owner") {
-    if (!v.complimentApprovalCodeId) {
+    const pinOk = await verifyComplimentPinForOutlet(
+      session.user.outletId,
+      v.complimentPin,
+    );
+    if (!pinOk) {
       return fail(
-        "COMPLIMENT_APPROVAL_REQUIRED",
-        "Compliment butuh kode approval dari Owner",
+        "COMPLIMENT_PIN_INVALID",
+        "PIN compliment salah atau belum diatur Owner",
       );
     }
-    const [row] = await db
-      .select({
-        id: approvalCodes.id,
-        reason: approvalCodes.reason,
-        outletId: approvalCodes.outletId,
-        consumedByUserId: approvalCodes.consumedByUserId,
-        usedForTransactionId: approvalCodes.usedForTransactionId,
-        approvedAmount: approvalCodes.approvedAmount,
-      })
-      .from(approvalCodes)
-      .where(
-        and(
-          eq(approvalCodes.id, v.complimentApprovalCodeId),
-          eq(approvalCodes.actionType, "pos.compliment"),
-        ),
-      )
-      .limit(1);
-    const verdict = checkComplimentApproval({
-      row: row ?? null,
-      outletId: session.user.outletId,
-      userId: session.user.id,
-      discountReason: v.discountReason ?? "",
-      subtotal: v.subtotal,
-      /* Bill yang sama boleh diedit berkali-kali dengan kode yang sama. */
-      allowLinkedTransactionId: v.transactionId,
-    });
-    if (!verdict.ok) return fail(verdict.code, verdict.message);
-    editComplimentCodeId = row!.id;
   }
 
   // Sesi AE-62k — defer approver token consumption sampai sebelum tx.
@@ -2371,9 +2299,9 @@ export async function editOpenBill(
   // audit log shows token consumed without effect.
   //
   // Permission check tetap di sini (cheap), token consumption deferred.
-  // AE-208 — compliment lewat kode Owner, bukan PIN approver (lihat catatan
-  // di createTransaction). Tanpa pengecualian ini kasir tidak pernah bisa
-  // menutup/menyimpan open bill yang di-compliment.
+  // AE-208/AE-221 — compliment punya gerbang PIN-nya sendiri, bukan PIN
+  // approver (lihat catatan di createTransaction). Tanpa pengecualian ini
+  // kasir tidak pernah bisa menutup/menyimpan open bill yang di-compliment.
   const editNeedsPinApprover = requiresPinApprover({
     discountAmount: v.discountAmount,
     role: session.user.role,
@@ -2613,27 +2541,6 @@ export async function editOpenBill(
         })
         .where(eq(transactions.id, v.transactionId));
 
-      /* Sesi AE-195 — tautkan kode compliment ke bill-nya. CAS pada
-       * "belum tertaut ATAU sudah tertaut ke bill ini" supaya edit berulang
-       * pada bill yang sama tidak menolak kodenya sendiri. */
-      if (editComplimentCodeId) {
-        const linked = await tx
-          .update(approvalCodes)
-          .set({ usedForTransactionId: v.transactionId })
-          .where(
-            and(
-              eq(approvalCodes.id, editComplimentCodeId),
-              or(
-                isNull(approvalCodes.usedForTransactionId),
-                eq(approvalCodes.usedForTransactionId, v.transactionId),
-              ),
-            ),
-          )
-          .returning({ id: approvalCodes.id });
-        if (linked.length === 0) {
-          throw new Error("COMPLIMENT_APPROVAL_ALREADY_USED");
-        }
-      }
 
       // Sesi K — promo usage tracking on edit. If the bill previously had
       // a promo, we DO NOT decrement the previous promo's currentUses
@@ -2873,11 +2780,10 @@ export async function saveAsOpenBill(
     cashReceived: input.total,
     cashChange: 0,
     discountApproverToken: input.discountApproverToken,
-    /* Sesi AE-196 — kode approval compliment WAJIB ikut diteruskan. Tanpa
-     * baris ini kasir yang menyimpan compliment sebagai open bill selalu
-     * ditolak COMPLIMENT_APPROVAL_REQUIRED, padahal Owner sudah mengirim
-     * kodenya — dan kodenya terlanjur hangus karena sudah dipakai di layar. */
-    complimentApprovalCodeId: input.complimentApprovalCodeId,
+    /* Sesi AE-196/AE-221 — PIN compliment WAJIB ikut diteruskan. Tanpa baris
+     * ini kasir yang menyimpan compliment sebagai open bill selalu ditolak
+     * gerbang compliment, padahal PIN-nya sudah benar di layar. */
+    complimentPin: input.complimentPin,
     promoId: input.promoId ?? null,
   };
   // Skip earn here — bill not yet paid. closeOpenBill fires earn when the

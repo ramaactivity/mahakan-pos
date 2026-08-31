@@ -59,10 +59,11 @@ export interface Draft {
   discountApproverId: string | null;
   discountApproverToken: string | null;
   /**
-   * Sesi AE-195 — id kode approval compliment yang SUDAH dikonsumsi kasir.
+   * Sesi AE-221 — PIN compliment yang sudah dicocokkan kasir di modal.
    * null untuk diskon biasa / compliment yang dijalankan owner sendiri.
+   * Server tetap memeriksanya ulang saat transaksi disimpan.
    */
-  complimentApprovalCodeId: string | null;
+  complimentPin: string | null;
   /** Sesi K — pre-configured promo applied to this draft (FK to promos).
    * Set in tandem with `discount` when staff picks a promo from POS picker.
    * Cleared when discount cleared or when redemption replaces it.

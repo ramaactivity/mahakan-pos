@@ -101,8 +101,9 @@ interface CartStore {
      * server can insert promo_usages + increment currentUses. Pass null
      * for ad-hoc discount paths (compliment, redeem). */
     promoId?: string | null,
-    /** Sesi AE-195 — kode approval compliment yang sudah dikonsumsi kasir. */
-    complimentApprovalCodeId?: string | null,
+    /** Sesi AE-221 — PIN compliment yang sudah dicocokkan server. Ikut
+     * dikirim saat checkout; server memeriksanya lagi di sana. */
+    complimentPin?: string | null,
   ) => void;
 
   /** Loyalty redemption — sets discount + reason atomically and tracks the
@@ -142,7 +143,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
       discountReason: null,
       discountApproverId: null,
       discountApproverToken: null,
-      complimentApprovalCodeId: null,
+      complimentPin: null,
       promoId: null,
       editingBillId: null,
       loyaltyPointsRedeemed: null,
@@ -199,7 +200,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
       discountReason: trx.discountReason,
       discountApproverId: trx.discountApprover ?? null,
       discountApproverToken: null, // approver token is single-use; re-approve on save if discount changes
-      complimentApprovalCodeId: null,
+      complimentPin: null,
       promoId: trx.promoId ?? null,
       editingBillId: trx.id,
       loyaltyPointsRedeemed: null, // redemption is paid-flow only — edit-bill resets it
@@ -376,7 +377,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
     approverId,
     approverToken,
     promoId,
-    complimentApprovalCodeId,
+    complimentPin,
   ) =>
     set((state) => {
       const draft = state.drafts[draftId];
@@ -391,10 +392,9 @@ export const useCartStore = create<CartStore>((set, get) => ({
             discountReason: reason,
             discountApproverId: approverId ?? null,
             discountApproverToken: approverToken ?? null,
-            /* Sesi AE-195 — id kode approval compliment yang sudah dikonsumsi.
-             * Ikut dikirim saat checkout; server menautkannya ke transaksi
-             * supaya satu kode tidak bisa dipakai dua kali. */
-            complimentApprovalCodeId: complimentApprovalCodeId ?? null,
+            /* Sesi AE-221 — PIN compliment. Disimpan di draft hanya sampai
+             * transaksinya selesai; gerbang sebenarnya ada di server. */
+            complimentPin: complimentPin ?? null,
             promoId: promoId ?? null,
             loyaltyPointsRedeemed: isRedemption
               ? draft.loyaltyPointsRedeemed
@@ -418,7 +418,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
               discountReason: null,
               discountApproverId: null,
               discountApproverToken: null,
-            complimentApprovalCodeId: null,
+            complimentPin: null,
               promoId: null,
               loyaltyPointsRedeemed: null,
             },
@@ -435,7 +435,7 @@ export const useCartStore = create<CartStore>((set, get) => ({
             discountReason: `Tukar Poin: ${points} poin`,
             discountApproverId: null,
             discountApproverToken: null,
-            complimentApprovalCodeId: null,
+            complimentPin: null,
             promoId: null,
             loyaltyPointsRedeemed: points,
           },

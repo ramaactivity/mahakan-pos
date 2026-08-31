@@ -69,7 +69,10 @@ export const createTransactionSchema = z.object({
   /* Sesi AE-195 — id kode approval compliment yang sudah dikonsumsi kasir di
    * modal. WAJIB untuk transaksi ber-reason "Compliment: ..." kecuali yang
    * menjalankan adalah owner sendiri. */
-  complimentApprovalCodeId: z.uuid().optional(),
+  /* Sesi AE-221 — compliment kini dijaga PIN STATIS, bukan kode 6 digit
+   * yang dikirim ke owner. Diverifikasi di SERVER; jangan pernah percaya
+   * hasil pemeriksaan dari layar kasir. */
+  complimentPin: z.string().trim().min(4).max(6).optional(),
   loyaltyPointsRedeemed: z
     .number()
     .int()
@@ -245,7 +248,10 @@ export const editOpenBillSchema = z.object({
   /** For Staff-initiated discount on edit: token from /api/v1/auth/verify-approver. */
   discountApproverToken: z.string().optional(),
   /* Sesi AE-195 — compliment di open bill juga wajib kode approval owner. */
-  complimentApprovalCodeId: z.uuid().optional(),
+  /* Sesi AE-221 — compliment kini dijaga PIN STATIS, bukan kode 6 digit
+   * yang dikirim ke owner. Diverifikasi di SERVER; jangan pernah percaya
+   * hasil pemeriksaan dari layar kasir. */
+  complimentPin: z.string().trim().min(4).max(6).optional(),
   /** Sesi K — FK to promos.id when discount sourced from a master promo. */
   promoId: z.uuid().nullish(),
 });

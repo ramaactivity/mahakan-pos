@@ -16,6 +16,7 @@ import {
   parseShiftGateThresholds,
   updateShiftDayGate,
 } from "@/features/shifts";
+import { updateComplimentPin } from "@/features/approval-codes/compliment-pin";
 import { formatRupiah, parseRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -113,6 +114,9 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
   );
   const [notifyEmails, setNotifyEmails] = useState<string[]>(initial.notifyEmails);
   const [pendingEmail, setPendingEmail] = useState("");
+  /* Sesi AE-221 — PIN statis compliment. Kosong = tidak diubah; yang
+   * tersimpan adalah hash, jadi tidak pernah bisa ditampilkan kembali. */
+  const [complimentPin, setComplimentPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,6 +145,7 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setRefundCodeMode(initial.refundMode === "code");
     setNotifyEmails(initial.notifyEmails);
     setPendingEmail("");
+    setComplimentPin("");
     setError(null);
     setSubmitting(false);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -395,6 +400,24 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
       }
     }
 
+    /* Sesi AE-221 — PIN compliment disimpan lewat action-nya sendiri (hash
+     * bcrypt + jejak audit). Dibiarkan kosong = PIN lama tetap berlaku. */
+    if (complimentPin.trim()) {
+      const rPin = await updateComplimentPin({ pin: complimentPin.trim() });
+      if (!isOk(rPin)) {
+        setError(rPin.error.message);
+        setSubmitting(false);
+        return;
+      }
+      setComplimentPin("");
+      if (!last) {
+        setSubmitting(false);
+        toast.success("PIN compliment tersimpan");
+        onClose();
+        return;
+      }
+    }
+
     if (last) {
       toast.success("Settings tersimpan");
       onSaved(last);
@@ -527,6 +550,31 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
               hint="1–120 menit."
             />
           </div>
+        </section>
+
+        {/* Sesi AE-221 — PIN statis compliment (menggantikan kode 6 digit). */}
+        <section>
+          <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-mahakan-green-900">
+            PIN Compliment
+          </h3>
+          <p className="mb-3 text-xs leading-relaxed text-neutral-600">
+            PIN yang diketik kasir untuk menggratiskan tagihan 100%. Karena
+            dipegang bersama, jejaknya menunjukkan siapa yang{" "}
+            <em>menjalankan</em>, bukan siapa yang menyetujui — ganti PIN-nya
+            kalau ada staff yang keluar. Kosongkan kolom ini kalau tidak ingin
+            mengubah; PIN lama tidak bisa ditampilkan lagi.
+          </p>
+          <Input
+            label="PIN baru (4-6 digit)"
+            type="password"
+            inputMode="numeric"
+            autoComplete="new-password"
+            value={complimentPin}
+            onChange={(e) =>
+              setComplimentPin(e.target.value.replace(/[^\d]/g, "").slice(0, 6))
+            }
+            placeholder="Biarkan kosong = tidak diubah"
+          />
         </section>
 
         <section>

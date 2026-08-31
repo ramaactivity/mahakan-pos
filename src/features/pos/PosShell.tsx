@@ -945,13 +945,10 @@ export function PosShell() {
   }
 
   /* Sesi AE-195 — compliment sekarang disetujui lewat KODE OWNER, bukan PIN
-   * approver. ComplimentModal yang mengurus minta + verifikasi kode; di sini
-   * tinggal menerapkan diskonnya. Owner tanpa kode → approvalCodeId null,
-   * server mengizinkan karena dialah yang berwenang menyetujui. */
-  function handleComplimentApproved(
-    reason: string,
-    approvalCodeId: string | null,
-  ) {
+   * approver. ComplimentModal yang mengurus PIN-nya; di sini tinggal
+   * menerapkan diskonnya. Owner tanpa PIN → null, server mengizinkan karena
+   * dialah yang berwenang menyetujui. */
+  function handleComplimentApproved(reason: string, pin: string | null) {
     if (!activeDraftId || !session) return;
     setComplimentModalOpen(false);
     setDiscount(
@@ -961,12 +958,10 @@ export function PosShell() {
       undefined,
       undefined,
       null, // compliment ad-hoc, bukan promo master
-      approvalCodeId,
+      pin,
     );
     toast.success(
-      approvalCodeId
-        ? "Compliment disetujui Owner via kode"
-        : "Compliment diterapkan (Owner)",
+      pin ? "Compliment diterapkan" : "Compliment diterapkan (Owner)",
     );
   }
 
@@ -1110,8 +1105,8 @@ export function PosShell() {
           total,
           discountApproverToken:
             activeDraft.discountApproverToken ?? undefined,
-          complimentApprovalCodeId:
-            activeDraft.complimentApprovalCodeId ?? undefined,
+          complimentPin:
+            activeDraft.complimentPin ?? undefined,
           promoId: activeDraft.promoId,
         });
         if (!res.success) {
@@ -1153,8 +1148,8 @@ export function PosShell() {
         discountReason: activeDraft.discountReason,
         total,
         discountApproverToken: activeDraft.discountApproverToken ?? undefined,
-        complimentApprovalCodeId:
-          activeDraft.complimentApprovalCodeId ?? undefined,
+        complimentPin:
+          activeDraft.complimentPin ?? undefined,
         promoId: activeDraft.promoId,
       };
       const res = await saveAsOpenBill(payload);
@@ -1230,8 +1225,8 @@ export function PosShell() {
         cashReceived: null,
         cashChange: null,
         discountApproverToken: activeDraft.discountApproverToken ?? undefined,
-        complimentApprovalCodeId:
-          activeDraft.complimentApprovalCodeId ?? undefined,
+        complimentPin:
+          activeDraft.complimentPin ?? undefined,
         loyaltyPointsRedeemed: activeDraft.loyaltyPointsRedeemed,
         promoId: activeDraft.promoId,
         splits,
@@ -1305,8 +1300,8 @@ export function PosShell() {
         cashReceived: paymentMethod === "cash" ? cashReceived : null,
         cashChange: paymentMethod === "cash" ? cashChange : null,
         discountApproverToken: activeDraft.discountApproverToken ?? undefined,
-        complimentApprovalCodeId:
-          activeDraft.complimentApprovalCodeId ?? undefined,
+        complimentPin:
+          activeDraft.complimentPin ?? undefined,
         loyaltyPointsRedeemed: activeDraft.loyaltyPointsRedeemed,
         promoId: activeDraft.promoId,
       };

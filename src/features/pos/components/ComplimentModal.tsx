@@ -1,29 +1,26 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Gift, Mail, ShieldAlert, Smartphone } from "lucide-react";
+import { Gift, ShieldAlert } from "lucide-react";
 import { Button, Input, Modal, Select } from "@/components/ui";
 // Impor langsung dari file action (BUKAN barrel) — barrel ikut mengekspor
 // tipe bersama action, dan webpack bisa terbawa memasukkan dependensi
 // server-only (nodemailer/bcryptjs) ke bundle klien lalu PosShell gagal mount.
-import {
-  consumeComplimentApprovalCode,
-  requestComplimentApprovalCode,
-} from "@/features/approval-codes/compliment-actions";
+import { verifyComplimentPin } from "@/features/approval-codes/compliment-pin";
 import { isOk } from "@/features/approval-codes/types";
 import { formatRupiah } from "@/lib/format";
 
 interface ComplimentModalProps {
   open: boolean;
   subtotal: number;
-  /** Owner tidak perlu kode — dialah yang menyetujui. */
+  /** Owner tidak perlu PIN — dialah yang menyetujui. */
   isOwner: boolean;
   onClose: () => void;
   /**
-   * Dipanggil setelah compliment DISETUJUI. `approvalCodeId` null kalau
-   * owner sendiri yang menjalankan (jalur direct-approve).
+   * Dipanggil setelah compliment disetujui. `pin` null kalau owner sendiri
+   * yang menjalankan (jalur direct-approve).
    */
-  onApproved: (reason: string, approvalCodeId: string | null) => void;
+  onApproved: (reason: string, pin: string | null) => void;
 }
 
 const PRESET_REASONS = [
@@ -35,18 +32,22 @@ const PRESET_REASONS = [
   "Lainnya",
 ] as const;
 
-type Step = "reason" | "code";
+type Step = "reason" | "pin";
 
 /**
  * Compliment = 100% gratis seluruh transaksi.
  *
- * Sesi AE-195 — approval-nya sekarang KODE DARI OWNER, bukan PIN approver.
- * Alurnya: kasir isi alasan → server kirim kode 6 digit ke owner (email +
- * push ke HP owner) → owner meneruskan kodenya ke kasir → kasir ketik.
+ * Sesi AE-221 — approval-nya sekarang PIN STATIS, menggantikan kode 6 digit
+ * yang dikirim ke owner (AE-195). Arahan owner: kasir tidak perlu lagi
+ * menunggu kode.
  *
- * Kodenya sengaja TIDAK PERNAH melewati perangkat kasir sampai owner
- * memberikannya; itu inti kontrolnya. Owner yang menjalankan POS sendiri
- * lewat tanpa kode.
+ * Yang perlu diketahui siapa pun yang membaca ini nanti: PIN yang sama
+ * dipegang bersama, jadi jejaknya membuktikan "ada yang tahu PIN-nya", bukan
+ * "owner menyetujui transaksi ini". Itu pertukaran yang disengaja owner demi
+ * kelancaran operasional; audit log tetap mencatat kasir, alasan, dan nilai.
+ *
+ * Pemeriksaan di layar ini hanya supaya kasir tahu lebih awal kalau PIN-nya
+ * salah. Gerbang sebenarnya ada di server (createTransaction & editOpenBill).
  */
 export function ComplimentModal({
   open,
@@ -59,16 +60,9 @@ export function ComplimentModal({
   const [reasonPreset, setReasonPreset] = useState<string>("VIP customer");
   const [customReason, setCustomReason] = useState("");
   const [error, setError] = useState<string | null>(null);
-
-  const [requesting, setRequesting] = useState(false);
+  const [pin, setPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [code, setCode] = useState("");
-  const [sentTo, setSentTo] = useState("");
-  const [codeFirstTwo, setCodeFirstTwo] = useState("");
-  const [pushSent, setPushSent] = useState(0);
-  const [emailMode, setEmailMode] = useState<"sent" | "logged" | "failed">(
-    "sent",
-  );
+  const [reason, setReason] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -77,11 +71,8 @@ export function ComplimentModal({
     setReasonPreset("VIP customer");
     setCustomReason("");
     setError(null);
-    setCode("");
-    setSentTo("");
-    setCodeFirstTwo("");
-    setPushSent(0);
-    setRequesting(false);
+    setPin("");
+    setReason("");
     setSubmitting(false);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open]);
@@ -96,48 +87,37 @@ export function ComplimentModal({
     return `Compliment: ${finalReason}`;
   }
 
-  async function handleReasonNext() {
+  function handleReasonNext() {
     setError(null);
-    const reason = resolveReason();
-    if (!reason) return;
+    const resolved = resolveReason();
+    if (!resolved) return;
 
-    // Owner menyetujui dirinya sendiri — tidak perlu bolak-balik kode.
+    // Owner menyetujui dirinya sendiri — tidak perlu PIN.
     if (isOwner) {
-      onApproved(reason, null);
+      onApproved(resolved, null);
       return;
     }
-
-    setRequesting(true);
-    const res = await requestComplimentApprovalCode({ reason, subtotal });
-    setRequesting(false);
-    if (!isOk(res)) {
-      setError(res.error.message);
-      return;
-    }
-    setSentTo(res.data.ownerEmailMasked);
-    setCodeFirstTwo(res.data.codeFirstTwo);
-    setEmailMode(res.data.emailMode);
-    setPushSent(res.data.pushSent);
-    setStep("code");
+    setReason(resolved);
+    setStep("pin");
   }
 
-  async function handleCodeSubmit() {
+  async function handlePinSubmit() {
     if (submitting) return;
     setError(null);
-    if (!/^\d{6}$/.test(code.trim())) {
-      setError("Kode harus 6 digit angka");
+    const candidate = pin.trim();
+    if (!/^\d{4,6}$/.test(candidate)) {
+      setError("PIN harus 4-6 digit angka");
       return;
     }
     setSubmitting(true);
-    const res = await consumeComplimentApprovalCode(code.trim());
+    const res = await verifyComplimentPin(candidate);
     setSubmitting(false);
     if (!isOk(res)) {
       setError(res.error.message);
+      setPin("");
       return;
     }
-    /* Pakai alasan yang DISETUJUI owner, bukan yang masih di layar — supaya
-     * yang diterapkan persis yang di-approve. */
-    onApproved(res.data.approvedReason, res.data.approvalCodeId);
+    onApproved(reason, candidate);
   }
 
   return (
@@ -153,13 +133,9 @@ export function ComplimentModal({
             <Button variant="ghost" onClick={onClose}>
               Batal
             </Button>
-            <Button onClick={handleReasonNext} disabled={requesting}>
+            <Button onClick={handleReasonNext}>
               <Gift className="size-4" aria-hidden />
-              {requesting
-                ? "Mengirim ke Owner…"
-                : isOwner
-                  ? "Terapkan Compliment"
-                  : "Minta Kode Owner"}
+              {isOwner ? "Terapkan Compliment" : "Lanjut — Masukkan PIN"}
             </Button>
           </>
         ) : (
@@ -167,8 +143,8 @@ export function ComplimentModal({
             <Button variant="ghost" onClick={() => setStep("reason")}>
               Kembali
             </Button>
-            <Button onClick={handleCodeSubmit} disabled={submitting}>
-              {submitting ? "Memeriksa…" : "Approve & Terapkan"}
+            <Button onClick={handlePinSubmit} disabled={submitting}>
+              {submitting ? "Memeriksa…" : "Terapkan Compliment"}
             </Button>
           </>
         )
@@ -185,12 +161,12 @@ export function ComplimentModal({
               <p className="font-semibold uppercase tracking-wide">
                 {isOwner
                   ? "Owner — langsung disetujui"
-                  : "Compliment butuh kode dari Owner"}
+                  : "Compliment butuh PIN"}
               </p>
               <p className="text-warning-500/90">
                 {isOwner
-                  ? "Kamu Owner, jadi compliment langsung diterapkan tanpa kode. Tetap tercatat di Audit Log."
-                  : "Setelah tap tombol, kode 6 digit dikirim ke Owner lewat email + notifikasi HP. Minta kodenya ke Owner, lalu ketik di layar berikutnya."}
+                  ? "Kamu Owner, jadi compliment langsung diterapkan tanpa PIN. Tetap tercatat di Audit Log."
+                  : "Masukkan PIN compliment di layar berikutnya. Alasan, nilai, dan nama kasir tercatat di Audit Log."}
               </p>
             </div>
           </div>
@@ -220,47 +196,23 @@ export function ComplimentModal({
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="space-y-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-700">
-            <div className="flex items-start gap-2">
-              <Mail className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <span>
-                {emailMode === "sent" ? (
-                  <>
-                    Kode dikirim ke <strong>{sentTo}</strong>
-                  </>
-                ) : emailMode === "logged" ? (
-                  <>Email belum dikonfigurasi — kode tercatat di log server.</>
-                ) : (
-                  <span className="text-danger-500">
-                    Email GAGAL terkirim. Minta Owner cek notifikasi HP-nya.
-                  </span>
-                )}
-              </span>
-            </div>
-            <div className="flex items-start gap-2">
-              <Smartphone className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <span>
-                {pushSent > 0
-                  ? `Notifikasi terkirim ke ${pushSent} perangkat Owner.`
-                  : "Owner belum mengaktifkan notifikasi HP — kode hanya lewat email."}
-              </span>
-            </div>
-            {codeFirstTwo ? (
-              <p className="text-neutral-500">
-                Kode aktif diawali <strong>{codeFirstTwo}…</strong> — cocokkan
-                dengan yang Owner sebutkan.
-              </p>
-            ) : null}
+          <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-700">
+            <p>
+              Alasan: <strong>{reason.replace(/^Compliment:\s*/, "")}</strong>
+            </p>
+            <p className="mt-1 text-neutral-500">
+              Nilai yang digratiskan {formatRupiah(subtotal)} — tercatat atas
+              nama kasir yang sedang login.
+            </p>
           </div>
 
           <Input
-            label="Kode Approval dari Owner"
-            value={code}
-            onChange={(e) =>
-              setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
-            }
+            label="PIN Compliment"
+            value={pin}
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
             inputMode="numeric"
-            placeholder="6 digit"
+            type="password"
+            placeholder="••••••"
             autoFocus
             className="text-center font-mono text-2xl tracking-[0.4em]"
           />
@@ -270,16 +222,6 @@ export function ComplimentModal({
               {error}
             </p>
           ) : null}
-
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleReasonNext}
-            disabled={requesting}
-            className="w-full"
-          >
-            {requesting ? "Mengirim ulang…" : "Kirim ulang kode"}
-          </Button>
         </div>
       )}
     </Modal>
