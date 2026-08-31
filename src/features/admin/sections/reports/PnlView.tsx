@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { Download, Lock } from "lucide-react";
+import { ReportExportButtons } from "./ReportExportButtons";
 import {
   Badge,
   Button,
@@ -97,14 +98,55 @@ export function PnlView({ viewerRole }: PnlViewProps) {
             Revenue vs expenses sederhana — bukan akuntansi resmi.
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={onExport}
-          disabled={!report || !outlet || loading}
-          aria-label="Export PDF"
-        >
-          <Download className="size-4" /> Export PDF
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ReportExportButtons
+            filenameBase={`laba-rugi-${report?.period.from ?? ""}-sd-${report?.period.to ?? ""}`}
+            disabled={!report || loading}
+            size="md"
+            buildSheets={() =>
+              report
+                ? [
+                    {
+                      name: "Laba Rugi",
+                      rows: [
+                        { Pos: "Omzet POS", Nilai: report.income.posRevenue },
+                        {
+                          Pos: "Pemasukan manual",
+                          Nilai: report.income.manualIncome,
+                        },
+                        {
+                          Pos: "Pemasukan histori",
+                          Nilai: report.income.historicalIncome,
+                        },
+                        { Pos: "TOTAL PEMASUKAN", Nilai: report.income.total },
+                        { Pos: "HPP (POS)", Nilai: report.cogs },
+                        { Pos: "HPP (histori)", Nilai: report.historicalCogs },
+                        { Pos: "LABA KOTOR", Nilai: report.grossMargin },
+                        ...report.expenses.byCategory.map((c) => ({
+                          Pos: `Beban — ${c.name}`,
+                          Nilai: c.amount,
+                        })),
+                        {
+                          Pos: "Beban histori",
+                          Nilai: report.expenses.historicalTotal,
+                        },
+                        { Pos: "TOTAL BEBAN", Nilai: report.expenses.total },
+                        { Pos: "LABA BERSIH", Nilai: report.netProfit },
+                      ],
+                    },
+                  ]
+                : []
+            }
+          />
+          <Button
+            variant="outline"
+            onClick={onExport}
+            disabled={!report || !outlet || loading}
+            aria-label="Export PDF"
+          >
+            <Download className="size-4" /> Export PDF
+          </Button>
+        </div>
       </header>
 
       <Card>

@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { ArrowDown, ArrowRight, ArrowUp, Download } from "lucide-react";
+import { ReportExportButtons } from "./ReportExportButtons";
 import {
   Button,
   Card,
@@ -123,6 +124,72 @@ export function SalesRangeView() {
               options={PAYMENT_OPTIONS}
             />
           </div>
+          <ReportExportButtons
+            filenameBase={`penjualan-${from}-sd-${to}`}
+            disabled={!report || loading}
+            size="md"
+            buildSheets={() =>
+              report
+                ? [
+                    {
+                      name: "Per Hari",
+                      rows: report.byDay.map((d) => ({
+                        Tanggal: d.date,
+                        Omzet: d.revenue,
+                        "Jumlah Transaksi": d.transactionCount,
+                        Sumber: d.isHistorical
+                          ? (d.sourceLabel ?? "Histori")
+                          : "POS",
+                      })),
+                    },
+                    {
+                      name: "Ringkasan",
+                      rows: [
+                        { Keterangan: "Dari", Nilai: report.period.from },
+                        { Keterangan: "Sampai", Nilai: report.period.to },
+                        { Keterangan: "Omzet", Nilai: report.metrics.revenue },
+                        {
+                          Keterangan: "Jumlah transaksi",
+                          Nilai: report.metrics.transactionCount,
+                        },
+                        {
+                          Keterangan: "Rata-rata per bill",
+                          Nilai: report.metrics.averageTicket,
+                        },
+                        {
+                          Keterangan: "Omzet periode sebelumnya",
+                          Nilai: report.comparison.revenue,
+                        },
+                      ],
+                    },
+                    {
+                      name: "Metode Bayar",
+                      rows: report.byPaymentMethod.map((m) => ({
+                        Metode: m.method,
+                        "Jumlah Transaksi": m.count,
+                        Nominal: m.amount,
+                      })),
+                    },
+                    {
+                      name: "Kategori",
+                      rows: report.byCategory.map((c) => ({
+                        Kategori: c.categoryName,
+                        Terjual: c.count,
+                        Omzet: c.revenue,
+                      })),
+                    },
+                    {
+                      name: "Item Terlaris",
+                      rows: report.topItems.map((t) => ({
+                        Menu: t.name,
+                        Qty: t.quantity,
+                        Omzet: t.revenue,
+                      })),
+                    },
+                  ]
+                : []
+            }
+          />
           <Button
             variant="outline"
             onClick={onExport}

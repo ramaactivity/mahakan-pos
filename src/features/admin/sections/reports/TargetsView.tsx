@@ -28,6 +28,7 @@ import {
 } from "@/features/outlets";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ReportExportButtons } from "./ReportExportButtons";
 
 function todayWibIso(): string {
   // Hari ini WIB (UTC+7) sebagai YYYY-MM-DD
@@ -226,6 +227,42 @@ export function TargetsView() {
               </div>
             </CardContent>
           </Card>
+
+          <div className="flex justify-end">
+            <ReportExportButtons
+              filenameBase={`target-progress-${today}`}
+              buildSheets={() => [
+                {
+                  name: "Target & Progress",
+                  rows: [
+                    { label: "Hari Ini", periode: today, p: dailyProgress },
+                    {
+                      label: "Minggu Ini",
+                      periode: `${weekStart} s/d ${today}`,
+                      p: weeklyProgress,
+                    },
+                    {
+                      label: "Bulan Ini",
+                      periode: `${monthStart} s/d ${today}`,
+                      p: monthlyProgress,
+                    },
+                    {
+                      label: "Tahun Ini",
+                      periode: `${yearStart} s/d ${today}`,
+                      p: yearlyProgress,
+                    },
+                  ].map((r) => ({
+                    Periode: r.label,
+                    Rentang: r.periode,
+                    Target: r.p.target,
+                    Realisasi: r.p.revenue,
+                    "Selisih (realisasi − target)": r.p.delta,
+                    "Capaian (%)": r.p.pct ?? "",
+                  })),
+                },
+              ]}
+            />
+          </div>
 
           <div className="grid gap-3 lg:grid-cols-2">
             <ProgressCard

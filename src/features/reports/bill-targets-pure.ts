@@ -139,6 +139,11 @@ export function aggregateClosingShifts(
   totalActualCash: number;
   totalVariance: number;
   totalSettlement: number;
+  totalQris: number;
+  totalCard: number;
+  totalAggregator: number;
+  totalClosing: number;
+  nonCashMismatchCount: number;
   avgVariance: number;
   biggestPositiveVariance: number;
   biggestNegativeVariance: number;
@@ -151,6 +156,11 @@ export function aggregateClosingShifts(
       totalActualCash: 0,
       totalVariance: 0,
       totalSettlement: 0,
+      totalQris: 0,
+      totalCard: 0,
+      totalAggregator: 0,
+      totalClosing: 0,
+      nonCashMismatchCount: 0,
       avgVariance: 0,
       biggestPositiveVariance: 0,
       biggestNegativeVariance: 0,
@@ -162,6 +172,11 @@ export function aggregateClosingShifts(
   let totalActualCash = 0;
   let totalVariance = 0;
   let totalSettlement = 0;
+  let totalQris = 0;
+  let totalCard = 0;
+  let totalAggregator = 0;
+  let totalClosing = 0;
+  let nonCashMismatch = 0;
   let biggestPos = 0;
   let biggestNeg = 0;
   let overThreshold = 0;
@@ -171,6 +186,14 @@ export function aggregateClosingShifts(
     totalActualCash += r.actualCash;
     totalVariance += r.variance;
     totalSettlement += r.settlementTotal;
+    totalQris += r.qrisSettlement;
+    totalCard += r.edcSettlement;
+    totalAggregator += r.aggregatorTotal;
+    totalClosing += r.totalClosing;
+    /* Selisih non-tunai dihitung terpisah dari selisih kas: uang QRIS/kartu
+     * tidak lewat laci, jadi selisihnya berarti salah lapor atau transaksi
+     * belum masuk — bukan kas kurang. */
+    if (r.qrisVariance !== 0 || r.cardVariance !== 0) nonCashMismatch++;
     if (r.variance > biggestPos) biggestPos = r.variance;
     if (r.variance < biggestNeg) biggestNeg = r.variance;
     if (Math.abs(r.variance) > varianceThreshold) overThreshold++;
@@ -182,6 +205,11 @@ export function aggregateClosingShifts(
     totalActualCash,
     totalVariance,
     totalSettlement,
+    totalQris,
+    totalCard,
+    totalAggregator,
+    totalClosing,
+    nonCashMismatchCount: nonCashMismatch,
     avgVariance: Math.round(totalVariance / rows.length),
     biggestPositiveVariance: biggestPos,
     biggestNegativeVariance: biggestNeg,

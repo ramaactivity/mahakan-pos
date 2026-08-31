@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Download } from "lucide-react";
+import { ReportExportButtons } from "./ReportExportButtons";
 import {
   Bar,
   BarChart,
@@ -114,6 +115,72 @@ export function DailySalesView() {
               options={PAYMENT_OPTIONS}
             />
           </div>
+          <ReportExportButtons
+            filenameBase={`penjualan-harian-${date}`}
+            disabled={!report || loading}
+            size="md"
+            buildSheets={() =>
+              report
+                ? [
+                    {
+                      name: "Ringkasan",
+                      rows: [
+                        { Keterangan: "Tanggal", Nilai: report.date },
+                        { Keterangan: "Omzet", Nilai: report.metrics.revenue },
+                        {
+                          Keterangan: "Jumlah transaksi",
+                          Nilai: report.metrics.transactionCount,
+                        },
+                        {
+                          Keterangan: "Rata-rata per bill",
+                          Nilai: report.metrics.averageTicket,
+                        },
+                        {
+                          Keterangan: "Void (jumlah)",
+                          Nilai: report.metrics.voidedCount,
+                        },
+                        {
+                          Keterangan: "Void (rupiah)",
+                          Nilai: report.metrics.voidedAmount,
+                        },
+                        {
+                          Keterangan: "Refund (jumlah)",
+                          Nilai: report.metrics.refundedCount,
+                        },
+                        {
+                          Keterangan: "Refund (rupiah)",
+                          Nilai: report.metrics.refundedAmount,
+                        },
+                      ],
+                    },
+                    {
+                      name: "Metode Bayar",
+                      rows: report.byPaymentMethod.map((m) => ({
+                        Metode: m.method,
+                        "Jumlah Transaksi": m.count,
+                        Nominal: m.amount,
+                      })),
+                    },
+                    {
+                      name: "Kategori",
+                      rows: report.byCategory.map((c) => ({
+                        Kategori: c.categoryName,
+                        Terjual: c.count,
+                        Omzet: c.revenue,
+                      })),
+                    },
+                    {
+                      name: "Item Terlaris",
+                      rows: report.topItems.map((t) => ({
+                        Menu: t.name,
+                        Qty: t.quantity,
+                        Omzet: t.revenue,
+                      })),
+                    },
+                  ]
+                : []
+            }
+          />
           <Button
             variant="outline"
             onClick={onExport}

@@ -57,6 +57,10 @@ import type {
   TopItem,
 } from "./types";
 import { classifyMenuMatrix } from "./menu-engineering-pure";
+import {
+  computeShiftCashSummary,
+  type ShiftTxnRow,
+} from "@/features/shifts/close-pure";
 import { clampFromDate, getCutoffDate } from "@/features/cutoff/cutoff";
 import {
   aggregateClosingShifts,
@@ -844,6 +848,7 @@ export async function fetchClosingShiftReport(
       actualCash: shifts.actualCash,
       variance: shifts.variance,
       edcSettlement: shifts.edcSettlement,
+      qrisSettlement: shifts.qrisSettlement,
       gofoodSettlement: shifts.gofoodSettlement,
       grabfoodSettlement: shifts.grabfoodSettlement,
       shopeefoodSettlement: shifts.shopeefoodSettlement,
@@ -866,40 +871,89 @@ export async function fetchClosingShiftReport(
   let rows: ClosingShiftRow[] = [];
   if (shiftRows.length > 0) {
     const shiftIds = shiftRows.map((s) => s.id);
-    const cashAgg = await db
+
+    /* Sesi AE-224 — angka per kanal dihitung dengan `computeShiftCashSummary`,
+     * helper yang SAMA dipakai layar tutup shift. Dua alasan:
+     *
+     * 1. QRIS dan kartu ikut terhitung, termasuk pecahannya di pembayaran
+     *    split — yang lama hanya menjumlah transaksi ber-paymentMethod 'cash',
+     *    jadi bagian tunai dari transaksi split pun tidak pernah masuk
+     *    "Penjualan Cash" dan variance-nya jadi alarm palsu.
+     * 2. Rumusnya tidak bisa berbeda dengan yang dipakai saat shift ditutup;
+     *    kalau ditulis ulang di sini, suatu saat keduanya akan berbeda diam-diam.
+     */
+    const txnRows = await db
       .select({
         shiftId: transactions.shiftId,
-        paidCash: sql<number>`coalesce(sum(case
-            when ${transactions.paymentMethod} = 'cash'
-             and ${transactions.status} in ('paid','partially_refunded','refunded')
-            then ${transactions.total} else 0 end), 0)::bigint`,
-        refundedCash: sql<number>`coalesce(sum(case
-            when ${transactions.paymentMethod} = 'cash'
-             and ${transactions.status} = 'partially_refunded'
-            then ${transactions.refundedAmount}
-            when ${transactions.paymentMethod} = 'cash'
-             and ${transactions.status} = 'refunded'
-            then ${transactions.total} else 0 end), 0)::bigint`,
+        id: transactions.id,
+        status: transactions.status,
+        paymentMethod: transactions.paymentMethod,
+        total: transactions.total,
+        refundedAmount: transactions.refundedAmount,
       })
       .from(transactions)
-      .where(inArray(transactions.shiftId, shiftIds))
-      .groupBy(transactions.shiftId);
+      .where(inArray(transactions.shiftId, shiftIds));
 
-    const cashByShift = new Map<string, { paidCash: number; refundedCash: number }>();
-    for (const r of cashAgg) {
-      cashByShift.set(r.shiftId, {
-        paidCash: Number(r.paidCash),
-        refundedCash: Number(r.refundedCash),
+    const splitRows = await db
+      .select({
+        transactionId: splitPayments.transactionId,
+        paymentMethod: splitPayments.paymentMethod,
+        amount: splitPayments.amount,
+      })
+      .from(splitPayments)
+      .innerJoin(transactions, eq(transactions.id, splitPayments.transactionId))
+      .where(inArray(transactions.shiftId, shiftIds));
+
+    const splitsByTxn = new Map<
+      string,
+      Array<{ paymentMethod: string; amount: number }>
+    >();
+    for (const r of splitRows) {
+      const arr = splitsByTxn.get(r.transactionId) ?? [];
+      arr.push({
+        paymentMethod: r.paymentMethod,
+        amount: Number(r.amount),
       });
+      splitsByTxn.set(r.transactionId, arr);
+    }
+
+    const txnsByShift = new Map<string, ShiftTxnRow[]>();
+    for (const t of txnRows) {
+      if (!t.shiftId) continue;
+      const arr = txnsByShift.get(t.shiftId) ?? [];
+      arr.push({
+        status: t.status as ShiftTxnRow["status"],
+        paymentMethod: t.paymentMethod,
+        total: Number(t.total),
+        refundedAmount: Number(t.refundedAmount ?? 0),
+        splits: splitsByTxn.get(t.id),
+      });
+      txnsByShift.set(t.shiftId, arr);
+    }
+
+    const summaryByShift = new Map<
+      string,
+      ReturnType<typeof computeShiftCashSummary>
+    >();
+    for (const id of shiftIds) {
+      summaryByShift.set(id, computeShiftCashSummary(txnsByShift.get(id) ?? []));
     }
 
     rows = shiftRows.map((s) => {
-      const cash = cashByShift.get(s.id) ?? { paidCash: 0, refundedCash: 0 };
+      const sum = summaryByShift.get(s.id);
+      const cash = {
+        paidCash: sum?.paidCash ?? 0,
+        refundedCash: sum?.refundedCash ?? 0,
+      };
       const opening = Number(s.openingCash);
       const expected = opening + cash.paidCash - cash.refundedCash;
       const actual = s.actualCash == null ? 0 : Number(s.actualCash);
       const variance = s.variance == null ? actual - expected : Number(s.variance);
       const edc = s.edcSettlement == null ? 0 : Number(s.edcSettlement);
+      /* QRIS diisi otomatis dari transaksi saat tutup shift (AE-56), tapi
+       * kasir boleh menimpanya dengan angka fisik dari aplikasi QRIS. Yang
+       * dipakai di sini yang tersimpan — selisihnya justru yang ingin dilihat. */
+      const qris = s.qrisSettlement == null ? 0 : Number(s.qrisSettlement);
       const gofood = s.gofoodSettlement == null ? 0 : Number(s.gofoodSettlement);
       const grab = s.grabfoodSettlement == null ? 0 : Number(s.grabfoodSettlement);
       const shopee = s.shopeefoodSettlement == null
@@ -933,6 +987,13 @@ export async function fetchClosingShiftReport(
         grabfoodSettlement: grab,
         shopeefoodSettlement: shopee,
         settlementTotal: edc + gofood + grab + shopee,
+        expectedQris: sum?.paidQris ?? 0,
+        qrisSettlement: qris,
+        qrisVariance: qris - (sum?.paidQris ?? 0),
+        expectedCard: sum?.paidCard ?? 0,
+        cardVariance: edc - (sum?.paidCard ?? 0),
+        aggregatorTotal: gofood + grab + shopee,
+        totalClosing: actual + qris + edc + gofood + grab + shopee,
         notes: s.notes,
       };
     });

@@ -20,6 +20,7 @@ import {
 } from "@/features/reports";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ReportExportButtons } from "./ReportExportButtons";
 import { todayJakarta } from "@/lib/tz";
 
 function isoDaysAgo(days: number): string {
@@ -31,7 +32,12 @@ function isoToday(): string {
   return todayJakarta();
 }
 
-type SortKey = "date" | "variance" | "actualCash" | "kasir";
+type SortKey =
+  | "date"
+  | "variance"
+  | "actualCash"
+  | "kasir"
+  | "totalClosing";
 
 export function ClosingShiftView() {
   const [from, setFrom] = useState<string>(isoDaysAgo(6));
@@ -65,6 +71,8 @@ export function ClosingShiftView() {
       if (sortKey === "date") cmp = a.closedAt.localeCompare(b.closedAt);
       else if (sortKey === "variance") cmp = a.variance - b.variance;
       else if (sortKey === "actualCash") cmp = a.actualCash - b.actualCash;
+      else if (sortKey === "totalClosing")
+        cmp = a.totalClosing - b.totalClosing;
       else cmp = a.userName.localeCompare(b.userName);
       return sortDir === "asc" ? cmp : -cmp;
     });
@@ -88,9 +96,51 @@ export function ClosingShiftView() {
             Laporan Closing Shift
           </h2>
           <p className="text-xs text-neutral-500">
-            Ringkasan variance kas + settlement aggregator per shift yang sudah
-            ditutup.
+            Kas, QRIS, debit/EDC, dan aggregator per shift yang sudah ditutup —
+            lengkap dengan total closing-nya.
           </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <ReportExportButtons
+            filenameBase={`closing-shift-${from}-sd-${to}`}
+            disabled={!report || report.rows.length === 0}
+            buildSheets={() => [
+              {
+                name: "Closing Shift",
+                rows: (report?.rows ?? []).map((r) => ({
+                  Tanggal: r.shiftDate,
+                  Kasir: r.userName,
+                  Buka: new Date(r.openedAt).toLocaleTimeString("id-ID", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }),
+                  Tutup: new Date(r.closedAt).toLocaleTimeString("id-ID", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }),
+                  "Durasi (menit)": r.durationMinutes,
+                  "Kas Awal": r.openingCash,
+                  "Penjualan Cash": r.paidCash,
+                  "Refund Cash": r.refundedCash,
+                  "Kas Harusnya": r.expectedCash,
+                  "Kas Aktual": r.actualCash,
+                  "Selisih Kas": r.variance,
+                  "QRIS Dilaporkan": r.qrisSettlement,
+                  "QRIS Menurut Transaksi": r.expectedQris,
+                  "Selisih QRIS": r.qrisVariance,
+                  "Debit/EDC Dilaporkan": r.edcSettlement,
+                  "Debit/EDC Menurut Transaksi": r.expectedCard,
+                  "Selisih Debit": r.cardVariance,
+                  GoFood: r.gofoodSettlement,
+                  GrabFood: r.grabfoodSettlement,
+                  ShopeeFood: r.shopeefoodSettlement,
+                  "Total Aggregator": r.aggregatorTotal,
+                  "Total Closing": r.totalClosing,
+                  Catatan: r.notes ?? "",
+                })),
+              },
+            ]}
+          />
         </div>
         <div className="min-w-[16rem]">
           <DateRangePicker
@@ -169,9 +219,9 @@ function ReportBody({
           subtitle={`Negatif terbesar ${formatRupiah(totals.biggestNegativeVariance)}`}
         />
         <StatCard
-          title="Total Settlement Aggregator"
-          value={formatRupiah(totals.totalSettlement)}
-          subtitle="EDC + GoFood + GrabFood + ShopeeFood"
+          title="Total Closing"
+          value={formatRupiah(totals.totalClosing)}
+          subtitle={`Kas ${formatRupiah(totals.totalActualCash)} · QRIS ${formatRupiah(totals.totalQris)} · Debit ${formatRupiah(totals.totalCard)} · Aggregator ${formatRupiah(totals.totalAggregator)}`}
         />
       </div>
 
@@ -223,7 +273,16 @@ function ReportBody({
                       dir={sortDir}
                       align="right"
                     />
-                    <th className="px-3 py-2 text-right">Settlement</th>
+                    <th className="px-3 py-2 text-right">QRIS</th>
+                    <th className="px-3 py-2 text-right">Debit / EDC</th>
+                    <th className="px-3 py-2 text-right">Aggregator</th>
+                    <SortableTh
+                      label="Total Closing"
+                      onClick={() => onSort("totalClosing")}
+                      active={sortKey === "totalClosing"}
+                      dir={sortDir}
+                      align="right"
+                    />
                   </tr>
                 </thead>
                 <tbody>
@@ -281,8 +340,42 @@ function ReportBody({
                             {formatRupiah(r.variance)}
                           </Badge>
                         </td>
+                        {/* Sesi AE-224 — QRIS & debit diperlakukan seperti kas:
+                            yang dilaporkan di atas, yang seharusnya (menurut
+                            transaksi) di bawahnya kalau berbeda. */}
+                        <td className="px-3 py-2 text-right font-mono">
+                          <div className="text-neutral-900">
+                            {formatRupiah(r.qrisSettlement)}
+                          </div>
+                          {r.qrisVariance !== 0 ? (
+                            <div
+                              className="text-[11px] text-danger-500"
+                              title={`Transaksi QRIS shift ini ${formatRupiah(r.expectedQris)}`}
+                            >
+                              {r.qrisVariance > 0 ? "+" : ""}
+                              {formatRupiah(r.qrisVariance)} vs transaksi
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono">
+                          <div className="text-neutral-900">
+                            {formatRupiah(r.edcSettlement)}
+                          </div>
+                          {r.cardVariance !== 0 ? (
+                            <div
+                              className="text-[11px] text-danger-500"
+                              title={`Transaksi kartu shift ini ${formatRupiah(r.expectedCard)}`}
+                            >
+                              {r.cardVariance > 0 ? "+" : ""}
+                              {formatRupiah(r.cardVariance)} vs transaksi
+                            </div>
+                          ) : null}
+                        </td>
                         <td className="px-3 py-2 text-right font-mono text-neutral-700">
-                          {formatRupiah(r.settlementTotal)}
+                          {formatRupiah(r.aggregatorTotal)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono font-semibold text-neutral-900">
+                          {formatRupiah(r.totalClosing)}
                         </td>
                       </tr>
                     );
@@ -305,7 +398,16 @@ function ReportBody({
                       {formatRupiah(totals.totalVariance)}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">
-                      {formatRupiah(totals.totalSettlement)}
+                      {formatRupiah(totals.totalQris)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatRupiah(totals.totalCard)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatRupiah(totals.totalAggregator)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatRupiah(totals.totalClosing)}
                     </td>
                   </tr>
                 </tfoot>

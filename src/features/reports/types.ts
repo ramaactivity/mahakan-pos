@@ -282,6 +282,31 @@ export interface ClosingShiftRow {
   grabfoodSettlement: number;
   shopeefoodSettlement: number;
   settlementTotal: number;
+  /* ---- Sesi AE-224 — non-tunai ikut direkonsiliasi, bukan cuma kas ----
+   *
+   * Laporan ini sebelumnya hanya mengadu Kas Harusnya vs Kas Aktual. QRIS
+   * bahkan tidak pernah ikut terbaca padahal kolomnya sudah lama ada di tabel
+   * shifts, jadi shift yang penjualannya mayoritas QRIS terlihat seolah nyaris
+   * tanpa pemasukan. Sekarang QRIS dan kartu/debit diperlakukan sama seperti
+   * kas: yang SEHARUSNYA (dari transaksi, sudah termasuk pecahan split) diadu
+   * dengan yang DILAPORKAN kasir saat tutup shift. */
+  /** QRIS menurut transaksi shift ini. */
+  expectedQris: number;
+  /** QRIS yang dilaporkan kasir saat tutup (shifts.qris_settlement). */
+  qrisSettlement: number;
+  qrisVariance: number;
+  /** Kartu/debit (EDC) menurut transaksi shift ini. */
+  expectedCard: number;
+  /** Selisih EDC dilaporkan vs seharusnya. */
+  cardVariance: number;
+  /** GoFood + GrabFood + ShopeeFood. */
+  aggregatorTotal: number;
+  /**
+   * Total yang benar-benar ditutup shift ini = kas aktual + QRIS + EDC +
+   * aggregator. Ini angka "total closing" yang dicari owner: berapa nilai
+   * seluruh pemasukan shift, bukan cuma laci kasnya.
+   */
+  totalClosing: number;
   notes: string | null;
 }
 
@@ -294,6 +319,13 @@ export interface ClosingShiftReport {
     totalActualCash: number;
     totalVariance: number;
     totalSettlement: number;
+    /** Sesi AE-224 — total per kanal + total closing seluruh periode. */
+    totalQris: number;
+    totalCard: number;
+    totalAggregator: number;
+    totalClosing: number;
+    /** Jumlah shift yang QRIS/kartunya tidak cocok dengan transaksi. */
+    nonCashMismatchCount: number;
     avgVariance: number;
     biggestPositiveVariance: number;
     biggestNegativeVariance: number;

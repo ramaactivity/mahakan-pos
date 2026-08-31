@@ -28,6 +28,13 @@ function shift(overrides: Partial<ClosingShiftRow>): ClosingShiftRow {
     grabfoodSettlement: overrides.grabfoodSettlement ?? 0,
     shopeefoodSettlement: overrides.shopeefoodSettlement ?? 0,
     settlementTotal: overrides.settlementTotal ?? 0,
+    expectedQris: overrides.expectedQris ?? 0,
+    qrisSettlement: overrides.qrisSettlement ?? 0,
+    qrisVariance: overrides.qrisVariance ?? 0,
+    expectedCard: overrides.expectedCard ?? 0,
+    cardVariance: overrides.cardVariance ?? 0,
+    aggregatorTotal: overrides.aggregatorTotal ?? 0,
+    totalClosing: overrides.totalClosing ?? 0,
     notes: overrides.notes ?? null,
   };
 }
@@ -183,5 +190,67 @@ describe("computeProgress", () => {
     expect(r.tier).toBe("on_track");
     expect(r.pct).toBe(120);
     expect(r.delta).toBe(400_000);
+  });
+});
+
+/* Sesi AE-224 — laporan closing shift dulu hanya merekonsiliasi KAS. QRIS
+ * bahkan tidak pernah dibaca padahal kolomnya sudah ada, jadi shift yang
+ * penjualannya mayoritas QRIS terlihat nyaris tanpa pemasukan. */
+describe("aggregateClosingShifts — kanal non-tunai", () => {
+  it("menjumlah QRIS, kartu, aggregator, dan total closing", () => {
+    const totals = aggregateClosingShifts(
+      [
+        shift({
+          shiftId: "a",
+          actualCash: 700_000,
+          qrisSettlement: 500_000,
+          edcSettlement: 200_000,
+          aggregatorTotal: 100_000,
+          totalClosing: 1_500_000,
+        }),
+        shift({
+          shiftId: "b",
+          actualCash: 300_000,
+          qrisSettlement: 250_000,
+          edcSettlement: 0,
+          aggregatorTotal: 50_000,
+          totalClosing: 600_000,
+        }),
+      ],
+      10_000,
+    );
+    expect(totals.totalQris).toBe(750_000);
+    expect(totals.totalCard).toBe(200_000);
+    expect(totals.totalAggregator).toBe(150_000);
+    expect(totals.totalClosing).toBe(2_100_000);
+  });
+
+  it("menghitung shift yang non-tunainya tidak cocok dengan transaksi", () => {
+    const totals = aggregateClosingShifts(
+      [
+        shift({ shiftId: "a", qrisVariance: 0, cardVariance: 0 }),
+        shift({ shiftId: "b", qrisVariance: -25_000, cardVariance: 0 }),
+        shift({ shiftId: "c", qrisVariance: 0, cardVariance: 15_000 }),
+      ],
+      10_000,
+    );
+    expect(totals.nonCashMismatchCount).toBe(2);
+  });
+
+  it("selisih non-tunai TIDAK ikut menghitung selisih kas", () => {
+    const totals = aggregateClosingShifts(
+      [shift({ variance: 0, qrisVariance: -500_000 })],
+      10_000,
+    );
+    expect(totals.totalVariance).toBe(0);
+    expect(totals.overThresholdCount).toBe(0);
+    expect(totals.nonCashMismatchCount).toBe(1);
+  });
+
+  it("periode kosong mengembalikan nol untuk semua kanal", () => {
+    const totals = aggregateClosingShifts([], 10_000);
+    expect(totals.totalQris).toBe(0);
+    expect(totals.totalClosing).toBe(0);
+    expect(totals.nonCashMismatchCount).toBe(0);
   });
 });

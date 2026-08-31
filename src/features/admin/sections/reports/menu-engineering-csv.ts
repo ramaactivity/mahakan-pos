@@ -69,7 +69,13 @@ export function buildRowsCsv(result: MenuEngineeringResult): string {
 
 /** Trigger browser download for an in-memory CSV string. */
 export function downloadCsv(filename: string, content: string): void {
-  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+  /* Sesi AE-224 — awali dengan BOM UTF-8. Tanpa ini Excel membaca file
+   * sebagai ANSI, jadi huruf beraksen dan tanda "—" di nama menu berubah jadi
+   * karakter aneh begitu dibuka. Dipasang di sini supaya seluruh tab laporan
+   * yang memakai helper ini ikut terbetulkan sekaligus. */
+  const blob = new Blob([`\ufeff${content}`], {
+    type: "text/csv;charset=utf-8",
+  });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
