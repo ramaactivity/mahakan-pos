@@ -292,6 +292,22 @@ export type OutletSettings = {
     yearlyRevenue?: number;
     /** ISO timestamp last edit, untuk audit/staleness check. */
     updatedAt?: string;
+    /**
+     * Sesi AE-223 — TARGET BULANAN YANG BENAR-BENAR BERLAKU di bulan itu,
+     * dikunci per bulan: { "2026-08": 40000000, ... }.
+     *
+     * `monthlyRevenue` di atas selalu menunjukkan target yang berlaku
+     * SEKARANG. Begitu owner mengubahnya, patokan bulan-bulan lampau ikut
+     * berubah — jadi pencapaian Agustus mendadak dinilai dengan target
+     * September. Riwayat ini yang membuat penilaian bulan lampau tetap
+     * dibandingkan ke angka yang memang dipasang saat itu.
+     *
+     * Diisi otomatis untuk bulan berjalan setiap `monthlyRevenue` disimpan,
+     * dan bisa diisi manual per bulan (termasuk backfill bulan lampau).
+     * Bulan yang tidak ada di sini = memang tidak pernah tercatat; JANGAN
+     * diam-diam jatuh ke target sekarang tanpa memberi tahu pembacanya.
+     */
+    monthlyHistory?: Record<string, number>;
   };
   /** Sesi AE-207 — BATAS BUKU: sembunyikan (bukan hapus) data sebelum
    * tanggal ini supaya pencatatan mulai bersih dari periode baru.

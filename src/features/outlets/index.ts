@@ -15,6 +15,7 @@ export {
   updateScheduleTemplates,
   updateThresholds,
   updateFeatures,
+  setMonthlyTargetForMonth,
   updateRevenueTargets,
   type OpeningBalanceAutoStatus,
   type UpdateBusinessInfoInput,

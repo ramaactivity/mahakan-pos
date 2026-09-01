@@ -68,6 +68,7 @@ export {
 
 export {
   getTargetProgress,
+  getMonthlyTargetFor,
   type TargetProgressData,
   type TargetScale,
 } from "./target-progress";

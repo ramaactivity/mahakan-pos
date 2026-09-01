@@ -13,6 +13,7 @@ import {
   stockOpnameSessions,
 } from "@/db/schema";
 import type { OperationalHours, OutletSettings } from "@/db/schema/outlets";
+import { currentMonthWib } from "@/lib/month-wib";
 import { auth } from "@/lib/auth";
 import { hasPermission, type Permission } from "@/lib/auth";
 import { diffShallow, logAudit } from "@/lib/audit/logger";
@@ -721,11 +722,26 @@ export async function updateRevenueTargets(
   if (!before) return err("NOT_FOUND", "Outlet tidak ditemukan");
 
   const beforeSettings: OutletSettings = before.settings ?? {};
+
+  /* Sesi AE-223 — kunci target bulanan untuk BULAN BERJALAN setiap kali
+   * disimpan. Tanpa ini, mengubah target bulan depan diam-diam menilai ulang
+   * pencapaian bulan-bulan lampau dengan patokan yang tidak pernah berlaku
+   * saat itu. Dihitung lewat kalender WIB, bukan zona mesin. */
+  const historyBefore = beforeSettings.targets?.monthlyHistory ?? {};
+  const monthlyHistory =
+    parsed.data.monthlyRevenue === undefined
+      ? historyBefore
+      : {
+          ...historyBefore,
+          [currentMonthWib()]: parsed.data.monthlyRevenue,
+        };
+
   const merged: OutletSettings = {
     ...beforeSettings,
     targets: {
       ...(beforeSettings.targets ?? {}),
       ...parsed.data,
+      monthlyHistory,
       updatedAt: new Date().toISOString(),
     },
   };
@@ -804,6 +820,87 @@ export async function updateScheduleTemplates(
       before: { scheduleTemplates: beforeSettings.scheduleTemplates ?? [] },
       after: { scheduleTemplates: parsed.data.templates },
       context: { section: "scheduleTemplates" },
+    },
+    metadata: { outletId: row.id, actorRole: session.user.role },
+  });
+
+  return { success: true, data: row };
+}
+
+
+/**
+ * Sesi AE-223 — kunci target bulanan untuk SATU bulan tertentu.
+ *
+ * Dipakai owner untuk mencatat target yang dulu benar-benar berlaku di bulan
+ * lampau (backfill), atau memasang target bulan berjalan tanpa mengubah
+ * target "berlaku sekarang" yang dipakai kartu progres berjalan.
+ *
+ * `amount` null = hapus catatan bulan itu; pencapaiannya kembali dinyatakan
+ * "tidak tercatat" alih-alih dinilai dengan patokan yang salah.
+ */
+export async function setMonthlyTargetForMonth(input: {
+  month: string;
+  amount: number | null;
+}): Promise<ApiResult<Outlet>> {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(input.month)) {
+    return err("VALIDATION_ERROR", "Bulan harus format YYYY-MM");
+  }
+  if (
+    input.amount !== null &&
+    (!Number.isInteger(input.amount) ||
+      input.amount < 0 ||
+      input.amount > 9_999_999_999)
+  ) {
+    return err("VALIDATION_ERROR", "Nominal target tidak valid");
+  }
+
+  let session;
+  try {
+    session = await requirePerm("settings.targets.update");
+  } catch (e) {
+    return err("FORBIDDEN", e instanceof Error ? e.message : "FORBIDDEN");
+  }
+
+  const [before] = await db
+    .select()
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  if (!before) return err("NOT_FOUND", "Outlet tidak ditemukan");
+
+  const beforeSettings: OutletSettings = before.settings ?? {};
+  const history = { ...(beforeSettings.targets?.monthlyHistory ?? {}) };
+  if (input.amount === null) delete history[input.month];
+  else history[input.month] = input.amount;
+
+  const merged: OutletSettings = {
+    ...beforeSettings,
+    targets: {
+      ...(beforeSettings.targets ?? {}),
+      monthlyHistory: history,
+      updatedAt: new Date().toISOString(),
+    },
+  };
+
+  const [row] = await db
+    .update(outlets)
+    .set({ settings: merged, updatedAt: new Date() })
+    .where(eq(outlets.id, session.user.outletId))
+    .returning();
+
+  await logAudit({
+    eventType: "settings.update",
+    userId: session.user.id,
+    entityType: "outlet",
+    entityId: row.id,
+    payload: {
+      summary:
+        input.amount === null
+          ? `Hapus target bulan ${input.month}`
+          : `Set target bulan ${input.month} = ${input.amount.toLocaleString("id-ID")}`,
+      before: { month: input.month, amount: beforeSettings.targets?.monthlyHistory?.[input.month] ?? null },
+      after: { month: input.month, amount: input.amount },
+      context: { section: "targets" },
     },
     metadata: { outletId: row.id, actorRole: session.user.role },
   });

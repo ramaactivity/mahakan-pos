@@ -5,7 +5,7 @@ import {
   isValidMonth,
   monthRange,
   shiftMonth,
-} from "@/features/admin/sections/dashboard-month";
+} from "@/lib/month-wib";
 
 describe("currentMonthWib", () => {
   it("memakai kalender WIB, bukan UTC", () => {

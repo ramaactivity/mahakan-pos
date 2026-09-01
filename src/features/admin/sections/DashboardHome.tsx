@@ -33,6 +33,7 @@ import {
 } from "@/components/ui";
 import {
   getDailySalesReport,
+  getMonthlyTargetFor,
   getSalesRangeReport,
   getTargetProgress,
   isOk,
@@ -65,7 +66,7 @@ import {
   isFutureMonth,
   monthRange,
   shiftMonth,
-} from "./dashboard-month";
+} from "@/lib/month-wib";
 
 interface DashboardHomeProps {
   /* Sesi AE-123 — accept full user (role dipakai untuk RBAC banner). */
@@ -175,8 +176,23 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
     staleTime: 60 * 1000,
   });
 
+  /* Sesi AE-223 — target yang BENAR-BENAR berlaku di bulan yang sedang
+   * dilihat. Kalau bulan itu tidak pernah dikunci targetnya, kartunya bilang
+   * apa adanya alih-alih diam-diam memakai target sekarang. */
+  const monthTargetQuery = useQuery({
+    queryKey: ["admin", "dashboard", "monthly-target", month],
+    queryFn: async () => {
+      const res = await getMonthlyTargetFor(month);
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+    enabled: !isCurrentMonth,
+    staleTime: 5 * 60 * 1000,
+  });
+
   const report = reportQuery.data ?? null;
   const monthSales = monthSalesQuery.data ?? null;
+  const monthTarget = monthTargetQuery.data ?? null;
   const attendance = attendanceQuery.data ?? null;
   const activePeriod = payrollQuery.data ?? null;
   const expiringDocs = docsQuery.data ?? [];
@@ -381,15 +397,16 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
             />
           )
         ) : null
-      ) : targetProgress?.monthly.target != null ? (
-        /* Sesi AE-222 — bulan lampau: target harian & mingguan tidak relevan,
-         * tapi pencapaian bulanannya berguna. Targetnya diberi label jujur:
-         * yang tersimpan cuma target yang BERLAKU SEKARANG, bukan target yang
-         * dulu dipasang untuk bulan itu. */
+      ) : monthTarget?.target != null ? (
+        /* Sesi AE-222/223 — bulan lampau: target harian & mingguan tidak
+         * relevan, tapi pencapaian bulanannya berguna. Sejak AE-223 patokannya
+         * target yang DIKUNCI untuk bulan itu; kalau belum pernah dikunci,
+         * kartunya mengatakannya. */
         <PastMonthTargetCard
           label={mtdRange.label}
           revenue={metrics.revenue}
-          target={targetProgress.monthly.target}
+          target={monthTarget.target}
+          fromHistory={monthTarget.fromHistory}
         />
       ) : null}
 
@@ -1040,21 +1057,25 @@ function HrPayrollCard({
 }
 
 /**
- * Sesi AE-222 — pencapaian bulan lampau terhadap target.
+ * Sesi AE-222/223 — pencapaian bulan lampau terhadap target.
  *
- * Sistem hanya menyimpan target yang BERLAKU SEKARANG, bukan target yang dulu
- * dipasang untuk bulan itu. Itu dinyatakan terang-terangan di kartunya —
- * angka yang terlihat resmi padahal dibandingkan ke patokan yang salah lebih
- * berbahaya daripada tidak menampilkan apa pun.
+ * Sejak AE-223 target bisa dikunci per bulan, jadi penilaian bulan lampau
+ * memakai patokan yang memang berlaku saat itu. Untuk bulan yang belum pernah
+ * dikunci, kartunya MENGATAKANNYA — angka yang terlihat resmi padahal
+ * dibandingkan ke patokan yang salah lebih berbahaya daripada tidak
+ * menampilkan apa pun.
  */
 function PastMonthTargetCard({
   label,
   revenue,
   target,
+  fromHistory,
 }: {
   label: string;
   revenue: number;
   target: number;
+  /** true = target ini memang dikunci untuk bulan tersebut. */
+  fromHistory: boolean;
 }) {
   const pct = target > 0 ? Math.round((revenue / target) * 100) : 0;
   const kurang = Math.max(0, target - revenue);
@@ -1087,9 +1108,15 @@ function PastMonthTargetCard({
             {kurang > 0 ? `Kurang ${formatRupiah(kurang)}` : "Target tercapai"}
           </span>
         </div>
-        <p className="text-[11px] leading-relaxed text-neutral-500">
-          Dibandingkan dengan target bulanan yang berlaku sekarang — sistem
-          tidak menyimpan target lama per bulan.
+        <p
+          className={cn(
+            "text-[11px] leading-relaxed",
+            fromHistory ? "text-neutral-500" : "text-warning-700",
+          )}
+        >
+          {fromHistory
+            ? `Dibandingkan dengan target yang memang dipasang untuk ${label}.`
+            : `Target ${label} belum pernah dikunci — angka ini dibandingkan dengan target bulanan yang berlaku sekarang. Isi di Laporan → Target kalau ingin penilaiannya tepat.`}
         </p>
       </CardContent>
     </Card>

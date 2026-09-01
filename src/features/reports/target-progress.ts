@@ -9,6 +9,7 @@ import {
   todayWibIso,
 } from "@/features/cash/helpers";
 import { fail, ok, type ApiResult } from "@/features/reports/types";
+import { resolveMonthlyTarget } from "./target-history-pure";
 
 /**
  * Sesi AE-62ah — Server helper untuk progress target pendapatan vs realisasi.
@@ -143,4 +144,32 @@ export async function getTargetProgress(): Promise<
       toDate: today,
     },
   });
+}
+
+
+/**
+ * Sesi AE-223 — target bulanan untuk SATU bulan tertentu.
+ *
+ * `fromHistory=true` berarti angkanya memang dikunci untuk bulan itu.
+ * `false` berarti kita hanya punya target yang berlaku SEKARANG — pemanggil
+ * WAJIB mengatakannya ke pembaca, karena membandingkan pencapaian Agustus ke
+ * target September menghasilkan persentase yang terlihat resmi tapi salah.
+ */
+export async function getMonthlyTargetFor(month: string): Promise<
+  ApiResult<{ target: number | null; fromHistory: boolean }>
+> {
+  const session = await auth();
+  if (!session) return fail("UNAUTHORIZED", "Tidak login");
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    return fail("VALIDATION_ERROR", "Bulan harus format YYYY-MM");
+  }
+
+  const [outletRow] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  const targets = outletRow?.settings?.targets ?? {};
+
+  return ok(resolveMonthlyTarget(month, targets));
 }

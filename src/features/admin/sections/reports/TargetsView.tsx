@@ -23,10 +23,12 @@ import {
 import {
   getOwnOutlet,
   isOk as isOutletOk,
+  setMonthlyTargetForMonth,
   updateRevenueTargets,
   type Outlet,
 } from "@/features/outlets";
 import { formatRupiah } from "@/lib/format";
+import { currentMonthWib, monthRange, shiftMonth } from "@/lib/month-wib";
 import { cn } from "@/lib/utils";
 import { ReportExportButtons } from "./ReportExportButtons";
 
@@ -227,6 +229,11 @@ export function TargetsView() {
               </div>
             </CardContent>
           </Card>
+
+          <MonthlyTargetHistoryCard
+            history={targets?.monthlyHistory ?? {}}
+            onSaved={setOutlet}
+          />
 
           <div className="flex justify-end">
             <ReportExportButtons
@@ -437,6 +444,155 @@ function ProgressCard({
             ({Math.round((projection / target) * 100)}% target)
           </p>
         ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+
+/**
+ * Sesi AE-223 — TARGET PER BULAN.
+ *
+ * "Target Bulanan" di atas adalah target yang berlaku SEKARANG; mengubahnya
+ * ikut menggeser penilaian bulan-bulan lampau. Kartu ini mengunci angka per
+ * bulan, dan memungkinkan owner mengisi mundur target yang dulu memang
+ * dipakai — supaya pencapaian Agustus dinilai dengan target Agustus.
+ *
+ * Bulan berjalan terkunci otomatis setiap "Simpan Target" ditekan, jadi kartu
+ * ini terutama untuk mengisi mundur atau mengoreksi.
+ */
+function MonthlyTargetHistoryCard({
+  history,
+  onSaved,
+}: {
+  history: Record<string, number>;
+  onSaved: (o: Outlet) => void;
+}) {
+  const current = currentMonthWib();
+  const [month, setMonth] = useState(shiftMonth(current, -1));
+  const [amount, setAmount] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const rows = Object.entries(history).sort((a, b) => b[0].localeCompare(a[0]));
+
+  async function save(next: number | null) {
+    if (saving) return;
+    setSaving(true);
+    const res = await setMonthlyTargetForMonth({ month, amount: next });
+    setSaving(false);
+    if (!isOutletOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    onSaved(res.data);
+    setAmount("");
+    toast.success(
+      next === null
+        ? `Target ${monthRange(month).label} dihapus`
+        : `Target ${monthRange(month).label} tersimpan`,
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <TargetIcon className="size-4" /> Target Per Bulan
+        </CardTitle>
+        <CardDescription>
+          Mengunci target untuk bulan tertentu. Dipakai dashboard saat menilai
+          pencapaian bulan lampau — tanpa ini, bulan lampau dinilai dengan
+          target yang berlaku sekarang.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-xs font-medium text-neutral-700">
+              Bulan
+            </label>
+            <input
+              type="month"
+              value={month}
+              max={current}
+              onChange={(e) => setMonth(e.target.value)}
+              className="mt-1 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-mahakan-green-700 focus:outline-none"
+            />
+          </div>
+          <div className="min-w-[10rem] flex-1">
+            <RpInput
+              label="Target bulan itu"
+              value={amount}
+              onChange={setAmount}
+              hint={
+                history[month] != null
+                  ? `Tersimpan: ${formatRupiah(history[month])}`
+                  : "Belum pernah dikunci"
+              }
+            />
+          </div>
+          <Button
+            onClick={() => {
+              const cleaned = amount.replace(/[^\d]/g, "");
+              if (!cleaned) {
+                toast.error("Isi nominal targetnya dulu");
+                return;
+              }
+              void save(Number(cleaned));
+            }}
+            disabled={saving}
+          >
+            <Save className="size-4" />
+            {saving ? "Menyimpan..." : "Kunci"}
+          </Button>
+        </div>
+
+        {rows.length === 0 ? (
+          <p className="text-xs text-neutral-500">
+            Belum ada bulan yang dikunci. Bulan berjalan ikut terkunci otomatis
+            setiap kamu menekan Simpan Target di atas.
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {rows.map(([m, v]) => (
+              <div
+                key={m}
+                className="flex items-center justify-between gap-3 rounded-md border border-neutral-200 bg-white px-3 py-2"
+              >
+                <span className="text-sm font-medium text-neutral-900">
+                  {monthRange(m).label}
+                  {m === current ? (
+                    <span className="ml-2 text-[11px] font-normal text-neutral-500">
+                      (bulan berjalan)
+                    </span>
+                  ) : null}
+                </span>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-sm text-neutral-900">
+                    {formatRupiah(v)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMonth(m);
+                      void setMonthlyTargetForMonth({ month: m, amount: null }).then(
+                        (r) => {
+                          if (isOutletOk(r)) {
+                            onSaved(r.data);
+                            toast.success(`Target ${monthRange(m).label} dihapus`);
+                          } else toast.error(r.error.message);
+                        },
+                      );
+                    }}
+                    className="text-xs font-medium text-danger-500 underline-offset-4 hover:underline"
+                  >
+                    Hapus
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
