@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   BookOpen,
+  CalendarDays,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   Scale,
   TrendingUp,
@@ -31,6 +33,7 @@ import {
 } from "@/components/ui";
 import {
   getDailySalesReport,
+  getSalesRangeReport,
   getTargetProgress,
   isOk,
 } from "@/features/reports";
@@ -57,6 +60,12 @@ import { OpnameMonthlyBanner } from "./inventory/opname/OpnameMonthlyBanner";
 import { useCashDepositDashboard } from "@/features/finance/useCashDepositDashboard";
 import { hasPermission } from "@/lib/auth/rbac";
 import { cn } from "@/lib/utils";
+import {
+  currentMonthWib,
+  isFutureMonth,
+  monthRange,
+  shiftMonth,
+} from "./dashboard-month";
 
 interface DashboardHomeProps {
   /* Sesi AE-123 — accept full user (role dipakai untuk RBAC banner). */
@@ -65,21 +74,16 @@ interface DashboardHomeProps {
 }
 
 export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
-  // MTD date range — stable per render, used by accounting queries below.
-  const mtdRange = useMemo(() => {
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, "0");
-    const lastDay = new Date(yyyy, now.getMonth() + 1, 0).getDate();
-    return {
-      fromDate: `${yyyy}-${mm}-01`,
-      toDate: `${yyyy}-${mm}-${String(lastDay).padStart(2, "0")}`,
-      label: now.toLocaleDateString("id-ID", {
-        year: "numeric",
-        month: "long",
-      }),
-    };
-  }, []);
+  /* Sesi AE-222 — dashboard tidak lagi terkunci di bulan berjalan.
+   *
+   * Begitu tanggal berganti bulan, seluruh angka bulan kemarin dulu lenyap
+   * dari layar dan owner harus membuka modul Laporan/Akuntansi satu per satu.
+   * Sekarang bulannya bisa digeser, dan SEMUA kartu yang memang bulanan ikut
+   * bergeser bersamaan — bukan cuma satu kartu. */
+  const currentMonth = useMemo(() => currentMonthWib(), []);
+  const [month, setMonth] = useState(currentMonth);
+  const isCurrentMonth = month === currentMonth;
+  const mtdRange = useMemo(() => monthRange(month), [month]);
 
   // 6 independent queries — each cached separately by TanStack Query.
   // Failures don't deadlock the dashboard (mimics old Promise.allSettled
@@ -92,6 +96,22 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
       return res.data;
     },
     staleTime: 60 * 1000, // 1min — kasir rotates throughout day
+    enabled: isCurrentMonth,
+  });
+
+  /* Bulan lampau: angka penjualan diambil se-BULAN, bukan "hari ini" — kartu
+   * "Omzet Hari Ini" di sebelah Neraca bulan Agustus hanya akan menyesatkan.
+   * Bentuk `metrics`-nya sama persis dengan laporan harian, jadi kartu yang
+   * sama bisa dipakai ulang tanpa cabang di tiap tempat. */
+  const monthSalesQuery = useQuery({
+    queryKey: ["admin", "dashboard", "sales-range", mtdRange.fromDate, mtdRange.toDate],
+    queryFn: async () => {
+      const res = await getSalesRangeReport(mtdRange.fromDate, mtdRange.toDate);
+      if (!isOk(res)) throw new Error(res.error.message);
+      return res.data;
+    },
+    enabled: !isCurrentMonth,
+    staleTime: 5 * 60 * 1000,
   });
 
   const attendanceQuery = useQuery({
@@ -102,6 +122,7 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
       return res.data;
     },
     staleTime: 2 * 60 * 1000, // 2min — BO tidak butuh real-time absensi (AE-63 audit P1.3)
+    enabled: isCurrentMonth,
   });
 
   const payrollQuery = useQuery({
@@ -155,6 +176,7 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
   });
 
   const report = reportQuery.data ?? null;
+  const monthSales = monthSalesQuery.data ?? null;
   const attendance = attendanceQuery.data ?? null;
   const activePeriod = payrollQuery.data ?? null;
   const expiringDocs = docsQuery.data ?? [];
@@ -165,8 +187,12 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
   // Match old behavior: single global loading flag = ANY query still loading
   // first time. After cache hit on revisit, all return false instantly →
   // dashboard renders fully without skeleton flash.
+  /* react-query v5: `isLoading` = isPending && isFetching, jadi query yang
+   * di-disable (mis. laporan harian saat melihat bulan lampau) tidak ikut
+   * menahan dashboard di skeleton. */
   const loading =
     reportQuery.isLoading ||
+    monthSalesQuery.isLoading ||
     attendanceQuery.isLoading ||
     payrollQuery.isLoading ||
     docsQuery.isLoading ||
@@ -198,11 +224,32 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
     );
   }
 
-  if (!report) {
-    return <p className="text-sm text-danger-500">Gagal load laporan</p>;
+  /* Sumber angka penjualan: laporan HARI INI saat melihat bulan berjalan,
+   * laporan SE-BULAN saat melihat bulan lampau. */
+  const sales = isCurrentMonth ? report : monthSales;
+  if (!sales) {
+    return (
+      <div className="space-y-4 p-6">
+        <MonthSwitcher
+          label={mtdRange.label}
+          isCurrentMonth={isCurrentMonth}
+          canGoNext={!isFutureMonth(shiftMonth(month, 1), currentMonth)}
+          onPrev={() => setMonth((m) => shiftMonth(m, -1))}
+          onNext={() => setMonth((m) => shiftMonth(m, 1))}
+          onToday={() => setMonth(currentMonth)}
+        />
+        <p className="text-sm text-danger-500">
+          Gagal memuat laporan penjualan untuk {mtdRange.label}.
+        </p>
+      </div>
+    );
   }
 
-  const { metrics, byPaymentMethod, hourlyDistribution, topItems } = report;
+  const { metrics, byPaymentMethod, topItems } = sales;
+  const hourlyDistribution = isCurrentMonth
+    ? (report?.hourlyDistribution ?? [])
+    : [];
+  const perDay = isCurrentMonth ? [] : (monthSales?.byDay ?? []);
 
   const totalEmployees = attendance?.length ?? 0;
   const onFloor =
@@ -215,13 +262,25 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
 
   return (
     <div className="space-y-6 p-6">
-      <header>
-        <h1 className="text-2xl font-bold text-mahakan-green-900">
-          Halo, {user.name}
-        </h1>
-        <p className="text-sm text-neutral-700">
-          Ringkasan operasional hari ini · {report.date}
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-mahakan-green-900">
+            Halo, {user.name}
+          </h1>
+          <p className="text-sm text-neutral-700">
+            {isCurrentMonth
+              ? `Ringkasan operasional hari ini · ${report?.date ?? ""}`
+              : `Ringkasan bulan ${mtdRange.label} · ${mtdRange.fromDate} → ${mtdRange.toDate}`}
+          </p>
+        </div>
+        <MonthSwitcher
+          label={mtdRange.label}
+          isCurrentMonth={isCurrentMonth}
+          canGoNext={!isFutureMonth(shiftMonth(month, 1), currentMonth)}
+          onPrev={() => setMonth((m) => shiftMonth(m, -1))}
+          onNext={() => setMonth((m) => shiftMonth(m, 1))}
+          onToday={() => setMonth(currentMonth)}
+        />
       </header>
 
       {/* Expiring docs alert — only shown when there are docs expiring/expired */}
@@ -242,7 +301,10 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
         onTap={onNavigate ? () => onNavigate("inventory") : undefined}
       />
 
-      {/* HR widgets — Tim Hari Ini */}
+      {/* HR widgets — Tim Hari Ini. Sesi AE-222: absensi & payroll adalah
+        * keadaan SEKARANG, bukan potret bulan lampau. Menampilkannya di
+        * sebelah Neraca bulan Agustus hanya akan menyesatkan. */}
+      {isCurrentMonth ? (
       <section className="space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
           Tim Hari Ini
@@ -270,11 +332,12 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
           />
         </div>
       </section>
+      ) : null}
 
       {/* Stat cards */}
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard
-          title="Omzet Hari Ini"
+          title={isCurrentMonth ? "Omzet Hari Ini" : `Omzet ${mtdRange.label}`}
           value={formatRupiah(metrics.revenue)}
           subtitle={`${metrics.transactionCount} transaksi`}
         />
@@ -299,23 +362,35 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
 
       {/* Target Pendapatan — sesi AE-62ah/ai. Always-show: kalau belum
        *  ada target → kasih CTA "Set Target" supaya owner tahu fitur ada. */}
-      {targetProgress ? (
-        targetProgress.daily.target != null ||
-        targetProgress.weekly.target != null ||
-        targetProgress.monthly.target != null ? (
-          <TargetProgressCard data={targetProgress} showRupiah />
-        ) : (
-          <TargetEmptyCard
-            onTap={
-              onNavigate
-                ? () => {
-                    setReportsInitialTab("targets");
-                    onNavigate("reports");
-                  }
-                : undefined
-            }
-          />
-        )
+      {isCurrentMonth ? (
+        targetProgress ? (
+          targetProgress.daily.target != null ||
+          targetProgress.weekly.target != null ||
+          targetProgress.monthly.target != null ? (
+            <TargetProgressCard data={targetProgress} showRupiah />
+          ) : (
+            <TargetEmptyCard
+              onTap={
+                onNavigate
+                  ? () => {
+                      setReportsInitialTab("targets");
+                      onNavigate("reports");
+                    }
+                  : undefined
+              }
+            />
+          )
+        ) : null
+      ) : targetProgress?.monthly.target != null ? (
+        /* Sesi AE-222 — bulan lampau: target harian & mingguan tidak relevan,
+         * tapi pencapaian bulanannya berguna. Targetnya diberi label jujur:
+         * yang tersimpan cuma target yang BERLAKU SEKARANG, bukan target yang
+         * dulu dipasang untuk bulan itu. */
+        <PastMonthTargetCard
+          label={mtdRange.label}
+          revenue={metrics.revenue}
+          target={targetProgress.monthly.target}
+        />
       ) : null}
 
       {/* Accounting MTD summary — visible kalau ada data ledger */}
@@ -343,11 +418,61 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
       {/* Hourly chart */}
       <Card>
         <CardHeader>
-          <CardTitle>Distribusi Per Jam</CardTitle>
-          <CardDescription>Penjualan per jam (WIB)</CardDescription>
+          <CardTitle>
+            {isCurrentMonth ? "Distribusi Per Jam" : "Penjualan Per Tanggal"}
+          </CardTitle>
+          <CardDescription>
+            {isCurrentMonth
+              ? "Penjualan per jam (WIB)"
+              : `Penjualan harian sepanjang ${mtdRange.label} (WIB)`}
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {hourlyDistribution.length === 0 ? (
+          {/* Sesi AE-222 — sebaran per JAM cuma bermakna untuk satu hari.
+            * Untuk satu bulan penuh, yang berguna adalah per TANGGAL. */}
+          {!isCurrentMonth ? (
+            perDay.length === 0 ? (
+              <p className="py-8 text-center text-sm text-neutral-500">
+                Tidak ada transaksi di {mtdRange.label}.
+              </p>
+            ) : (
+              <div className="h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={perDay}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E3DB" />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 11, fill: "#514E45" }}
+                      tickFormatter={(d: string) => d.slice(8)}
+                      interval="preserveStartEnd"
+                      minTickGap={12}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 12, fill: "#514E45" }}
+                      tickFormatter={(v) =>
+                        v >= 1000 ? `${Math.round(v / 1000)}rb` : String(v)
+                      }
+                    />
+                    <Tooltip
+                      cursor={{ fill: "#F2F1EC" }}
+                      contentStyle={{
+                        borderRadius: 8,
+                        border: "1px solid #E5E3DB",
+                        fontSize: 12,
+                      }}
+                      formatter={(value) =>
+                        typeof value === "number"
+                          ? formatRupiah(value)
+                          : String(value)
+                      }
+                      labelFormatter={(label) => `Tanggal ${String(label)}`}
+                    />
+                    <Bar dataKey="revenue" fill="#3D7557" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )
+          ) : hourlyDistribution.length === 0 ? (
             <p className="py-8 text-center text-sm text-neutral-500">
               Belum ada transaksi hari ini.
             </p>
@@ -396,7 +521,10 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
         <Card>
           <CardHeader>
             <CardTitle>Breakdown Pembayaran</CardTitle>
-            <CardDescription>Per metode (lunas saja)</CardDescription>
+            <CardDescription>
+              Per metode, lunas saja ·{" "}
+              {isCurrentMonth ? "hari ini" : mtdRange.label}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -425,7 +553,10 @@ export function DashboardHome({ user, onNavigate }: DashboardHomeProps) {
         <Card>
           <CardHeader>
             <CardTitle>Top 10 Item</CardTitle>
-            <CardDescription>By quantity terjual</CardDescription>
+            <CardDescription>
+              Terlaris per kuantitas ·{" "}
+              {isCurrentMonth ? "hari ini" : mtdRange.label}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {topItems.length === 0 ? (
@@ -905,6 +1036,121 @@ function HrPayrollCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Sesi AE-222 — pencapaian bulan lampau terhadap target.
+ *
+ * Sistem hanya menyimpan target yang BERLAKU SEKARANG, bukan target yang dulu
+ * dipasang untuk bulan itu. Itu dinyatakan terang-terangan di kartunya —
+ * angka yang terlihat resmi padahal dibandingkan ke patokan yang salah lebih
+ * berbahaya daripada tidak menampilkan apa pun.
+ */
+function PastMonthTargetCard({
+  label,
+  revenue,
+  target,
+}: {
+  label: string;
+  revenue: number;
+  target: number;
+}) {
+  const pct = target > 0 ? Math.round((revenue / target) * 100) : 0;
+  const kurang = Math.max(0, target - revenue);
+  return (
+    <Card>
+      <CardContent className="space-y-3 px-5 py-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="flex items-center gap-2 font-semibold text-neutral-900">
+            <TrendingUp className="size-4 text-mahakan-green-700" aria-hidden />
+            Pencapaian {label}
+          </h3>
+          <span className="font-mono text-sm font-semibold text-neutral-900">
+            {pct}%
+          </span>
+        </div>
+        <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-200">
+          <div
+            className={cn(
+              "h-full rounded-full",
+              pct >= 100 ? "bg-mahakan-green-700" : "bg-warning-500",
+            )}
+            style={{ width: `${Math.min(100, pct)}%` }}
+          />
+        </div>
+        <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
+          <span className="font-mono text-neutral-900">
+            <strong>{formatRupiah(revenue)}</strong> / {formatRupiah(target)}
+          </span>
+          <span className="text-neutral-600">
+            {kurang > 0 ? `Kurang ${formatRupiah(kurang)}` : "Target tercapai"}
+          </span>
+        </div>
+        <p className="text-[11px] leading-relaxed text-neutral-500">
+          Dibandingkan dengan target bulanan yang berlaku sekarang — sistem
+          tidak menyimpan target lama per bulan.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Sesi AE-222 — penggeser bulan. Bulan di depan sengaja dimatikan: tidak ada
+ * datanya, dan tombol yang bisa ditekan tapi selalu kosong lebih membingungkan
+ * daripada tombol yang jelas mati.
+ */
+function MonthSwitcher({
+  label,
+  isCurrentMonth,
+  canGoNext,
+  onPrev,
+  onNext,
+  onToday,
+}: {
+  label: string;
+  isCurrentMonth: boolean;
+  canGoNext: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+  onToday: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      {!isCurrentMonth ? (
+        <button
+          type="button"
+          onClick={onToday}
+          className="rounded-md px-2 py-1.5 text-xs font-semibold text-mahakan-green-700 underline-offset-4 hover:underline"
+        >
+          Bulan ini
+        </button>
+      ) : null}
+      <div className="flex items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1">
+        <button
+          type="button"
+          onClick={onPrev}
+          aria-label="Bulan sebelumnya"
+          className="rounded-md p-1.5 text-neutral-700 transition-colors hover:bg-neutral-100"
+        >
+          <ChevronLeft className="size-4" aria-hidden />
+        </button>
+        <span className="flex min-w-[9.5rem] items-center justify-center gap-1.5 px-1 text-sm font-semibold text-neutral-900">
+          <CalendarDays className="size-4 text-neutral-500" aria-hidden />
+          {label}
+        </span>
+        <button
+          type="button"
+          onClick={onNext}
+          disabled={!canGoNext}
+          aria-label="Bulan berikutnya"
+          className="rounded-md p-1.5 text-neutral-700 transition-colors hover:bg-neutral-100 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:hover:bg-transparent"
+        >
+          <ChevronRight className="size-4" aria-hidden />
+        </button>
+      </div>
+    </div>
   );
 }
 
