@@ -431,7 +431,10 @@ export async function fetchTopHistory(
   /* Sesi AE-207 — riwayat TOP ikut batas buku, TAPI nota yang belum lunas
    * selalu ditampilkan berapa pun tanggalnya. Hutang hidup tidak boleh
    * disembunyikan; yang disembunyikan hanya riwayat yang sudah beres. */
-  const cutoff = await getCutoffDate(outletId);
+  /* Sesi AE-225 — `sinceBeginning` melepas batas buku sepenuhnya. Dipakai
+   * saat owner menelusuri saldo Hutang Dagang yang minus: minusnya justru
+   * lahir karena nota lama disembunyikan sementara pelunasannya terhitung. */
+  const cutoff = opts.sinceBeginning ? null : await getCutoffDate(outletId);
   const topFloor = cutoff
     ? sql`(${purchases.purchaseDate} >= ${cutoff} OR ${purchases.status} = 'pending_payment')`
     : undefined;

@@ -7,6 +7,7 @@ import {
   Wallet,
   CheckCircle2,
   Clock,
+  History,
   RefreshCw,
 } from "lucide-react";
 import {
@@ -108,6 +109,9 @@ export function TopTrackerView() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [filter, setFilter] = useState<Filter>("all");
   const [statusTab, setStatusTab] = useState<StatusTab>("pending_payment");
+  /* Sesi AE-225 — lepas batas buku. Default mati supaya layar harian tetap
+   * ringkas; dinyalakan saat menelusuri kenapa saldo Hutang Dagang minus. */
+  const [sinceBeginning, setSinceBeginning] = useState(false);
 
   const [payTarget, setPayTarget] = useState<TopHistoryItem | null>(
     null,
@@ -136,7 +140,7 @@ export function TopTrackerView() {
     setLoading(true);
     /* eslint-enable react-hooks/set-state-in-effect */
     void (async () => {
-      const res = await listTopHistory({ status: statusTab });
+      const res = await listTopHistory({ status: statusTab, sinceBeginning });
       if (cancelled) return;
       if (isOk(res)) {
         setItems(res.data.items);
@@ -147,7 +151,7 @@ export function TopTrackerView() {
     return () => {
       cancelled = true;
     };
-  }, [refreshKey, statusTab]);
+  }, [refreshKey, statusTab, sinceBeginning]);
 
   /* Saringan jatuh tempo hanya bermakna untuk hutang yang masih berjalan —
    * untuk yang sudah lunas, "telat sekian hari" tidak relevan lagi. */
@@ -319,7 +323,34 @@ export function TopTrackerView() {
                       : ""}
               </button>
             ))}
+            {/* Sesi AE-225 — lepas batas buku. Tanpa ini nota Juni yang sudah
+                lunas tidak pernah tampil, padahal PELUNASANNYA ikut menggerakkan
+                saldo Hutang Dagang — itulah yang membuat saldonya terlihat
+                minus tanpa ada yang bisa ditunjuk. */}
+            <button
+              type="button"
+              onClick={() => setSinceBeginning((v) => !v)}
+              aria-pressed={sinceBeginning}
+              title="Tampilkan juga nota sebelum batas buku (1 Juli 2026)"
+              className={cn(
+                "rounded-full px-3 py-1 text-xs font-semibold transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700",
+                sinceBeginning
+                  ? "bg-warning-500 text-white"
+                  : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200",
+              )}
+            >
+              <History className="mr-1 inline size-3.5" aria-hidden />
+              Sejak awal sistem
+            </button>
           </div>
+          {sinceBeginning ? (
+            <p className="text-[11px] leading-relaxed text-warning-500">
+              Batas buku dilepas — nota sebelum 1 Juli 2026 ikut ditampilkan.
+              Nota lama inilah yang membuat saldo Hutang Dagang terlihat minus:
+              notanya disembunyikan, tapi pelunasannya tetap terhitung.
+            </p>
+          ) : null}
           {/* Saringan jatuh tempo hanya muncul saat melihat yang belum bayar. */}
           {dueFilterActive ? (
             <div

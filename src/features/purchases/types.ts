@@ -219,6 +219,16 @@ export interface TopHistoryOptions {
   toDate?: string;
   supplierId?: string;
   limit?: number;
+  /**
+   * Sesi AE-225 — abaikan batas buku, tampilkan SEJAK AWAL PEMAKAIAN SISTEM.
+   *
+   * Batas buku (AE-207, 1 Juli 2026) menyembunyikan riwayat lama yang sudah
+   * beres. Itu bagus untuk operasional harian, tapi menyesatkan saat menelusuri
+   * kenapa saldo Hutang Dagang minus: nota Juni disembunyikan sementara
+   * PELUNASANNYA di Juli/Agustus tetap terhitung. Default tetap false supaya
+   * layar sehari-hari tidak berubah.
+   */
+  sinceBeginning?: boolean;
 }
 
 export interface TopHistorySummary {
