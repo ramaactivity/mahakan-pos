@@ -84,6 +84,9 @@ export function isOk<T>(
 
 export interface StartOpnameInput {
   periodLabel?: string;
+  /** Sesi AE-230 — bulan yang DIWAKILI opname ini ("YYYY-MM"). Kalau diisi,
+   * label ikut diturunkan dari sini dan rekap COGS memakai bulan ini. */
+  periodMonth?: string;
   notes?: string | null;
 }
 

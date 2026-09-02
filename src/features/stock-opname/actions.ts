@@ -14,7 +14,7 @@ import { logAudit } from "@/lib/audit/logger";
 import { errorChainIncludes, logAndSanitize } from "@/lib/server-error";
 import { computeNewStock, formatMovementDelta } from "@/lib/stock-decimal";
 import { jakartaDateOf, todayJakarta } from "@/lib/tz";
-import { jakartaMonthLabel } from "./cadence";
+import { jakartaMonthLabel, monthKeyToLabel } from "./cadence";
 import { computeDiffStats } from "./diff-stats";
 import {
   addOpnameItemAdHocSchema,
@@ -213,7 +213,12 @@ export async function startOpname(
     );
   }
   const v = parsed.data;
-  const periodLabel = v.periodLabel ?? jakartaMonthLabel(new Date());
+  /* Sesi AE-230 — kalau bulan periodenya disebut, LABELNYA IKUT bulan itu.
+   * Kalau tidak, perilaku lama: bulan saat opname dimulai. */
+  const periodMonth = v.periodMonth ?? null;
+  const periodLabel = periodMonth
+    ? monthKeyToLabel(periodMonth)
+    : (v.periodLabel ?? jakartaMonthLabel(new Date()));
 
   // Block double-start — DB partial-unique index also enforces this, but
   // we want a friendly error before the constraint fires.
@@ -244,6 +249,7 @@ export async function startOpname(
           outletId: session.user.outletId,
           status: "in_progress",
           periodLabel,
+          periodMonth,
           notes: v.notes ?? null,
           startedBy: session.user.id,
           totalLines: ingredientsToSnapshot.length,

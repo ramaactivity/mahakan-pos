@@ -48,6 +48,23 @@ export const stockOpnameSessions = pgTable(
     periodLabel: text("period_label").notNull(),
     notes: text("notes"),
 
+    /**
+     * Sesi AE-230 — BULAN yang diwakili opname ini ("YYYY-MM"), bukan kapan
+     * menghitungnya.
+     *
+     * Arahan owner: "jangan sesuai tanggal submit masuk ke rekap COGS, tapi
+     * sesuai saat SO — misal Agustus ya Agustus." Kejadian nyata: stok akhir
+     * Agustus dihitung 1 September sore. Dengan patokan tanggal hitung, opname
+     * itu menutup SEPTEMBER, sehingga rekap Agustus kosong sama sekali (159
+     * baris "perlu dicek", HPP Rp 0) sementara September memuat pemakaian
+     * sebulan penuh yang bukan miliknya.
+     *
+     * NULL = jatuh kembali ke `started_at` (perilaku lama). Sengaja tidak
+     * di-backfill massal: opname Mei/Juni/Juli memang dihitung di bulannya
+     * sendiri, jadi angkanya sudah benar dan tidak boleh bergeser surut.
+     */
+    periodMonth: text("period_month"),
+
     startedAt: timestamp("started_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

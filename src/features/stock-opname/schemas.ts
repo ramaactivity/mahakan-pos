@@ -17,6 +17,12 @@ const qtyNonNeg = z
 
 export const startOpnameSchema = z.object({
   periodLabel: z.string().trim().min(1).max(PERIOD_MAX).optional(),
+  /* Sesi AE-230 — bulan yang DIWAKILI opname ini ("YYYY-MM"), bukan bulan
+   * saat menghitung. Ini yang menentukan opname masuk rekap COGS bulan mana. */
+  periodMonth: z
+    .string()
+    .regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Format bulan harus YYYY-MM")
+    .optional(),
   notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
 });
 

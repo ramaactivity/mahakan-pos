@@ -30,7 +30,12 @@ export {
   type StockValueLineLike,
   type StockValueSummary,
 } from "./stock-value";
-export { jakartaMonthKey, jakartaMonthLabel } from "./cadence";
+export {
+  jakartaMonthKey,
+  jakartaMonthLabel,
+  monthKeyToLabel,
+  suggestedOpnamePeriodKey,
+} from "./cadence";
 
 export {
   addOpnameItemAdHocSchema,

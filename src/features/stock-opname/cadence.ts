@@ -50,3 +50,39 @@ export function jakartaMonthLabel(now: Date): string {
 export function jakartaMonthKeyOf(at: Date): string {
   return jakartaMonthKey(at);
 }
+
+/**
+ * Sesi AE-230 — bulan yang PALING MUNGKIN diwakili sebuah opname yang dimulai
+ * pada `now`.
+ *
+ * Hitungan fisik jarang selesai tepat di hari terakhir bulan; yang lazim
+ * adalah menghitung di hari-hari pertama bulan berikutnya untuk menutup bulan
+ * yang baru lewat. Kejadian nyata: stok akhir Agustus 2026 dihitung 1
+ * September sore, lalu tercatat sebagai opname September — rekap COGS Agustus
+ * jadi kosong sama sekali.
+ *
+ * Ini cuma NILAI AWAL di layar; owner tetap bisa memilih bulan lain.
+ */
+export function suggestedOpnamePeriodKey(now: Date): string {
+  const key = jakartaMonthKey(now);
+  const dayStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: JAKARTA_TZ,
+    day: "2-digit",
+  }).format(now);
+  const day = parseInt(dayStr, 10);
+  if (day > OPNAME_PREV_MONTH_GRACE_DAYS) return key;
+  const [y, m] = key.split("-").map(Number);
+  const prevMonth = m === 1 ? 12 : m - 1;
+  const prevYear = m === 1 ? y - 1 : y;
+  return `${prevYear}-${String(prevMonth).padStart(2, "0")}`;
+}
+
+/** Hari pertama bulan yang masih dianggap "menutup bulan sebelumnya". */
+export const OPNAME_PREV_MONTH_GRACE_DAYS = 5;
+
+/** "2026-08" → "Agustus 2026". */
+export function monthKeyToLabel(key: string): string {
+  const [y, m] = key.split("-").map(Number);
+  if (!y || !m || m < 1 || m > 12) return key;
+  return `${MONTH_LABELS_ID[m - 1]} ${y}`;
+}

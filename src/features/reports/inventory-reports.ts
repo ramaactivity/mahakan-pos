@@ -42,6 +42,24 @@ export interface OpnameSnapshot {
   costByIngredient: Map<string, number>;
 }
 
+/**
+ * Sesi AE-230 — TANGGAL EFEKTIF sebuah opname: kapan hitungan itu BERLAKU,
+ * bukan kapan orangnya menghitung.
+ *
+ * Kalau `period_month` diisi ("2026-08"), opname dianggap berlaku pada detik
+ * terakhir bulan itu. Kalau kosong, jatuh kembali ke `started_at` — perilaku
+ * lama, jadi opname lama tidak bergeser.
+ *
+ * Ini yang membuat hitungan fisik tanggal 1 September bisa menutup Agustus.
+ * Tanpa itu, rekap Agustus kosong (HPP Rp 0) dan pemakaian sebulan penuh
+ * menumpuk di September.
+ */
+const OPNAME_EFFECTIVE_AT = sql`COALESCE(
+  ((period_month || '-01')::date + interval '1 month' - interval '1 second')
+    AT TIME ZONE 'Asia/Jakarta',
+  started_at
+)`;
+
 /* Sesi AE-131 perf — combine session lookup + load lines into ONE query
  * via CTE (saves 1 RTT). Caller pass WHERE predicate untuk session
  * selection; CTE picks the latest, LEFT JOIN lines, single round-trip.
@@ -55,6 +73,7 @@ async function fetchOpnameSnapshotByPredicate(
     session_id: string;
     finalized_at: Date | null;
     started_at: Date | null;
+    effective_at: Date | null;
     period_label: string | null;
     ingredient_id: string | null;
     actual_qty: number | null;
@@ -62,16 +81,18 @@ async function fetchOpnameSnapshotByPredicate(
   };
   const result = await db.execute(sql`
     WITH latest_session AS (
-      SELECT id, finalized_at, started_at, period_label
+      SELECT id, finalized_at, started_at, period_label,
+             ${OPNAME_EFFECTIVE_AT} AS effective_at
       FROM stock_opname_sessions
       WHERE ${sessionPredicate}
-      ORDER BY started_at DESC
+      ORDER BY ${OPNAME_EFFECTIVE_AT} DESC
       LIMIT 1
     )
     SELECT
       ls.id AS session_id,
       ls.finalized_at,
       ls.started_at,
+      ls.effective_at,
       ls.period_label,
       l.ingredient_id,
       /* Sesi AE-196 — mirror desimal adalah kebenaran; kolom bigint hanya
@@ -90,9 +111,13 @@ async function fetchOpnameSnapshotByPredicate(
   }
   const sessionId = rows[0].session_id;
   const finalizedAt = new Date(rows[0].finalized_at);
-  const countedAt = rows[0].started_at
-    ? new Date(rows[0].started_at)
-    : finalizedAt;
+  /* `countedAt` = tanggal efektif: itulah yang dipakai jendela pembelian di
+   * layar opname maupun rantai stok awal/akhir antar bulan. */
+  const countedAt = rows[0].effective_at
+    ? new Date(rows[0].effective_at)
+    : rows[0].started_at
+      ? new Date(rows[0].started_at)
+      : finalizedAt;
   const periodLabel = rows[0].period_label ?? "";
   const qtyByIngredient = new Map<string, number>();
   const costByIngredient = new Map<string, number>();
@@ -137,7 +162,7 @@ export async function fetchLatestOpnameBefore(
   return fetchOpnameSnapshotByPredicate(sql`
     outlet_id = ${outletId}::uuid
     AND status = 'completed'
-    AND started_at < (${beforeDate}::date AT TIME ZONE 'Asia/Jakarta')
+    AND ${OPNAME_EFFECTIVE_AT} < (${beforeDate}::date AT TIME ZONE 'Asia/Jakarta')
   `);
 }
 
@@ -154,8 +179,8 @@ export async function fetchLatestOpnameWithin(
   return fetchOpnameSnapshotByPredicate(sql`
     outlet_id = ${outletId}::uuid
     AND status = 'completed'
-    AND started_at >= (${fromDate}::date AT TIME ZONE 'Asia/Jakarta')
-    AND started_at < ((${toDate}::date + interval '1 day') AT TIME ZONE 'Asia/Jakarta')
+    AND ${OPNAME_EFFECTIVE_AT} >= (${fromDate}::date AT TIME ZONE 'Asia/Jakarta')
+    AND ${OPNAME_EFFECTIVE_AT} < ((${toDate}::date + interval '1 day') AT TIME ZONE 'Asia/Jakarta')
   `);
 }
 

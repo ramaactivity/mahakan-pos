@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarPlus,
   CheckCircle2,
@@ -18,6 +18,7 @@ import {
   EmptyCard,
   Input,
   Modal,
+  Select,
   Skeleton,
   toast,
 } from "@/components/ui";
@@ -29,6 +30,8 @@ import {
   isOk,
   jakartaMonthLabel,
   listOpnameSessions,
+  monthKeyToLabel,
+  suggestedOpnamePeriodKey,
   startOpname,
   type MonthlyCadenceStatus,
   type OpnameSessionDetail,
@@ -84,8 +87,27 @@ export function OpnameTab() {
     useState<OpnameSessionDetail | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  /* Sesi AE-230 — enam bulan terakhir sudah lebih dari cukup; opname yang
+   * tertinggal lebih lama dari itu praktis tidak pernah terjadi. */
+  const periodOptions = useMemo(() => {
+    const out: Array<{ value: string; label: string }> = [];
+    const now = new Date();
+    for (let i = 0; i < 6; i += 1) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      out.push({ value: key, label: monthKeyToLabel(key) });
+    }
+    return out;
+  }, []);
+
   const [startOpen, setStartOpen] = useState(false);
   const [startNotes, setStartNotes] = useState("");
+  /* Sesi AE-230 — bulan yang DIWAKILI opname ini. Nilai awal mundur ke bulan
+   * lalu kalau dimulai di hari-hari pertama bulan, karena itulah yang lazim:
+   * menghitung awal bulan untuk menutup bulan yang baru lewat. */
+  const [startPeriod, setStartPeriod] = useState(() =>
+    suggestedOpnamePeriodKey(new Date()),
+  );
   const [startSubmitting, setStartSubmitting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
@@ -139,7 +161,7 @@ export function OpnameTab() {
     setStartSubmitting(true);
     setStartError(null);
     const res = await startOpname({
-      periodLabel: jakartaMonthLabel(new Date()),
+      periodMonth: startPeriod,
       notes: startNotes.trim() || null,
     });
     setStartSubmitting(false);
@@ -377,7 +399,7 @@ export function OpnameTab() {
           setStartOpen(false);
           setStartError(null);
         }}
-        title={`Mulai opname ${jakartaMonthLabel(new Date())}?`}
+        title={`Mulai opname ${monthKeyToLabel(startPeriod)}?`}
         description="Sistem akan menyimpan stok saat ini sebagai expected qty. Lalu kamu input qty aktual setelah hitung fisik. Bisa di-pause + lanjutkan kapan aja."
         size="md"
         footer={
@@ -396,6 +418,26 @@ export function OpnameTab() {
         }
       >
         <div className="space-y-3">
+          {/* Sesi AE-230 — opname masuk rekap COGS bulan INI, bukan bulan saat
+              menghitungnya. Stok akhir Agustus yang dihitung 1 September harus
+              tetap dicatat sebagai Agustus; kalau tidak, rekap Agustus kosong
+              dan pemakaian sebulan penuh menumpuk di September. */}
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-neutral-900">
+              Opname ini untuk bulan
+            </label>
+            <Select
+              ariaLabel="Opname ini untuk bulan"
+              options={periodOptions}
+              value={startPeriod}
+              onValueChange={setStartPeriod}
+            />
+            <p className="text-xs text-neutral-600">
+              Yang dipakai rekap COGS adalah bulan ini, bukan tanggal
+              menghitungnya. Hitung tanggal 1 September untuk menutup Agustus?
+              Pilih <strong>Agustus</strong>.
+            </p>
+          </div>
           <div className="space-y-1.5">
             <label className="block text-sm font-medium text-neutral-900">
               Catatan (opsional)
