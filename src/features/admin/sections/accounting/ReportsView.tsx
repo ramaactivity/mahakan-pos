@@ -13,6 +13,7 @@ import {
   ArrowLeft,
   ArrowUpDown,
   ChevronRight,
+  History,
   XCircle,
 } from "lucide-react";
 import {
@@ -1050,6 +1051,9 @@ function GeneralLedgerTab({
     monthRangeFor(new Date()),
   );
   const [report, setReport] = useState<GeneralLedgerReport | null>(null);
+  /* Sesi AE-226 — lepas batas buku untuk akun yang sedang dibuka. Default
+   * mati; layar sehari-hari tetap seperti semula. */
+  const [sinceBeginning, setSinceBeginning] = useState(false);
   const [loading, setLoading] = useState(false);
   /* Sesi AE-183 — ringkasan semua akun untuk tampilan sebelum pilih akun. */
   const [summary, setSummary] = useState<LedgerAccountSummaryReport | null>(
@@ -1082,6 +1086,7 @@ function GeneralLedgerTab({
       accountId,
       fromDate: range.from,
       toDate: range.to,
+      sinceBeginning,
     });
     setLoading(false);
     if (res.ok) setReport(res.data);
@@ -1092,7 +1097,7 @@ function GeneralLedgerTab({
     if (!accountId) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
-  }, [accountId, range.from, range.to]);
+  }, [accountId, range.from, range.to, sinceBeginning]);
 
   /* Ringkasan hanya dimuat saat belum ada akun terpilih — tidak perlu
    * dihitung ulang saat owner sedang membaca detail satu akun. */
@@ -1163,6 +1168,7 @@ function GeneralLedgerTab({
             onClick={() => {
               setAccountId(null);
               setReport(null);
+              setSinceBeginning(false);
             }}
           >
             <ArrowLeft className="size-4" /> Semua akun
@@ -1170,12 +1176,37 @@ function GeneralLedgerTab({
         ) : (
           <span />
         )}
-        {report && report.entries.length > 0 ? (
-          <Button variant="outline" size="sm" onClick={onExportCsv}>
-            <Download className="size-4" /> Export CSV
-          </Button>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {/* Sesi AE-226 — lepas batas buku. Untuk akun yang transaksinya
+              melintasi 1 Juli 2026 (Hutang Dagang paling kentara), tanpa ini
+              pelunasan nota lama terlihat sementara nota yang dilunasi tidak
+              ada di daftar mana pun — saldonya seperti minus tanpa sebab. */}
+          {accountId ? (
+            <Button
+              variant={sinceBeginning ? "primary" : "outline"}
+              size="sm"
+              onClick={() => setSinceBeginning((v) => !v)}
+              aria-pressed={sinceBeginning}
+              title="Tampilkan seluruh mutasi akun ini sejak jurnal pertama, abaikan batas buku"
+            >
+              <History className="size-4" /> Sejak awal sistem
+            </Button>
+          ) : null}
+          {report && report.entries.length > 0 ? (
+            <Button variant="outline" size="sm" onClick={onExportCsv}>
+              <Download className="size-4" /> Export CSV
+            </Button>
+          ) : null}
+        </div>
       </div>
+      {accountId && sinceBeginning ? (
+        <p className="rounded-md border border-warning-500/40 bg-warning-100/40 px-3 py-2 text-[11px] leading-relaxed text-neutral-700">
+          <strong className="text-warning-500">Batas buku dilepas.</strong>{" "}
+          Seluruh mutasi akun ini ditampilkan sejak jurnal pertama, termasuk
+          sebelum 1 Juli 2026. Saldo awalnya nol, jadi saldo di baris terakhir
+          adalah saldo akun yang sebenarnya sepanjang pemakaian sistem.
+        </p>
+      ) : null}
       {!accountId ? (
         summaryLoading || !summary ? (
           <Skeleton className="h-64 w-full" />

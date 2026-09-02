@@ -27,6 +27,7 @@ import {
   getAccountLedgerEntries,
   getAccountOpeningBalance,
   getCarriedInBalances,
+  getEarliestPostedEntryDate,
   getCashFlowEntries,
   getCurrentPeriod,
   getJournalEntryById,
@@ -3135,6 +3136,14 @@ export async function fetchGeneralLedger(args: {
   accountId: string;
   fromDate: string;
   toDate: string;
+  /**
+   * Sesi AE-226 — tampilkan sejak awal pemakaian sistem, abaikan batas buku.
+   *
+   * Dipakai owner saat menelusuri akun yang transaksinya melintasi batas buku
+   * 1 Juli 2026. Contoh nyata: Hutang Dagang tampil −Rp 864.000 karena nota
+   * Juni disembunyikan sementara pelunasannya di Juli/Agustus tetap terhitung.
+   */
+  sinceBeginning?: boolean;
 }): Promise<ApiResult<GeneralLedgerReport>> {
   const session = await requireSession();
   if (!hasPermission(session.user.role, "accounting.report.view")) {
@@ -3144,10 +3153,23 @@ export async function fetchGeneralLedger(args: {
   const account = await getAccountById(session.user.outletId, args.accountId);
   if (!account) return fail("NOT_FOUND", "Akun tidak ditemukan");
 
+  /* Sesi AE-226 — mode "sejak awal sistem" juga menarik batas bawahnya ke
+   * jurnal pertama akun ini. Melepas batas buku saja tidak cukup: rentang
+   * tanggal yang sedang dipilih owner tetap akan memotong barisnya. */
+  let fromDate = args.fromDate;
+  if (args.sinceBeginning) {
+    const earliest = await getEarliestPostedEntryDate({
+      outletId: session.user.outletId,
+      accountId: args.accountId,
+    });
+    if (earliest) fromDate = earliest;
+  }
+
   const opening = await getAccountOpeningBalance({
     outletId: session.user.outletId,
     accountId: args.accountId,
-    beforeDate: args.fromDate,
+    beforeDate: fromDate,
+    sinceBeginning: args.sinceBeginning,
   });
 
   // Normalize opening balance per normalBalance.
@@ -3157,8 +3179,9 @@ export async function fetchGeneralLedger(args: {
   const entries = await getAccountLedgerEntries({
     outletId: session.user.outletId,
     accountId: args.accountId,
-    fromDate: args.fromDate,
+    fromDate,
     toDate: args.toDate,
+    sinceBeginning: args.sinceBeginning,
   });
 
   return ok(

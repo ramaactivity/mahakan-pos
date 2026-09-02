@@ -493,6 +493,16 @@ export async function getAccountLedgerEntries(args: {
   accountId: string;
   fromDate: string;
   toDate: string;
+  /**
+   * Sesi AE-226 — lepas batas buku, tampilkan sejak awal pemakaian sistem.
+   *
+   * Batas buku menyembunyikan jurnal sebelum 1 Juli 2026. Untuk akun yang
+   * transaksinya melintasi tanggal itu — Hutang Dagang paling kentara —
+   * layarnya jadi menyesatkan: pelunasan nota Juni terlihat sementara nota
+   * yang dilunasi tidak ada di daftar mana pun, jadi saldonya seperti minus
+   * tanpa sebab. Default tetap false supaya "mulai bersih Juli" tidak berubah.
+   */
+  sinceBeginning?: boolean;
 }): Promise<
   Array<{
     entryNumber: string;
@@ -504,10 +514,10 @@ export async function getAccountLedgerEntries(args: {
   }>
 > {
   // Sesi AE-207 — Buku Besar tidak boleh menampilkan baris sebelum batas buku.
-  const fromDate = clampFromDate(
-    args.fromDate,
-    await getCutoffDate(args.outletId),
-  ) as string;
+  // Sesi AE-226 — kecuali saat owner sengaja meminta "sejak awal sistem".
+  const fromDate = args.sinceBeginning
+    ? args.fromDate
+    : (clampFromDate(args.fromDate, await getCutoffDate(args.outletId)) as string);
   const rows = await db
     .select({
       entryNumber: journalEntries.entryNumber,
@@ -740,12 +750,16 @@ export async function getAccountOpeningBalance(args: {
   outletId: string;
   accountId: string;
   beforeDate: string;
+  /** Sesi AE-226 — abaikan batas buku (lihat getAccountLedgerEntries). */
+  sinceBeginning?: boolean;
 }): Promise<number> {
   /* Sesi AE-207 — saldo awal Buku Besar dihitung dari batas buku saja. Tanpa
    * ini kolom "Saldo Awal" masih menjumlah jurnal Maret–Juni yang sudah
    * disembunyikan, jadi Buku Besar Juli mulai dari angka yang tak ada
    * penjelasannya di layar. */
-  const cutoff = await getCutoffDate(args.outletId);
+  const cutoff = args.sinceBeginning
+    ? null
+    : await getCutoffDate(args.outletId);
   /* Sesi AE-212 — entry Saldo Awal yang bertanggal TEPAT di awal periode
    * ikut dihitung sebagai saldo awal, bukan sebagai mutasi periode itu.
    *
@@ -816,4 +830,33 @@ export async function getCarriedInBalances(args: {
   const out = new Map<string, number>();
   for (const r of rows) out.set(r.accountId, Number(r.net) || 0);
   return out;
+}
+
+/**
+ * Sesi AE-226 — tanggal jurnal terposting PALING AWAL untuk satu akun.
+ *
+ * Dipakai Buku Besar mode "sejak awal sistem": melepas batas buku saja tidak
+ * cukup, karena rentang tanggal yang sedang dipilih owner (biasanya bulan
+ * berjalan) tetap memotong barisnya. Dengan tanggal ini sebagai batas bawah,
+ * saldo awalnya nol dan seluruh mutasi akun itu tampil dari baris pertama.
+ *
+ * Null kalau akun tersebut belum pernah punya jurnal.
+ */
+export async function getEarliestPostedEntryDate(args: {
+  outletId: string;
+  accountId: string;
+}): Promise<string | null> {
+  const [r] = await db
+    .select({ earliest: sql<string | null>`MIN(${journalEntries.entryDate})` })
+    .from(journalLines)
+    .innerJoin(
+      journalEntries,
+      and(
+        eq(journalEntries.id, journalLines.entryId),
+        eq(journalEntries.outletId, args.outletId),
+        eq(journalEntries.status, "posted"),
+      ),
+    )
+    .where(eq(journalLines.accountId, args.accountId));
+  return r?.earliest ? String(r.earliest) : null;
 }
