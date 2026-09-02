@@ -28,7 +28,6 @@ import {
   RefreshCw,
   Scissors,
   Trash2,
-  TrendingUp,
   Wallet,
   X,
 } from "lucide-react";
@@ -264,10 +263,14 @@ export function PettyCashCard() {
        * drawer view tidak ke-leak entry yang sumbernya bukan laci kasir.
        * Sesi AE-67 — date pakai entryDate (default today, bisa retro).
        * Sesi AE-198 — 'purchase' IKUT ditampilkan karena pembelian tunai
-       * memotong laci yang sama. Sesi AE-203: kasir tidak lagi membuat
-       * pembelian dari POS, tapi filter ini TETAP DIPERLUKAN — pembelian
-       * tunai yang diinput accounting tetap mengurangi laci, dan kasir harus
-       * melihatnya saat tutup shift. Payroll/refund tetap dikecualikan. */
+       * dulu memotong laci yang sama.
+       *
+       * Sesi AE-227 — arahan owner MEMBALIK itu: pembelian tunai yang diinput
+       * accounting dari dashboard TIDAK lagi mengurangi laci kasir, jadi
+       * praktis tidak ada lagi baris 'purchase' yang lolos `drawerOnly`.
+       * Filter sourceType-nya sengaja DIBIARKAN sebagai jaring pengaman untuk
+       * baris lama (entry_origin NULL, sebelum AE-227) yang memang masih
+       * terhitung sebagai isi laci. Payroll/refund tetap dikecualikan. */
       const [expRes, incRes, pecRes] = await Promise.all([
         listExpenses({
           from: entryDate,
@@ -275,12 +278,18 @@ export function PettyCashCard() {
           limit: 50,
           sourceType: ["manual", "purchase"],
           paymentMethod: "cash",
+          /* Sesi AE-227 — daftar ini harus berisi PERSIS yang dihitung
+           * sebagai isi laci. Sejak entry dashboard tidak lagi memotong Kas
+           * Harusnya, menampilkannya di sini cuma membuat kasir mencari
+           * selisih yang tidak pernah ada. */
+          drawerOnly: true,
         }),
         listIncomes({
           from: entryDate,
           to: entryDate,
           limit: 50,
           paymentMethod: "cash",
+          drawerOnly: true,
         }),
         listPendingEntryChanges({ status: "pending_approval", limit: 100 }),
       ]);
@@ -346,7 +355,6 @@ export function PettyCashCard() {
       inSum,
       outCount,
       inCount,
-      net: inSum - outSum,
       total: outCount + inCount,
     };
   }, [recent]);
@@ -488,6 +496,11 @@ export function PettyCashCard() {
         amount: parsedAmount,
         paymentMethod: "cash",
         receiptImageUrl: receiptUrl,
+        /* Sesi AE-227 — SATU-SATUNYA tempat yang mengaku "pos": uang ini
+         * benar-benar diambil dari laci kasir, jadi memang harus memotong
+         * Kas Harusnya saat tutup shift. Semua input dari dashboard tidak
+         * pernah menyentuh angka kasir. */
+        entryOrigin: "pos",
       });
       setSubmitting(false);
       if (!isOk(res)) {
@@ -505,6 +518,8 @@ export function PettyCashCard() {
         description: description.trim(),
         amount: parsedAmount,
         paymentMethod: "cash",
+        /* Sesi AE-227 — uangnya masuk ke laci kasir sekarang juga. */
+        entryOrigin: "pos",
       });
       setSubmitting(false);
       if (!isOk(res)) {
@@ -561,7 +576,11 @@ export function PettyCashCard() {
         </div>
 
         {/* Dashboard cards */}
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {/* Sesi AE-227 — kotak saldo (Net Petty Cash) DIHAPUS atas arahan
+            owner: saldo kas tidak lagi ditampilkan di POS, setoran dihitung
+            manual. Yang tersisa hanya CATATAN AKTIVITAS hari ini — berapa yang
+            keluar, berapa yang masuk, berapa entri — bukan posisi kas. */}
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
           <StatCard
             label="Pengeluaran Hari Ini"
             value={formatRupiah(dashboard.outSum)}
@@ -575,13 +594,6 @@ export function PettyCashCard() {
             sublabel={`${dashboard.inCount}× entri`}
             tone="success"
             icon={<ArrowUpCircle className="size-4" />}
-          />
-          <StatCard
-            label="Net Petty Cash"
-            value={formatRupiah(dashboard.net)}
-            sublabel={dashboard.net >= 0 ? "Surplus" : "Defisit"}
-            tone={dashboard.net >= 0 ? "success" : "danger"}
-            icon={<TrendingUp className="size-4" />}
           />
           <StatCard
             label="Total Entri"

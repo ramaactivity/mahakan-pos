@@ -128,12 +128,6 @@ export function KasOwnerPanel({ viewerRole }: Props) {
         ) : (
           <>
             <MiniStat
-              Icon={Wallet}
-              label="Kas Tersedia"
-              value={formatRupiah(dashboard.cashOnHand)}
-              accent={dashboard.isOverThreshold ? "warning" : "default"}
-            />
-            <MiniStat
               Icon={ArrowRight}
               label="Belum Disetor"
               value={formatRupiah(dashboard.outstandingToDeposit)}

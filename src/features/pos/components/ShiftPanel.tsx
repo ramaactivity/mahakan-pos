@@ -34,7 +34,6 @@ import { listTransactions, isOk } from "@/features/transactions";
 import { useSession } from "@/features/auth/SessionProvider";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getDailyCashSummary, isOk as isCashOk } from "@/features/cash";
-import { CashOnHandTile } from "@/features/admin/sections/finance/CashOnHandTile";
 import { formatRupiah } from "@/lib/format";
 import { formatIndonesianTime, formatIndonesianDateTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
@@ -298,8 +297,6 @@ export function ShiftPanel({
           </p>
         </header>
 
-        <CashOnHandTile />
-
         <Card>
           <CardHeader>
             <CardTitle>Shift Belum Dibuka</CardTitle>
@@ -448,8 +445,6 @@ export function ShiftPanel({
           </Button>
         ) : null}
       </header>
-
-      <CashOnHandTile />
 
       {/* Hero: duration + opening cash + paid count + total revenue */}
       <Card variant="emphasis">
