@@ -1,5 +1,6 @@
 import type { InferSelectModel } from "drizzle-orm";
 import type { expenseCategories, expenses, incomes } from "@/db/schema";
+import type { CashEntryOrigin } from "./drawer-origin";
 
 export type ExpenseCategory = InferSelectModel<typeof expenseCategories>;
 export type Expense = InferSelectModel<typeof expenses>;
@@ -49,6 +50,11 @@ export interface CreateExpenseInput {
   /** Sesi AE-69 — optional bank account FK (untuk transfer/other). NULL
    * = fallback ke hardcoded mapping (transfer→1110, other→1112). */
   bankAccountId?: string | null;
+  /** Sesi AE-227 — dari mana entry ini dibuat. "pos" = Petty Cash di POS,
+   * uangnya keluar dari laci kasir dan ikut memotong Kas Harusnya. Apapun
+   * selain itu (termasuk saat field ini kosong) diperlakukan "backoffice"
+   * dan TIDAK pernah menyentuh laporan kasir. Lihat `drawer-origin.ts`. */
+  entryOrigin?: CashEntryOrigin;
 }
 
 export interface CreateIncomeInput {
@@ -62,6 +68,8 @@ export interface CreateIncomeInput {
    * Pendapatan Lain-lain. Owner pilih per entry untuk granular reporting
    * (Sewa Ruang vs Titip Jual vs Lain di P&L). */
   accountId?: string | null;
+  /** Sesi AE-227 — pasangan `CreateExpenseInput.entryOrigin`. */
+  entryOrigin?: CashEntryOrigin;
 }
 
 export interface DailyCashSummary {
@@ -72,7 +80,12 @@ export interface DailyCashSummary {
       total: number;
       count: number;
       /** Sesi AE-49 — breakdown by payment method. Cash only affect kas drawer
-       * fisik (laci kasir); transfer/other affect bank account, bukan kas. */
+       * fisik (laci kasir); transfer/other affect bank account, bukan kas.
+       *
+       * Sesi AE-227 — `cash`/`cashCount` kini HANYA baris yang benar-benar
+       * lewat laci kasir (entry_origin 'pos' atau NULL/legacy). Pemasukan
+       * tunai yang dicatat dari dashboard tetap terhitung di `total`, tapi
+       * tidak lagi menaikkan Kas Harusnya kasir. */
       cash: number;
       cashCount: number;
       nonCash: number;
@@ -90,7 +103,11 @@ export interface DailyCashSummary {
     total: number;
     /** Sesi AE-49 — breakdown by payment method. Cuma cash yang dikurangi
      * dari Kas Harusnya saat tutup shift. Transfer/other tampil terpisah
-     * di modal sebagai info (tidak affect drawer fisik). */
+     * di modal sebagai info (tidak affect drawer fisik).
+     *
+     * Sesi AE-227 — plus HANYA yang keluar dari laci kasir. Pengeluaran yang
+     * diinput dari dashboard tetap ada di `total` + `byCategory` (owner harus
+     * melihatnya di halaman Kas) tapi tidak memotong angka kasir. */
     cash: number;
     cashCount: number;
     nonCash: number;

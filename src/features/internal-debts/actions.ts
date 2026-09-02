@@ -56,6 +56,7 @@ import {
   type ReverseInternalDebtInput,
   type UpdateInternalDebtPartyInput,
 } from "./types";
+import { BACKOFFICE_ORIGIN } from "@/features/cash/drawer-origin";
 
 /**
  * Sesi AE-180 — Hutang Internal (Talangan Owner/Pengelola) actions.
@@ -472,6 +473,9 @@ export async function postInternalDebtEntry(
             amount: v.amount,
             paymentMethod: "other",
             sourceType: "internal_debt",
+            /* Sesi AE-227 — talangan owner/pengelola dicatat dari back
+             * office; uangnya tidak pernah lewat laci kasir. */
+            entryOrigin: BACKOFFICE_ORIGIN,
             createdBy: session.user.id,
           })
           .returning({ id: expenses.id });

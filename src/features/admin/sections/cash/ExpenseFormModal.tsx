@@ -137,6 +137,11 @@ export function ExpenseFormModal({
           paymentMethod: method,
           receiptImageUrl,
           bankAccountId: resolvedBankAccountId,
+          /* Sesi AE-227 — ditulis eksplisit walau server sudah menganggap
+           * apa pun selain "pos" sebagai backoffice: yang membaca kode ini
+           * harus langsung tahu entry dari dashboard TIDAK memotong laporan
+           * kasir. */
+          entryOrigin: "backoffice",
         });
     if (!isOk(res)) {
       setError(res.error.message);
@@ -256,6 +261,18 @@ export function ExpenseFormModal({
               </button>
             ))}
           </div>
+          {/* Sesi AE-227 — arahan owner: input dashboard tidak boleh mengubah
+              angka kasir. Dulu pengeluaran tunai di sini diam-diam memotong
+              "Kas Harusnya" kasir; sekarang tidak, dan itu perlu tertulis
+              supaya tidak ada yang menunggu angka kasir ikut berubah. */}
+          {method === "cash" ? (
+            <p className="rounded-md bg-neutral-100 px-3 py-2 text-xs text-neutral-600">
+              Pengeluaran tunai yang dicatat dari sini{" "}
+              <strong>tidak mengurangi laporan kasir</strong> (Kas Harusnya /
+              Kas Tersedia). Kalau uangnya diambil dari laci kasir, kasir yang
+              mencatatnya lewat Petty Cash di POS.
+            </p>
+          ) : null}
         </div>
 
         {/* Sesi AE-69 — Bank account selector (hanya kalau metode != cash).

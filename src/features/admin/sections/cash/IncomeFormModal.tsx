@@ -150,8 +150,18 @@ export function IncomeFormModal({
       accountId: accountId || null,
     };
     const res = isEdit
-      ? await updateIncome(edit!.id, payload)
-      : await createIncome(payload);
+      ? /* Edit TIDAK mengirim entryOrigin — asal entry tidak boleh berubah
+         * hanya karena diperbaiki dari dashboard. Entry yang dulu dicatat
+         * kasir di POS tetap terhitung sebagai isi laci. */
+        await updateIncome(edit!.id, payload)
+      : await createIncome({
+          ...payload,
+          /* Sesi AE-227 — dicatat dari dashboard: tidak menambah Kas
+           * Harusnya kasir, karena uangnya tidak masuk ke laci. Kalau
+           * uangnya diterima di kasir, kasir yang mencatatnya lewat Petty
+           * Cash di POS. */
+          entryOrigin: "backoffice",
+        });
     if (!isOk(res)) {
       setError(res.error.message);
       setSubmitting(false);

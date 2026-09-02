@@ -41,6 +41,10 @@ import { transactions, expenses, incomes } from "@/db/schema";
 import { toJakartaDateOnly } from "@/lib/date";
 import { approvalResendWaitSeconds } from "@/features/approval-codes/resend-cooldown-db";
 import { resendCooldownMessage } from "@/features/approval-codes/resend-cooldown";
+import {
+  expenseAffectsDrawer,
+  incomeAffectsDrawer,
+} from "@/features/cash/drawer-origin";
 
 const BCRYPT_COST = 10;
 
@@ -165,6 +169,8 @@ async function computeRebalancedVariance(
       and(
         eq(expenses.outletId, shift.outletId),
         eq(expenses.paymentMethod, "cash"),
+        /* Sesi AE-227 — sama dengan closeShift: cuma yang lewat laci kasir. */
+        expenseAffectsDrawer(),
         sql`${expenses.expenseDate} >= ${shiftStartDate}`,
         sql`${expenses.expenseDate} <= ${closeDate}`,
         isNull(expenses.deletedAt),
@@ -179,6 +185,7 @@ async function computeRebalancedVariance(
       and(
         eq(incomes.outletId, shift.outletId),
         eq(incomes.paymentMethod, "cash"),
+        incomeAffectsDrawer(),
         sql`${incomes.incomeDate} >= ${shiftStartDate}`,
         sql`${incomes.incomeDate} <= ${closeDate}`,
         isNull(incomes.deletedAt),

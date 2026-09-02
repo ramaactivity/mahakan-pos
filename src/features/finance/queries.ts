@@ -37,6 +37,9 @@ import {
   computeReconciliationTotals,
   detectReconciliationAnomalies,
 } from "./reconciliation-pure";
+import {
+  expenseAffectsDrawer,
+} from "@/features/cash/drawer-origin";
 
 /**
  * Convert a Jakarta calendar date (YYYY-MM-DD) into a UTC `[from, toExclusive)`
@@ -143,6 +146,10 @@ export async function getDailySettlementReport(
   // Approximation: filter expenses by outlet + expense_date == dateIso AND
   // paymentMethod='cash'. Multi-shift days share the bucket — split is
   // proportional to # shifts. Acceptable for finance overview.
+  //
+  // Sesi AE-227 — hanya yang keluar dari laci kasir. Laporan ini membandingkan
+  // setoran yang DITULIS KASIR dengan aktivitas POS; pengeluaran yang diinput
+  // dari dashboard bukan bagian dari yang kasir pegang.
   const cashExpRows = await db
     .select({
       total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)`,
@@ -154,6 +161,7 @@ export async function getDailySettlementReport(
         eq(expenses.outletId, outletId),
         eq(expenses.expenseDate, dateIso),
         eq(expenses.paymentMethod, "cash"),
+        expenseAffectsDrawer(),
         isNull(expenses.deletedAt),
       ),
     );
@@ -403,7 +411,11 @@ export async function getCashOnHand(
     cashSales += Number(splitAgg[0]?.total ?? 0);
   }
 
-  // 3. Cash expenses in window (by expense_date, paymentMethod=cash).
+  /* 3. Cash expenses in window (by expense_date, paymentMethod=cash).
+   *
+   * Sesi AE-227 — hanya yang keluar dari LACI. Angka ini yang dibaca kasir
+   * untuk menentukan besar setoran; kalau pengeluaran dashboard ikut memotong,
+   * kasir menyetor terlalu sedikit dan sisa uangnya menumpuk tanpa penjelasan. */
   const cashExpRows = await db
     .select({
       total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)`,
@@ -413,6 +425,7 @@ export async function getCashOnHand(
       and(
         eq(expenses.outletId, outletId),
         eq(expenses.paymentMethod, "cash"),
+        expenseAffectsDrawer(),
         isNull(expenses.deletedAt),
         gte(expenses.expenseDate, unsettledFromDate ?? "1970-01-01"),
         lte(expenses.expenseDate, today),
@@ -723,7 +736,7 @@ export async function getCashDepositDashboard(
     }
   }
 
-  // Cash expenses per expense_date.
+  // Cash expenses per expense_date. Sesi AE-227 — laci kasir saja.
   const expenseRows = await db
     .select({
       date: expenses.expenseDate,
@@ -734,6 +747,7 @@ export async function getCashDepositDashboard(
       and(
         eq(expenses.outletId, outletId),
         eq(expenses.paymentMethod, "cash"),
+        expenseAffectsDrawer(),
         isNull(expenses.deletedAt),
         gte(expenses.expenseDate, fromIso),
         lte(expenses.expenseDate, todayIso),
@@ -831,6 +845,10 @@ export async function getCashDepositDashboard(
         and(
           eq(expenses.outletId, outletId),
           eq(expenses.paymentMethod, "cash"),
+          /* Sesi AE-227 — saldo awal ikut aturan yang sama; kalau tidak,
+           * sisa awal dan mutasi hariannya dihitung dengan dua aturan
+           * berbeda dan grafiknya tidak akan pernah menutup. */
+          expenseAffectsDrawer(),
           isNull(expenses.deletedAt),
           lte(expenses.expenseDate, beforeFromIso),
         ),

@@ -33,6 +33,7 @@ import {
   type Income,
   type Paginated,
 } from "./types";
+import { BACKOFFICE_ORIGIN, POS_ORIGIN } from "./drawer-origin";
 
 const isoDateSchema = z
   .string()
@@ -61,6 +62,9 @@ const createExpenseSchema = z.object({
   receiptImageUrl: z.string().url().nullable().optional(),
   /* Sesi AE-69 — optional bank account FK. */
   bankAccountId: z.uuid().nullable().optional(),
+  /* Sesi AE-227 — hanya POS yang mengirim "pos". Tidak dikirim / apa pun
+   * selain itu = backoffice, dan tidak menyentuh laporan kasir. */
+  entryOrigin: z.enum(["pos", "backoffice"]).optional(),
 });
 
 const createIncomeSchema = z.object({
@@ -73,6 +77,8 @@ const createIncomeSchema = z.object({
   bankAccountId: z.uuid().nullable().optional(),
   /* Sesi AE-71 — optional revenue account FK. */
   accountId: z.uuid().nullable().optional(),
+  /* Sesi AE-227 — lihat createExpenseSchema. */
+  entryOrigin: z.enum(["pos", "backoffice"]).optional(),
 });
 
 async function requireSession() {
@@ -240,6 +246,11 @@ export async function createExpense(
       paymentMethod: v.paymentMethod,
       receiptImageUrl: v.receiptImageUrl ?? null,
       bankAccountId: v.bankAccountId ?? null,
+      /* Sesi AE-227 — asalnya ditulis EKSPLISIT, tidak mengandalkan default
+       * kolom (memang tidak ada). Yang tidak menyebut dirinya POS dianggap
+       * dashboard, jadi jalur baru yang lupa mengisi gagal ke arah yang
+       * aman: tidak mengganggu laporan kasir. */
+      entryOrigin: v.entryOrigin === POS_ORIGIN ? POS_ORIGIN : BACKOFFICE_ORIGIN,
       createdBy: session.user.id,
     })
     .returning();
@@ -315,6 +326,8 @@ export async function createIncome(
       paymentMethod: v.paymentMethod,
       bankAccountId: v.bankAccountId ?? null,
       accountId: v.accountId ?? null,
+      /* Sesi AE-227 — sama dengan createExpense. */
+      entryOrigin: v.entryOrigin === POS_ORIGIN ? POS_ORIGIN : BACKOFFICE_ORIGIN,
       createdBy: session.user.id,
     })
     .returning();

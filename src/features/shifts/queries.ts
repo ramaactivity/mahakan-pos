@@ -9,6 +9,10 @@ import type {
   ShiftStatus,
   ShiftWithOpener,
 } from "./types";
+import {
+  expenseAffectsDrawer,
+  incomeAffectsDrawer,
+} from "@/features/cash/drawer-origin";
 
 /**
  * Sesi AE-63 phase10 — Active shift di-resolve OUTLET-SCOPED (bukan
@@ -154,6 +158,9 @@ export async function fetchShiftPettyBreakdown(
       and(
         eq(expenses.outletId, shift.outletId),
         eq(expenses.paymentMethod, "cash"),
+        /* Sesi AE-227 — cermin filter closeShift; kalau beda, rincian yang
+         * ditampilkan tidak akan menjumlah ke variance yang ter-persist. */
+        expenseAffectsDrawer(),
         gte(expenses.expenseDate, fromDate),
         lte(expenses.expenseDate, toDate),
         isNull(expenses.deletedAt),
@@ -166,6 +173,7 @@ export async function fetchShiftPettyBreakdown(
       and(
         eq(incomes.outletId, shift.outletId),
         eq(incomes.paymentMethod, "cash"),
+        incomeAffectsDrawer(),
         gte(incomes.incomeDate, fromDate),
         lte(incomes.incomeDate, toDate),
         isNull(incomes.deletedAt),

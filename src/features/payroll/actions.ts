@@ -49,6 +49,7 @@ import {
   type PayrollPeriodWithStats,
   type UpdatePayrollLineInput,
 } from "./types";
+import { BACKOFFICE_ORIGIN } from "@/features/cash/drawer-origin";
 
 async function requireSession() {
   const session = await auth();
@@ -961,6 +962,9 @@ export async function markPayrollPaid(
            * dan jurnal tidak pernah bercerita beda. */
           bankAccountId: shape.data.bankAccountId,
           sourceType: "payroll",
+          /* Sesi AE-227 — gaji dibayar dari back office, bukan dari laci
+           * kasir; jangan ikut memotong Kas Harusnya kasir. */
+          entryOrigin: BACKOFFICE_ORIGIN,
           payrollPeriodId: periodId,
           createdBy: session.user.id,
         })

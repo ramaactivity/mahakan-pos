@@ -292,6 +292,7 @@ import {
   type VoidTransactionInput,
 } from "./types";
 import type { MenuItem } from "@/features/menu";
+import { POS_ORIGIN } from "@/features/cash/drawer-origin";
 
 async function requireSession() {
   const session = await auth();
@@ -1515,6 +1516,9 @@ export async function refundTransaction(
         amount: current.total,
         paymentMethod: "cash",
         refundedTransactionId: current.id,
+        /* Sesi AE-227 — refund dibayarkan kasir dari laci saat itu juga,
+         * jadi ini memang mengurangi isi laci (bukan input dashboard). */
+        entryOrigin: POS_ORIGIN,
         createdBy: session.user.id,
       });
 
@@ -1876,6 +1880,8 @@ export async function refundTransactionPartial(
       amount: computation.totalRefunded,
       paymentMethod: "cash",
       refundedTransactionId: current.id,
+      /* Sesi AE-227 — refund parsial juga keluar dari laci kasir. */
+      entryOrigin: POS_ORIGIN,
       createdBy: session.user.id,
     });
 

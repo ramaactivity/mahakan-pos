@@ -56,6 +56,10 @@ import {
   type ShiftDayGateState,
   type ShiftWithOpener,
 } from "./types";
+import {
+  expenseAffectsDrawer,
+  incomeAffectsDrawer,
+} from "@/features/cash/drawer-origin";
 
 const openShiftSchema = z.object({
   openingCash: z.number().int().min(0).max(99_999_999),
@@ -539,6 +543,9 @@ export async function closeShift(
       and(
         eq(expenses.outletId, current.outletId),
         eq(expenses.paymentMethod, "cash"),
+        /* Sesi AE-227 — HANYA yang keluar dari laci kasir. Pengeluaran yang
+         * diinput dari dashboard tidak lagi memotong Kas Harusnya. */
+        expenseAffectsDrawer(),
         gte(expenses.expenseDate, shiftStartDate),
         lte(expenses.expenseDate, todayDate),
         isNull(expenses.deletedAt),
@@ -553,6 +560,9 @@ export async function closeShift(
       and(
         eq(incomes.outletId, current.outletId),
         eq(incomes.paymentMethod, "cash"),
+        /* Sesi AE-227 — pasangannya: pemasukan dari dashboard tidak menaikkan
+         * Kas Harusnya, uangnya memang tidak masuk laci. */
+        incomeAffectsDrawer(),
         gte(incomes.incomeDate, shiftStartDate),
         lte(incomes.incomeDate, todayDate),
         isNull(incomes.deletedAt),

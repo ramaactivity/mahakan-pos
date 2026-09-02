@@ -102,6 +102,28 @@ export const expenses = pgTable(
      * NULL untuk method='cash' atau staff skip pilih. */
     bankAccountId: uuid("bank_account_id"),
 
+    /** Sesi AE-227 — DARI MANA baris ini diinput, bukan siapa yang input.
+     *
+     * Arahan owner: "data input manual dari dashboard langsung mengurangi
+     * pada POS kasir, jadi laporan dari kasir jangan diganggu sama dashboard
+     * perhitungannya." Sebelum kolom ini, SEMUA pengeluaran tunai hari itu
+     * memotong Kas Harusnya saat tutup shift — tidak peduli uangnya keluar
+     * dari laci kasir atau dari brankas/rekening owner di back office.
+     *
+     * - 'pos'        = keluar dari LACI KASIR (Petty Cash di POS, refund POS).
+     *                  Ikut mengurangi Kas Harusnya & Kas Tersedia.
+     * - 'backoffice' = diinput dari dashboard (Kas, Pembelian, Payroll,
+     *                  Hutang Internal). TIDAK PERNAH menyentuh laporan kasir.
+     * - NULL         = baris LAMA sebelum sesi AE-227. Diperlakukan 'pos'
+     *                  supaya angka shift yang sudah tertutup tidak berubah
+     *                  surut — variance-nya sudah ter-persist dengan
+     *                  perhitungan lama. JANGAN di-backfill tanpa perintah
+     *                  owner.
+     *
+     * Aturan bacanya ada di `src/features/cash/drawer-origin.ts` — SEMUA
+     * query yang menghitung isi laci WAJIB lewat helper itu. */
+    entryOrigin: text("entry_origin", { enum: ["pos", "backoffice"] }),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -147,6 +169,12 @@ export const incomes = pgTable(
      * pick di IncomeFormModal untuk pisahkan Sewa Ruang vs Titip Jual
      * vs Lain di Laporan Laba Rugi. */
     accountId: uuid("account_id"),
+
+    /** Sesi AE-227 — pasangan `expenses.entry_origin`; aturan & alasannya
+     * sama persis, cuma arahnya menambah kas bukan mengurangi. Pemasukan
+     * yang diinput dari dashboard tidak boleh menaikkan Kas Harusnya kasir,
+     * karena uangnya tidak masuk ke laci. NULL = baris lama = 'pos'. */
+    entryOrigin: text("entry_origin", { enum: ["pos", "backoffice"] }),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

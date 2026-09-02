@@ -16,6 +16,11 @@ import type {
   Income,
   Paginated,
 } from "./types";
+import {
+  affectsDrawer,
+  expenseAffectsDrawer,
+  incomeAffectsDrawer,
+} from "./drawer-origin";
 
 export interface ListExpensesOptions {
   from?: string;
@@ -41,6 +46,12 @@ export interface ListExpensesOptions {
    * dirancang spesifik untuk CASH DRAWER (laci kasir). Transfer/other
    * tidak affect drawer fisik → exclude dari POS view. */
   paymentMethod?: "cash" | "transfer" | "other";
+  /* Sesi AE-227 — true = HANYA baris yang benar-benar lewat laci kasir.
+   * Dipakai Petty Cash di POS: sejak pengeluaran dari dashboard tidak lagi
+   * memotong Kas Harusnya, menampilkannya di daftar kasir cuma bikin kasir
+   * mencari-cari selisih yang tidak ada. Baris lama (entry_origin NULL)
+   * tetap ikut — aturannya di `drawer-origin.ts`. */
+  drawerOnly?: boolean;
 }
 
 export async function fetchExpenses(
@@ -66,6 +77,7 @@ export async function fetchExpenses(
   }
   if (opts.paymentMethod)
     conds.push(eq(expenses.paymentMethod, opts.paymentMethod));
+  if (opts.drawerOnly) conds.push(expenseAffectsDrawer());
 
   const rows = await db
     .select()
@@ -105,6 +117,12 @@ export interface ListIncomesOptions {
    * tidak punya sourceType field (selalu manual), tapi paymentMethod
    * relevant: petty cash hanya cash drawer. */
   paymentMethod?: "cash" | "transfer" | "other";
+  /* Sesi AE-227 — true = HANYA baris yang benar-benar lewat laci kasir.
+   * Dipakai Petty Cash di POS: sejak pengeluaran dari dashboard tidak lagi
+   * memotong Kas Harusnya, menampilkannya di daftar kasir cuma bikin kasir
+   * mencari-cari selisih yang tidak ada. Baris lama (entry_origin NULL)
+   * tetap ikut — aturannya di `drawer-origin.ts`. */
+  drawerOnly?: boolean;
 }
 
 export async function fetchIncomes(
@@ -119,6 +137,7 @@ export async function fetchIncomes(
   if (opts.to) conds.push(lte(incomes.incomeDate, opts.to));
   if (opts.paymentMethod)
     conds.push(eq(incomes.paymentMethod, opts.paymentMethod));
+  if (opts.drawerOnly) conds.push(incomeAffectsDrawer());
 
   const rows = await db
     .select()
@@ -199,7 +218,12 @@ export async function fetchDailyCashSummary(
   let manualNonCash = 0;
   let manualNonCashCount = 0;
   for (const i of incomeRows) {
-    if (i.paymentMethod === "cash") {
+    /* Sesi AE-227 — ember `cash`/`cashCount` khusus LACI KASIR: dua angka ini
+     * yang dipakai POS untuk pratinjau Kas Harusnya, jadi harus memakai
+     * aturan yang sama dengan closeShift di server. Pemasukan yang dicatat
+     * dari dashboard tetap masuk `total` (owner harus lihat semuanya di
+     * halaman Kas) tapi tidak lagi menaikkan angka kasir. */
+    if (i.paymentMethod === "cash" && affectsDrawer(i.entryOrigin)) {
       manualCash += i.amount;
       manualCashCount++;
     } else {
@@ -214,6 +238,7 @@ export async function fetchDailyCashSummary(
       categoryName: expenseCategories.name,
       amount: expenses.amount,
       paymentMethod: expenses.paymentMethod,
+      entryOrigin: expenses.entryOrigin,
     })
     .from(expenses)
     .innerJoin(
@@ -240,7 +265,9 @@ export async function fetchDailyCashSummary(
   let expensesNonCashCount = 0;
   for (const e of expenseRows) {
     expensesTotal += e.amount;
-    if (e.paymentMethod === "cash") {
+    /* Sesi AE-227 — lihat catatan di ember pemasukan: `cash`/`cashCount`
+     * hanya yang keluar dari laci kasir. `total` + `byCategory` tetap utuh. */
+    if (e.paymentMethod === "cash" && affectsDrawer(e.entryOrigin)) {
       expensesCash += e.amount;
       expensesCashCount++;
     } else {

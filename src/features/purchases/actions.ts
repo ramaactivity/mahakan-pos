@@ -83,6 +83,7 @@ import {
   type UpdatePurchaseOrderInput,
   type UpdatePurchaseOrderResult,
 } from "./types";
+import { BACKOFFICE_ORIGIN } from "@/features/cash/drawer-origin";
 
 async function requireSession() {
   const session = await auth();
@@ -900,6 +901,9 @@ export async function createPurchase(
                *      bisa fire reverse journal yg konflik dengan purchase
                *      journal. */
               sourceType: "purchase",
+              /* Sesi AE-227 — pembelian diinput dari back office; uangnya tidak
+               * keluar dari laci kasir, jadi tidak boleh memotong laporan kasir. */
+              entryOrigin: BACKOFFICE_ORIGIN,
               purchaseId: created.id,
               createdBy: session.user.id,
             })
@@ -1689,6 +1693,9 @@ export async function markPurchasePaid(
             /* Sesi AE-79 — tag sebagai purchase (lihat catatan sama di
              * createPurchase line ~545). */
             sourceType: "purchase",
+            /* Sesi AE-227 — pembelian diinput dari back office; uangnya tidak
+             * keluar dari laci kasir, jadi tidak boleh memotong laporan kasir. */
+            entryOrigin: BACKOFFICE_ORIGIN,
             purchaseId: p.id,
             createdBy: session.user.id,
           })
@@ -3336,6 +3343,9 @@ export async function updatePurchaseOrder(
                     amount: grTotal,
                     paymentMethod: expensePaymentMethod(po.paymentMethod),
                     sourceType: "purchase",
+                    /* Sesi AE-227 — pembelian diinput dari back office; uangnya tidak
+                     * keluar dari laci kasir, jadi tidak boleh memotong laporan kasir. */
+                    entryOrigin: BACKOFFICE_ORIGIN,
                     purchaseId: po.id,
                     createdBy: session.user.id,
                   })
@@ -3906,6 +3916,9 @@ export async function confirmGoodsReceipt(input: {
               amount: po.totalAmount,
               paymentMethod: expensePaymentMethod(po.paymentMethod),
               sourceType: "purchase",
+              /* Sesi AE-227 — pembelian diinput dari back office; uangnya tidak
+               * keluar dari laci kasir, jadi tidak boleh memotong laporan kasir. */
+              entryOrigin: BACKOFFICE_ORIGIN,
               purchaseId: po.id,
               createdBy: session.user.id,
             })
@@ -5100,6 +5113,9 @@ export async function receiveGoods(input: {
               amount: grTotal,
               paymentMethod: expensePaymentMethod(po.paymentMethod),
               sourceType: "purchase",
+              /* Sesi AE-227 — pembelian diinput dari back office; uangnya tidak
+               * keluar dari laci kasir, jadi tidak boleh memotong laporan kasir. */
+              entryOrigin: BACKOFFICE_ORIGIN,
               purchaseId: po.id,
               createdBy: session.user.id,
             })
