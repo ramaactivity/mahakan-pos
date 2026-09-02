@@ -5,6 +5,7 @@ import {
   expenseCategories,
   expenses,
   incomes,
+  splitPayments,
   transactions,
 } from "@/db/schema";
 import { endOfWibDateUtc, startOfWibDateUtc } from "./helpers";
@@ -162,6 +163,7 @@ export async function fetchDailyCashSummary(
 
   const trxRows = await db
     .select({
+      id: transactions.id,
       status: transactions.status,
       paymentMethod: transactions.paymentMethod,
       total: transactions.total,
@@ -176,6 +178,34 @@ export async function fetchDailyCashSummary(
       ),
     );
 
+  /* Sesi AE-228 — pecahan SPLIT BILL. Transaksi split menyimpan literal
+   * "split" di `payment_method`, jadi sebelum ini seluruh nilainya jatuh ke
+   * ember "kartu" (cabang `else` di bawah): penjualan tunai dan QRIS dari
+   * bill yang dibayar patungan tidak pernah muncul di ringkasan kas harian.
+   * Rincian per kanal diambil dari `split_payments`. */
+  const splitTrxIds = trxRows
+    .filter((t) => t.paymentMethod === "split")
+    .map((t) => t.id);
+  const splitLegsByTrx = new Map<
+    string,
+    Array<{ paymentMethod: string; amount: number }>
+  >();
+  if (splitTrxIds.length > 0) {
+    const legs = await db
+      .select({
+        transactionId: splitPayments.transactionId,
+        paymentMethod: splitPayments.paymentMethod,
+        amount: splitPayments.amount,
+      })
+      .from(splitPayments)
+      .where(inArray(splitPayments.transactionId, splitTrxIds));
+    for (const l of legs) {
+      const list = splitLegsByTrx.get(l.transactionId) ?? [];
+      list.push({ paymentMethod: l.paymentMethod, amount: Number(l.amount) });
+      splitLegsByTrx.set(l.transactionId, list);
+    }
+  }
+
   let posCash = 0;
   let posQris = 0;
   let posCard = 0;
@@ -185,7 +215,30 @@ export async function fetchDailyCashSummary(
     // paid + partially_refunded both contribute revenue (net of partial refund)
     if (t.status === "paid" || t.status === "partially_refunded") {
       const net = t.total - t.refundedAmount;
-      if (t.paymentMethod === "cash") posCash += net;
+      const legs = splitLegsByTrx.get(t.id);
+      if (t.paymentMethod === "split" && legs && legs.length > 0) {
+        /* Refund sebagian tidak menyebut pecahan mana yang dikurangi, jadi
+         * potongannya dibagi menurut porsi tiap pecahan. Tanpa refund (kasus
+         * normal) hasilnya persis nilai tiap pecahan.
+         *
+         * Sisa pembulatan diberikan ke pecahan TERAKHIR supaya jumlah ketiga
+         * ember selalu sama dengan `net` — rupiah tidak boleh menguap hanya
+         * karena pembagian tidak bulat. */
+        const legTotal = legs.reduce((sum, l) => sum + l.amount, 0);
+        let allocated = 0;
+        legs.forEach((l, i) => {
+          const share =
+            i === legs.length - 1
+              ? net - allocated
+              : legTotal > 0
+                ? Math.round((net * l.amount) / legTotal)
+                : 0;
+          allocated += share;
+          if (l.paymentMethod === "cash") posCash += share;
+          else if (l.paymentMethod === "qris") posQris += share;
+          else posCard += share;
+        });
+      } else if (t.paymentMethod === "cash") posCash += net;
       else if (t.paymentMethod === "qris") posQris += net;
       else posCard += net;
       // Partial refund contribution to refunded totals

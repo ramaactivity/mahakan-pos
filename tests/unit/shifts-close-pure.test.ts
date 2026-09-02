@@ -359,3 +359,144 @@ describe("computeShiftCashSummary — split payment method", () => {
     expect(s.paidCard).toBe(100_000);
   });
 });
+
+/* ============================================================
+ * Sesi AE-228 — SPLIT BILL.
+ *
+ * Laporan owner: "Bagian split bill tidak masuk ke laporan shift, tidak
+ * terdetect." Transaksi split menyimpan literal "split" di `paymentMethod`
+ * dan pecahannya di `splits`. Sebelum sesi ini hanya cabang `paid` yang
+ * mengerti itu; cabang refund menyaring `paymentMethod === "cash"` yang tidak
+ * pernah cocok, jadi seluruh nilainya jatuh ke ember kartu diam-diam.
+ * ============================================================ */
+
+function splitTxn(
+  status: "paid" | "refunded" | "partially_refunded",
+  total: number,
+  legs: Array<{ paymentMethod: string; amount: number }>,
+  refundedAmount = 0,
+) {
+  return {
+    status,
+    paymentMethod: "split" as const,
+    total,
+    refundedAmount,
+    splits: legs,
+  };
+}
+
+describe("computeShiftCashSummary — split bill", () => {
+  /* Kejadian nyata di produksi: Rp 132.000 dibayar Rp 100.000 tunai +
+   * Rp 32.000 QRIS. Layar tutup shift tidak menghitung satu pun. */
+  const NYATA = splitTxn("paid", 132_000, [
+    { paymentMethod: "cash", amount: 100_000 },
+    { paymentMethod: "qris", amount: 32_000 },
+  ]);
+
+  it("bagian tunai masuk Kas Harusnya, bagian QRIS masuk QRIS", () => {
+    const sum = computeShiftCashSummary([NYATA]);
+    expect(sum.paidCash).toBe(100_000);
+    expect(sum.paidQris).toBe(32_000);
+    expect(sum.paidCard).toBe(0);
+    expect(sum.paidCount).toBe(1);
+  });
+
+  it("Kas Harusnya naik sebesar bagian TUNAI-nya saja", () => {
+    const sum = computeShiftCashSummary([NYATA]);
+    expect(computeExpectedCash(500_000, sum)).toBe(600_000);
+  });
+
+  it("rincian kanal selalu berjumlah sama dengan nilai transaksinya", () => {
+    const sum = computeShiftCashSummary([NYATA]);
+    expect(sum.paidCash + sum.paidQris + sum.paidCard).toBe(132_000);
+  });
+
+  it("pecahan kartu masuk ember kartu, bukan tunai", () => {
+    const sum = computeShiftCashSummary([
+      splitTxn("paid", 200_000, [
+        { paymentMethod: "cash", amount: 50_000 },
+        { paymentMethod: "card_bca", amount: 100_000 },
+        { paymentMethod: "qris", amount: 50_000 },
+      ]),
+    ]);
+    expect(sum.paidCash).toBe(50_000);
+    expect(sum.paidCard).toBe(100_000);
+    expect(sum.paidQris).toBe(50_000);
+  });
+
+  it("split yang di-refund penuh: hanya bagian tunai yang keluar dari laci", () => {
+    /* Bagian QRIS/kartu kembali lewat kanalnya sendiri, bukan dari laci —
+     * kalau ikut dipotong, kasir dituduh kurang uang sebesar bagian itu. */
+    const sum = computeShiftCashSummary([
+      splitTxn("refunded", 132_000, [
+        { paymentMethod: "cash", amount: 100_000 },
+        { paymentMethod: "qris", amount: 32_000 },
+      ]),
+    ]);
+    expect(sum.paidCash).toBe(100_000);
+    expect(sum.paidQris).toBe(32_000);
+    expect(sum.refundedCash).toBe(100_000);
+    expect(sum.refundedAmount).toBe(132_000);
+    /* Uang masuk lalu keluar lagi → laci kembali seperti semula. */
+    expect(computeExpectedCash(500_000, sum)).toBe(500_000);
+  });
+
+  it("split refund sebagian tidak pernah mengembalikan tunai lebih dari yang masuk", () => {
+    /* Refund Rp 120.000 padahal tunai yang masuk cuma Rp 100.000 — sisanya
+     * pasti kembali lewat QRIS, bukan dari laci. */
+    const sum = computeShiftCashSummary([
+      splitTxn(
+        "partially_refunded",
+        132_000,
+        [
+          { paymentMethod: "cash", amount: 100_000 },
+          { paymentMethod: "qris", amount: 32_000 },
+        ],
+        120_000,
+      ),
+    ]);
+    expect(sum.refundedCash).toBe(100_000);
+    expect(sum.refundedAmount).toBe(120_000);
+  });
+
+  it("split refund sebagian di bawah nilai tunai dipotong apa adanya", () => {
+    const sum = computeShiftCashSummary([
+      splitTxn(
+        "partially_refunded",
+        132_000,
+        [
+          { paymentMethod: "cash", amount: 100_000 },
+          { paymentMethod: "qris", amount: 32_000 },
+        ],
+        40_000,
+      ),
+    ]);
+    expect(sum.refundedCash).toBe(40_000);
+    expect(computeExpectedCash(0, sum)).toBe(60_000);
+  });
+
+  it("split tanpa baris pecahan (data lama) tetap utuh, tidak hilang", () => {
+    const sum = computeShiftCashSummary([
+      { status: "paid", paymentMethod: "split", total: 90_000, refundedAmount: 0 },
+    ]);
+    expect(sum.paidCash + sum.paidQris + sum.paidCard).toBe(90_000);
+  });
+
+  it("transaksi biasa tidak berubah perilakunya", () => {
+    /* Penjagaan regresi: perbaikan split tidak boleh menggeser jalur lama. */
+    const sum = computeShiftCashSummary([
+      { status: "paid", paymentMethod: "cash", total: 50_000, refundedAmount: 0 },
+      { status: "paid", paymentMethod: "qris", total: 25_000, refundedAmount: 0 },
+      { status: "refunded", paymentMethod: "qris", total: 10_000, refundedAmount: 0 },
+      {
+        status: "partially_refunded",
+        paymentMethod: "cash",
+        total: 30_000,
+        refundedAmount: 12_000,
+      },
+    ]);
+    expect(sum.paidCash).toBe(80_000);
+    expect(sum.paidQris).toBe(35_000);
+    expect(sum.refundedCash).toBe(12_000);
+  });
+});

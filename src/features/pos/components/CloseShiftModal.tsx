@@ -19,6 +19,7 @@ import { Badge, Button, Input, Modal, Spinner, toast } from "@/components/ui";
 import {
   isOk,
   closeShift,
+  fetchShiftCashPreview,
   type CloseShiftResult,
   type Shift,
 } from "@/features/shifts";
@@ -253,9 +254,23 @@ export function CloseShiftModal({
     /* eslint-enable react-hooks/set-state-in-effect */
 
     async function load() {
-      const [trxRes, cashRes] = await Promise.all([
+      /* Sesi AE-228 — angka kas datang dari SERVER (`fetchShiftCashPreview`),
+       * fungsi yang sama persis dipakai `closeShift` saat menyimpan.
+       *
+       * Sebelumnya layar ini menghitung sendiri dari daftar transaksi dengan
+       * menyaring `paymentMethod === "cash"` / `"qris"` / `"card_bca"`.
+       * Transaksi SPLIT BILL menyimpan literal "split" di kolom itu — tidak
+       * cocok saringan mana pun — jadi seluruh nilainya lenyap dari Kas
+       * Harusnya, prefill QRIS, dan prefill EDC, tanpa satu pun error. Server
+       * sudah menghitungnya, jadi kasir melihat angka yang berbeda dari yang
+       * tersimpan.
+       *
+       * Daftar transaksi tetap diambil untuk open bill + jumlah per status
+       * (bukan untuk menghitung uang). */
+      const [trxRes, cashRes, cashStateRes] = await Promise.all([
         listTransactions({ shiftId: shift.id, limit: 1000 }),
         getDailyCashSummary(),
+        fetchShiftCashPreview(shift.id),
       ]);
       if (cancelled) return;
       if (!isOk(trxRes)) {
@@ -283,38 +298,19 @@ export function CloseShiftModal({
       const voided = items.filter((t) => t.status === "voided");
       const refunded = items.filter((t) => t.status === "refunded");
 
-      const paidCash = paid
-        .filter((t) => t.paymentMethod === "cash")
-        .reduce((s, t) => s + t.total, 0);
-      // Sesi AE-62g — refundedCash includes BOTH full refunds (entire total)
-      // dan partial refunds (refundedAmount column). Sebelumnya cuma full
-      // refund yang dihitung → UI under-state refund → expectedCash over-state.
-      const partiallyRefundedCash = items
-        .filter(
-          (t) =>
-            t.paymentMethod === "cash" && t.status === "partially_refunded",
-        )
-        .reduce((s, t) => s + t.refundedAmount, 0);
-      const refundedCash =
-        refunded
-          .filter((t) => t.paymentMethod === "cash")
-          .reduce((s, t) => s + t.total, 0) + partiallyRefundedCash;
-
+      const cashState = isOk(cashStateRes) ? cashStateRes.data : null;
       const cashSummary = isOk(cashRes) ? cashRes.data : null;
 
-      /* Sesi AE-49 — petty cash cash-only affect Kas Harusnya. Filter
-       * paymentMethod=cash di queries.ts sudah expose cashField di summary.
-       * Formula: expectedCash = opening + paidCash - refundedCash
-       *                       - pettyExpenseCash + pettyIncomeCash */
-      const pettyExpenseCash = cashSummary?.expenses.cash ?? 0;
-      const pettyIncomeCash = cashSummary?.income.manual.cash ?? 0;
-
-      const paidQris = paid
-        .filter((t) => t.paymentMethod === "qris")
-        .reduce((s, t) => s + t.total, 0);
-      const paidCardBca = paid
-        .filter((t) => t.paymentMethod === "card_bca")
-        .reduce((s, t) => s + t.total, 0);
+      /* Semua angka uang dari server. Kalau panggilannya gagal, sisa
+       * hitungan lama TIDAK dipakai sebagai cadangan — angka cadangan yang
+       * salah diam-diam justru itu masalah aslinya. */
+      const paidCash = cashState?.summary.paidCash ?? 0;
+      const paidQris = cashState?.summary.paidQris ?? 0;
+      const paidCardBca = cashState?.summary.paidCard ?? 0;
+      /* Sesi AE-49 — petty cash rentang shift (server), bukan ringkasan
+       * harian: shift yang melewati tengah malam beda rentangnya. */
+      const pettyExpenseCash = cashState?.summary.pettyExpenseCash ?? 0;
+      const pettyIncomeCash = cashState?.summary.pettyIncomeCash ?? 0;
 
       /* Sesi AE-165 — prefill Reported QRIS/EDC dari POS (auto + boleh
        * override). Nilai QRIS/EDC sudah tercatat di POS, jadi kasir tidak
@@ -339,12 +335,14 @@ export function CloseShiftModal({
           count: refunded.length,
           totalAmount: refunded.reduce((s, t) => s + t.total, 0),
         },
+        /* Sesi AE-228 — Kas Harusnya apa adanya dari server.
+         *
+         * `effectiveOpening` (koreksi kas awal yang baru disetujui dan belum
+         * terbaca server) tetap dihormati: kalau kasir mengoreksinya di layar
+         * ini, selisihnya ditambahkan ke hasil server. */
         expectedCash:
-          effectiveOpening +
-          paidCash -
-          refundedCash -
-          pettyExpenseCash +
-          pettyIncomeCash,
+          (cashState?.expectedCash ?? 0) +
+          (effectiveOpening - (cashState?.openingCash ?? effectiveOpening)),
         petty: {
           expenseCash: pettyExpenseCash,
           expenseCashCount: cashSummary?.expenses.cashCount ?? 0,

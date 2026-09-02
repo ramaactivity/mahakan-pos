@@ -291,6 +291,157 @@ export async function openShift(
   }
 }
 
+/* ============================================================
+ * Sesi AE-228 — SATU sumber angka kas shift.
+ *
+ * Laporan owner: "Bagian split bill tidak masuk ke laporan shift, tidak
+ * terdetect." Penyebabnya: layar tutup shift menghitung sendiri di browser
+ * dengan menyaring transaksi `paymentMethod === "cash"` / `"qris"` /
+ * `"card_bca"`. Transaksi split bill menyimpan literal `"split"` di kolom itu
+ * dan pecahannya ada di tabel `split_payments` — jadi transaksi itu tidak
+ * cocok saringan mana pun dan nilainya lenyap dari Kas Harusnya, prefill QRIS,
+ * maupun prefill EDC. Server (`closeShift`) sebetulnya SUDAH split-aware,
+ * jadi angka yang dilihat kasir berbeda dari yang akhirnya tersimpan.
+ *
+ * Sejak sekarang keduanya memanggil fungsi ini. Menghitung ulang di browser
+ * dilarang: setiap kanal pembayaran baru harus cukup ditangani di satu tempat.
+ * ============================================================ */
+
+export type ShiftCashState = {
+  summary: ReturnType<typeof computeShiftCashSummary>;
+  expectedCash: number;
+  /** Semua transaksi shift ini, termasuk open bill — bukan cuma yang lunas. */
+  transactionCount: number;
+};
+
+async function computeShiftCashState(shift: {
+  shiftId: string;
+  outletId: string;
+  openedAt: Date;
+  closedAt: Date | null;
+  openingCash: number;
+}): Promise<ShiftCashState> {
+  /* refundedAmount wajib ikut supaya refund sebagian dipotong presisi
+   * (bukan over-deduct memakai total). */
+  const txnRows = await db
+    .select({
+      id: transactions.id,
+      status: transactions.status,
+      paymentMethod: transactions.paymentMethod,
+      total: transactions.total,
+      refundedAmount: transactions.refundedAmount,
+    })
+    .from(transactions)
+    .where(eq(transactions.shiftId, shift.shiftId));
+
+  /* Sesi AE-155 — pecahan split diambil terpisah lalu ditempelkan ke
+   * transaksinya; pure helper yang membagi ke ember cash/qris/kartu. */
+  const splitTrxIds = txnRows
+    .filter((t) => t.paymentMethod === "split")
+    .map((t) => t.id);
+  const splitsByTrxId = new Map<
+    string,
+    Array<{ paymentMethod: string; amount: number }>
+  >();
+  if (splitTrxIds.length > 0) {
+    const splitRows = await db
+      .select({
+        transactionId: splitPayments.transactionId,
+        paymentMethod: splitPayments.paymentMethod,
+        amount: splitPayments.amount,
+      })
+      .from(splitPayments)
+      .where(inArray(splitPayments.transactionId, splitTrxIds));
+    for (const r of splitRows) {
+      const list = splitsByTrxId.get(r.transactionId) ?? [];
+      list.push({ paymentMethod: r.paymentMethod, amount: Number(r.amount) });
+      splitsByTrxId.set(r.transactionId, list);
+    }
+  }
+
+  const txns = txnRows.map((t) => ({
+    status: t.status,
+    paymentMethod: t.paymentMethod,
+    total: t.total,
+    refundedAmount: t.refundedAmount,
+    splits: splitsByTrxId.get(t.id),
+  }));
+
+  /* Sesi AE-49 — petty cash yang benar-benar menyentuh laci kasir.
+   * Sesi AE-227 — `expenseAffectsDrawer` / `incomeAffectsDrawer`: yang
+   * diinput dari dashboard tidak ikut. Rentangnya dari tanggal WIB shift
+   * dibuka sampai tanggal tutup (atau hari ini kalau masih terbuka), supaya
+   * shift yang melewati tengah malam tetap terhitung utuh. */
+  const shiftStartDate = toJakartaDateOnly(shift.openedAt);
+  const endDate = toJakartaDateOnly(shift.closedAt ?? new Date());
+
+  const pettyExpenseRows = await db
+    .select({ amount: expenses.amount })
+    .from(expenses)
+    .where(
+      and(
+        eq(expenses.outletId, shift.outletId),
+        eq(expenses.paymentMethod, "cash"),
+        expenseAffectsDrawer(),
+        gte(expenses.expenseDate, shiftStartDate),
+        lte(expenses.expenseDate, endDate),
+        isNull(expenses.deletedAt),
+      ),
+    );
+  const pettyIncomeRows = await db
+    .select({ amount: incomes.amount })
+    .from(incomes)
+    .where(
+      and(
+        eq(incomes.outletId, shift.outletId),
+        eq(incomes.paymentMethod, "cash"),
+        incomeAffectsDrawer(),
+        gte(incomes.incomeDate, shiftStartDate),
+        lte(incomes.incomeDate, endDate),
+        isNull(incomes.deletedAt),
+      ),
+    );
+
+  const summary = computeShiftCashSummary(txns, {
+    expenseCash: pettyExpenseRows.reduce((s, r) => s + Number(r.amount), 0),
+    incomeCash: pettyIncomeRows.reduce((s, r) => s + Number(r.amount), 0),
+  });
+
+  return {
+    summary,
+    expectedCash: computeExpectedCash(shift.openingCash, summary),
+    transactionCount: txnRows.length,
+  };
+}
+
+/**
+ * Sesi AE-228 — angka kas shift BERJALAN untuk layar POS (panel shift +
+ * modal tutup shift). Persis yang akan dipakai `closeShift` saat disimpan,
+ * jadi apa yang dilihat kasir tidak mungkin berbeda dengan hasilnya.
+ */
+export async function fetchShiftCashPreview(
+  shiftId: string,
+): Promise<ApiResult<ShiftCashState & { openingCash: number }>> {
+  const session = await requireSession();
+  const [shift] = await db
+    .select()
+    .from(shifts)
+    .where(
+      and(eq(shifts.id, shiftId), eq(shifts.outletId, session.user.outletId)),
+    )
+    .limit(1);
+  if (!shift) return fail("NOT_FOUND", "Shift tidak ditemukan");
+
+  const state = await computeShiftCashState({
+    shiftId: shift.id,
+    outletId: shift.outletId,
+    openedAt: shift.openedAt,
+    closedAt: shift.closedAt,
+    openingCash: shift.openingCash,
+  });
+  return ok({ ...state, openingCash: shift.openingCash });
+}
+
 export async function closeShift(
   input: CloseShiftInput,
 ): Promise<ApiResult<CloseShiftResult>> {
@@ -475,107 +626,21 @@ export async function closeShift(
     );
   }
 
-  // Aggregate transactions in this shift via pure helper (sesi AE-44).
-  // refundedAmount column wajib di-select supaya partial refund bisa
-  // di-deduct presisi (bukan over-deduct pakai total).
-  // Sesi AE-155 — fetch trx + splits sekaligus supaya pure helper bisa
-  // allocate per-method untuk paymentMethod="split". Tanpa join splits,
-  // expectedCash hitung 0 dari split trx (variance alarm palsu).
-  const txnRows = await db
-    .select({
-      id: transactions.id,
-      status: transactions.status,
-      paymentMethod: transactions.paymentMethod,
-      total: transactions.total,
-      refundedAmount: transactions.refundedAmount,
-    })
-    .from(transactions)
-    .where(eq(transactions.shiftId, current.id));
-
-  const splitTrxIds = txnRows
-    .filter((t) => t.paymentMethod === "split")
-    .map((t) => t.id);
-  const splitsByTrxId = new Map<
-    string,
-    Array<{ paymentMethod: string; amount: number }>
-  >();
-  if (splitTrxIds.length > 0) {
-    const splitRows = await db
-      .select({
-        transactionId: splitPayments.transactionId,
-        paymentMethod: splitPayments.paymentMethod,
-        amount: splitPayments.amount,
-      })
-      .from(splitPayments)
-      .where(inArray(splitPayments.transactionId, splitTrxIds));
-    for (const s of splitRows) {
-      const list = splitsByTrxId.get(s.transactionId) ?? [];
-      list.push({ paymentMethod: s.paymentMethod, amount: s.amount });
-      splitsByTrxId.set(s.transactionId, list);
-    }
-  }
-  const txns = txnRows.map((t) => ({
-    status: t.status,
-    paymentMethod: t.paymentMethod,
-    total: t.total,
-    refundedAmount: t.refundedAmount,
-    splits: splitsByTrxId.get(t.id),
-  }));
-
-  /* Sesi AE-49 — fetch petty cash expense + income yang affect kas drawer
-   * fisik. Filter:
-   *   - outletId = session outlet
-   *   - paymentMethod = 'cash' (transfer/other tidak affect laci kasir)
-   *   - deletedAt IS NULL
-   *   - date dalam range shift (open → close). Pakai expenseDate per WIB.
-   *     Untuk handle overnight shift, range = WIB date of shift.openedAt
-   *     sampai WIB date of close (= today saat tutup).
-   *
-   * Sum di server (bukan trust client) — single source of truth supaya
-   * tidak bisa di-bypass dari client. */
-  const shiftStartDate = toJakartaDateOnly(current.openedAt);
-  const todayDate = toJakartaDateOnly(new Date());
-
-  const pettyExpenseRows = await db
-    .select({ amount: expenses.amount })
-    .from(expenses)
-    .where(
-      and(
-        eq(expenses.outletId, current.outletId),
-        eq(expenses.paymentMethod, "cash"),
-        /* Sesi AE-227 — HANYA yang keluar dari laci kasir. Pengeluaran yang
-         * diinput dari dashboard tidak lagi memotong Kas Harusnya. */
-        expenseAffectsDrawer(),
-        gte(expenses.expenseDate, shiftStartDate),
-        lte(expenses.expenseDate, todayDate),
-        isNull(expenses.deletedAt),
-      ),
-    );
-  const pettyExpenseCash = pettyExpenseRows.reduce((s, r) => s + r.amount, 0);
-
-  const pettyIncomeRows = await db
-    .select({ amount: incomes.amount })
-    .from(incomes)
-    .where(
-      and(
-        eq(incomes.outletId, current.outletId),
-        eq(incomes.paymentMethod, "cash"),
-        /* Sesi AE-227 — pasangannya: pemasukan dari dashboard tidak menaikkan
-         * Kas Harusnya, uangnya memang tidak masuk laci. */
-        incomeAffectsDrawer(),
-        gte(incomes.incomeDate, shiftStartDate),
-        lte(incomes.incomeDate, todayDate),
-        isNull(incomes.deletedAt),
-      ),
-    );
-  const pettyIncomeCash = pettyIncomeRows.reduce((s, r) => s + r.amount, 0);
-
-  const cashSummary = computeShiftCashSummary(txns, {
-    expenseCash: pettyExpenseCash,
-    incomeCash: pettyIncomeCash,
+  /* Sesi AE-228 — hitungannya pindah ke `computeShiftCashState` yang juga
+   * dipakai layar tutup shift lewat `fetchShiftCashPreview`. Sebelumnya POS
+   * menghitung sendiri di browser dengan menyaring `paymentMethod === "cash"`,
+   * dan transaksi SPLIT (paymentMethod-nya literal "split") tidak cocok
+   * saringan mana pun sehingga hilang dari layar — padahal server di sini
+   * sudah menghitungnya. Kasir melihat Kas Harusnya yang berbeda dari yang
+   * tersimpan. Satu fungsi = tidak bisa beda lagi. */
+  const state = await computeShiftCashState({
+    shiftId: current.id,
+    outletId: current.outletId,
+    openedAt: current.openedAt,
+    closedAt: null,
+    openingCash: current.openingCash,
   });
-  // refundedCash dipakai di computeExpectedCash internal — destructure
-  // di sini cuma untuk audit log + response. Skip refundedCash di destructure.
+  const cashSummary = state.summary;
   const {
     paidCount,
     paidCash,
@@ -586,10 +651,9 @@ export async function closeShift(
     refundedCount,
     refundedAmount,
   } = cashSummary;
-
-  // Sesi AE-49 — pakai helper terpadu supaya formula konsisten di
-  // server + UI preview. Kas Harusnya sekarang include petty cash.
-  const expectedCash = computeExpectedCash(current.openingCash, cashSummary);
+  const pettyExpenseCash = cashSummary.pettyExpenseCash;
+  const pettyIncomeCash = cashSummary.pettyIncomeCash;
+  const expectedCash = state.expectedCash;
   const variance = v.actualCash - expectedCash;
 
   /* Sesi AE-56 — auto-fill qrisSettlement dari sum paidQris.
@@ -769,7 +833,7 @@ export async function closeShift(
   return ok({
     shift: updated,
     summary: {
-      transactionCount: txns.length,
+      transactionCount: state.transactionCount,
       paid: { count: paidCount, cash: paidCash, qris: paidQris, cardBca: paidCard },
       voided: { count: voidedCount, totalAmount: voidedAmount },
       refunded: { count: refundedCount, totalAmount: refundedAmount },

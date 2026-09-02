@@ -112,22 +112,44 @@ export function computeShiftCashSummary(
     else paidCard += amount;
   }
 
+  /* Sesi AE-228 — masukkan uang masuk sebuah transaksi ke ember yang benar,
+   * split maupun bukan. Sebelumnya HANYA cabang `paid` yang mengerti split;
+   * cabang refund memakai `t.paymentMethod` yang untuk transaksi split berisi
+   * literal "split" — tidak cocok "cash" maupun "qris", jadi seluruh nilainya
+   * jatuh ke ember kartu tanpa satu error pun. */
+  function allocateIncoming(t: ShiftTxnRow) {
+    if (t.paymentMethod === "split" && t.splits && t.splits.length > 0) {
+      for (const s of t.splits) bucketize(s.paymentMethod, s.amount);
+      return;
+    }
+    /* Defensif: transaksi split tanpa baris pecahan (data lama / anomali)
+     * masuk ember kartu supaya totalnya tetap utuh — sama seperti AE-155. */
+    if (t.paymentMethod === "split") {
+      paidCard += t.total;
+      return;
+    }
+    bucketize(t.paymentMethod, t.total);
+  }
+
+  /** Berapa rupiah dari transaksi ini yang masuk sebagai TUNAI. */
+  function cashPortion(t: ShiftTxnRow): number {
+    if (t.paymentMethod === "split") {
+      if (!t.splits) return 0;
+      return t.splits
+        .filter((s) => s.paymentMethod === "cash")
+        .reduce((sum, s) => sum + s.amount, 0);
+    }
+    return t.paymentMethod === "cash" ? t.total : 0;
+  }
+
   for (const t of txns) {
     if (t.status === "paid") {
       paidCount += 1;
-      if (t.paymentMethod === "split") {
-        /* Iterate per-method splits supaya expectedCash + QRIS settlement
-         * + Card settlement akurat. Defensive: kalau splits kosong (data
-         * lama / migration anomaly), fallback ke single bucket "other" via
-         * paidCard supaya total tetap match. */
-        if (t.splits && t.splits.length > 0) {
-          for (const s of t.splits) bucketize(s.paymentMethod, s.amount);
-        } else {
-          paidCard += t.total;
-        }
-      } else {
-        bucketize(t.paymentMethod, t.total);
-      }
+      /* Sesi AE-155 — transaksi split dipecah per metode supaya expectedCash
+       * + settlement QRIS + settlement kartu akurat. Sesi AE-228 — logikanya
+       * pindah ke `allocateIncoming` supaya cabang refund memakai aturan yang
+       * sama persis. */
+      allocateIncoming(t);
     } else if (t.status === "voided") {
       voidedCount += 1;
       voidedAmount += t.total;
@@ -145,27 +167,22 @@ export function computeShiftCashSummary(
       paidCount += 1;
       refundedCount += 1;
       refundedAmount += t.total;
-      if (t.paymentMethod === "cash") {
-        paidCash += t.total;
-        refundedCash += t.total;
-      } else if (t.paymentMethod === "qris") {
-        paidQris += t.total;
-      } else {
-        paidCard += t.total;
-      }
+      /* Sesi AE-228 — split-aware. Untuk transaksi split, uang yang
+       * dikembalikan dari laci = bagian TUNAI-nya saja; bagian QRIS/kartu
+       * kembali lewat kanalnya masing-masing, bukan dari laci. */
+      allocateIncoming(t);
+      refundedCash += cashPortion(t);
     } else if (t.status === "partially_refunded") {
       paidCount += 1;
       refundedCount += 1;
       const refValue = t.refundedAmount ?? 0;
       refundedAmount += refValue;
-      if (t.paymentMethod === "cash") {
-        paidCash += t.total;
-        refundedCash += refValue;
-      } else if (t.paymentMethod === "qris") {
-        paidQris += t.total;
-      } else {
-        paidCard += t.total;
-      }
+      allocateIncoming(t);
+      /* Refund sebagian tidak menyebut pecahan mana yang dikembalikan. Batas
+       * yang pasti benar: tidak mungkin mengembalikan tunai lebih banyak dari
+       * tunai yang masuk. Untuk transaksi non-split hasilnya persis perilaku
+       * lama (refValue kalau bayarnya tunai, 0 kalau bukan). */
+      refundedCash += Math.min(refValue, cashPortion(t));
     }
   }
 

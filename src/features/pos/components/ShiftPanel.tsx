@@ -22,6 +22,7 @@ import {
   Spinner,
 } from "@/components/ui";
 import {
+  fetchShiftCashPreview,
   getLastClosedShiftAtOutlet,
   getShiftPettyBreakdown,
   type Shift,
@@ -212,11 +213,18 @@ export function ShiftPanel({
     setStatsLoading(true);
     /* eslint-enable react-hooks/set-state-in-effect */
     void (async () => {
-      const [res, cashRes] = await Promise.all([
+      const [res, cashRes, cashStateRes] = await Promise.all([
         listTransactions({ shiftId: shift.id, limit: 1000 }),
         // Sesi AE-49 — petty cash summary hari ini untuk preview affect ke
         // Kas Harusnya. Filter cash-only sudah di queries.ts level.
         getDailyCashSummary(),
+        /* Sesi AE-228 — angka per kanal dari SERVER, sama dengan yang dipakai
+         * saat shift ditutup. Penjumlahan di browser dulu menyaring
+         * `paymentMethod === "cash"` / `"qris"` / daftar kartu; transaksi
+         * SPLIT BILL menyimpan literal "split" sehingga tidak masuk kolom
+         * mana pun — Total Penjualan memuatnya, rinciannya tidak, dan
+         * jumlahnya tidak pernah ketemu. */
+        fetchShiftCashPreview(shift.id),
       ]);
       if (cancelled) return;
       if (!isOk(res)) {
@@ -225,26 +233,16 @@ export function ShiftPanel({
       }
       const items = res.data.items;
       const cashSummary = isCashOk(cashRes) ? cashRes.data : null;
+      const cashState = isOk(cashStateRes) ? cashStateRes.data : null;
       const paid = items.filter((t) => t.status === "paid");
       const voided = items.filter((t) => t.status === "voided");
       const refunded = items.filter((t) => t.status === "refunded");
 
-      const sum = (
-        list: typeof paid,
-        method: string,
-      ) =>
-        list
-          .filter((t) => t.paymentMethod === method)
-          .reduce((s, t) => s + t.total, 0);
-
-      const cashRevenue = sum(paid, "cash");
-      const qrisRevenue = sum(paid, "qris");
-      const cardRevenue = paid
-        .filter((t) =>
-          ["card_bca", "card_bni", "card_mandiri", "card_bri", "card_other"]
-            .includes(t.paymentMethod),
-        )
-        .reduce((s, t) => s + t.total, 0);
+      /* Sesi AE-228 — rincian kanal dari server; split bill sudah dipecah
+       * ke tunai / QRIS / kartu di sana. */
+      const cashRevenue = cashState?.summary.paidCash ?? 0;
+      const qrisRevenue = cashState?.summary.paidQris ?? 0;
+      const cardRevenue = cashState?.summary.paidCard ?? 0;
 
       setStats({
         paidCount: paid.length,
