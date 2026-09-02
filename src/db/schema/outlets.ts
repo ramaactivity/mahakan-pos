@@ -69,8 +69,18 @@ export type OutletSettings = {
      * (Owner+Manager PIN); "code" = new email-delivered Owner-only 6-digit
      * code via ApprovalCodeModal. Default "pin" so existing field-test
      * isn't disrupted. Owner flips to "code" after team training. */
-    voidMode?: "pin" | "code";
-    refundMode?: "pin" | "code";
+    /* Sesi AE-229 — nilai ketiga "pin_or_code": kasir boleh memilih PIN
+     * manager yang sedang bertugas ATAU kode Owner lewat email.
+     *
+     * Arahan owner: "harus ada yang in charge untuk approval; kalau mau void
+     * tidak bisa sambil melakukan transaksi lain; kalau di-approve tidak di
+     * hari yang sama, transaksinya tidak terkurangi." Mode "code" memaksa
+     * kasir menunggu Owner membaca email — antrean berhenti, dan kalau
+     * kodenya baru datang besok, void-nya DITOLAK karena shift-nya sudah
+     * ditutup (`assertShiftOpen`), jadi penjualan salah itu tidak pernah
+     * terkoreksi. Mode ini menutup ketiganya tanpa mencabut jalur kode. */
+    voidMode?: "pin" | "code" | "pin_or_code";
+    refundMode?: "pin" | "code" | "pin_or_code";
     /** @deprecated single-email — superseded by `notifyEmails` array.
      * Read by resolveApprovalEmail as fallback when notifyEmails empty. */
     notifyEmail?: string;

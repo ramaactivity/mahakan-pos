@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, DatePicker, Input, Modal, toast } from "@/components/ui";
+import {
+  Button,
+  DatePicker,
+  Input,
+  Modal,
+  Select,
+  toast,
+} from "@/components/ui";
 import {
   isOk,
   updateApproval,
@@ -31,6 +38,20 @@ interface Props {
  * Combined modal for Receipt + Thresholds + Features. Bundled because the
  * fields are short and Owner usually edits these together.
  */
+/* Sesi AE-229 — tiga mode persetujuan void/refund. "pin_or_code" adalah
+ * jawaban atas keluhan owner: antrean berhenti menunggu Owner membaca email,
+ * dan kalau kodenya baru datang besok, void-nya ditolak karena shift-nya sudah
+ * ditutup sehingga penjualan salah itu tidak pernah terkoreksi. */
+const APPROVAL_MODE_OPTIONS = [
+  { value: "pin_or_code", label: "PIN manager ATAU kode Owner (disarankan)" },
+  { value: "pin", label: "PIN manager saja" },
+  { value: "code", label: "Kode Owner lewat email saja" },
+];
+
+function normalizeApprovalMode(v: string | undefined): string {
+  return v === "code" || v === "pin_or_code" ? v : "pin";
+}
+
 export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props) {
   // Resolve initial recipient list — prefer notifyEmails array; fall back
   // to legacy single notifyEmail. Empty array = use first Owner default.
@@ -70,8 +91,8 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     gpsLat: existingGps?.lat ?? DEFAULT_GPS.lat,
     gpsLng: existingGps?.lng ?? DEFAULT_GPS.lng,
     gpsRadius: existingGps?.radiusMeters ?? DEFAULT_GPS.radiusMeters,
-    voidMode: outlet.settings?.approval?.voidMode === "code" ? "code" : "pin",
-    refundMode: outlet.settings?.approval?.refundMode === "code" ? "code" : "pin",
+    voidMode: normalizeApprovalMode(outlet.settings?.approval?.voidMode),
+    refundMode: normalizeApprovalMode(outlet.settings?.approval?.refundMode),
     notifyEmails: initialEmails,
   } as const;
   const [footer, setFooter] = useState(initial.footerText);
@@ -108,9 +129,12 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
   const [gpsLat, setGpsLat] = useState(String(initial.gpsLat));
   const [gpsLng, setGpsLng] = useState(String(initial.gpsLng));
   const [gpsRadius, setGpsRadius] = useState(String(initial.gpsRadius));
-  const [voidCodeMode, setVoidCodeMode] = useState(initial.voidMode === "code");
-  const [refundCodeMode, setRefundCodeMode] = useState(
-    initial.refundMode === "code",
+  /* Sesi AE-229 — tiga mode, bukan lagi saklar on/off. */
+  const [voidApprovalMode, setVoidApprovalMode] = useState<string>(
+    initial.voidMode,
+  );
+  const [refundApprovalMode, setRefundApprovalMode] = useState<string>(
+    initial.refundMode,
   );
   const [notifyEmails, setNotifyEmails] = useState<string[]>(initial.notifyEmails);
   const [pendingEmail, setPendingEmail] = useState("");
@@ -141,8 +165,6 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setGpsLat(String(initial.gpsLat));
     setGpsLng(String(initial.gpsLng));
     setGpsRadius(String(initial.gpsRadius));
-    setVoidCodeMode(initial.voidMode === "code");
-    setRefundCodeMode(initial.refundMode === "code");
     setNotifyEmails(initial.notifyEmails);
     setPendingEmail("");
     setComplimentPin("");
@@ -340,8 +362,11 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
       last = r3c.data;
     }
 
-    const wantVoidMode = voidCodeMode ? "code" : "pin";
-    const wantRefundMode = refundCodeMode ? "code" : "pin";
+    const wantVoidMode = voidApprovalMode as "pin" | "code" | "pin_or_code";
+    const wantRefundMode = refundApprovalMode as
+      | "pin"
+      | "code"
+      | "pin_or_code";
     const emailsChanged =
       notifyEmails.length !== initial.notifyEmails.length ||
       notifyEmails.some((e, i) => e !== initial.notifyEmails[i]);
@@ -705,31 +730,36 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
             Approval Void / Refund
           </h3>
           <p className="mb-2 text-xs text-neutral-500">
-            Mode <strong>PIN</strong>: Manager / Owner approve via PIN di tablet
-            kasir (legacy). Mode <strong>Kode Email</strong>: kode 6-digit
-            single-use dikirim ke email Owner, Owner forward via WA — fraud
-            harder, butuh email connectivity.
+            <strong>PIN manager</strong>: Owner/Manager yang sedang bertugas
+            memasukkan PIN langsung di tablet — selesai saat itu juga.{" "}
+            <strong>Kode Owner</strong>: kode 6 digit sekali pakai dikirim ke
+            email Owner. <strong>Keduanya</strong>: kasir memakai PIN manager
+            kalau ada yang bertugas, dan masih bisa minta kode Owner kalau
+            tidak ada.
           </p>
-          <div className="space-y-2">
-            <ToggleRow
-              label="Void pakai Kode Email (Owner-only)"
-              hint={
-                voidCodeMode
-                  ? "Aktif — kasir minta kode dari Owner via email."
-                  : "PIN mode — Manager / Owner approve langsung di tablet."
-              }
-              checked={voidCodeMode}
-              onChange={setVoidCodeMode}
+          <div className="rounded-md border border-warning-500/40 bg-warning-100/40 px-3 py-2 text-[11px] leading-relaxed text-neutral-700">
+            <strong className="text-warning-500">Penting soal waktu.</strong>{" "}
+            Void/refund hanya bisa diterapkan selama shift transaksinya{" "}
+            <em>masih terbuka</em>. Kalau persetujuan baru datang setelah shift
+            ditutup, sistem menolaknya dan penjualan itu tidak terkoreksi —
+            koreksinya harus lewat Riwayat → Koreksi Transaksi. Karena itu mode
+            yang mengandalkan email saja berisiko kalau Owner tidak sempat
+            membalas hari itu juga.
+          </div>
+          <div className="mt-2 space-y-2">
+            <Select
+              label="Siapa yang menyetujui VOID"
+              options={APPROVAL_MODE_OPTIONS}
+              value={voidApprovalMode}
+              onValueChange={setVoidApprovalMode}
+              size="sm"
             />
-            <ToggleRow
-              label="Refund pakai Kode Email (Owner-only)"
-              hint={
-                refundCodeMode
-                  ? "Aktif — kasir minta kode dari Owner via email."
-                  : "PIN mode — Manager / Owner approve langsung di tablet."
-              }
-              checked={refundCodeMode}
-              onChange={setRefundCodeMode}
+            <Select
+              label="Siapa yang menyetujui REFUND"
+              options={APPROVAL_MODE_OPTIONS}
+              value={refundApprovalMode}
+              onValueChange={setRefundApprovalMode}
+              size="sm"
             />
             <div>
               <label className="block text-xs font-medium text-neutral-700">

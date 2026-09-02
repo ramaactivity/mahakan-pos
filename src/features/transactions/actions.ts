@@ -59,18 +59,25 @@ import { asc } from "drizzle-orm";
 async function resolveApprovalMode(
   outletId: string,
   kind: "void" | "refund",
-): Promise<"pin" | "code"> {
+): Promise<"pin" | "code" | "pin_or_code"> {
   const [outlet] = await db
     .select({ settings: outlets.settings })
     .from(outlets)
     .where(eq(outlets.id, outletId))
     .limit(1);
   const approval = (outlet?.settings as
-    | { approval?: { voidMode?: "pin" | "code"; refundMode?: "pin" | "code" } }
+    | {
+        approval?: {
+          voidMode?: "pin" | "code" | "pin_or_code";
+          refundMode?: "pin" | "code" | "pin_or_code";
+        };
+      }
     | null)?.approval;
   const mode =
     kind === "void" ? approval?.voidMode : approval?.refundMode;
-  return mode === "code" ? "code" : "pin";
+  if (mode === "code") return "code";
+  if (mode === "pin_or_code") return "pin_or_code";
+  return "pin";
 }
 
 /**
@@ -150,6 +157,32 @@ async function prepareVoidRefundAuth(
   }
 
   const mode = await resolveApprovalMode(outletId, kind);
+
+  /* Sesi AE-229 — mode "pin_or_code": kasir boleh memakai PIN manager yang
+   * sedang bertugas ATAU kode Owner. PIN didahulukan kalau keduanya dikirim,
+   * karena itu jalur yang selesai di tempat. Pengamannya tidak dilonggarkan:
+   * jalur PIN tetap lewat /verify-approver yang hanya menerima Owner/Manager,
+   * menolak approve diri sendiri, dan menolak approver dari outlet lain. */
+  if (mode === "pin_or_code") {
+    if (v.approverToken) {
+      return { ok: true, mode: "pin", approverToken: v.approverToken };
+    }
+    if (v.approvalCode) {
+      const ownerId = await resolveActiveOwnerId(outletId);
+      return {
+        ok: true,
+        mode: "code",
+        approvalCode: v.approvalCode,
+        ownerId,
+      };
+    }
+    return {
+      ok: false,
+      code: "APPROVER_REQUIRED",
+      message: `${kind === "void" ? "Void" : "Refund"} butuh PIN manager atau kode Owner`,
+    };
+  }
+
   if (mode === "code") {
     if (!v.approvalCode) {
       return {

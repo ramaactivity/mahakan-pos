@@ -36,6 +36,13 @@ interface ApproverOverrideModalProps {
   onClose: () => void;
   /** Called when verification succeeds. Provides token + approverId. */
   onVerified: (result: { approverId: string; token: string }) => void;
+  /**
+   * Sesi AE-229 — jalan keluar ke kode Owner. Diisi hanya saat outlet memakai
+   * mode "pin_or_code": manager yang bertugas menyetujui di tempat, dan kalau
+   * memang tidak ada manager, kasir masih bisa minta kode ke Owner tanpa
+   * keluar-masuk layar.
+   */
+  onUseOwnerCode?: () => void;
 }
 
 const MAX_PIN_LENGTH = 6;
@@ -48,6 +55,7 @@ export function ApproverOverrideModal({
   description = "Owner / Manager input PIN untuk authorize aksi ini.",
   onClose,
   onVerified,
+  onUseOwnerCode,
 }: ApproverOverrideModalProps) {
   const [users, setUsers] = useState<ApproverUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
@@ -206,6 +214,19 @@ export function ApproverOverrideModal({
             </div>
           </div>
         )}
+
+        {/* Sesi AE-229 — jalan keluar kalau tidak ada manager di tempat.
+            Sengaja di bawah dan berupa tautan, bukan tombol setara: jalur
+            yang diharapkan adalah PIN manager yang selesai saat itu juga. */}
+        {onUseOwnerCode ? (
+          <button
+            type="button"
+            onClick={onUseOwnerCode}
+            className="mt-4 w-full rounded-md border border-dashed border-neutral-300 px-3 py-2 text-xs text-neutral-600 transition-colors hover:border-mahakan-green-700 hover:text-mahakan-green-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mahakan-green-700"
+          >
+            Tidak ada manager di tempat? Minta kode ke Owner
+          </button>
+        ) : null}
       </div>
     </Modal>
   );

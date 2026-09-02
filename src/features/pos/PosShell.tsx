@@ -374,8 +374,8 @@ export function PosShell() {
   // call sites so footer/header/wifi edits at admin Settings take effect
   // without a tab reload.
   const [approvalModes, setApprovalModes] = useState<{
-    voidMode: "pin" | "code";
-    refundMode: "pin" | "code";
+    voidMode: "pin" | "code" | "pin_or_code";
+    refundMode: "pin" | "code" | "pin_or_code";
   }>({ voidMode: "pin", refundMode: "pin" });
   const [receiptConfig, setReceiptConfig] = useState<ReceiptConfig | null>(
     null,
@@ -626,8 +626,20 @@ export function PosShell() {
         setReceiptConfig(outletToReceiptConfig(res.data));
         const approval = res.data.settings?.approval;
         setApprovalModes({
-          voidMode: approval?.voidMode === "code" ? "code" : "pin",
-          refundMode: approval?.refundMode === "code" ? "code" : "pin",
+          /* Sesi AE-229 — tiga mode; nilai tak dikenal jatuh ke "pin"
+           * (perilaku paling lama, tidak pernah memblok kasir). */
+          voidMode:
+            approval?.voidMode === "code"
+              ? "code"
+              : approval?.voidMode === "pin_or_code"
+                ? "pin_or_code"
+                : "pin",
+          refundMode:
+            approval?.refundMode === "code"
+              ? "code"
+              : approval?.refundMode === "pin_or_code"
+                ? "pin_or_code"
+                : "pin",
         });
         // Sesi AE-62t — pull live varianceThreshold dari outlet settings.
         const thr = res.data.settings?.thresholds?.shiftVarianceAlert;

@@ -312,8 +312,9 @@ const scheduleTemplatesSchema = z.object({
 });
 
 const approvalSchema = z.object({
-  voidMode: z.enum(["pin", "code"]).optional(),
-  refundMode: z.enum(["pin", "code"]).optional(),
+  /* Sesi AE-229 — "pin_or_code": PIN manager di tempat ATAU kode Owner. */
+  voidMode: z.enum(["pin", "code", "pin_or_code"]).optional(),
+  refundMode: z.enum(["pin", "code", "pin_or_code"]).optional(),
   /** @deprecated kept for back-compat */
   notifyEmail: z
     .string()

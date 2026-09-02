@@ -71,7 +71,10 @@ interface HistoryDetailModalProps {
   receiptConfig: ReceiptConfig | null;
   /** Outlet flag — picks between legacy PIN approval modal vs new
    * Owner-only email-code modal. Default "pin" preserves field-test path. */
-  approvalModes: { voidMode: "pin" | "code"; refundMode: "pin" | "code" };
+  approvalModes: {
+    voidMode: "pin" | "code" | "pin_or_code";
+    refundMode: "pin" | "code" | "pin_or_code";
+  };
   onClose: () => void;
   /** Called when transaction state changes (void/refund/serve) — parent should refresh list. */
   onChanged: () => void;
@@ -338,6 +341,10 @@ export function HistoryDetailModal({
       partialItems,
     });
     setActionModal(null);
+    /* Sesi AE-229 — "pin_or_code" membuka modal PIN dulu: manager yang
+     * sedang bertugas bisa menyetujui di tempat, jadi antrean tidak berhenti
+     * menunggu Owner membaca email. Di dalam modal itu ada jalan keluar ke
+     * kode Owner kalau memang tidak ada manager. */
     if (mode === "code") {
       setCodeModalOpen(true);
     } else {
@@ -869,6 +876,19 @@ export function HistoryDetailModal({
           setPendingApproval(null);
         }}
         onVerified={onApproverVerified}
+        /* Sesi AE-229 — tawarkan kode Owner hanya kalau outlet memang memakai
+         * mode gabungan; di mode "pin" murni jalur kode tidak berlaku dan
+         * tombolnya cuma akan berujung penolakan server. */
+        onUseOwnerCode={
+          (pendingApproval?.actionType === "void"
+            ? approvalModes.voidMode
+            : approvalModes.refundMode) === "pin_or_code"
+            ? () => {
+                setApproverOpen(false);
+                setCodeModalOpen(true);
+              }
+            : undefined
+        }
       />
 
       {trx ? (
