@@ -86,6 +86,8 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
       outlet.settings?.features?.perpetualStockPurchases !== false,
     /* Sesi AE-193 — tanggal mulai jurnal penjualan harian. "" = belum aktif. */
     dailyJournalSince: outlet.settings?.features?.dailyJournalSince ?? "",
+    /* Sesi AE-224 — undefined = MATI (harus dinyalakan sadar). */
+    pettyCash: outlet.settings?.features?.pettyCashEnabled === true,
     defaultMarkupPct: outlet.settings?.features?.defaultMarkupPct ?? 250,
     lateGraceMinutes: outlet.settings?.attendance?.lateGraceMinutes ?? 5,
     gpsLat: existingGps?.lat ?? DEFAULT_GPS.lat,
@@ -123,6 +125,7 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
   const [dailyJournalSince, setDailyJournalSince] = useState(
     initial.dailyJournalSince,
   );
+  const [pettyCash, setPettyCash] = useState(initial.pettyCash);
   const [lateGraceMinutes, setLateGraceMinutes] = useState(
     String(initial.lateGraceMinutes),
   );
@@ -161,6 +164,7 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
     setAddStockOnPurchase(initial.addStockOnPurchase);
     setDefaultMarkupPct(String(initial.defaultMarkupPct));
     setDailyJournalSince(initial.dailyJournalSince);
+    setPettyCash(initial.pettyCash);
     setLateGraceMinutes(String(initial.lateGraceMinutes));
     setGpsLat(String(initial.gpsLat));
     setGpsLng(String(initial.gpsLng));
@@ -286,6 +290,15 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
         return;
       }
       last = r3p.data;
+    }
+    if (pettyCash !== initial.pettyCash) {
+      const rPetty = await updateFeatures({ pettyCashEnabled: pettyCash });
+      if (!isOk(rPetty)) {
+        setError(rPetty.error.message);
+        setSubmitting(false);
+        return;
+      }
+      last = rPetty.data;
     }
     if (dailyJournalSince !== initial.dailyJournalSince) {
       const rDaily = await updateFeatures({
@@ -606,6 +619,16 @@ export function SettingsTunablesModal({ open, outlet, onClose, onSaved }: Props)
           <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-mahakan-green-900">
             Feature Flags
           </h3>
+          {/* Sesi AE-224 — dimatikan owner 2026-09-01 karena di lapangan
+            * sebagian shift mencatat lewat petty cash dan sebagian tidak,
+            * jadi kasnya harus dicatat ulang manual. Fiturnya utuh, tinggal
+            * dinyalakan lagi setelah auditnya selesai. */}
+          <ToggleRow
+            label="Menu Petty Cash di POS"
+            hint="Default OFF. Nyalakan kalau kasir boleh mencatat pengeluaran/pemasukan kecil langsung dari POS — nominalnya ikut memotong kas drawer saat tutup shift."
+            checked={pettyCash}
+            onChange={setPettyCash}
+          />
           <ToggleRow
             label="HPP terlihat ke Staff"
             hint="Default off. Aktifkan kalau staff perlu lihat margin per item."

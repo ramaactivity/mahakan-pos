@@ -384,6 +384,9 @@ export function PosShell() {
    * → Threshold). Default 10k kalau outlet belum loaded atau setting null.
    * Threaded ke CloseShiftModal supaya peringatan kasir live update saat
    * owner ubah di Pengaturan. */
+  /* Sesi AE-224 — saklar menu Petty Cash. Default MATI supaya menu tidak
+   * sempat berkedip muncul sebelum pengaturan outlet selesai dimuat. */
+  const [pettyCashEnabled, setPettyCashEnabled] = useState(false);
   const [varianceThreshold, setVarianceThreshold] = useState<number>(10_000);
 
   // Menu
@@ -641,6 +644,11 @@ export function PosShell() {
                 ? "pin_or_code"
                 : "pin",
         });
+        /* Sesi AE-224 — saklar menu Petty Cash. undefined = MATI: menu ini
+         * harus dinyalakan secara sadar, bukan muncul sendiri. */
+        setPettyCashEnabled(
+          res.data.settings?.features?.pettyCashEnabled === true,
+        );
         // Sesi AE-62t — pull live varianceThreshold dari outlet settings.
         const thr = res.data.settings?.thresholds?.shiftVarianceAlert;
         if (typeof thr === "number" && thr >= 0) {
@@ -1393,6 +1401,13 @@ export function PosShell() {
     setMobileCartOpen(false); // sesi AE-172 — tutup drawer HP setelah transaksi
   }
 
+  /* Sesi AE-224 — kalau saklar Petty Cash mati sementara tab itu yang sedang
+   * terpilih (mis. owner mematikannya saat kasir sedang membukanya), layarnya
+   * jangan ditinggal kosong tanpa menu untuk keluar. Diturunkan saat render,
+   * bukan lewat effect: tidak ada kedipan dan tidak ada render berantai. */
+  const effectiveTab: PosTab =
+    tab === "petty_cash" && !pettyCashEnabled ? "cashier" : tab;
+
   async function handleLogout() {
     await logout("/pin");
   }
@@ -1554,12 +1569,13 @@ export function PosShell() {
       className="flex h-[calc(100dvh-4rem)] w-full max-w-full overflow-hidden bg-neutral-50 touch:h-[calc(100dvh-3.5rem)]"
     >
       <PosLeftNav
-        activeTab={tab}
+        activeTab={effectiveTab}
         onTabChange={setTab}
         onLogout={handleLogout}
         role={session.user.role}
         cashierBadge={drafts.length}
         openBillsBadge={openBillsCount}
+        pettyCashEnabled={pettyCashEnabled}
       />
 
       {/* MIDDLE COLUMN — content per tab. min-w-0 prevents flex child from
@@ -1569,9 +1585,9 @@ export function PosShell() {
        * landing). Panel lain di-lazy wrapped Suspense. Spinner one-time
        * saat chunk fetch pertama; setelah loaded, cached browser-side. */}
       <main className="flex-1 min-w-0 overflow-hidden">
-        {tab === "dashboard" ? (
+        {effectiveTab === "dashboard" ? (
           <PosDashboardView cashierName={session.user.name} />
-        ) : tab === "cashier" ? (
+        ) : effectiveTab === "cashier" ? (
           <CashierMiddle
             menuLoading={menuLoading}
             filteredItems={filteredItems}
@@ -1595,7 +1611,7 @@ export function PosShell() {
           />
         ) : (
           <Suspense fallback={<PanelFallback />}>
-            {tab === "open_bills" ? (
+            {effectiveTab === "open_bills" ? (
               <OpenBillPanel
                 cashierName={session.user.name}
                 receiptConfig={receiptConfig}
@@ -1617,30 +1633,30 @@ export function PosShell() {
                   setPrintConfirm({ trx, title: "Pembayaran sukses" });
                 }}
               />
-            ) : tab === "queue" ? (
+            ) : effectiveTab === "queue" ? (
               <OrderQueuePanel
                 cashierName={session.user.name}
                 receiptConfig={receiptConfig}
                 refreshKey={historyRefreshKey}
                 onOpenSettings={() => setTab("settings")}
               />
-            ) : tab === "history" ? (
+            ) : effectiveTab === "history" ? (
               <HistoryPanel
                 refreshKey={historyRefreshKey}
                 onSelectTransaction={(id) => setHistoryDetailId(id)}
               />
-            ) : tab === "shifts" ? (
+            ) : effectiveTab === "shifts" ? (
               <ShiftPanel
                 shift={shift}
                 loading={shiftLoading}
                 onRequestOpenShift={() => setOpenShiftOpen(true)}
                 onRequestCloseShift={() => setCloseShiftOpen(true)}
               />
-            ) : tab === "petty_cash" ? (
+            ) : effectiveTab === "petty_cash" ? (
               <PettyCashPanel />
-            ) : tab === "kas" ? (
+            ) : effectiveTab === "kas" ? (
               <KasOwnerPanel viewerRole={session.user.role} />
-            ) : tab === "goods_receive" ? (
+            ) : effectiveTab === "goods_receive" ? (
               <GoodsReceivePanel />
             ) : (
               <PosSettingsPanel
@@ -1663,13 +1679,13 @@ export function PosShell() {
        * desktop tetap 400px.
        *
        * sesi AD-6 — only render aside on Kasir tab. Other tabs (Bill
-       * Aktif, Pesanan, Riwayat, Shift, Petty Cash, Settings) get full
+       * Aktif, Pesanan, Riwayat, Shift, Settings) get full
        * viewport width since they don't need the cart/order panel.
        * Cart state (rightPanel.kind === "cart"/"paying") preserved when
        * user switches away — they can resume the draft when they come
        * back to Kasir.
        */}
-      {tab === "cashier" ? (
+      {effectiveTab === "cashier" ? (
         <>
           {/* Sesi AE-172 — backdrop drawer (HP only). Tap di luar = tutup. */}
           {mobileCartOpen ? (

@@ -975,9 +975,14 @@ function SummarySection({
   onCorrectOpening: () => void;
 }) {
   /* Sesi AE-49 — display full formula breakdown supaya owner & kasir
-   * paham angka Kas Harusnya dari mana. Petty cash sekarang TERMASUK di
-   * formula (sebelumnya display-only di section terpisah → confusing). */
+   * paham angka Kas Harusnya dari mana. Petty cash TERMASUK di formula
+   * (sebelumnya display-only di section terpisah → confusing). */
   const refundedCashApprox = summary.refunded.totalAmount; // approx; exact split di server
+  /* Sesi AE-224 — shift yang masih membawa petty cash dari sebelum fiturnya
+   * dicabut. Untuk shift baru selalu false: tidak ada lagi jalan membuat
+   * catatan kas ber-asal POS. */
+  const hasPettyCash =
+    summary.petty.expenseCashCount > 0 || summary.petty.incomeCashCount > 0;
   return (
     <section className="rounded-xl border border-neutral-200 bg-white p-4 touch:p-3">
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-600">
@@ -1052,9 +1057,14 @@ function SummarySection({
             {formatRupiah(summary.expectedCash)}
           </span>
         </div>
+        {/* Sesi AE-224 — petty cash dicabut dari POS. Rumusnya hanya menyebut
+          * petty kalau shift INI memang masih punya sisanya (shift yang sudah
+          * berjalan sebelum pencabutan). Menyebut suku yang selalu nol cuma
+          * membuat kasir mengira ada yang belum diisi. */}
         <p className="mt-1 text-[10px] text-neutral-500">
-          Formula: Kas Awal + Penjualan Tunai − Refund Tunai − Petty Pengeluaran
-          Cash + Petty Pemasukan Cash
+          {hasPettyCash
+            ? "Formula: Kas Awal + Penjualan Tunai − Refund Tunai − Petty Pengeluaran Cash + Petty Pemasukan Cash"
+            : "Formula: Kas Awal + Penjualan Tunai − Refund Tunai"}
         </p>
       </div>
     </section>

@@ -46,6 +46,9 @@ interface PosLeftNavProps {
   openBillsBadge?: number;
   /** Optional badge for kas tab (pending deposits awaiting verify). */
   kasBadge?: number;
+  /** Sesi AE-224 — saklar menu Petty Cash dari pengaturan outlet.
+   * undefined/false = disembunyikan. */
+  pettyCashEnabled?: boolean;
 }
 
 interface TabConfig {
@@ -54,6 +57,8 @@ interface TabConfig {
   Icon: LucideIcon;
   /** Permission required to see this tab. Undefined = visible to all roles. */
   gate?: Permission;
+  /** Sesi AE-224 — menu yang butuh saklar outlet, bukan sekadar izin peran. */
+  flag?: "pettyCash";
 }
 
 // Sesi AE-8 — tambah "kas" tab gated by cash_deposit.view (owner+manager+
@@ -67,7 +72,10 @@ const TABS: TabConfig[] = [
   { key: "queue", label: "Pesanan", Icon: ClipboardList },
   { key: "history", label: "Riwayat", Icon: History },
   { key: "shifts", label: "Shift", Icon: Wallet },
-  { key: "petty_cash", label: "Petty Cash", Icon: Coins },
+  /* Sesi AE-224 — Petty Cash disembunyikan sejak owner mematikannya. Entrinya
+   * sengaja DIBIARKAN di sini, bukan dihapus: fiturnya masih utuh dan tinggal
+   * dinyalakan lagi dari Pengaturan setelah audit kas selesai. */
+  { key: "petty_cash", label: "Petty Cash", Icon: Coins, flag: "pettyCash" },
   { key: "kas", label: "Kas", Icon: Landmark, gate: "cash_deposit.view" },
   // Sesi AE-173 — Terima Barang (GR) dari PO. Staff bisa nerima kiriman.
   {
@@ -128,12 +136,15 @@ export function PosLeftNav({
   queueBadge,
   openBillsBadge,
   kasBadge,
+  pettyCashEnabled = false,
 }: PosLeftNavProps) {
   const [collapsed, setCollapsed] = useSidebarCollapsed();
   const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
-  const visibleTabs = TABS.filter(
-    (t) => !t.gate || hasPermission(role, t.gate),
-  );
+  const visibleTabs = TABS.filter((t) => {
+    if (t.gate && !hasPermission(role, t.gate)) return false;
+    if (t.flag === "pettyCash" && !pettyCashEnabled) return false;
+    return true;
+  });
   return (
     <nav
       aria-label="Navigasi POS"

@@ -39,6 +39,19 @@ export type OutletSettings = {
     perpetualStockSales?: boolean;
     perpetualStockPurchases?: boolean;
     /**
+     * Sesi AE-224 — SAKLAR MENU PETTY CASH DI POS.
+     *
+     * Dimatikan owner 2026-09-01: di lapangan sebagian shift mencatat lewat
+     * petty cash dan sebagian tidak, jadi kasnya harus dicatat ulang manual.
+     * Fiturnya TIDAK dihapus — cuma disembunyikan — supaya bisa dinyalakan
+     * lagi setelah auditnya selesai dan aturannya jelas.
+     *
+     * undefined = MATI. Berbeda dengan flag lain di sekitarnya yang default
+     * menyala: menu ini sengaja harus dinyalakan secara sadar, bukan muncul
+     * sendiri di outlet baru.
+     */
+    pettyCashEnabled?: boolean;
+    /**
      * Sesi AE-193 — tanggal mulai (YYYY-MM-DD) jurnal penjualan HARIAN.
      *
      * Sejak tanggal ini, penjualan POS diringkas jadi SATU journal entry per

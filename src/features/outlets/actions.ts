@@ -241,6 +241,8 @@ const featuresSchema = z.object({
    * false → stok hanya dari Opname (penjualan/pembelian tak menggerakkan stok). */
   perpetualStockSales: z.boolean().optional(),
   perpetualStockPurchases: z.boolean().optional(),
+  /** Sesi AE-224 — saklar menu Petty Cash di POS. undefined = MATI. */
+  pettyCashEnabled: z.boolean().optional(),
   /**
    * Sesi AE-193 — tanggal mulai jurnal penjualan HARIAN (YYYY-MM-DD).
    *
