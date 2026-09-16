@@ -44,6 +44,8 @@ import {
 } from "@/features/internal-debts";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ExportWorkbookButton } from "./ExportWorkbookButton";
+import { downloadInternalDebtWorkbook } from "./internal-debts/internal-debt-export";
 import { InternalDebtEntryModal } from "./internal-debts/InternalDebtEntryModal";
 import { InternalDebtPartyFormModal } from "./internal-debts/InternalDebtPartyFormModal";
 import { InternalDebtRepaymentModal } from "./internal-debts/InternalDebtRepaymentModal";
@@ -224,6 +226,9 @@ export function InternalDebtsSection({ viewerRole }: InternalDebtsSectionProps) 
             berbunga tetap di Hutang Kreditur.
           </p>
         </div>
+        {/* Sesi AE-231 — rekap pihak + hutang masuk + cicilan jadi satu
+          * berkas Excel bertata rias, beserta rumus yang hidup. */}
+        <ExportWorkbookButton build={downloadInternalDebtWorkbook} />
       </header>
 
       {/* Stats */}

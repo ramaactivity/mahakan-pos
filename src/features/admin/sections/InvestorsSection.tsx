@@ -56,6 +56,8 @@ import {
   type ProfitDistribution,
 } from "@/features/profit-distributions";
 import { CapitalChangesReportView } from "./investors/CapitalChangesReportView";
+import { ExportWorkbookButton } from "./ExportWorkbookButton";
+import { downloadInvestorWorkbook } from "./investors/investor-export";
 import { MasterImportButton } from "./investors/MasterImportButton";
 import { WipeModuleButton } from "./investors/WipeModuleButton";
 import { InvestorFormModal } from "./investors/InvestorFormModal";
@@ -133,6 +135,9 @@ export function InvestorsSection({ viewerRole }: InvestorsSectionProps) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Sesi AE-231 — unduh SELURUH data modul (semua tab) jadi satu
+            * berkas Excel bertata rias, beserta rumus yang hidup. */}
+          <ExportWorkbookButton build={downloadInvestorWorkbook} />
           {canManage ? <MasterImportButton /> : null}
           <WipeModuleButton isOwner={isOwner} />
         </div>
