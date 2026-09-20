@@ -946,7 +946,10 @@ export async function fetchClosingShiftReport(
         refundedCash: sum?.refundedCash ?? 0,
       };
       const opening = Number(s.openingCash);
-      const expected = opening + cash.paidCash - cash.refundedCash;
+      /* Sesi AE-232 — sama dengan `computeExpectedCash`: kas awal tidak ikut.
+       * Variance yang ditampilkan tetap dari kolom tersimpan, jadi shift lama
+       * tidak berubah nilainya. */
+      const expected = cash.paidCash - cash.refundedCash;
       const actual = s.actualCash == null ? 0 : Number(s.actualCash);
       const variance = s.variance == null ? actual - expected : Number(s.variance);
       const edc = s.edcSettlement == null ? 0 : Number(s.edcSettlement);

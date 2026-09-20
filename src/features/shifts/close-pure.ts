@@ -217,8 +217,16 @@ export function computeExpectedCash(
   openingCash: number,
   summary: ShiftCashSummary,
 ): number {
+  /* Sesi AE-232 — KAS AWAL TIDAK LAGI DIHITUNG. Arahan owner: modal laci
+   * sering tercampur petty cash sehingga rekonsiliasi jadi rancu. Kini Kas
+   * Harusnya = penjualan tunai bersih saja, dan kasir menghitung isi laci
+   * DIKURANGI modal awal.
+   *
+   * `openingCash` sengaja tetap jadi parameter: nilainya masih dicatat saat
+   * buka shift (modal laci tetap perlu diketahui) dan shift lama tetap
+   * menyimpan variance-nya sendiri, jadi angka historis tidak bergeser. */
+  void openingCash;
   return (
-    openingCash +
     summary.paidCash -
     summary.refundedCash -
     summary.pettyExpenseCash +

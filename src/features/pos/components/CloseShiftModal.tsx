@@ -805,9 +805,6 @@ export function CloseShiftModal({
             >
               <SummarySection
                 summary={summary}
-                effectiveOpening={effectiveOpening}
-                openingCorrected={openingOverride !== null}
-                onCorrectOpening={() => setCorrectOpen(true)}
               />
               {/* Sesi AE-62n — 3-channel balance verification panel.
                   Owner request: kasir input fisik per channel supaya keliatan
@@ -964,15 +961,9 @@ export function CloseShiftModal({
 
 function SummarySection({
   summary,
-  effectiveOpening,
-  openingCorrected,
-  onCorrectOpening,
 }: {
   summary: SummaryPreview;
   /* Sesi AE-167 — kas awal efektif (setelah koreksi in-place) + handler. */
-  effectiveOpening: number;
-  openingCorrected: boolean;
-  onCorrectOpening: () => void;
 }) {
   /* Sesi AE-49 — display full formula breakdown supaya owner & kasir
    * paham angka Kas Harusnya dari mana. Petty cash TERMASUK di formula
@@ -989,25 +980,6 @@ function SummarySection({
         Ringkasan Shift
       </h3>
       <div className="space-y-1.5 text-sm">
-        {/* Sesi AE-167 — Kas Awal + tombol koreksi (salah input saat buka). */}
-        <div className="flex items-center justify-between text-sm text-neutral-900">
-          <span className="inline-flex items-center gap-2">
-            Kas Awal
-            <button
-              type="button"
-              onClick={onCorrectOpening}
-              className="rounded border border-neutral-300 px-1.5 py-0.5 text-[10px] font-medium text-mahakan-green-700 hover:bg-mahakan-green-50"
-            >
-              Koreksi
-            </button>
-            {openingCorrected ? (
-              <span className="rounded bg-mahakan-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-mahakan-green-800">
-                dikoreksi
-              </span>
-            ) : null}
-          </span>
-          <span className="font-mono">{formatRupiah(effectiveOpening)}</span>
-        </div>
         <SummaryRow
           label={`Penjualan Tunai (${summary.paid.count} trx)`}
           value={`+ ${formatRupiah(summary.paid.cash)}`}
@@ -1063,8 +1035,8 @@ function SummarySection({
           * membuat kasir mengira ada yang belum diisi. */}
         <p className="mt-1 text-[10px] text-neutral-500">
           {hasPettyCash
-            ? "Formula: Kas Awal + Penjualan Tunai − Refund Tunai − Petty Pengeluaran Cash + Petty Pemasukan Cash"
-            : "Formula: Kas Awal + Penjualan Tunai − Refund Tunai"}
+            ? "Formula: Penjualan Tunai − Refund Tunai − Petty Pengeluaran Cash + Petty Pemasukan Cash"
+            : "Formula: Penjualan Tunai − Refund Tunai"}
         </p>
       </div>
     </section>

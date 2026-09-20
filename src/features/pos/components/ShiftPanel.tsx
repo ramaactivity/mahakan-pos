@@ -462,13 +462,7 @@ export function ShiftPanel({
             </Badge>
           </div>
 
-          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat
-              icon={<Wallet className="size-4" aria-hidden />}
-              label="Kas Awal"
-              value={formatRupiah(shift.openingCash)}
-              tone="muted"
-            />
+          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <Stat
               icon={<Receipt className="size-4" aria-hidden />}
               label="Transaksi"

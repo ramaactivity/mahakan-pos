@@ -221,7 +221,7 @@ describe("computeShiftCashSummary — petty cash (sesi AE-49 FIX)", () => {
 describe("computeExpectedCash (sesi AE-49)", () => {
   it("formula tanpa petty: opening + paid - refunded", () => {
     const s = computeShiftCashSummary([txn("paid", "cash", 605_000)]);
-    expect(computeExpectedCash(200_000, s)).toBe(805_000);
+    expect(computeExpectedCash(200_000, s)).toBe(605_000);
   });
 
   it("formula dengan petty expense: opening + paid - refunded - pettyExpense", () => {
@@ -232,7 +232,7 @@ describe("computeExpectedCash (sesi AE-49)", () => {
       [txn("paid", "cash", 605_000)],
       { expenseCash: 38_000, incomeCash: 0 },
     );
-    expect(computeExpectedCash(200_000, s)).toBe(767_000);
+    expect(computeExpectedCash(200_000, s)).toBe(567_000);
   });
 
   it("formula dengan petty income: opening + paid - refunded + pettyIncome", () => {
@@ -241,7 +241,7 @@ describe("computeExpectedCash (sesi AE-49)", () => {
       [txn("paid", "cash", 100_000)],
       { expenseCash: 0, incomeCash: 50_000 },
     );
-    expect(computeExpectedCash(200_000, s)).toBe(350_000);
+    expect(computeExpectedCash(200_000, s)).toBe(150_000);
   });
 
   it("formula dengan both petty + partial refund", () => {
@@ -255,7 +255,7 @@ describe("computeExpectedCash (sesi AE-49)", () => {
       ],
       { expenseCash: 38_000, incomeCash: 10_000 },
     );
-    expect(computeExpectedCash(200_000, s)).toBe(747_000);
+    expect(computeExpectedCash(200_000, s)).toBe(547_000);
   });
 
   it("edge: petty expense > paid → expectedCash bisa negatif (owner liat alarm)", () => {
@@ -264,7 +264,7 @@ describe("computeExpectedCash (sesi AE-49)", () => {
       [txn("paid", "cash", 10_000)],
       { expenseCash: 50_000, incomeCash: 0 },
     );
-    expect(computeExpectedCash(20_000, s)).toBe(-20_000);
+    expect(computeExpectedCash(20_000, s)).toBe(-40_000);
   });
 });
 
@@ -340,7 +340,7 @@ describe("computeShiftCashSummary — split payment method", () => {
       ]),
     ]);
     /* Opening 200k + paidCash 100k - refunds 0 - petty 0 = 300k */
-    expect(computeExpectedCash(200_000, s)).toBe(300_000);
+    expect(computeExpectedCash(200_000, s)).toBe(100_000);
   });
 
   it("defensive fallback: split trx tanpa splits array → paidCard (avoid lose total)", () => {
@@ -403,7 +403,7 @@ describe("computeShiftCashSummary — split bill", () => {
 
   it("Kas Harusnya naik sebesar bagian TUNAI-nya saja", () => {
     const sum = computeShiftCashSummary([NYATA]);
-    expect(computeExpectedCash(500_000, sum)).toBe(600_000);
+    expect(computeExpectedCash(500_000, sum)).toBe(100_000);
   });
 
   it("rincian kanal selalu berjumlah sama dengan nilai transaksinya", () => {
@@ -437,8 +437,9 @@ describe("computeShiftCashSummary — split bill", () => {
     expect(sum.paidQris).toBe(32_000);
     expect(sum.refundedCash).toBe(100_000);
     expect(sum.refundedAmount).toBe(132_000);
-    /* Uang masuk lalu keluar lagi → laci kembali seperti semula. */
-    expect(computeExpectedCash(500_000, sum)).toBe(500_000);
+    /* Uang masuk lalu keluar lagi → penjualan tunai bersihnya nol.
+     * Sesi AE-232: kas awal tidak lagi ikut, jadi hasilnya 0, bukan modal. */
+    expect(computeExpectedCash(500_000, sum)).toBe(0);
   });
 
   it("split refund sebagian tidak pernah mengembalikan tunai lebih dari yang masuk", () => {
@@ -498,5 +499,29 @@ describe("computeShiftCashSummary — split bill", () => {
     expect(sum.paidCash).toBe(80_000);
     expect(sum.paidQris).toBe(35_000);
     expect(sum.refundedCash).toBe(12_000);
+  });
+});
+
+/* Sesi AE-232 — kas awal dikeluarkan dari Kas Harusnya atas arahan owner:
+ * modal laci sering tercampur petty cash sehingga rekonsiliasi jadi rancu. */
+describe("computeExpectedCash — kas awal tidak ikut dihitung", () => {
+  const sum = {
+    paidCount: 1,
+    paidCash: 113_000,
+    paidQris: 0,
+    paidCard: 0,
+    voidedCount: 0,
+    voidedAmount: 0,
+    refundedCount: 0,
+    refundedAmount: 0,
+    refundedCash: 0,
+    pettyExpenseCash: 0,
+    pettyIncomeCash: 0,
+  };
+
+  it("berapa pun modal lacinya, hasilnya sama", () => {
+    expect(computeExpectedCash(0, sum)).toBe(113_000);
+    expect(computeExpectedCash(200_000, sum)).toBe(113_000);
+    expect(computeExpectedCash(1_000_000, sum)).toBe(113_000);
   });
 });
