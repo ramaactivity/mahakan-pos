@@ -4,7 +4,7 @@ Untuk sesi Claude di repo HERMES. Pola sama dengan Tetra Ops (`/api/mcp`, JSON-R
 
 ## 1. Endpoint
 
-- **URL production:** `https://mahakan-pos.vercel.app/api/mcp` (aktif setelah Rama mengizinkan deploy; per 24 Sep 2026 BELUM di-deploy).
+- **URL production:** `https://mahakan-pos.vercel.app/api/mcp` — LIVE sejak 24 Sep 2026 (commit `0436bbb`).
 - Transport: Streamable HTTP tanpa sesi. Hanya `POST`; `GET` → 405 (sesuai probe Hermes).
 - Method: `initialize`, `ping`, `tools/list`, `tools/call`, `notifications/*` (→ 202).
 - Kode: `src/app/api/mcp/route.ts`, `src/features/mcp/protocol.ts`, `src/features/mcp/tools.ts`.
@@ -16,10 +16,9 @@ Untuk sesi Claude di repo HERMES. Pola sama dengan Tetra Ops (`/api/mcp`, JSON-R
 - 10 kali gagal per IP dalam 15 menit → **429** (`src/lib/rate-limit.ts`, per instance serverless).
 - Key ini setara akses owner (HPP, laba, saldo). Hanya untuk agent owner.
 
-**Cara memasang key (Rama):**
-1. Buat key: `openssl rand -base64 32`.
-2. Vercel → project mahakan-pos → Settings → Environment Variables → tambah `MAHAKAN_MCP_API_KEY` (Production), lalu redeploy.
-3. Salin nilai yang sama ke `~/Desktop/HERMES/.env.local`, dengan nama variabel yang dipakai konfigurasi MCP profil `mahakan` (ditentukan sesi Hermes). Jangan tempel key di chat, dokumen, atau commit.
+**Status key (24 Sep 2026):** `MAHAKAN_MCP_API_KEY` sudah diset di Vercel (Production) dan di `~/Desktop/HERMES/.env.local` dengan nilai yang sama. Key pertama sempat tercetak di log sesi, sehingga langsung diganti; key lama tidak berlaku lagi.
+
+**Cara ganti key (rotasi):** buat key dengan `openssl rand -base64 32`, ganti di Vercel (Settings → Environment Variables), deploy ulang, lalu ganti nilai yang sama di `~/Desktop/HERMES/.env.local`. Jangan tempel key di chat, dokumen, atau commit.
 
 ## 3. Tool (semua `readOnlyHint: true`)
 
@@ -95,11 +94,13 @@ Rincian ada di `docs/PENGETAHUAN-AGENT-MAHAKAN.md`. Hermes jangan mengulang hal-
 | Omzet target dicocokkan dengan SQL kartu dashboard | 1–24 Sep 17.117.000, 7 hari 4.992.000, 23 Sep 750.000: **sama persis** |
 | `next dev` lokal + curl | tanpa key 401, key salah 401, GET 405, `tools/list` 10 tool `readOnlyHint: true`, `ringkasan_harian` 23 Sep sesuai di atas |
 
-**Belum jalan:** uji curl ke production. Menunggu izin deploy dan key diset di Vercel. Angka `ringkasan_harian` perlu dicocokkan manual bersama Rama di halaman Laporan.
+| curl ke **production** (24 Sep 2026) | tanpa key 401, key salah 401, GET 405, `tools/list` 10 tool semua `readOnlyHint: true`; `ringkasan_harian` 23 Sep, `pencapaian_target` bulan, `peringatan`, `saldo_kas`, `laba_rugi` Agustus → angka sama persis dengan uji lokal, 1–3,5 detik per panggilan (cold start) |
+
+**Belum jalan:** Rama perlu mencocokkan angka `ringkasan_harian` secara manual di halaman Laporan. Workflow GitHub "E2E Smoke" sudah gagal sejak sebelum MCP (`68e264a`) karena `package-lock.json` tidak sinkron (esbuild 0.28.2); ini tidak berkaitan dengan MCP dan deploy tetap sukses.
 
 ## 7. Keputusan yang menunggu Rama
 
-1. Izin commit + deploy (`release/phase-1`) dan pembuatan `MAHAKAN_MCP_API_KEY` di Vercel.
+1. ~~Izin deploy + key~~ — selesai 24 Sep 2026.
 2. **Minggu = 7 hari bergulir**, mengikuti kartu dashboard, jadi tidak ada "sisa hari minggu ini". Kalau mau Senin–Minggu, angkanya akan beda dari dashboard.
 3. Target harian/mingguan tidak punya riwayat; tanggal lampau dinilai dengan target sekarang (tool memberi `catatan`).
 4. `stok_menipis` mengikuti layar Inventori. Dalam mode periodik, sisanya adalah hasil opname terakhir, sehingga 70 bahan tampil menipis. Karena itu tidak ada "perkiraan habis", dan "stok habis" tidak masuk `peringatan`.
