@@ -1060,6 +1060,10 @@ export async function fetchBillPerformance(
       refundedAmount: transactions.refundedAmount,
       paymentMethod: transactions.paymentMethod,
       status: transactions.status,
+      cashReceived: transactions.cashReceived,
+      cashChange: transactions.cashChange,
+      discountAmount: transactions.discountAmount,
+      discountReason: transactions.discountReason,
     })
     .from(transactions)
     .leftJoin(users, eq(users.id, transactions.cashierId))
@@ -1068,10 +1072,70 @@ export async function fetchBillPerformance(
     .orderBy(sql`${transactions.createdAt} desc`)
     .limit(BILL_HARD_LIMIT);
 
+  /* Sesi AE-234 — open bill trail per bill: edit count, the highest total
+   * the bill ever reached, and when it was actually closed. A paid total
+   * below its peak = items removed/swapped after ordering (fraud signal:
+   * TRX-20260924-0003 Pablo 24rb → Americano 16rb, closed 2 jam kemudian). */
+  const ids = trxRows.map((t) => t.id);
+  const trailRows =
+    ids.length === 0
+      ? []
+      : await db
+          .select({
+            id: auditLogs.entityId,
+            editCount: sql<number>`count(*) filter (where ${auditLogs.eventType} = 'transaction.open_bill.edit')::int`,
+            peakTotal: sql<string | null>`max(greatest(
+              coalesce((${auditLogs.payload}->'before'->>'total')::bigint, 0),
+              coalesce((${auditLogs.payload}->'after'->>'total')::bigint, 0),
+              coalesce((${auditLogs.payload}->'context'->>'total')::bigint, 0)
+            )) filter (where ${auditLogs.eventType} in ('transaction.open_bill.create', 'transaction.open_bill.edit'))`,
+            paidAt: sql<Date | null>`min(${auditLogs.createdAt}) filter (where ${auditLogs.eventType} = 'transaction.open_bill.close')`,
+          })
+          .from(auditLogs)
+          .where(
+            and(
+              eq(auditLogs.entityType, "transaction"),
+              inArray(auditLogs.entityId, ids),
+              sql`${auditLogs.eventType} like 'transaction.open_bill.%'`,
+            ),
+          )
+          .groupBy(auditLogs.entityId);
+  const trailById = new Map(trailRows.map((r) => [r.id, r]));
+  const itemRows =
+    ids.length === 0
+      ? []
+      : await db
+          .select({
+            transactionId: transactionItems.transactionId,
+            itemName: transactionItems.itemName,
+            variant: transactionItems.variant,
+            quantity: transactionItems.quantity,
+          })
+          .from(transactionItems)
+          .where(inArray(transactionItems.transactionId, ids));
+  const itemsById = new Map<string, string[]>();
+  for (const i of itemRows) {
+    const list = itemsById.get(i.transactionId) ?? [];
+    list.push(`${i.quantity}× ${i.itemName}${i.variant ? ` (${i.variant})` : ""}`);
+    itemsById.set(i.transactionId, list);
+  }
+
   const rows: BillRow[] = trxRows.map((t) => {
     const total = Number(t.total);
     const refunded = Number(t.refundedAmount);
+    const trail = trailById.get(t.id);
+    const peak = trail?.peakTotal == null ? total : Number(trail.peakTotal);
     return {
+      paidAt: trail?.paidAt ? new Date(trail.paidAt).toISOString() : null,
+      isOpenBill: trail !== undefined,
+      editCount: trail?.editCount ?? 0,
+      peakTotal: peak,
+      reducedBy: Math.max(0, peak - total),
+      items: (itemsById.get(t.id) ?? []).join(", "),
+      cashReceived: t.cashReceived === null ? null : Number(t.cashReceived),
+      cashChange: t.cashChange === null ? null : Number(t.cashChange),
+      discountAmount: Number(t.discountAmount),
+      discountReason: t.discountReason,
       transactionId: t.id,
       transactionNumber: t.transactionNumber,
       closedAt: t.createdAt.toISOString(),

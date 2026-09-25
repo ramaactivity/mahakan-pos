@@ -326,6 +326,11 @@ import {
 } from "./types";
 import type { MenuItem } from "@/features/menu";
 import { POS_ORIGIN } from "@/features/cash/drawer-origin";
+import {
+  diffAuditLines,
+  formatChanges,
+  toAuditLines,
+} from "./open-bill-audit";
 
 async function requireSession() {
   const session = await auth();
@@ -2674,6 +2679,26 @@ export async function editOpenBill(
       );
     }
 
+    /* Sesi AE-234 — items are hard-deleted above, so this log is the only
+     * record of what the bill held before the edit. Keep item names. */
+    const beforeLines = toAuditLines(current.items);
+    const afterLines = toAuditLines(
+      v.items.map((it) => ({
+        itemName: menuById.get(it.menuItemId)!.name,
+        variant: it.variant ?? null,
+        quantity: it.quantity,
+        subtotal: it.subtotal,
+      })),
+    );
+    const itemDiff = diffAuditLines(beforeLines, afterLines);
+    const totalDelta = validation.recomputedTotal - current.total;
+    const rp = (n: number) => `Rp${n.toLocaleString("id-ID")}`;
+    const summaryParts = [
+      `Edit open bill ${current.transactionNumber}: total ${rp(current.total)} → ${rp(validation.recomputedTotal)}${totalDelta < 0 ? ` (TURUN ${rp(-totalDelta)})` : totalDelta > 0 ? ` (naik ${rp(totalDelta)})` : ""}`,
+      itemDiff.removed.length ? `hapus ${formatChanges(itemDiff.removed)}` : "",
+      itemDiff.added.length ? `tambah ${formatChanges(itemDiff.added)}` : "",
+    ].filter(Boolean);
+
     await logAudit({
       eventType: "transaction.open_bill.edit",
       userId: session.user.id,
@@ -2681,19 +2706,31 @@ export async function editOpenBill(
       entityType: "transaction",
       entityId: v.transactionId,
       payload: {
-        summary: `Edit open bill ${current.transactionNumber} — ${v.items.length} item, total Rp${validation.recomputedTotal.toLocaleString("id-ID")}`,
+        summary: summaryParts.join(" — "),
         before: {
           itemCount: current.items.length,
           total: current.total,
+          discountAmount: current.discountAmount,
           customerName: current.customerName,
+          items: beforeLines,
         },
         after: {
           itemCount: v.items.length,
           total: validation.recomputedTotal,
+          discountAmount: validation.recomputedDiscountAmount,
+          discountReason: v.discountReason ?? null,
           customerName: v.customerName ?? null,
+          items: afterLines,
         },
         context: {
           transactionNumber: current.transactionNumber,
+          totalDelta,
+          removed: itemDiff.removed,
+          added: itemDiff.added,
+          billOpenedAt: current.createdAt,
+          minutesSinceOpened: Math.round(
+            (Date.now() - new Date(current.createdAt).getTime()) / 60000,
+          ),
         },
       },
       metadata: {
@@ -2863,11 +2900,12 @@ export async function saveAsOpenBill(
       entityType: "transaction",
       entityId: created.data.id,
       payload: {
-        summary: `Open bill ${created.data.transactionNumber} disimpan (Pager ${created.data.pagerNumber}, total Rp${created.data.total.toLocaleString("id-ID")})`,
+        summary: `Open bill ${created.data.transactionNumber} disimpan (${created.data.customerName ?? `Pager ${created.data.pagerNumber}`}, total Rp${created.data.total.toLocaleString("id-ID")}) — ${formatChanges(toAuditLines(created.data.items))}`,
         context: {
           transactionNumber: created.data.transactionNumber,
           total: created.data.total,
           itemCount: created.data.items.length,
+          items: toAuditLines(created.data.items),
         },
       },
       metadata: {
@@ -3174,13 +3212,19 @@ export async function closeOpenBill(
     entityType: "transaction",
     entityId: input.transactionId,
     payload: {
-      summary: `Close open bill ${current.transactionNumber} via ${input.paymentMethod} (Rp${current.total.toLocaleString("id-ID")})`,
+      summary: `Close open bill ${current.transactionNumber} via ${input.paymentMethod} (Rp${current.total.toLocaleString("id-ID")})${input.paymentMethod === "cash" ? ` — terima Rp${(input.cashReceived ?? 0).toLocaleString("id-ID")}, kembali Rp${(cashChange ?? 0).toLocaleString("id-ID")}` : ""} — ${formatChanges(toAuditLines(current.items))}`,
       context: {
         transactionNumber: current.transactionNumber,
         paymentMethod: input.paymentMethod,
         total: current.total,
         cashReceived: input.cashReceived,
         cashChange,
+        // Sesi AE-234 — what was actually billed + how long it sat open.
+        items: toAuditLines(current.items),
+        billOpenedAt: current.createdAt,
+        minutesOpen: Math.round(
+          (Date.now() - new Date(current.createdAt).getTime()) / 60000,
+        ),
       },
     },
     metadata: {

@@ -363,6 +363,20 @@ export interface BillRow {
   netTotal: number;
   paymentMethod: PaymentMethod;
   status: "paid" | "partially_refunded";
+  /** Sesi AE-234 — open bill trail. closedAt above is actually the time the
+   *  bill was OPENED (created_at); paidAt is when it was closed/paid. */
+  paidAt: string | null;
+  isOpenBill: boolean;
+  editCount: number;
+  /** Highest total the bill ever reached before payment. */
+  peakTotal: number;
+  /** peakTotal − total; > 0 means items were removed after ordering. */
+  reducedBy: number;
+  items: string;
+  cashReceived: number | null;
+  cashChange: number | null;
+  discountAmount: number;
+  discountReason: string | null;
 }
 
 export interface BillStats {

@@ -1,11 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Download } from "lucide-react";
-import Papa from "papaparse";
+import { AlertTriangle } from "lucide-react";
 import {
   Badge,
-  Button,
   Card,
   CardContent,
   CardDescription,
@@ -25,7 +23,7 @@ import type { PaymentMethod } from "@/features/transactions";
 import { formatRupiah } from "@/lib/format";
 import { paymentMethodLabel } from "@/lib/payment-method";
 import { cn } from "@/lib/utils";
-import { downloadCsv } from "./menu-engineering-csv";
+import { ReportExportButtons } from "./ReportExportButtons";
 import { todayJakarta } from "@/lib/tz";
 
 function isoDaysAgo(days: number): string {
@@ -57,6 +55,7 @@ export function PerBillView() {
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>("all");
   const [report, setReport] = useState<BillPerformanceReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [onlyReduced, setOnlyReduced] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,21 +73,42 @@ export function PerBillView() {
     };
   }, [from, to, paymentFilter]);
 
-  function onExportCsv() {
-    if (!report) return;
-    const data = report.rows.map((r) => ({
-      No: r.transactionNumber,
-      "Tanggal/Jam": new Date(r.closedAt).toLocaleString("id-ID"),
-      Kasir: r.userName ?? "-",
-      Customer: r.customerName ?? "-",
-      Total: r.total,
-      Refund: r.refundedAmount,
-      "Total Net": r.netTotal,
-      Payment: paymentMethodLabel(r.paymentMethod),
-      Status: r.status,
-    }));
-    const csv = Papa.unparse(data, { newline: "\n" });
-    downloadCsv(`per-bill-${from}-to-${to}.csv`, csv);
+  const wibTime = (iso: string | null) =>
+    iso
+      ? new Date(iso).toLocaleString("id-ID", {
+          timeZone: "Asia/Jakarta",
+          dateStyle: "short",
+          timeStyle: "short",
+        })
+      : "";
+
+  function buildSheets() {
+    if (!report) return [];
+    return [
+      {
+        name: "Per Bill",
+        rows: report.rows.map((r) => ({
+          No: r.transactionNumber,
+          Dibuka: wibTime(r.closedAt),
+          Dibayar: wibTime(r.paidAt ?? r.closedAt),
+          Kasir: r.userName ?? "-",
+          Customer: r.customerName ?? "-",
+          Item: r.items,
+          Payment: paymentMethodLabel(r.paymentMethod),
+          "Total Tertinggi": r.peakTotal,
+          "Total Dibayar": r.total,
+          "Turun Setelah Pesan": r.reducedBy,
+          "Jumlah Edit": r.editCount,
+          Diskon: r.discountAmount,
+          "Alasan Diskon": r.discountReason ?? "",
+          "Uang Diterima": r.cashReceived,
+          Kembalian: r.cashChange,
+          Refund: r.refundedAmount,
+          "Total Net": r.netTotal,
+          Status: r.status,
+        })),
+      },
+    ];
   }
 
   return (
@@ -121,13 +141,19 @@ export function PerBillView() {
               options={PAYMENT_OPTIONS}
             />
           </div>
-          <Button
-            variant="outline"
-            onClick={onExportCsv}
+          <label className="flex h-10 items-center gap-2 text-sm text-neutral-700">
+            <input
+              type="checkbox"
+              checked={onlyReduced}
+              onChange={(e) => setOnlyReduced(e.target.checked)}
+            />
+            Hanya bill yang totalnya turun
+          </label>
+          <ReportExportButtons
+            filenameBase={`per-bill-${from}-sd-${to}`}
+            buildSheets={buildSheets}
             disabled={!report || loading || report.rows.length === 0}
-          >
-            <Download className="size-4" /> Export CSV
-          </Button>
+          />
         </div>
       </header>
 
@@ -144,17 +170,27 @@ export function PerBillView() {
       ) : !report ? (
         <p className="text-sm text-danger-500">Gagal load laporan</p>
       ) : (
-        <Body report={report} />
+        <Body report={report} onlyReduced={onlyReduced} />
       )}
     </div>
   );
 }
 
-function Body({ report }: { report: BillPerformanceReport }) {
+function Body({
+  report,
+  onlyReduced,
+}: {
+  report: BillPerformanceReport;
+  onlyReduced: boolean;
+}) {
   const { stats, buckets, rows, truncated } = report;
   const sortedRows = useMemo(() => {
-    return [...rows].sort((a, b) => b.closedAt.localeCompare(a.closedAt));
-  }, [rows]);
+    return rows
+      .filter((r) => !onlyReduced || r.reducedBy > 0)
+      .sort((a, b) => b.closedAt.localeCompare(a.closedAt));
+  }, [rows, onlyReduced]);
+  const reduced = rows.filter((r) => r.reducedBy > 0);
+  const reducedSum = reduced.reduce((s, r) => s + r.reducedBy, 0);
 
   return (
     <div className="space-y-4">
@@ -203,6 +239,20 @@ function Body({ report }: { report: BillPerformanceReport }) {
           subtitle="Bucket dengan trx terbanyak"
         />
       </div>
+
+      {reduced.length > 0 ? (
+        <div className="flex items-start gap-2 rounded-md border border-danger-100 bg-danger-100/50 p-3 text-sm text-danger-500">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <p>
+            <span className="font-semibold">
+              {reduced.length} bill totalnya turun setelah dipesan (total{" "}
+              {formatRupiah(reducedSum)}).
+            </span>{" "}
+            Item dihapus/diganti setelah bill dibuka. Cocokkan dengan CCTV &
+            detail di Audit Log.
+          </p>
+        </div>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -270,11 +320,12 @@ function Body({ report }: { report: BillPerformanceReport }) {
                 <thead className="bg-neutral-50 text-xs uppercase tracking-wider text-neutral-500">
                   <tr>
                     <th className="px-3 py-2 text-left">No</th>
-                    <th className="px-3 py-2 text-left">Tanggal/Jam</th>
+                    <th className="px-3 py-2 text-left">Dibuka / Dibayar</th>
                     <th className="px-3 py-2 text-left">Kasir</th>
-                    <th className="px-3 py-2 text-left">Customer</th>
+                    <th className="px-3 py-2 text-left">Customer / Item</th>
                     <th className="px-3 py-2 text-left">Payment</th>
                     <th className="px-3 py-2 text-right">Total</th>
+                    <th className="px-3 py-2 text-left">Riwayat Edit</th>
                     <th className="px-3 py-2 text-right">Net</th>
                     <th className="px-3 py-2 text-left">Status</th>
                   </tr>
@@ -293,28 +344,71 @@ function Body({ report }: { report: BillPerformanceReport }) {
   );
 }
 
+const fmtTime = (iso: string) =>
+  new Date(iso).toLocaleString("id-ID", {
+    year: "2-digit",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
 function BillRowItem({ row: r }: { row: BillRow }) {
+  const minutesOpen = r.paidAt
+    ? Math.round((Date.parse(r.paidAt) - Date.parse(r.closedAt)) / 60000)
+    : null;
   return (
-    <tr className="border-t border-neutral-100">
+    <tr
+      className={cn(
+        "border-t border-neutral-100 align-top",
+        r.reducedBy > 0 && "bg-danger-100/40",
+      )}
+    >
       <td className="px-3 py-2 font-mono text-xs text-neutral-700">
         {r.transactionNumber}
       </td>
-      <td className="px-3 py-2 text-neutral-700">
-        {new Date(r.closedAt).toLocaleString("id-ID", {
-          year: "2-digit",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-        })}
+      <td className="px-3 py-2 text-xs text-neutral-700">
+        <div>{fmtTime(r.closedAt)}</div>
+        {r.paidAt ? (
+          <div className="text-neutral-500">
+            bayar {fmtTime(r.paidAt)}
+            {minutesOpen !== null ? ` (${minutesOpen} mnt)` : ""}
+          </div>
+        ) : null}
       </td>
       <td className="px-3 py-2 text-neutral-700">{r.userName ?? "-"}</td>
-      <td className="px-3 py-2 text-neutral-700">{r.customerName ?? "-"}</td>
       <td className="px-3 py-2 text-neutral-700">
-        {paymentMethodLabel(r.paymentMethod)}
+        <div>{r.customerName ?? "-"}</div>
+        <div className="text-xs text-neutral-500">{r.items}</div>
+      </td>
+      <td className="px-3 py-2 text-neutral-700">
+        <div>{paymentMethodLabel(r.paymentMethod)}</div>
+        {r.cashReceived !== null ? (
+          <div className="text-xs text-neutral-500">
+            terima {formatRupiah(r.cashReceived)} · kembali{" "}
+            {formatRupiah(r.cashChange ?? 0)}
+          </div>
+        ) : null}
       </td>
       <td className="px-3 py-2 text-right font-mono">
         {formatRupiah(r.total)}
+        {r.discountAmount > 0 ? (
+          <div className="text-xs text-neutral-500">
+            diskon {formatRupiah(r.discountAmount)}
+          </div>
+        ) : null}
+      </td>
+      <td className="px-3 py-2 text-xs">
+        {r.reducedBy > 0 ? (
+          <span className="font-semibold text-danger-500">
+            Turun {formatRupiah(r.reducedBy)} (dari {formatRupiah(r.peakTotal)})
+          </span>
+        ) : r.isOpenBill ? (
+          <span className="text-neutral-500">Open bill</span>
+        ) : null}
+        {r.editCount > 0 ? (
+          <div className="text-neutral-500">{r.editCount}× edit</div>
+        ) : null}
       </td>
       <td className="px-3 py-2 text-right font-mono font-semibold text-neutral-900">
         {formatRupiah(r.netTotal)}

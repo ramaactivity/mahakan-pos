@@ -2,8 +2,13 @@
 
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Download, RefreshCw } from "lucide-react";
-import Papa from "papaparse";
+import {
+  ChevronLeft,
+  ChevronRight,
+  FileSpreadsheet,
+  FileText,
+  RefreshCw,
+} from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -21,7 +26,8 @@ import type { AuditLogRow } from "@/lib/audit";
 import { AUDIT_EVENT_TYPES, isStaffVisibleEvent } from "@/lib/audit";
 import { formatDateTime } from "@/lib/format";
 import { todayWibIso } from "@/features/cash/helpers";
-import { downloadCsv } from "./reports/menu-engineering-csv";
+import { downloadCsvForExcel, downloadXlsx } from "./reports/report-export";
+import { buildAuditSheets } from "./audit-export";
 import type { Role } from "@/lib/auth";
 
 const EXPORT_CAP = 5000;
@@ -144,7 +150,7 @@ export function AuditLogSection({ viewerRole }: AuditLogSectionProps) {
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: ["admin", "audit-logs"] });
 
-  async function onExportCsv() {
+  async function onExport(kind: "xlsx" | "csv") {
     if (exporting) return;
     setExporting(true);
     const r = await listAuditLogs({
@@ -156,36 +162,24 @@ export function AuditLogSection({ viewerRole }: AuditLogSectionProps) {
     });
     setExporting(false);
     if (!r.ok) {
-      toast.error("Gagal load audit log untuk export");
+      toast.error("Gagal memuat audit log untuk diunduh");
       return;
     }
     if (r.data.rows.length === 0) {
-      toast.info("Tidak ada entry untuk filter ini");
+      toast.info("Tidak ada catatan untuk filter ini");
       return;
     }
     if (r.data.total > EXPORT_CAP) {
       toast.warning(
-        `Total ${r.data.total} entry, export dibatasi ${EXPORT_CAP}. Persempit range tanggal untuk export semua.`,
+        `Total ${r.data.total} catatan, unduhan dibatasi ${EXPORT_CAP} terbaru. Persempit rentang tanggal untuk mengunduh semuanya.`,
       );
     }
-    const csvData = r.data.rows.map((row) => ({
-      Waktu: new Date(row.createdAt).toISOString(),
-      Event: row.eventType,
-      Pelaku: row.userName ?? "",
-      Role: row.userRole ?? "",
-      Approver: row.approverName ?? "",
-      Entitas: row.entityType ?? "",
-      "Entity ID": row.entityId ?? "",
-      Ringkasan: (row.payload?.summary as string | undefined) ?? "",
-      Konteks: row.payload?.context
-        ? JSON.stringify(row.payload.context)
-        : "",
-      Diff: row.payload?.diff ? JSON.stringify(row.payload.diff) : "",
-    }));
-    const csv = Papa.unparse(csvData, { newline: "\n" });
-    const tag = eventType === "all" ? "all" : eventType.replace(/\./g, "-");
-    downloadCsv(`audit-log-${fromDate}-${toDate}-${tag}.csv`, csv);
-    toast.success(`Export ${r.data.rows.length} entries`);
+    const sheets = buildAuditSheets(r.data.rows);
+    const tag = eventType === "all" ? "semua" : eventType.replace(/\./g, "-");
+    const base = `audit-log-${fromDate}-sd-${toDate}-${tag}`;
+    if (kind === "xlsx") downloadXlsx(base, sheets);
+    else downloadCsvForExcel(base, sheets[0]!.rows);
+    toast.success(`${r.data.rows.length} catatan diunduh`);
   }
 
   return (
@@ -214,11 +208,19 @@ export function AuditLogSection({ viewerRole }: AuditLogSectionProps) {
           <Button
             variant="outline"
             size="sm"
-            onClick={onExportCsv}
+            onClick={() => void onExport("xlsx")}
             disabled={exporting || !rows || rows.length === 0}
           >
-            <Download className="size-4" />
-            {exporting ? "Memuat..." : "CSV"}
+            <FileSpreadsheet className="size-4" />
+            {exporting ? "Memuat..." : "Excel"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void onExport("csv")}
+            disabled={exporting || !rows || rows.length === 0}
+          >
+            <FileText className="size-4" /> CSV
           </Button>
           <Button
             variant="ghost"
