@@ -31,7 +31,12 @@ export interface StyledCol<T> {
   formula?: (r: number, ctx: SheetCtx) => string;
   /** Sertakan kolom ini di baris TOTAL (SUM). Default: true untuk money/int. */
   total?: boolean;
+  /** Teks panjang turun ke baris berikutnya; tinggi baris ikut menyesuaikan. */
+  wrap?: boolean;
 }
+
+/** Sesi AE-234 — warna latar satu baris penuh untuk menandai baris penting. */
+export type RowTone = "danger" | "warning" | null;
 
 export interface SheetCtx {
   /** Baris Excel pertama yang berisi data. */
@@ -50,6 +55,8 @@ export interface StyledSheet<T = Record<string, unknown>> {
   totalRow?: boolean;
   /** Baris ringkasan "label: nilai" di atas tabel (mis. total modal). */
   notes?: string[];
+  /** Tandai baris tertentu (mis. bill yang totalnya turun) dengan warna. */
+  rowTone?: (row: T) => RowTone;
 }
 
 const NUM_FMT: Record<ColFormat, string> = {
@@ -62,6 +69,22 @@ const NUM_FMT: Record<ColFormat, string> = {
 
 const GREEN = "FF1F5138";
 const GREEN_SOFT = "FFEAF1ED";
+const TONE_FILL: Record<"danger" | "warning", string> = {
+  danger: "FFFDE7E4",
+  warning: "FFFEF3DC",
+};
+const TONE_FONT: Record<"danger" | "warning", string> = {
+  danger: "FF9F1C12",
+  warning: "FF7A4A00",
+};
+
+/** Perkiraan jumlah baris teks sebuah sel ber-wrap (Excel tidak autofit saat buka). */
+function wrappedLines(v: unknown, width: number): number {
+  if (v == null) return 1;
+  return String(v)
+    .split("\n")
+    .reduce((n, part) => n + Math.max(1, Math.ceil(part.length / Math.max(width - 2, 1))), 0);
+}
 
 function autoWidth<T>(col: StyledCol<T>, rows: T[]): number {
   if (col.width) return col.width;
@@ -90,7 +113,8 @@ export async function buildStyledWorkbook(
     const cols = sheet.cols as Array<StyledCol<unknown>>;
     const ws = wb.addWorksheet(sheet.name.replace(/[:\\/?*[\]]/g, "-").slice(0, 31));
     ws.properties.defaultRowHeight = 18;
-    ws.columns = cols.map((c) => ({ width: autoWidth(c, rows) }));
+    const widths = cols.map((c) => autoWidth(c, rows));
+    ws.columns = widths.map((width) => ({ width }));
 
     /* ---- kepala berkas ---- */
     const lastCol = cols.length;
@@ -127,18 +151,24 @@ export async function buildStyledWorkbook(
     const lastRow = firstRow + rows.length - 1;
     const ctx: SheetCtx = { firstRow, lastRow };
 
+    const rowTone = sheet.rowTone as ((row: unknown) => RowTone) | undefined;
     rows.forEach((row, idx) => {
-      const r = ws.addRow(
-        cols.map((c) => (c.formula ? null : (c.value?.(row) ?? null))),
+      const values = cols.map((c) => (c.formula ? null : (c.value?.(row) ?? null)));
+      const r = ws.addRow(values);
+      const lines = cols.reduce(
+        (max, c, i) => (c.wrap ? Math.max(max, wrappedLines(values[i], widths[i]!)) : max),
+        1,
       );
-      r.height = 17;
+      r.height = Math.max(17, lines * 14 + 4);
+      const tone = rowTone?.(row) ?? null;
       cols.forEach((c, i) => {
         const cell = r.getCell(i + 1);
         if (c.formula) cell.value = { formula: c.formula(r.number, ctx) };
         cell.numFmt = NUM_FMT[c.fmt ?? "text"];
-        cell.font = { size: 11 };
+        cell.font = tone ? { size: 11, color: { argb: TONE_FONT[tone] } } : { size: 11 };
         cell.alignment = {
-          vertical: "middle",
+          vertical: lines > 1 ? "top" : "middle",
+          wrapText: c.wrap ?? false,
           horizontal:
             c.fmt === "money" || c.fmt === "int" || c.fmt === "pct"
               ? "right"
@@ -146,13 +176,16 @@ export async function buildStyledWorkbook(
                 ? "center"
                 : "left",
         };
-        if (idx % 2 === 1) {
+        if (tone) {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TONE_FILL[tone] } };
+        } else if (idx % 2 === 1) {
           cell.fill = {
             type: "pattern",
             pattern: "solid",
             fgColor: { argb: GREEN_SOFT },
           };
         }
+        cell.border = { bottom: { style: "hair", color: { argb: "FFD9DDD8" } } };
       });
     });
 

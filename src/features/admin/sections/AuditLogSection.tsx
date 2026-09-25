@@ -26,8 +26,12 @@ import type { AuditLogRow } from "@/lib/audit";
 import { AUDIT_EVENT_TYPES, isStaffVisibleEvent } from "@/lib/audit";
 import { formatDateTime } from "@/lib/format";
 import { todayWibIso } from "@/features/cash/helpers";
-import { downloadCsvForExcel, downloadXlsx } from "./reports/report-export";
-import { buildAuditSheets } from "./audit-export";
+import { downloadCsvForExcel } from "./reports/report-export";
+import {
+  auditRecordToCsvRow,
+  buildAuditStyledSheets,
+  toAuditRecords,
+} from "./audit-export";
 import type { Role } from "@/lib/auth";
 
 const EXPORT_CAP = 5000;
@@ -174,12 +178,28 @@ export function AuditLogSection({ viewerRole }: AuditLogSectionProps) {
         `Total ${r.data.total} catatan, unduhan dibatasi ${EXPORT_CAP} terbaru. Persempit rentang tanggal untuk mengunduh semuanya.`,
       );
     }
-    const sheets = buildAuditSheets(r.data.rows);
+    const records = toAuditRecords(r.data.rows);
     const tag = eventType === "all" ? "semua" : eventType.replace(/\./g, "-");
     const base = `audit-log-${fromDate}-sd-${toDate}-${tag}`;
-    if (kind === "xlsx") downloadXlsx(base, sheets);
-    else downloadCsvForExcel(base, sheets[0]!.rows);
-    toast.success(`${r.data.rows.length} catatan diunduh`);
+    try {
+      if (kind === "xlsx") {
+        // exceljs (~900KB) is loaded lazily inside downloadStyledXlsx.
+        const { downloadStyledXlsx } = await import("@/lib/xlsx-styled");
+        await downloadStyledXlsx(
+          base,
+          buildAuditStyledSheets(records, {
+            from: fromDate,
+            to: toDate,
+            filter: eventType === "all" ? "semua aktivitas" : eventType,
+          }),
+        );
+      } else {
+        downloadCsvForExcel(base, records.map(auditRecordToCsvRow));
+      }
+      toast.success(`${r.data.rows.length} catatan diunduh`);
+    } catch {
+      toast.error("Gagal menyiapkan berkas unduhan");
+    }
   }
 
   return (

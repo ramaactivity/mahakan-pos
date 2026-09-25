@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, FileText } from "lucide-react";
 import {
   Badge,
+  Button,
   Card,
   CardContent,
   CardDescription,
@@ -23,7 +24,9 @@ import type { PaymentMethod } from "@/features/transactions";
 import { formatRupiah } from "@/lib/format";
 import { paymentMethodLabel } from "@/lib/payment-method";
 import { cn } from "@/lib/utils";
-import { ReportExportButtons } from "./ReportExportButtons";
+import { ExportWorkbookButton } from "../ExportWorkbookButton";
+import { downloadCsvForExcel } from "./report-export";
+import type { StyledCol, StyledSheet } from "@/lib/xlsx-styled";
 import { todayJakarta } from "@/lib/tz";
 
 function isoDaysAgo(days: number): string {
@@ -73,42 +76,118 @@ export function PerBillView() {
     };
   }, [from, to, paymentFilter]);
 
-  const wibTime = (iso: string | null) =>
-    iso
-      ? new Date(iso).toLocaleString("id-ID", {
-          timeZone: "Asia/Jakarta",
-          dateStyle: "short",
-          timeStyle: "short",
-        })
-      : "";
+  /* Sesi AE-234 — WIB wall-clock parts; Excel gets a real date + text time. */
+  const wib = (iso: string) => {
+    const p = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Jakarta",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(iso));
+    const g = (t: string) => p.find((x) => x.type === t)?.value ?? "00";
+    return {
+      date: new Date(Date.UTC(+g("year"), +g("month") - 1, +g("day"))),
+      text: `${g("day")}/${g("month")}/${g("year")}`,
+      time: `${g("hour")}:${g("minute")}`,
+    };
+  };
+  const minutesOpen = (r: BillRow) =>
+    r.paidAt ? Math.round((Date.parse(r.paidAt) - Date.parse(r.closedAt)) / 60000) : null;
 
-  function buildSheets() {
-    if (!report) return [];
-    return [
+  async function downloadExcel() {
+    if (!report || report.rows.length === 0) throw new Error("EMPTY");
+    const { downloadStyledXlsx } = await import("@/lib/xlsx-styled");
+    const cols: Array<StyledCol<BillRow>> = [
+      { header: "No", width: 6, fmt: "int", total: false, formula: (r, ctx) => `ROW()-${ctx.firstRow - 1}` },
+      { header: "No. Transaksi", value: (r) => r.transactionNumber, width: 20 },
+      { header: "Tanggal", value: (r) => wib(r.closedAt).date, fmt: "date", width: 12 },
+      { header: "Jam Pesan", value: (r) => wib(r.closedAt).time, width: 10 },
+      { header: "Jam Bayar", value: (r) => (r.paidAt ? wib(r.paidAt).time : wib(r.closedAt).time), width: 10 },
+      { header: "Lama Terbuka (mnt)", value: minutesOpen, fmt: "int", width: 12, total: false },
+      { header: "Kasir", value: (r) => r.userName ?? "-", width: 12 },
+      { header: "Tamu", value: (r) => r.customerName ?? "-", width: 14 },
+      { header: "Item", value: (r) => r.items, width: 40, wrap: true },
+      { header: "Metode Bayar", value: (r) => paymentMethodLabel(r.paymentMethod), width: 13 },
+      { header: "Total Tertinggi", value: (r) => r.peakTotal, fmt: "money", width: 14 },
+      { header: "Total Dibayar", value: (r) => r.total, fmt: "money", width: 14 },
+      { header: "Turun Setelah Pesan", value: (r) => r.reducedBy || null, fmt: "money", width: 14 },
+      { header: "Jumlah Edit", value: (r) => r.editCount, fmt: "int", width: 9 },
+      { header: "Diskon", value: (r) => r.discountAmount || null, fmt: "money", width: 12 },
+      { header: "Alasan Diskon", value: (r) => r.discountReason, width: 22, wrap: true },
+      { header: "Uang Diterima", value: (r) => r.cashReceived, fmt: "money", width: 14, total: false },
+      { header: "Kembalian", value: (r) => r.cashChange, fmt: "money", width: 12, total: false },
+      { header: "Refund", value: (r) => r.refundedAmount || null, fmt: "money", width: 12 },
+      { header: "Total Net", value: (r) => r.netTotal, fmt: "money", width: 14 },
+      { header: "Status", value: (r) => (r.status === "paid" ? "Lunas" : "Refund sebagian"), width: 14 },
+    ];
+    const rows = [...report.rows].sort((a, b) => a.closedAt.localeCompare(b.closedAt));
+    const reduced = rows.filter((r) => r.reducedBy > 0);
+    const [fy, fm, fd] = from.split("-");
+    const [ty, tm, td] = to.split("-");
+    const sub = `Mahakan Coffee & Space · periode ${fd}/${fm}/${fy} s/d ${td}/${tm}/${ty} · ${PAYMENT_OPTIONS.find((o) => o.value === paymentFilter)?.label ?? ""} · jam dalam WIB`;
+    const sheets: Array<StyledSheet<BillRow>> = [
       {
         name: "Per Bill",
-        rows: report.rows.map((r) => ({
-          No: r.transactionNumber,
-          Dibuka: wibTime(r.closedAt),
-          Dibayar: wibTime(r.paidAt ?? r.closedAt),
-          Kasir: r.userName ?? "-",
-          Customer: r.customerName ?? "-",
-          Item: r.items,
-          Payment: paymentMethodLabel(r.paymentMethod),
-          "Total Tertinggi": r.peakTotal,
-          "Total Dibayar": r.total,
-          "Turun Setelah Pesan": r.reducedBy,
-          "Jumlah Edit": r.editCount,
-          Diskon: r.discountAmount,
-          "Alasan Diskon": r.discountReason ?? "",
-          "Uang Diterima": r.cashReceived,
-          Kembalian: r.cashChange,
-          Refund: r.refundedAmount,
-          "Total Net": r.netTotal,
-          Status: r.status,
-        })),
+        title: "Laporan Per-Bill",
+        subtitle: sub,
+        notes: [
+          `${rows.length} bill · total dibayar Rp ${rows.reduce((s, r) => s + r.total, 0).toLocaleString("id-ID")}`,
+          `${reduced.length} bill totalnya turun setelah dipesan (Rp ${reduced.reduce((s, r) => s + r.reducedBy, 0).toLocaleString("id-ID")}) — ditandai merah.`,
+        ],
+        cols,
+        rows,
+        totalRow: true,
+        rowTone: (r) => (r.reducedBy > 0 ? "danger" : null),
       },
     ];
+    if (reduced.length > 0) {
+      sheets.push({
+        name: "Bill Turun",
+        title: "Bill yang Totalnya Turun Setelah Dipesan",
+        subtitle: sub,
+        notes: ["Cocokkan dengan CCTV: uang yang diserahkan tamu dan jam tamu membayar."],
+        cols,
+        rows: reduced,
+        totalRow: true,
+        rowTone: () => "danger",
+      });
+    }
+    await downloadStyledXlsx(
+      `per-bill-${from}-sd-${to}`,
+      sheets as unknown as Array<StyledSheet<never>>,
+    );
+  }
+
+  function downloadCsv() {
+    if (!report) return;
+    downloadCsvForExcel(
+      `per-bill-${from}-sd-${to}`,
+      report.rows.map((r) => ({
+        "No. Transaksi": r.transactionNumber,
+        Tanggal: wib(r.closedAt).text,
+        "Jam Pesan": wib(r.closedAt).time,
+        "Jam Bayar": r.paidAt ? wib(r.paidAt).time : wib(r.closedAt).time,
+        "Lama Terbuka (mnt)": minutesOpen(r),
+        Kasir: r.userName ?? "-",
+        Tamu: r.customerName ?? "-",
+        Item: r.items,
+        "Metode Bayar": paymentMethodLabel(r.paymentMethod),
+        "Total Tertinggi": r.peakTotal,
+        "Total Dibayar": r.total,
+        "Turun Setelah Pesan": r.reducedBy,
+        "Jumlah Edit": r.editCount,
+        Diskon: r.discountAmount,
+        "Alasan Diskon": r.discountReason ?? "",
+        "Uang Diterima": r.cashReceived,
+        Kembalian: r.cashChange,
+        Refund: r.refundedAmount,
+        "Total Net": r.netTotal,
+        Status: r.status === "paid" ? "Lunas" : "Refund sebagian",
+      })),
+    );
   }
 
   return (
@@ -149,11 +228,15 @@ export function PerBillView() {
             />
             Hanya bill yang totalnya turun
           </label>
-          <ReportExportButtons
-            filenameBase={`per-bill-${from}-sd-${to}`}
-            buildSheets={buildSheets}
+          <ExportWorkbookButton build={downloadExcel} label="Excel" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={downloadCsv}
             disabled={!report || loading || report.rows.length === 0}
-          />
+          >
+            <FileText className="size-4" /> CSV
+          </Button>
         </div>
       </header>
 
