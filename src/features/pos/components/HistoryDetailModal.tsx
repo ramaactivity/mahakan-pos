@@ -44,6 +44,7 @@ import { formatRupiah } from "@/lib/format";
 import { paymentMethodLabel } from "@/lib/payment-method";
 import { formatIndonesianDateTime, toJakartaDateOnly } from "@/lib/date";
 import type { Role } from "@/lib/auth";
+import { useCrewPicker } from "@/features/crew/CrewPicker";
 
 const VOID_REASONS = [
   "Customer batal",
@@ -92,6 +93,7 @@ export function HistoryDetailModal({
   onChanged,
   onOpenSettings,
 }: HistoryDetailModalProps) {
+  const pickCrew = useCrewPicker();
   const { session } = useSession();
   const [trx, setTrx] = useState<TransactionWithItems | null>(null);
   const [splitBreakdown, setSplitBreakdown] =
@@ -242,12 +244,23 @@ export function HistoryDetailModal({
         ? { approverToken: approver.token }
         : { approvalCode: approver.code }
       : {};
+    /* Sesi AE-235 — on the POS ask which crew is doing this; the back office
+     * (opname tab) acts as the logged-in user. */
+    const crew = pickCrew
+      ? await pickCrew(actionType === "void" ? "Void transaksi" : "Refund transaksi")
+      : undefined;
+    if (crew === null) {
+      setSubmitting(false);
+      return;
+    }
+    const crewPayload = pickCrew ? { crewId: crew?.id } : { fromBackOffice: true };
 
     if (actionType === "void") {
       const res = await voidTransaction({
         transactionId: trx.id,
         reason: reasonText,
         ...authPayload,
+        ...crewPayload,
       });
       if (!isOk(res)) {
         setError(res.error.message);
@@ -267,6 +280,7 @@ export function HistoryDetailModal({
         reason: reasonText,
         clientRefId: crypto.randomUUID(),
         ...authPayload,
+        ...crewPayload,
       });
       if (!isOk(res)) {
         setError(res.error.message);
@@ -284,6 +298,7 @@ export function HistoryDetailModal({
         transactionId: trx.id,
         reason: reasonText,
         ...authPayload,
+        ...crewPayload,
       });
       if (!isOk(res)) {
         setError(res.error.message);

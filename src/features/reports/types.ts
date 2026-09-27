@@ -377,6 +377,9 @@ export interface BillRow {
   cashChange: number | null;
   discountAmount: number;
   discountReason: string | null;
+  /** Sesi AE-235 — crew who opened / took payment (null before AE-235). */
+  openedCrew: string | null;
+  paidCrew: string | null;
 }
 
 export interface BillStats {

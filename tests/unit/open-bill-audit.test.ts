@@ -49,7 +49,7 @@ describe("audit export records (AE-234)", async () => {
       after: { total: 16000, customerName: "Kapras", items: [{ name: "Americano (iced)", qty: 1, subtotal: 16000 }] },
       context: { transactionNumber: "TRX-20260924-0003", removed: [{ name: "Pablo Eskopi (iced)", qty: 1 }], added: [] },
     },
-    metadata: null,
+    metadata: { crew: { id: "e1", name: "Sarah", onDuty: true } },
   };
 
   it("uses WIB date/time, human labels and flags the reduction", () => {
@@ -60,6 +60,8 @@ describe("audit export records (AE-234)", async () => {
     expect(x!.activity).toBe("Edit bill");
     expect(x!.delta).toBe(-8000);
     expect(x!.tone).toBe("danger");
+    expect(x!.crew).toBe("Sarah");
+    expect(x!.actor).toBe("Galih");
     expect(auditRecordToCsvRow(x!)["Item Dihapus"]).toBe("1× Pablo Eskopi (iced)");
   });
 

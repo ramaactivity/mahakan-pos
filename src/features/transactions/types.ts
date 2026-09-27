@@ -38,6 +38,8 @@ export interface SplitPaymentItemInput {
 }
 
 export interface AddSplitPaymentInput {
+  /** Sesi AE-235 — crew (employees.id) who is serving; chosen per action on the POS. */
+  crewId?: string | null;
   transactionId: string;
   amount: number;
   paymentMethod: Exclude<PaymentMethod, "split">;
@@ -155,6 +157,10 @@ export interface CreateTransactionItemInput {
 }
 
 export interface CreateTransactionInput {
+  /** Sesi AE-235 — crew (employees.id) who is serving; chosen per action on the POS. */
+  crewId?: string | null;
+  /** Sesi AE-235 — replay from the offline queue; may lack crewId (queued before AE-235). */
+  fromOfflineQueue?: boolean;
   /** UUID; if duplicate of an existing transaction's clientRefId, server returns the existing one (idempotency). */
   clientRefId?: string;
   shiftId: string;
@@ -229,6 +235,10 @@ export interface CreateTransactionSplitInput {
 }
 
 export interface VoidTransactionInput {
+  /** Sesi AE-235 — back-office call (no POS crew; the logged-in user acts). */
+  fromBackOffice?: boolean;
+  /** Sesi AE-235 — crew (employees.id) who is serving; chosen per action on the POS. */
+  crewId?: string | null;
   transactionId: string;
   reason: string;
   /** Legacy "pin" mode — JWT from /api/v1/auth/verify-approver. */
@@ -241,6 +251,10 @@ export interface VoidTransactionInput {
 }
 
 export interface RefundTransactionInput {
+  /** Sesi AE-235 — back-office call (no POS crew; the logged-in user acts). */
+  fromBackOffice?: boolean;
+  /** Sesi AE-235 — crew (employees.id) who is serving; chosen per action on the POS. */
+  crewId?: string | null;
   transactionId: string;
   reason: string;
   approverToken?: string;
@@ -257,6 +271,10 @@ export interface RefundTransactionPartialItem {
 }
 
 export interface RefundTransactionPartialInput {
+  /** Sesi AE-235 — back-office call (no POS crew). */
+  fromBackOffice?: boolean;
+  /** Sesi AE-235 — crew (employees.id) who is serving; chosen per action on the POS. */
+  crewId?: string | null;
   transactionId: string;
   items: RefundTransactionPartialItem[];
   reason: string;
@@ -273,6 +291,8 @@ export interface RefundTransactionPartialInput {
  * are filled server-side with paymentMethod="cash", cashReceived=0).
  */
 export interface SaveOpenBillInput {
+  /** Sesi AE-235 — crew (employees.id) who is serving; chosen per action on the POS. */
+  crewId?: string | null;
   clientRefId?: string;
   shiftId: string;
   cashierId: string;
@@ -303,6 +323,8 @@ export interface SaveOpenBillInput {
 /** Sesi AE-36 — close open bill. paymentMethod excludes 'split' karena
  *  itu sentinel value yang dipasang server kalau ada prior splits. */
 export interface CloseOpenBillInput {
+  /** Sesi AE-235 — crew (employees.id) who is serving; chosen per action on the POS. */
+  crewId?: string | null;
   transactionId: string;
   paymentMethod: Exclude<PaymentMethod, "split">;
   cashReceived: number | null;
@@ -314,6 +336,8 @@ export interface CloseOpenBillInput {
  * "open"; payment fields untouched.
  */
 export interface EditOpenBillInput {
+  /** Sesi AE-235 — crew (employees.id) who is serving; chosen per action on the POS. */
+  crewId?: string | null;
   transactionId: string;
   customerName?: string | null;
   customerPhone?: string | null;
@@ -335,6 +359,8 @@ export interface EditOpenBillInput {
 
 /** Sesi AE-62k — cancel open bill (customer batal / no-show). */
 export interface CancelOpenBillInput {
+  /** Sesi AE-235 — crew (employees.id) who is serving; chosen per action on the POS. */
+  crewId?: string | null;
   transactionId: string;
   reason: string;
 }

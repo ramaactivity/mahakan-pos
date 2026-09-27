@@ -191,6 +191,7 @@ export const AUDIT_EVENT_TYPES = [
   /* Audit POS E2E 2026-06-12 — jejak buka shift eksplisit + tutup paksa
    * shift nginep oleh owner dari backoffice. */
   "shift.open",
+  "shift.close",
   "shift.force_close",
   /* Sesi AE-217 — rem anti-lupa-tutup-shift: pengaturan ambang jam. */
   "outlet.shift_day_gate.update",

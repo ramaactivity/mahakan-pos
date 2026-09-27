@@ -26,6 +26,7 @@ import type { Category, MenuItem } from "@/features/menu";
 import type { Role } from "@/lib/auth/rbac";
 import { cn } from "@/lib/utils";
 import { MenuStatusCard } from "./MenuStatusCard";
+import { useCrewPicker } from "@/features/crew/CrewPicker";
 
 interface OpenShiftModalProps {
   open: boolean;
@@ -79,6 +80,7 @@ export function OpenShiftModal({
   onClose,
   onOpened,
 }: OpenShiftModalProps) {
+  const pickCrew = useCrewPicker();
   const [step, setStep] = useState<Step>("cash");
   // Raw digit string (no separator) — formatted for display via formatRupiah.
   const [openingCash, setOpeningCash] = useState("200000");
@@ -143,7 +145,12 @@ export function OpenShiftModal({
     setSubmitting(true);
     setError(null);
 
-    const res = await openShift({ openingCash: parsed });
+    const crew = pickCrew ? await pickCrew("Buka shift") : undefined;
+    if (crew === null) {
+      setSubmitting(false);
+      return;
+    }
+    const res = await openShift({ openingCash: parsed, crewId: crew?.id });
     if (!isOk(res)) {
       setError(res.error.message);
       setSubmitting(false);

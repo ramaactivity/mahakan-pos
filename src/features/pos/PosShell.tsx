@@ -228,6 +228,8 @@ import {
   type ShiftDayGateState,
 } from "@/features/shifts";
 import { ShiftDayGateScreen } from "./components/ShiftDayGateScreen";
+import { useCrewPicker } from "@/features/crew/CrewPicker";
+import type { PosCrew } from "@/features/crew/types";
 import { EmergencyCloseShiftModal } from "./components/EmergencyCloseShiftModal";
 import { useOnlineStatus } from "@/lib/useOnlineStatus";
 import { queuePendingTransaction } from "@/lib/offline/queue";
@@ -295,6 +297,11 @@ const NO_SHIFT_HINT =
 
 export function PosShell() {
   const { session, logout } = useSession();
+  /* Sesi AE-235 — the tablet is logged in as one person all shift; every
+   * action asks which crew is actually serving. null = cancelled. */
+  const pickCrew = useCrewPicker();
+  const askCrew = (label: string) => (pickCrew ? pickCrew(label) : Promise.resolve(undefined));
+  const [closeAfterUpdateCrew, setCloseAfterUpdateCrew] = useState<PosCrew | null>(null);
   // Watch online status + pending offline queue; auto-sync when reconnected.
   usePendingSync();
 
@@ -1089,6 +1096,13 @@ export function PosShell() {
     }
     if (activeDraft.items.length === 0) return;
     paymentInFlightRef.current = true;
+    const crew = await askCrew(
+      activeDraft.editingBillId ? "Simpan perubahan bill" : "Simpan open bill",
+    );
+    if (crew === null) {
+      paymentInFlightRef.current = false;
+      return;
+    }
     setPaymentSubmitting(true);
     setPaymentError(null);
 
@@ -1123,6 +1137,7 @@ export function PosShell() {
           discountAmount,
           discountReason: activeDraft.discountReason,
           total,
+          crewId: crew?.id,
           discountApproverToken:
             activeDraft.discountApproverToken ?? undefined,
           complimentPin:
@@ -1143,6 +1158,8 @@ export function PosShell() {
          * sendiri setelah payment sukses). printConfirm di-skip biar
          * staff tidak ada modal nge-popup berlapis. */
         if (opts?.proceedToPay) {
+          // Same person, same flow — don't ask for the crew twice.
+          setCloseAfterUpdateCrew(crew ?? null);
           setBillToCloseAfterUpdate(res.data);
         } else {
           setPrintConfirm({ trx: res.data, title: "Bill di-update" });
@@ -1171,6 +1188,7 @@ export function PosShell() {
         complimentPin:
           activeDraft.complimentPin ?? undefined,
         promoId: activeDraft.promoId,
+        crewId: crew?.id,
       };
       const res = await saveAsOpenBill(payload);
       if (!res.success) {
@@ -1207,6 +1225,11 @@ export function PosShell() {
       return;
     }
     paymentInFlightRef.current = true;
+    const crew = await askCrew("Bayar transaksi (split)");
+    if (crew === null) {
+      paymentInFlightRef.current = false;
+      return;
+    }
     setPaymentSubmitting(true);
     setPaymentError(null);
 
@@ -1250,6 +1273,7 @@ export function PosShell() {
         loyaltyPointsRedeemed: activeDraft.loyaltyPointsRedeemed,
         promoId: activeDraft.promoId,
         splits,
+        crewId: crew?.id,
       };
 
       const res = await createTransaction(payload);
@@ -1282,6 +1306,11 @@ export function PosShell() {
       return;
     }
     paymentInFlightRef.current = true;
+    const crew = await askCrew("Bayar transaksi");
+    if (crew === null) {
+      paymentInFlightRef.current = false;
+      return;
+    }
     setPaymentSubmitting(true);
     setPaymentError(null);
 
@@ -1324,6 +1353,7 @@ export function PosShell() {
           activeDraft.complimentPin ?? undefined,
         loyaltyPointsRedeemed: activeDraft.loyaltyPointsRedeemed,
         promoId: activeDraft.promoId,
+        crewId: crew?.id,
       };
 
       // Offline path: queue locally, drop the draft, show offline-paid screen.
@@ -1368,7 +1398,7 @@ export function PosShell() {
         if (receiptConfig) {
           void printTickets(
             res.data,
-            session!.user.name,
+            crew?.name ?? session!.user.name,
             ["customer"],
             receiptConfig,
           );
@@ -1867,6 +1897,7 @@ export function PosShell() {
           bill={billToCloseAfterUpdate}
           cashierName={session?.user.name ?? "Kasir"}
           receiptConfig={receiptConfig}
+          presetCrew={closeAfterUpdateCrew}
           onClose={() => setBillToCloseAfterUpdate(null)}
           onClosed={(closedTrx) => {
             setBillToCloseAfterUpdate(null);

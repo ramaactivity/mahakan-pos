@@ -24,6 +24,7 @@ import type { ReceiptConfig } from "@/lib/printer/print-transaction";
 import { printTickets } from "@/lib/printer/print-transaction";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useCrewPicker } from "@/features/crew/CrewPicker";
 
 type PaymentMethod =
   | "cash"
@@ -77,6 +78,7 @@ export function SplitPaymentModal({
   onSplitAdded,
   onOpenSettings,
 }: SplitPaymentModalProps) {
+  const pickCrew = useCrewPicker();
   const [breakdown, setBreakdown] = useState<SplitPaymentBreakdown | null>(
     null,
   );
@@ -180,6 +182,11 @@ export function SplitPaymentModal({
     }
 
     setSubmitting(true);
+    const crew = pickCrew ? await pickCrew("Bayar sebagian (split)") : undefined;
+    if (crew === null) {
+      setSubmitting(false);
+      return;
+    }
     const itemsPayload =
       splitKind === "per_menu"
         ? Object.entries(perMenuQty)
@@ -195,6 +202,7 @@ export function SplitPaymentModal({
       cashChange: paymentMethod === "cash" ? cashChange : null,
       splitKind,
       items: itemsPayload,
+      crewId: crew?.id,
     });
 
     if (!isOk(res)) {
@@ -204,7 +212,7 @@ export function SplitPaymentModal({
     }
 
     if (willClose && receiptConfig) {
-      void printTickets(res.data, cashierName, ["customer"], receiptConfig).then(
+      void printTickets(res.data, crew?.name ?? cashierName, ["customer"], receiptConfig).then(
         (outcome) => {
           if (!outcome.ok && outcome.reason === "not_paired") {
             toast.error("Printer belum di-pair", {

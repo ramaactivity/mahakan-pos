@@ -12,6 +12,7 @@ import {
 import { outlets } from "./outlets";
 import { users } from "./users";
 import { transactions } from "./transactions";
+import { employees } from "./employees";
 
 /**
  * Owner-issued one-time approval codes for void/refund. Generated on
@@ -94,6 +95,8 @@ export const approvalCodes = pgTable(
     requestedByUserId: uuid("requested_by_user_id")
       .notNull()
       .references(() => users.id),
+    /** Sesi AE-235 — crew who asked (the tablet login may be someone else). */
+    requestedByCrewId: uuid("requested_by_crew_id").references(() => employees.id),
 
     /** Reason staff entered when requesting. Echoed in email body. */
     reason: text("reason").notNull(),

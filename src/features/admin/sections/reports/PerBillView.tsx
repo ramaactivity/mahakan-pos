@@ -107,7 +107,9 @@ export function PerBillView() {
       { header: "Jam Pesan", value: (r) => wib(r.closedAt).time, width: 10 },
       { header: "Jam Bayar", value: (r) => (r.paidAt ? wib(r.paidAt).time : wib(r.closedAt).time), width: 10 },
       { header: "Lama Terbuka (mnt)", value: minutesOpen, fmt: "int", width: 12, total: false },
-      { header: "Kasir", value: (r) => r.userName ?? "-", width: 12 },
+      { header: "Crew Buka", value: (r) => r.openedCrew ?? "-", width: 12 },
+      { header: "Crew Terima Bayar", value: (r) => r.paidCrew ?? "-", width: 14 },
+      { header: "Akun Tablet", value: (r) => r.userName ?? "-", width: 12 },
       { header: "Tamu", value: (r) => r.customerName ?? "-", width: 14 },
       { header: "Item", value: (r) => r.items, width: 40, wrap: true },
       { header: "Metode Bayar", value: (r) => paymentMethodLabel(r.paymentMethod), width: 13 },
@@ -171,7 +173,9 @@ export function PerBillView() {
         "Jam Pesan": wib(r.closedAt).time,
         "Jam Bayar": r.paidAt ? wib(r.paidAt).time : wib(r.closedAt).time,
         "Lama Terbuka (mnt)": minutesOpen(r),
-        Kasir: r.userName ?? "-",
+        "Crew Buka": r.openedCrew ?? "-",
+        "Crew Terima Bayar": r.paidCrew ?? "-",
+        "Akun Tablet": r.userName ?? "-",
         Tamu: r.customerName ?? "-",
         Item: r.items,
         "Metode Bayar": paymentMethodLabel(r.paymentMethod),
@@ -404,7 +408,7 @@ function Body({
                   <tr>
                     <th className="px-3 py-2 text-left">No</th>
                     <th className="px-3 py-2 text-left">Dibuka / Dibayar</th>
-                    <th className="px-3 py-2 text-left">Kasir</th>
+                    <th className="px-3 py-2 text-left">Crew</th>
                     <th className="px-3 py-2 text-left">Customer / Item</th>
                     <th className="px-3 py-2 text-left">Payment</th>
                     <th className="px-3 py-2 text-right">Total</th>
@@ -459,7 +463,19 @@ function BillRowItem({ row: r }: { row: BillRow }) {
           </div>
         ) : null}
       </td>
-      <td className="px-3 py-2 text-neutral-700">{r.userName ?? "-"}</td>
+      <td className="px-3 py-2 text-neutral-700">
+        {r.openedCrew || r.paidCrew ? (
+          <>
+            <div>{r.openedCrew ?? "-"}</div>
+            {r.paidCrew && r.paidCrew !== r.openedCrew ? (
+              <div className="text-xs text-neutral-500">bayar ke {r.paidCrew}</div>
+            ) : null}
+            <div className="text-xs text-neutral-400">tablet: {r.userName ?? "-"}</div>
+          </>
+        ) : (
+          r.userName ?? "-"
+        )}
+      </td>
       <td className="px-3 py-2 text-neutral-700">
         <div>{r.customerName ?? "-"}</div>
         <div className="text-xs text-neutral-500">{r.items}</div>

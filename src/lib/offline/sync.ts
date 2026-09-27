@@ -47,7 +47,9 @@ async function runSync(): Promise<SyncSummary> {
     summary.attempted += 1;
     try {
       await markSyncing(row.id);
-      const res = await createTransaction(row.payload);
+      // Sesi AE-235 — rows queued before the crew picker have no crewId;
+      // the flag lets the server accept them instead of dropping a sale.
+      const res = await createTransaction({ ...row.payload, fromOfflineQueue: true });
       if (isOk(res)) {
         await deletePending(row.id);
         summary.succeeded += 1;

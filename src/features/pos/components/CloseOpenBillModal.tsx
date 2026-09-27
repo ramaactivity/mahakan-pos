@@ -17,6 +17,8 @@ import {
   type ReceiptConfig,
 } from "@/lib/printer/print-transaction";
 import { cn } from "@/lib/utils";
+import { useCrewPicker } from "@/features/crew/CrewPicker";
+import type { PosCrew } from "@/features/crew/types";
 
 interface CloseOpenBillModalProps {
   open: boolean;
@@ -26,6 +28,8 @@ interface CloseOpenBillModalProps {
   onClose: () => void;
   onClosed: (closedTrx: TransactionWithItems) => void;
   onOpenSettings: () => void;
+  /** Sesi AE-235 — crew already picked earlier in the same flow (Update + Bayar). */
+  presetCrew?: PosCrew | null;
 }
 
 const QUICK_AMOUNTS = [20_000, 50_000, 100_000, 200_000];
@@ -55,7 +59,9 @@ export function CloseOpenBillModal({
   onClose,
   onClosed,
   onOpenSettings,
+  presetCrew,
 }: CloseOpenBillModalProps) {
+  const pickCrew = useCrewPicker();
   // Sesi AE-36 — exclude 'split' karena split adalah sentinel value
   // server-side, bukan user-selectable di Close modal.
   const [paymentMethod, setPaymentMethod] = useState<
@@ -148,10 +154,16 @@ export function CloseOpenBillModal({
       return;
     }
     setSubmitting(true);
+    const crew = presetCrew ?? (pickCrew ? await pickCrew("Bayar & tutup bill") : undefined);
+    if (crew === null) {
+      setSubmitting(false);
+      return;
+    }
     const res = await closeOpenBill({
       transactionId: bill.id,
       paymentMethod,
       cashReceived: paymentMethod === "cash" ? cashReceived : null,
+      crewId: crew?.id,
     });
     if (!isOk(res)) {
       setError(res.error.message);
@@ -162,7 +174,7 @@ export function CloseOpenBillModal({
       `Open bill ${res.data.transactionNumber} di-close (${formatRupiah(res.data.total)})`,
     );
     if (receiptConfig) {
-      void printTickets(res.data, cashierName, ["customer"], receiptConfig).then(
+      void printTickets(res.data, crew?.name ?? cashierName, ["customer"], receiptConfig).then(
         (outcome) => {
           if (!outcome.ok && outcome.reason === "not_paired") {
             toast.error("Printer belum di-pair", {

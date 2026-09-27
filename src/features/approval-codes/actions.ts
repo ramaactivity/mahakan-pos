@@ -24,6 +24,7 @@ import {
 } from "./types";
 import { approvalResendWaitSeconds } from "@/features/approval-codes/resend-cooldown-db";
 import { resendCooldownMessage } from "@/features/approval-codes/resend-cooldown";
+import { crewMeta, crewSuffix, resolveCrew } from "@/features/crew/server";
 
 const BCRYPT_COST = 10;
 
@@ -126,6 +127,11 @@ export async function requestApprovalCode(
   if (reason.length < 3 || reason.length > 200) {
     return fail("INVALID_REASON", "Alasan 3-200 karakter");
   }
+  const crewCheck = await resolveCrew(session.user.outletId, input.crewId, {
+    allowMissing: input.fromBackOffice === true,
+  });
+  if (!crewCheck.ok) return fail(crewCheck.code, crewCheck.message);
+  const crew = crewCheck.crew;
 
   // Sesi AE-62o — kalau actionType="shift.rebalance", caller harus pakai
   // requestShiftRebalance dari @/features/shifts/rebalance-actions, bukan
@@ -206,6 +212,7 @@ export async function requestApprovalCode(
           targetTransactionId: transactionId,
           outletId: session.user.outletId,
           requestedByUserId: session.user.id,
+          requestedByCrewId: crew?.id ?? null,
           reason,
           expiresAt,
         })
@@ -237,7 +244,7 @@ export async function requestApprovalCode(
         transactionNumber: trx.transactionNumber,
         transactionTotal: trx.total,
         reason,
-        requestedByName: session.user.name,
+        requestedByName: crew ? `${crew.name} (tablet: ${session.user.name})` : session.user.name,
         requestedByRole: session.user.role,
         expiresAt,
         outletName: outletRow?.name ?? "Mahakan Coffee & Space",
@@ -263,7 +270,7 @@ export async function requestApprovalCode(
     entityType: "approval_code",
     entityId: inserted.id,
     payload: {
-      summary: `Request ${input.actionType === "pos.transaction.void" ? "void" : "refund"} TRX ${trx.transactionNumber} — kode terkirim ke ${maskedTargets} (${overallMode})`,
+      summary: `Request ${input.actionType === "pos.transaction.void" ? "void" : "refund"} TRX ${trx.transactionNumber} — kode terkirim ke ${maskedTargets} (${overallMode})${crewSuffix(crew)}`,
       context: {
         transactionNumber: trx.transactionNumber,
         actionType: input.actionType,
@@ -283,6 +290,7 @@ export async function requestApprovalCode(
     metadata: {
       outletId: session.user.outletId,
       actorRole: session.user.role,
+      ...crewMeta(crew),
     },
   });
 

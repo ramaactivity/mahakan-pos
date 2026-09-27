@@ -43,6 +43,7 @@ import { formatDuration } from "@/lib/duration";
 import { formatIndonesianTime } from "@/lib/date";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
+import { useCrewPicker } from "@/features/crew/CrewPicker";
 
 interface OpenBillPanelProps {
   cashierName: string;
@@ -80,6 +81,7 @@ export function OpenBillPanel({
   onCountChange,
   onBillPaid,
 }: OpenBillPanelProps) {
+  const pickCrew = useCrewPicker();
   const [bills, setBills] = useState<TransactionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
@@ -443,9 +445,15 @@ export function OpenBillPanel({
                   return;
                 }
                 setCancelSubmitting(true);
+                const crew = pickCrew ? await pickCrew("Batalkan open bill") : undefined;
+                if (crew === null) {
+                  setCancelSubmitting(false);
+                  return;
+                }
                 const res = await cancelOpenBill({
                   transactionId: cancellingBill.id,
                   reason: cancelReason.trim(),
+                  crewId: crew?.id,
                 });
                 setCancelSubmitting(false);
                 if (!isOk(res)) {

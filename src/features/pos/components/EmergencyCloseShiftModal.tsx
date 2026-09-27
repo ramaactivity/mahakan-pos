@@ -6,6 +6,7 @@ import { Button, Input, Modal, toast } from "@/components/ui";
 import { ApproverOverrideModal } from "./ApproverOverrideModal";
 import { forceCloseShift, isOk } from "@/features/shifts";
 import { formatRupiah, parseRupiah } from "@/lib/format";
+import { useCrewPicker } from "@/features/crew/CrewPicker";
 
 interface Props {
   open: boolean;
@@ -36,6 +37,7 @@ export function EmergencyCloseShiftModal({
   onClose,
   onClosed,
 }: Props) {
+  const pickCrew = useCrewPicker();
   const [actualCash, setActualCash] = useState("");
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -67,11 +69,17 @@ export function EmergencyCloseShiftModal({
     if (!formValid || submitting) return;
     setSubmitting(true);
     setError(null);
+    const crew = pickCrew ? await pickCrew("Tutup paksa shift") : undefined;
+    if (crew === null) {
+      setSubmitting(false);
+      return;
+    }
     const res = await forceCloseShift({
       shiftId,
       actualCash: parsedCash,
       reason: reason.trim(),
       approverToken,
+      crewId: crew?.id,
     });
     setSubmitting(false);
     if (!isOk(res)) {

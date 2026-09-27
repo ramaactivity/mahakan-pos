@@ -350,6 +350,14 @@ export function AuditLogSection({ viewerRole }: AuditLogSectionProps) {
   );
 }
 
+/** Sesi AE-235 — crew who did the action on the POS (tablet login is userName). */
+function crewName(r: AuditLogRow): string | null {
+  const crew = r.metadata?.crew;
+  return crew && typeof crew === "object" && "name" in crew && typeof crew.name === "string"
+    ? crew.name
+    : null;
+}
+
 function auditColumns(
   expanded: string | null,
   setExpanded: (id: string | null) => void,
@@ -389,6 +397,11 @@ function auditColumns(
           ) : (
             <span className="text-neutral-400">—</span>
           )}
+          {crewName(r) ? (
+            <div className="mt-1 text-[11px] font-medium text-neutral-800">
+              crew: {crewName(r)}
+            </div>
+          ) : null}
           {r.approverName ? (
             <div className="mt-1 text-[11px] text-mahakan-green-700">
               ✓ approved by {r.approverName}

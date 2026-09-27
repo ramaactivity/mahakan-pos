@@ -18,6 +18,7 @@ import { isOk, type TransactionWithItems } from "@/features/transactions";
 import type { SplitPaymentBreakdown } from "@/features/transactions/types";
 import { formatRupiah } from "@/lib/format";
 import { paymentMethodLabel } from "@/lib/payment-method";
+import { useCrewPicker } from "@/features/crew/CrewPicker";
 
 interface TransactionCorrectionModalProps {
   open: boolean;
@@ -78,6 +79,7 @@ export function TransactionCorrectionModal({
   onClose,
   onSubmitted,
 }: TransactionCorrectionModalProps) {
+  const pickCrew = useCrewPicker();
   const [correctedPaymentMethod, setCorrectedPaymentMethod] =
     useState<PaymentMethod>("cash");
   const [correctedTotal, setCorrectedTotal] = useState("");
@@ -220,7 +222,13 @@ export function TransactionCorrectionModal({
       }
     }
     setSubmitting(true);
+    const crew = pickCrew ? await pickCrew("Minta koreksi transaksi") : undefined;
+    if (crew === null) {
+      setSubmitting(false);
+      return;
+    }
     const res = await requestTransactionCorrection({
+      ...(pickCrew ? { crewId: crew?.id } : { fromBackOffice: true }),
       transactionId: trx.id,
       correctedPaymentMethod,
       correctedTotal: totalNum,

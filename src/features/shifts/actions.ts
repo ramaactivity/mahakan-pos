@@ -20,6 +20,7 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { consumeApproverToken } from "@/lib/auth/approver";
 import { logAudit } from "@/lib/audit/logger";
+import { crewMeta, crewSuffix, resolveCrew } from "@/features/crew/server";
 import { logAndSanitize } from "@/lib/server-error";
 import { todayWibRangeUtc, toJakartaDateOnly } from "@/lib/date";
 import { jakartaMinutesOf } from "@/lib/tz";
@@ -63,6 +64,7 @@ import {
 
 const openShiftSchema = z.object({
   openingCash: z.number().int().min(0).max(99_999_999),
+  crewId: z.uuid().nullish(),
 });
 
 const moneyOptional = z
@@ -74,6 +76,7 @@ const moneyOptional = z
   .transform((n) => (typeof n === "number" ? n : null));
 
 const closeShiftSchema = z.object({
+  crewId: z.uuid().nullish(),
   shiftId: z.uuid(),
   actualCash: z.number().int().min(0).max(99_999_999),
   notes: z.string().max(500).nullable(),
@@ -201,6 +204,9 @@ export async function openShift(
       parsed.error.issues[0]?.message ?? "Input tidak valid",
     );
   }
+  const openCrewCheck = await resolveCrew(session.user.outletId, parsed.data.crewId);
+  if (!openCrewCheck.ok) return fail(openCrewCheck.code, openCrewCheck.message);
+  const openCrew = openCrewCheck.crew;
 
   /* Sesi AE-63 phase10 — Pre-check OUTLET active shift (any user). Schema
    * partial unique index ux_shifts_outlet_active is hard guarantee, but
@@ -273,12 +279,13 @@ export async function openShift(
       entityType: "shift",
       entityId: row.id,
       payload: {
-        summary: `Buka shift — kas awal ${parsed.data.openingCash.toLocaleString("id-ID")}`,
+        summary: `Buka shift — kas awal ${parsed.data.openingCash.toLocaleString("id-ID")}${crewSuffix(openCrew)}`,
         after: { openingCash: parsed.data.openingCash },
       },
       metadata: {
         outletId: session.user.outletId,
         actorRole: session.user.role,
+        ...crewMeta(openCrew),
       },
     }).catch((e) => console.error("[audit shift.open]", e));
     return ok(row);
@@ -459,6 +466,12 @@ export async function closeShift(
     );
   }
   const v = parsed.data;
+  // Owner force-close (back office) has no crew at the tablet.
+  const closeCrewCheck = await resolveCrew(session.user.outletId, v.crewId, {
+    allowMissing: session.user.role === "owner",
+  });
+  if (!closeCrewCheck.ok) return fail(closeCrewCheck.code, closeCrewCheck.message);
+  const closeCrew = closeCrewCheck.crew;
 
   const current = await fetchShiftById(v.shiftId);
   if (!current) return fail("NOT_FOUND", "Shift tidak ditemukan");
@@ -830,6 +843,24 @@ export async function closeShift(
     })();
   }
 
+  /* Sesi AE-235 — closing had no audit event, so nobody could tell who
+   * counted the drawer (shifts only stores the opener). */
+  await logAudit({
+    eventType: "shift.close",
+    userId: session.user.id,
+    entityType: "shift",
+    entityId: updated.id,
+    payload: {
+      summary: `Tutup shift — kas dihitung ${v.actualCash.toLocaleString("id-ID")}, selisih ${(updated.variance ?? 0).toLocaleString("id-ID")}${crewSuffix(closeCrew)}`,
+      context: { actualCash: v.actualCash, variance: updated.variance, expectedCash },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+      ...crewMeta(closeCrew),
+    },
+  });
+
   return ok({
     shift: updated,
     summary: {
@@ -874,8 +905,16 @@ export async function forceCloseShift(input: {
    * seharian hanya karena Owner sedang tidak di depan komputer.
    */
   approverToken?: string | null;
+  /** Sesi AE-235 — crew at the tablet (the session is usually a staff login). */
+  crewId?: string | null;
 }): Promise<ApiResult<CloseShiftResult>> {
   const session = await requireSession();
+  // Validate the crew BEFORE consuming the owner's PIN token, so a bad crew
+  // pick does not burn the approval. closeShift re-checks it.
+  const forceCrewCheck = await resolveCrew(session.user.outletId, input.crewId, {
+    allowMissing: session.user.role === "owner",
+  });
+  if (!forceCrewCheck.ok) return fail(forceCrewCheck.code, forceCrewCheck.message);
   let approverId: string | null = null;
   if (!hasPermission(session.user.role, "shift.force_close")) {
     if (!input.approverToken) {
@@ -911,6 +950,7 @@ export async function forceCloseShift(input: {
     actualCash: Math.round(input.actualCash),
     notes: `[TUTUP PAKSA owner] ${reason}`,
     handoverMessage: null,
+    crewId: input.crewId,
   });
   if (!res.success) return res;
 

@@ -15,6 +15,7 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { crewMeta, crewSuffix, resolveCrew } from "@/features/crew/server";
 import { logAndSanitize } from "@/lib/server-error";
 import { jakartaDateOf, todayJakarta } from "@/lib/tz";
 import { sendEmail } from "@/lib/email/send";
@@ -59,6 +60,8 @@ async function requireSession() {
 // ============================================================
 
 const requestSchema = z.object({
+  /** Sesi AE-235 — crew (employees.id) asking; required from the POS. */
+  crewId: z.uuid().nullish(),
   shiftId: z.uuid(),
   /** Sumber request. Default 'close_shift' (kasir saat close). Manager
    * backoffice pakai 'manager_backoffice' (sesi Phase 3 future). */
@@ -232,6 +235,7 @@ export async function requestShiftRebalance(input: {
   correctedEdcSettlement?: number | null;
   reason: string;
   photoUrl?: string | null;
+  crewId?: string | null;
 }): Promise<
   ApiResult<{
     rebalanceId: string;
@@ -253,6 +257,11 @@ export async function requestShiftRebalance(input: {
     );
   }
   const v = parsed.data;
+  const crewCheck = await resolveCrew(session.user.outletId, v.crewId, {
+    allowMissing: v.source === "manager_backoffice",
+  });
+  if (!crewCheck.ok) return fail(crewCheck.code, crewCheck.message);
+  const crew = crewCheck.crew;
 
   // 1. Validate shift
   const [shift] = await db
@@ -346,6 +355,7 @@ export async function requestShiftRebalance(input: {
         targetShiftRebalanceId: r.id,
         outletId: shift.outletId,
         requestedByUserId: session.user.id,
+        requestedByCrewId: crew?.id ?? null,
         reason: v.reason,
         expiresAt,
       });
@@ -416,7 +426,7 @@ export async function requestShiftRebalance(input: {
         cashierName: cashierRow?.name ?? "Kasir",
         changes,
         reason: v.reason,
-        requestedByName: session.user.name,
+        requestedByName: crew ? `${crew.name} (tablet: ${session.user.name})` : session.user.name,
         requestedByRole: session.user.role,
         source: v.source,
         expiresAt,
@@ -440,7 +450,7 @@ export async function requestShiftRebalance(input: {
     entityType: "shift_rebalance",
     entityId: rebalanceId,
     payload: {
-      summary: `Request rebalancing shift ${shift.id.slice(0, 8)}: ${v.reason}`,
+      summary: `Request rebalancing shift ${shift.id.slice(0, 8)}: ${v.reason}${crewSuffix(crew)}`,
       context: {
         shiftId: shift.id,
         source: v.source,
@@ -451,7 +461,7 @@ export async function requestShiftRebalance(input: {
         recipientCount: recipients.emails.length,
       },
     },
-    metadata: { outletId: shift.outletId, actorRole: session.user.role },
+    metadata: { outletId: shift.outletId, actorRole: session.user.role, ...crewMeta(crew) },
   });
 
   return ok({

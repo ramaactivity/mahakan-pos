@@ -326,6 +326,7 @@ import {
 } from "./types";
 import type { MenuItem } from "@/features/menu";
 import { POS_ORIGIN } from "@/features/cash/drawer-origin";
+import { crewMeta, crewSuffix, resolveCrew } from "@/features/crew/server";
 import {
   diffAuditLines,
   formatChanges,
@@ -495,7 +496,7 @@ export async function createTransaction(
   // Plus: menu + categories combined into single LEFT JOIN query.
   const menuItemIds = Array.from(new Set(v.items.map((i) => i.menuItemId)));
 
-  const [idempotentExisting, shift, menuRowsWithCat, customerResult] =
+  const [idempotentExisting, shift, menuRowsWithCat, customerResult, crewCheck] =
     await Promise.all([
       v.clientRefId
         ? fetchTransactionByClientRefId(v.clientRefId)
@@ -520,6 +521,11 @@ export async function createTransaction(
             name: v.customerName ?? `Member ${v.customerPhone}`,
           })
         : Promise.resolve(null),
+      /* Sesi AE-235 — crew chip. Offline-queue replays may predate the
+       * picker, so they are accepted without a crew (column stays NULL). */
+      resolveCrew(session.user.outletId, v.crewId, {
+        allowMissing: v.fromOfflineQueue === true,
+      }),
     ]);
 
   // Idempotent hit — return early
@@ -527,6 +533,11 @@ export async function createTransaction(
     const full = await fetchTransactionById(idempotentExisting.id);
     if (full) return ok(full);
   }
+  // Offline replays never fail on the crew — losing a sale is worse than a blank name.
+  if (!crewCheck.ok && v.fromOfflineQueue !== true) {
+    return fail(crewCheck.code, crewCheck.message);
+  }
+  const crew = crewCheck.ok ? crewCheck.crew : null;
 
   // Shift validation
   if (!shift) return fail("SHIFT_NOT_FOUND", "Shift tidak ditemukan");
@@ -826,6 +837,9 @@ export async function createTransaction(
           status: "paid",
           discountApprover: discountApproverId,
           promoId: v.promoId ?? null,
+          openedCrewId: crew?.id ?? null,
+          // saveAsOpenBill (deferStock) is not paid yet — closeOpenBill sets it.
+          paidCrewId: opts.deferStock ? null : (crew?.id ?? null),
         })
         .returning();
 
@@ -1018,6 +1032,7 @@ export async function createTransaction(
             cashReceived: s.paymentMethod === "cash" ? s.cashReceived : null,
             cashChange: s.paymentMethod === "cash" ? s.cashChange : null,
             splitKind: "nominal" as const,
+            crewId: crew?.id ?? null,
           })),
         );
       }
@@ -1217,6 +1232,12 @@ export async function voidTransaction(
     );
   }
   const v = parsed.data;
+  /* Sesi AE-235 — crew is required on the POS. Back-office calls act as the
+   * logged-in user; approvals carry the requesting crew from the code. */
+  const voidCrewQueue = v.directOwnerApprove === true || v.fromBackOffice === true;
+  const voidCrewCheck = await resolveCrew(session.user.outletId, v.crewId, { allowMissing: voidCrewQueue });
+  if (!voidCrewCheck.ok && !voidCrewQueue) return fail(voidCrewCheck.code, voidCrewCheck.message);
+  const voidCrew = voidCrewCheck.ok ? voidCrewCheck.crew : null;
 
   // Authorization: outlet flag picks PIN-mode (legacy ApproverOverrideModal,
   // Owner+Manager) or code-mode (Owner-only via emailed 6-digit). Anyone with
@@ -1344,7 +1365,7 @@ export async function voidTransaction(
     entityType: "transaction",
     entityId: updated.id,
     payload: {
-      summary: `Void TRX ${updated.transactionNumber} (${v.reason})`,
+      summary: `Void TRX ${updated.transactionNumber} (${v.reason})${crewSuffix(voidCrew)}`,
       context: {
         transactionNumber: updated.transactionNumber,
         total: updated.total,
@@ -1355,6 +1376,7 @@ export async function voidTransaction(
     metadata: {
       outletId: session.user.outletId,
       actorRole: session.user.role,
+      ...crewMeta(voidCrew),
     },
   });
 
@@ -1416,6 +1438,12 @@ export async function refundTransaction(
     );
   }
   const v = parsed.data;
+  /* Sesi AE-235 — crew is required on the POS. Back-office calls act as the
+   * logged-in user; approvals carry the requesting crew from the code. */
+  const refundCrewQueue = v.directOwnerApprove === true || v.fromBackOffice === true;
+  const refundCrewCheck = await resolveCrew(session.user.outletId, v.crewId, { allowMissing: refundCrewQueue });
+  if (!refundCrewCheck.ok && !refundCrewQueue) return fail(refundCrewCheck.code, refundCrewCheck.message);
+  const refundCrew = refundCrewCheck.ok ? refundCrewCheck.crew : null;
 
   // Sesi AE-62v — pre-resolve credential mode, defer consume ke INSIDE tx.
   const prepared = await prepareVoidRefundAuth(
@@ -1625,7 +1653,7 @@ export async function refundTransaction(
     entityType: "transaction",
     entityId: result.id,
     payload: {
-      summary: `Refund TRX ${result.transactionNumber} Rp${result.total.toLocaleString("id-ID")} (${v.reason})`,
+      summary: `Refund TRX ${result.transactionNumber} Rp${result.total.toLocaleString("id-ID")} (${v.reason})${crewSuffix(refundCrew)}`,
       context: {
         transactionNumber: result.transactionNumber,
         total: result.total,
@@ -1636,6 +1664,7 @@ export async function refundTransaction(
     metadata: {
       outletId: session.user.outletId,
       actorRole: session.user.role,
+      ...crewMeta(refundCrew),
     },
   });
 
@@ -1711,6 +1740,12 @@ export async function refundTransactionPartial(
     );
   }
   const v = parsed.data;
+  /* Sesi AE-235 — crew is required on the POS. Back-office calls act as the
+   * logged-in user; approvals carry the requesting crew from the code. */
+  const partialCrewQueue = v.fromBackOffice === true;
+  const partialCrewCheck = await resolveCrew(session.user.outletId, v.crewId, { allowMissing: partialCrewQueue });
+  if (!partialCrewCheck.ok && !partialCrewQueue) return fail(partialCrewCheck.code, partialCrewCheck.message);
+  const partialCrew = partialCrewCheck.ok ? partialCrewCheck.crew : null;
 
   /* Sesi AE-62v — idempotency: kalau clientRefId provided dan refund_event
    * dengan id ini sudah ada, return existing (cepat, tanpa re-execute side
@@ -1998,7 +2033,7 @@ export async function refundTransactionPartial(
     entityType: "transaction",
     entityId: result.transaction.id,
     payload: {
-      summary: `Refund parsial TRX ${result.transaction.transactionNumber} Rp${computation.totalRefunded.toLocaleString("id-ID")} (${v.reason})`,
+      summary: `Refund parsial TRX ${result.transaction.transactionNumber} Rp${computation.totalRefunded.toLocaleString("id-ID")} (${v.reason})${crewSuffix(partialCrew)}`,
       context: {
         transactionNumber: result.transaction.transactionNumber,
         eventId: result.eventId,
@@ -2013,6 +2048,7 @@ export async function refundTransactionPartial(
     metadata: {
       outletId: session.user.outletId,
       actorRole: session.user.role,
+      ...crewMeta(partialCrew),
     },
   });
 
@@ -2308,7 +2344,12 @@ export async function editOpenBill(
     );
   }
 
-  const current = await fetchTransactionById(v.transactionId);
+  const [current, editCrewCheck] = await Promise.all([
+    fetchTransactionById(v.transactionId),
+    resolveCrew(session.user.outletId, v.crewId),
+  ]);
+  if (!editCrewCheck.ok) return fail(editCrewCheck.code, editCrewCheck.message);
+  const editCrew = editCrewCheck.crew;
   if (!current) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
   if (current.status !== "open") {
     return fail(
@@ -2706,7 +2747,7 @@ export async function editOpenBill(
       entityType: "transaction",
       entityId: v.transactionId,
       payload: {
-        summary: summaryParts.join(" — "),
+        summary: summaryParts.join(" — ") + crewSuffix(editCrew),
         before: {
           itemCount: current.items.length,
           total: current.total,
@@ -2736,6 +2777,7 @@ export async function editOpenBill(
       metadata: {
         outletId: session.user.outletId,
         actorRole: session.user.role,
+        ...crewMeta(editCrew),
       },
     });
 
@@ -2861,6 +2903,7 @@ export async function saveAsOpenBill(
      * gerbang compliment, padahal PIN-nya sudah benar di layar. */
     complimentPin: input.complimentPin,
     promoId: input.promoId ?? null,
+    crewId: input.crewId,
   };
   // Skip earn here — bill not yet paid. closeOpenBill fires earn when the
   // bill actually transitions to status="paid".
@@ -2893,14 +2936,17 @@ export async function saveAsOpenBill(
 
   // Sesi AE-34 — fire-and-forget audit log (existing pattern di createTransaction).
   // Audit advisory, tolerant brief delay; tidak perlu blocking response.
-  runAfterResponse(() =>
-    logAudit({
+  runAfterResponse(async () => {
+    // createTransaction already validated the crew; re-read it for the name.
+    const crewCheck = await resolveCrew(session.user.outletId, input.crewId, { allowMissing: true });
+    const crew = crewCheck.ok ? crewCheck.crew : null;
+    await logAudit({
       eventType: "transaction.open_bill.create",
       userId: session.user.id,
       entityType: "transaction",
       entityId: created.data.id,
       payload: {
-        summary: `Open bill ${created.data.transactionNumber} disimpan (${created.data.customerName ?? `Pager ${created.data.pagerNumber}`}, total Rp${created.data.total.toLocaleString("id-ID")}) — ${formatChanges(toAuditLines(created.data.items))}`,
+        summary: `Open bill ${created.data.transactionNumber} disimpan (${created.data.customerName ?? `Pager ${created.data.pagerNumber}`}, total Rp${created.data.total.toLocaleString("id-ID")}) — ${formatChanges(toAuditLines(created.data.items))}${crewSuffix(crew)}`,
         context: {
           transactionNumber: created.data.transactionNumber,
           total: created.data.total,
@@ -2911,8 +2957,10 @@ export async function saveAsOpenBill(
       metadata: {
         outletId: session.user.outletId,
         actorRole: session.user.role,
+        ...crewMeta(crew),
       },
-    }), "audit-open-bill");
+    });
+  }, "audit-open-bill");
 
   // Sesi AE-34 — skip fetchTransactionById (yang trigger 3 round-trips:
   // select trx + items + mods + customer). created.data sudah lengkap
@@ -2937,7 +2985,12 @@ export async function closeOpenBill(
 ): Promise<ApiResult<TransactionWithItems>> {
   const session = await requireSession();
 
-  const current = await fetchTransactionById(input.transactionId);
+  const [current, closeCrewCheck] = await Promise.all([
+    fetchTransactionById(input.transactionId),
+    resolveCrew(session.user.outletId, input.crewId),
+  ]);
+  if (!closeCrewCheck.ok) return fail(closeCrewCheck.code, closeCrewCheck.message);
+  const closeCrew = closeCrewCheck.crew;
   if (!current) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
   if (current.status !== "open") {
     return fail(
@@ -3144,6 +3197,7 @@ export async function closeOpenBill(
             input.paymentMethod === "cash" ? input.cashReceived : null,
           cashChange: freshCashChange,
           splitKind: "nominal",
+          crewId: closeCrew?.id ?? null,
         });
         await tx
           .update(transactions)
@@ -3153,6 +3207,7 @@ export async function closeOpenBill(
             cashReceived: null,
             cashChange: null,
             stockDeductedAt: stockDeductedAtFinal,
+            paidCrewId: closeCrew?.id ?? null,
             updatedAt: finalUpdatedAt,
           })
           .where(eq(transactions.id, input.transactionId));
@@ -3171,6 +3226,7 @@ export async function closeOpenBill(
             cashChange:
               input.paymentMethod === "cash" ? freshCashChange : null,
             stockDeductedAt: stockDeductedAtFinal,
+            paidCrewId: closeCrew?.id ?? null,
             updatedAt: finalUpdatedAt,
           })
           .where(eq(transactions.id, input.transactionId));
@@ -3212,7 +3268,7 @@ export async function closeOpenBill(
     entityType: "transaction",
     entityId: input.transactionId,
     payload: {
-      summary: `Close open bill ${current.transactionNumber} via ${input.paymentMethod} (Rp${current.total.toLocaleString("id-ID")})${input.paymentMethod === "cash" ? ` — terima Rp${(input.cashReceived ?? 0).toLocaleString("id-ID")}, kembali Rp${(cashChange ?? 0).toLocaleString("id-ID")}` : ""} — ${formatChanges(toAuditLines(current.items))}`,
+      summary: `Close open bill ${current.transactionNumber} via ${input.paymentMethod} (Rp${current.total.toLocaleString("id-ID")})${input.paymentMethod === "cash" ? ` — terima Rp${(input.cashReceived ?? 0).toLocaleString("id-ID")}, kembali Rp${(cashChange ?? 0).toLocaleString("id-ID")}` : ""} — ${formatChanges(toAuditLines(current.items))}${crewSuffix(closeCrew)}`,
       context: {
         transactionNumber: current.transactionNumber,
         paymentMethod: input.paymentMethod,
@@ -3230,6 +3286,7 @@ export async function closeOpenBill(
     metadata: {
       outletId: session.user.outletId,
       actorRole: session.user.role,
+      ...crewMeta(closeCrew),
     },
   });
 
@@ -3309,6 +3366,9 @@ export async function cancelOpenBill(
     );
   }
   const v = parsed.data;
+  const cancelCrewCheck = await resolveCrew(session.user.outletId, v.crewId);
+  if (!cancelCrewCheck.ok) return fail(cancelCrewCheck.code, cancelCrewCheck.message);
+  const cancelCrew = cancelCrewCheck.crew;
 
   let updated: Transaction;
   let restoredIngredientIds: string[] = [];
@@ -3421,7 +3481,7 @@ export async function cancelOpenBill(
     entityType: "transaction",
     entityId: updated.id,
     payload: {
-      summary: `Cancel open bill ${updated.transactionNumber}: ${v.reason}`,
+      summary: `Cancel open bill ${updated.transactionNumber}: ${v.reason}${crewSuffix(cancelCrew)}`,
       context: {
         transactionNumber: updated.transactionNumber,
         reason: v.reason,
@@ -3430,6 +3490,7 @@ export async function cancelOpenBill(
     metadata: {
       outletId: session.user.outletId,
       actorRole: session.user.role,
+      ...crewMeta(cancelCrew),
     },
   });
 
@@ -3522,7 +3583,12 @@ export async function addSplitPayment(
   }
   const v = parsed.data;
 
-  const current = await fetchTransactionById(v.transactionId);
+  const [current, splitCrewCheck] = await Promise.all([
+    fetchTransactionById(v.transactionId),
+    resolveCrew(session.user.outletId, v.crewId),
+  ]);
+  if (!splitCrewCheck.ok) return fail(splitCrewCheck.code, splitCrewCheck.message);
+  const splitCrew = splitCrewCheck.crew;
   if (!current) return fail("NOT_FOUND", "Transaksi tidak ditemukan");
   if (current.status !== "open") {
     return fail(
@@ -3687,6 +3753,7 @@ export async function addSplitPayment(
           cashReceived: v.paymentMethod === "cash" ? v.cashReceived : null,
           cashChange,
           splitKind: v.splitKind,
+          crewId: splitCrew?.id ?? null,
         })
         .returning();
 
@@ -3710,6 +3777,7 @@ export async function addSplitPayment(
             paymentMethod: "split",
             cashReceived: null,
             cashChange: null,
+            paidCrewId: splitCrew?.id ?? null,
             updatedAt: new Date(),
           })
           .where(eq(transactions.id, v.transactionId));
@@ -3754,7 +3822,7 @@ export async function addSplitPayment(
       entityType: "transaction",
       entityId: v.transactionId,
       payload: {
-        summary: `Split ${v.splitKind} Rp${v.amount.toLocaleString("id-ID")} via ${v.paymentMethod} pada ${current.transactionNumber}`,
+        summary: `Split ${v.splitKind} Rp${v.amount.toLocaleString("id-ID")} via ${v.paymentMethod} pada ${current.transactionNumber}${crewSuffix(splitCrew)}`,
         context: {
           transactionNumber: current.transactionNumber,
           amount: v.amount,
@@ -3768,6 +3836,7 @@ export async function addSplitPayment(
       metadata: {
         outletId: session.user.outletId,
         actorRole: session.user.role,
+        ...crewMeta(splitCrew),
       },
     }), "audit-split");
 

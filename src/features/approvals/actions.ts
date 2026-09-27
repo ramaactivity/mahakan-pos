@@ -97,6 +97,7 @@ export async function directApprove(input: {
         consumedAt: approvalCodes.consumedAt,
         revokedAt: approvalCodes.revokedAt,
         outletId: approvalCodes.outletId,
+        requestedByCrewId: approvalCodes.requestedByCrewId,
       })
       .from(approvalCodes)
       .where(eq(approvalCodes.id, input.sourceId))
@@ -127,6 +128,7 @@ export async function directApprove(input: {
         transactionId: codeRow.targetTransactionId,
         reason: codeRow.reason,
         directOwnerApprove: true,
+        crewId: codeRow.requestedByCrewId,
       });
       if (!isOk(res)) return fail(res.error.code, res.error.message);
     } else {
@@ -134,6 +136,7 @@ export async function directApprove(input: {
         transactionId: codeRow.targetTransactionId,
         reason: codeRow.reason,
         directOwnerApprove: true,
+        crewId: codeRow.requestedByCrewId,
       });
       if (!isOk(res)) return fail(res.error.code, res.error.message);
     }
@@ -180,6 +183,7 @@ export async function approveVoidRefundWithCode(input: {
       consumedAt: approvalCodes.consumedAt,
       revokedAt: approvalCodes.revokedAt,
       outletId: approvalCodes.outletId,
+      requestedByCrewId: approvalCodes.requestedByCrewId,
     })
     .from(approvalCodes)
     .where(eq(approvalCodes.id, input.approvalCodeId))
@@ -200,6 +204,8 @@ export async function approveVoidRefundWithCode(input: {
       transactionId: codeRow.targetTransactionId,
       reason: codeRow.reason,
       approvalCode: codeTrim,
+      crewId: codeRow.requestedByCrewId,
+      fromBackOffice: true,
     });
     if (!isOk(res)) return fail(res.error.code, res.error.message);
     return ok({ kind: "void", sourceId: input.approvalCodeId });
@@ -209,6 +215,8 @@ export async function approveVoidRefundWithCode(input: {
       transactionId: codeRow.targetTransactionId,
       reason: codeRow.reason,
       approvalCode: codeTrim,
+      crewId: codeRow.requestedByCrewId,
+      fromBackOffice: true,
     });
     if (!isOk(res)) return fail(res.error.code, res.error.message);
     return ok({ kind: "refund", sourceId: input.approvalCodeId });

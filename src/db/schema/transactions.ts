@@ -15,6 +15,7 @@ import { users } from "./users";
 import { shifts } from "./shifts";
 import { menuItems } from "./menu";
 import { customers } from "./customers";
+import { employees } from "./employees";
 
 export const transactions = pgTable(
   "transactions",
@@ -128,6 +129,13 @@ export const transactions = pgTable(
      * untuk closeOpenBill / editOpenBill / cancelOpenBill route ke flow
      * lama (restore stock) vs flow baru (no-op). */
     stockDeductedAt: timestamp("stock_deducted_at", { withTimezone: true }),
+
+    /* Sesi AE-235 — the tablet stays logged in as the shift opener while
+     * different crew serve. These record who actually served: who opened /
+     * rang up the order, and who took the payment. NULL = pre-AE-235 or an
+     * offline-queue replay from an old client. */
+    openedCrewId: uuid("opened_crew_id").references(() => employees.id),
+    paidCrewId: uuid("paid_crew_id").references(() => employees.id),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

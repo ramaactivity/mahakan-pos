@@ -1064,6 +1064,9 @@ export async function fetchBillPerformance(
       cashChange: transactions.cashChange,
       discountAmount: transactions.discountAmount,
       discountReason: transactions.discountReason,
+      // Sesi AE-235 — who actually served (the tablet login is cashierName).
+      openedCrewName: sql<string | null>`(select coalesce(nullif(trim(e.nickname), ''), e.full_name) from employees e where e.id = "transactions"."opened_crew_id")`,
+      paidCrewName: sql<string | null>`(select coalesce(nullif(trim(e.nickname), ''), e.full_name) from employees e where e.id = "transactions"."paid_crew_id")`,
     })
     .from(transactions)
     .leftJoin(users, eq(users.id, transactions.cashierId))
@@ -1136,6 +1139,8 @@ export async function fetchBillPerformance(
       cashChange: t.cashChange === null ? null : Number(t.cashChange),
       discountAmount: Number(t.discountAmount),
       discountReason: t.discountReason,
+      openedCrew: t.openedCrewName,
+      paidCrew: t.paidCrewName,
       transactionId: t.id,
       transactionNumber: t.transactionNumber,
       closedAt: t.createdAt.toISOString(),

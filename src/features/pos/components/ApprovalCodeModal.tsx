@@ -10,6 +10,7 @@ import { Button, Input, Modal, toast } from "@/components/ui";
 import { requestApprovalCode } from "@/features/approval-codes/actions";
 import { isOk, type ApprovalActionType } from "@/features/approval-codes/types";
 import { formatRupiah } from "@/lib/format";
+import { useCrewPicker } from "@/features/crew/CrewPicker";
 
 interface ApprovalCodeModalProps {
   open: boolean;
@@ -34,6 +35,7 @@ export function ApprovalCodeModal({
   onClose,
   onApproved,
 }: ApprovalCodeModalProps) {
+  const pickCrew = useCrewPicker();
   const [step, setStep] = useState<Step>("request");
   const [requesting, setRequesting] = useState(false);
   const [emailMasked, setEmailMasked] = useState<string>("");
@@ -65,10 +67,16 @@ export function ApprovalCodeModal({
     if (requesting) return;
     setRequesting(true);
     setError(null);
+    const crew = pickCrew ? await pickCrew("Minta kode persetujuan owner") : undefined;
+    if (crew === null) {
+      setRequesting(false);
+      return;
+    }
     const res = await requestApprovalCode({
       transactionId,
       actionType,
       reason,
+      ...(pickCrew ? { crewId: crew?.id } : { fromBackOffice: true }),
     });
     setRequesting(false);
     if (!isOk(res)) {

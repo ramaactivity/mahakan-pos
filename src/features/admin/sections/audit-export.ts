@@ -139,6 +139,8 @@ export interface AuditExportRecord {
   activity: string;
   eventType: string;
   actor: string;
+  /** Sesi AE-235 — crew who did it on the POS; actor is the tablet login. */
+  crew: string;
   role: string;
   approver: string;
   trxNo: string;
@@ -215,6 +217,7 @@ export function toAuditRecord(r: AuditLogRow): AuditExportRecord {
     activity: eventLabel(r.eventType),
     eventType: r.eventType,
     actor: r.userName ?? "",
+    crew: str(asObj(asObj(r.metadata).crew).name),
     role: ROLE_LABEL[r.userRole ?? ""] ?? r.userRole ?? "",
     approver: r.approverName ?? "",
     trxNo: str(ctx.transactionNumber),
@@ -249,7 +252,8 @@ export function auditRecordToCsvRow(x: AuditExportRecord): ExportRow {
     "Jam (WIB)": x.time,
     Kategori: x.category,
     Aktivitas: x.activity,
-    Pelaku: x.actor,
+    Crew: x.crew,
+    "Akun Tablet / Pelaku": x.actor,
     Peran: x.role,
     "Disetujui oleh": x.approver,
     "No. Transaksi": x.trxNo,
@@ -284,7 +288,8 @@ const LOG_COLS: Array<StyledCol<AuditExportRecord>> = [
   { header: "Jam (WIB)", value: (x) => x.time, width: 10 },
   { header: "Kategori", value: (x) => x.category, width: 13 },
   { header: "Aktivitas", value: (x) => x.activity, width: 22, wrap: true },
-  { header: "Pelaku", value: (x) => x.actor, width: 14 },
+  { header: "Crew", value: (x) => x.crew || null, width: 12 },
+  { header: "Akun Tablet / Pelaku", value: (x) => x.actor, width: 14 },
   { header: "Peran", value: (x) => x.role, width: 11 },
   { header: "Disetujui oleh", value: (x) => x.approver || null, width: 14 },
   { header: "No. Transaksi", value: (x) => x.trxNo || null, width: 20 },
@@ -308,7 +313,8 @@ const REDUCED_COLS: Array<StyledCol<AuditExportRecord>> = [
   noCol,
   { header: "Tanggal", value: (x) => x.date, fmt: "date", width: 12 },
   { header: "Jam (WIB)", value: (x) => x.time, width: 10 },
-  { header: "Pelaku", value: (x) => x.actor, width: 14 },
+  { header: "Crew", value: (x) => x.crew || null, width: 12 },
+  { header: "Akun Tablet", value: (x) => x.actor, width: 14 },
   { header: "No. Transaksi", value: (x) => x.trxNo, width: 20 },
   { header: "Tamu", value: (x) => x.customer || null, width: 14 },
   { header: "Total Sebelum", value: (x) => x.totalBefore, fmt: "money", width: 14, total: false },
@@ -337,7 +343,8 @@ interface ActorSummary {
 function summarizeByActor(recs: AuditExportRecord[]): ActorSummary[] {
   const map = new Map<string, ActorSummary>();
   for (const x of recs) {
-    const key = x.actor || "(sistem)";
+    // Crew first (AE-235): the tablet login is often not who did it.
+    const key = x.crew || x.actor || "(sistem)";
     const s = map.get(key) ?? {
       actor: key, role: x.role, total: 0, login: 0, create: 0, edit: 0, editDown: 0,
       editDownRp: 0, close: 0, cancel: 0, voids: 0, compliment: 0,
@@ -362,7 +369,7 @@ function summarizeByActor(recs: AuditExportRecord[]): ActorSummary[] {
 }
 
 const SUMMARY_COLS: Array<StyledCol<ActorSummary>> = [
-  { header: "Pelaku", value: (s) => s.actor, width: 16 },
+  { header: "Crew / Pelaku", value: (s) => s.actor, width: 16 },
   { header: "Peran", value: (s) => s.role, width: 11 },
   { header: "Semua Aktivitas", value: (s) => s.total, fmt: "int", width: 12 },
   { header: "Login", value: (s) => s.login, fmt: "int", width: 9 },
@@ -394,7 +401,7 @@ export function buildAuditStyledSheets(
   const sheets: Array<StyledSheet<never>> = [
     {
       name: "Ringkasan",
-      title: "Ringkasan Audit Log per Pelaku",
+      title: "Ringkasan Audit Log per Crew",
       subtitle: sub,
       notes: [
         `Total catatan: ${recs.length.toLocaleString("id-ID")}`,

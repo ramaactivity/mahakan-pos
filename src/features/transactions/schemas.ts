@@ -21,6 +21,9 @@ const itemSchema = z.object({
 });
 
 export const createTransactionSchema = z.object({
+  /** Sesi AE-235 — crew (employees.id) serving this action. */
+  crewId: z.uuid().nullish(),
+  fromOfflineQueue: z.boolean().optional(),
   clientRefId: z.uuid().optional(),
   shiftId: z.uuid(),
   cashierId: z.uuid(),
@@ -106,6 +109,8 @@ export const createTransactionSchema = z.object({
 });
 
 export const voidTransactionSchema = z.object({
+  /** Sesi AE-235 — crew (employees.id) serving this action. */
+  crewId: z.uuid().nullish(),
   transactionId: z.uuid(),
   reason: z.string().trim().min(3).max(200),
   /** Legacy "pin" mode — PIN-derived JWT from /api/v1/auth/verify-approver. */
@@ -121,17 +126,23 @@ export const voidTransactionSchema = z.object({
    * code/PIN entirely. Caller HARUS owner role; auth helper enforce.
    * Active codes untuk trx ini di-revoke (audit trail jelas). */
   directOwnerApprove: z.boolean().optional(),
+  /** Sesi AE-235 — called from the back office (no POS crew; the logged-in user acts). */
+  fromBackOffice: z.boolean().optional(),
 });
 
 /** Sesi AE-62k — cancel open bill (customer batal, no-show, dst).
  * Status flip ke 'voided' + restore stock + restore points + decrement promo,
  * skip approver (customer cancellation is normal, bukan correction). */
 export const cancelOpenBillSchema = z.object({
+  /** Sesi AE-235 — crew (employees.id) serving this action. */
+  crewId: z.uuid().nullish(),
   transactionId: z.uuid(),
   reason: z.string().trim().min(3, "Alasan minimal 3 karakter").max(200),
 });
 
 export const refundTransactionSchema = z.object({
+  /** Sesi AE-235 — crew (employees.id) serving this action. */
+  crewId: z.uuid().nullish(),
   transactionId: z.uuid(),
   reason: z.string().trim().min(3).max(200),
   approverToken: z.string().optional(),
@@ -143,9 +154,12 @@ export const refundTransactionSchema = z.object({
   /** Direct-approve mode (Pusat Persetujuan, owner-only). Lihat note di
    * voidTransactionSchema. */
   directOwnerApprove: z.boolean().optional(),
+  fromBackOffice: z.boolean().optional(),
 });
 
 export const refundTransactionPartialSchema = z.object({
+  /** Sesi AE-235 — crew (employees.id) serving this action. */
+  crewId: z.uuid().nullish(),
   transactionId: z.uuid(),
   items: z
     .array(
@@ -168,10 +182,13 @@ export const refundTransactionPartialSchema = z.object({
    * refund_event instead of insert duplicate. Optional supaya UI lama
    * (tanpa generate) tetap jalan. */
   clientRefId: z.uuid().optional(),
+  fromBackOffice: z.boolean().optional(),
 });
 
 export const addSplitPaymentSchema = z
   .object({
+    /** Sesi AE-235 — crew (employees.id) serving this action. */
+    crewId: z.uuid().nullish(),
     transactionId: z.uuid(),
     amount: moneySchema,
     paymentMethod: z.enum([
@@ -219,6 +236,8 @@ export const addSplitPaymentSchema = z
   );
 
 export const editOpenBillSchema = z.object({
+  /** Sesi AE-235 — crew (employees.id) serving this action. */
+  crewId: z.uuid().nullish(),
   transactionId: z.uuid(),
   customerName: z
     .string()

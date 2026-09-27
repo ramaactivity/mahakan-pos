@@ -44,10 +44,14 @@ export function isOk<T>(
 }
 
 export interface OpenShiftInput {
+  /** Sesi AE-235 — crew (employees.id) doing this on the POS. */
+  crewId?: string | null;
   openingCash: number;
 }
 
 export interface CloseShiftInput {
+  /** Sesi AE-235 — crew (employees.id) doing this on the POS. */
+  crewId?: string | null;
   shiftId: string;
   actualCash: number;
   notes: string | null;

@@ -49,6 +49,7 @@ import { cn } from "@/lib/utils";
 import { BelanjaSubmissionModal } from "./BelanjaSubmissionModal";
 import { CloseOpenBillModal } from "./CloseOpenBillModal";
 import { CorrectOpeningCashModal } from "./CorrectOpeningCashModal";
+import { useCrewPicker } from "@/features/crew/CrewPicker";
 
 /* Sesi AE-62t — variance threshold default 10k kalau prop tidak di-pass
  * dari parent. Owner bisa override via Pengaturan → Threshold (path
@@ -147,6 +148,7 @@ export function CloseShiftModal({
   onClosed,
   onOpenSettings,
 }: CloseShiftModalProps) {
+  const pickCrew = useCrewPicker();
   const VARIANCE_THRESHOLD = varianceThreshold ?? DEFAULT_VARIANCE_THRESHOLD;
   const [summary, setSummary] = useState<SummaryPreview | null>(null);
   const [openBills, setOpenBills] = useState<
@@ -488,6 +490,11 @@ export function CloseShiftModal({
     }
     setSubmitting(true);
     setError(null);
+    const crew = pickCrew ? await pickCrew("Tutup shift & hitung laci") : undefined;
+    if (crew === null) {
+      setSubmitting(false);
+      return;
+    }
 
     const tryParse = (s: string): number | null => {
       const trimmed = s.trim();
@@ -502,6 +509,7 @@ export function CloseShiftModal({
 
     const parsedDeposit = tryParse(depositAmount);
     const res = await closeShift({
+      crewId: crew?.id,
       shiftId: shift.id,
       actualCash: parsedCash,
       notes: notes.trim() || null,

@@ -13,6 +13,7 @@ import { outlets } from "./outlets";
 import { users } from "./users";
 import { shifts } from "./shifts";
 import { transactions, transactionItems } from "./transactions";
+import { employees } from "./employees";
 
 /**
  * Split payment events for a single transaction (C-5 #13). Each row is
@@ -59,6 +60,8 @@ export const splitPayments = pgTable(
     cashChange: bigint("cash_change", { mode: "number" }),
 
     splitKind: text("split_kind", { enum: ["nominal", "per_menu"] }).notNull(),
+    /** Sesi AE-235 — crew who took this partial payment. */
+    crewId: uuid("crew_id").references(() => employees.id),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

@@ -17,6 +17,7 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { crewMeta, crewSuffix, resolveCrew } from "@/features/crew/server";
 import { logAndSanitize } from "@/lib/server-error";
 import { sendEmail } from "@/lib/email/send";
 import { buildTransactionCorrectionCodeEmail } from "@/lib/email/templates/transaction-correction-code";
@@ -83,6 +84,9 @@ const splitRowSchema = z.object({
 });
 
 const requestSchema = z.object({
+  /** Sesi AE-235 — crew (employees.id) asking for the correction. */
+  crewId: z.uuid().nullish(),
+  fromBackOffice: z.boolean().optional(),
   transactionId: z.uuid(),
   correctedPaymentMethod: z.enum(PAYMENT_METHOD_ENUM),
   correctedTotal: z.number().int().min(1).max(99_999_999),
@@ -219,6 +223,8 @@ export async function requestTransactionCorrection(input: {
   correctedCashReceived?: number | null;
   reason: string;
   photoUrl?: string | null;
+  crewId?: string | null;
+  fromBackOffice?: boolean;
 }): Promise<
   ApiResult<{
     correctionId: string;
@@ -240,6 +246,11 @@ export async function requestTransactionCorrection(input: {
     );
   }
   const v = parsed.data;
+  const crewCheck = await resolveCrew(session.user.outletId, v.crewId, {
+    allowMissing: v.fromBackOffice === true,
+  });
+  if (!crewCheck.ok) return fail(crewCheck.code, crewCheck.message);
+  const crew = crewCheck.crew;
 
   // 1. Fetch trx
   const [trx] = await db
@@ -460,6 +471,7 @@ export async function requestTransactionCorrection(input: {
         targetTransactionCorrectionId: r.id,
         outletId: trx.outletId,
         requestedByUserId: session.user.id,
+        requestedByCrewId: crew?.id ?? null,
         reason: v.reason,
         expiresAt,
       });
@@ -526,7 +538,7 @@ export async function requestTransactionCorrection(input: {
         cashierName: cashierRow?.name ?? "Kasir",
         changes,
         reason: v.reason,
-        requestedByName: session.user.name,
+        requestedByName: crew ? `${crew.name} (tablet: ${session.user.name})` : session.user.name,
         requestedByRole: session.user.role,
         source: windowCheck.source ?? "kasir_active_shift",
         expiresAt,
@@ -550,7 +562,7 @@ export async function requestTransactionCorrection(input: {
     entityType: "transaction_correction",
     entityId: correctionId,
     payload: {
-      summary: `Request koreksi TRX ${trx.transactionNumber}: ${changes.map((c) => `${c.label} ${c.originalValue}→${c.correctedValue}`).join(", ")}`,
+      summary: `Request koreksi TRX ${trx.transactionNumber}: ${changes.map((c) => `${c.label} ${c.originalValue}→${c.correctedValue}`).join(", ")}${crewSuffix(crew)}`,
       context: {
         transactionId: trx.id,
         transactionNumber: trx.transactionNumber,
@@ -564,7 +576,7 @@ export async function requestTransactionCorrection(input: {
         recipientCount: recipients.emails.length,
       },
     },
-    metadata: { outletId: trx.outletId, actorRole: session.user.role },
+    metadata: { outletId: trx.outletId, actorRole: session.user.role, ...crewMeta(crew) },
   });
 
   return ok({

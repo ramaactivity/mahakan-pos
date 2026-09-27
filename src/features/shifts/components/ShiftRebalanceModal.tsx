@@ -22,6 +22,7 @@ import {
 import { isOk, type Shift } from "@/features/shifts/types";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useCrewPicker } from "@/features/crew/CrewPicker";
 
 interface ShiftRebalanceModalProps {
   open: boolean;
@@ -67,6 +68,7 @@ export function ShiftRebalanceModal({
   onClose,
   onSubmitted,
 }: ShiftRebalanceModalProps) {
+  const pickCrew = useCrewPicker();
   const [correctedCash, setCorrectedCash] = useState("");
   const [correctedQris, setCorrectedQris] = useState("");
   const [correctedEdc, setCorrectedEdc] = useState("");
@@ -128,9 +130,15 @@ export function ShiftRebalanceModal({
       return;
     }
     setSubmitting(true);
+    const crew = pickCrew ? await pickCrew("Minta koreksi kas shift") : undefined;
+    if (crew === null) {
+      setSubmitting(false);
+      return;
+    }
     const res = await requestShiftRebalance({
       shiftId: shift.id,
       source,
+      crewId: crew?.id,
       correctedActualCash: cashNum,
       correctedQrisSettlement: qrisNum,
       correctedEdcSettlement: edcNum,

@@ -25,6 +25,10 @@ export interface RequestApprovalCodeInput {
   shiftRebalanceId?: string;
   actionType: ApprovalActionType;
   reason: string;
+  /** Sesi AE-235 — crew (employees.id) asking; the tablet login may be someone else. */
+  crewId?: string | null;
+  /** Sesi AE-235 — requested from the back office (logged-in user acts, no POS crew). */
+  fromBackOffice?: boolean;
 }
 
 export interface RequestApprovalCodeResult {
