@@ -1,4 +1,5 @@
-import { sql } from "drizzle-orm";
+import { and, eq, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { toJakartaDateOnly } from "@/lib/date";
 import { expenses, incomes } from "@/db/schema";
 
 /**
@@ -71,4 +72,54 @@ export function affectsDrawer(
   entryOrigin: CashEntryOrigin | string | null | undefined,
 ): boolean {
   return entryOrigin == null || entryOrigin === POS_ORIGIN;
+}
+
+/**
+ * Sesi AE-236 — SATU definisi "petty cash laci milik shift ini".
+ *
+ * Dulu tutup shift, rincian shift, dan rebalance masing-masing menulis
+ * rentangnya sendiri: tanggal WIB buka s/d tanggal WIB tutup, utuh. Shift
+ * yang ditutup lewat tengah malam (mis. 20 Jul 00:00) jadi ikut menyedot
+ * SELURUH hari tanggal 20 — pengeluaran shift berikutnya ikut tampil di
+ * shift tanggal 19. Sekarang baris bertanggal hari tutup hanya ikut kalau
+ * diinput sebelum shift ditutup; baris ber-tanggal-mundur di hari-hari
+ * sebelumnya tetap ikut seperti dulu.
+ */
+type ShiftWindow = { outletId: string; openedAt: Date; closedAt: Date | null };
+
+function shiftDateRange(shift: ShiftWindow) {
+  return {
+    from: toJakartaDateOnly(shift.openedAt),
+    to: toJakartaDateOnly(shift.closedAt ?? new Date()),
+  };
+}
+
+export function expenseInShiftDrawer(shift: ShiftWindow) {
+  const { from, to } = shiftDateRange(shift);
+  return and(
+    eq(expenses.outletId, shift.outletId),
+    eq(expenses.paymentMethod, "cash"),
+    expenseAffectsDrawer(),
+    gte(expenses.expenseDate, from),
+    lte(expenses.expenseDate, to),
+    shift.closedAt
+      ? or(lt(expenses.expenseDate, to), lte(expenses.createdAt, shift.closedAt))
+      : undefined,
+    isNull(expenses.deletedAt),
+  );
+}
+
+export function incomeInShiftDrawer(shift: ShiftWindow) {
+  const { from, to } = shiftDateRange(shift);
+  return and(
+    eq(incomes.outletId, shift.outletId),
+    eq(incomes.paymentMethod, "cash"),
+    incomeAffectsDrawer(),
+    gte(incomes.incomeDate, from),
+    lte(incomes.incomeDate, to),
+    shift.closedAt
+      ? or(lt(incomes.incomeDate, to), lte(incomes.createdAt, shift.closedAt))
+      : undefined,
+    isNull(incomes.deletedAt),
+  );
 }

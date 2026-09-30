@@ -6,6 +6,8 @@ import {
   accountingPeriods,
   chartOfAccounts,
   employeeAdvances,
+  expenses,
+  incomes,
   ingredients,
   journalEntries,
   journalLines,
@@ -2174,6 +2176,27 @@ export async function reverseJournalEntry(
         })
         .where(eq(journalEntries.id, reverseResult.entryId));
 
+      /* Sesi AE-236 — jurnal pengeluaran/pemasukan dibatalkan = barisnya
+       * ikut dinonaktifkan. Dulu barisnya dibiarkan hidup: jurnal sudah
+       * nol, tapi daftar Kas, rincian shift, dan laporan operasional tetap
+       * menghitungnya (22 baris Rp 1,09jt, kebanyakan dobel dengan
+       * pembelian yang diinput ulang accounting). Satu transaksi dengan
+       * penandaan jurnal supaya keduanya tak pernah pisah. */
+      if (updated.length > 0 && original.sourceId) {
+        const now = new Date();
+        if (original.sourceType === "expense_create") {
+          await tx
+            .update(expenses)
+            .set({ deletedAt: now, updatedAt: now })
+            .where(and(eq(expenses.id, original.sourceId), isNull(expenses.deletedAt)));
+        } else if (original.sourceType === "income_create") {
+          await tx
+            .update(incomes)
+            .set({ deletedAt: now, updatedAt: now })
+            .where(and(eq(incomes.id, original.sourceId), isNull(incomes.deletedAt)));
+        }
+      }
+
       return updated.length > 0;
     });
     if (!marked) {
@@ -2205,6 +2228,9 @@ export async function reverseJournalEntry(
         reverseEntryNumber: reverseResult.entryNumber,
         entryDate: String(original.entryDate),
         reason,
+        /* Sesi AE-236 — baris sumber yang ikut dinonaktifkan (kalau ada). */
+        sourceType: original.sourceType,
+        sourceId: original.sourceId,
       },
     },
     metadata: {

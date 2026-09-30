@@ -21,11 +21,7 @@ import { CorrectOpeningCashModal } from "@/features/pos/components/CorrectOpenin
 import {
   isOk as isCashOk,
   listExpenseCategories,
-  listExpenses,
-  listIncomes,
-  type Expense,
   type ExpenseCategory,
-  type Income,
 } from "@/features/cash";
 import { toJakartaDateOnly } from "@/lib/date";
 import { useSession } from "@/features/auth/SessionProvider";
@@ -61,8 +57,6 @@ export function ShiftDetailModal({
   /* Sesi AE-65 — petty cash transaction-level detail (per shift date range).
    * Owner pakai untuk trace selisih variance ke entry spesifik yang
    * mungkin missing/extra. */
-  const [shiftExpenses, setShiftExpenses] = useState<Expense[]>([]);
-  const [shiftIncomes, setShiftIncomes] = useState<Income[]>([]);
   const [categoriesById, setCategoriesById] = useState<Map<string, ExpenseCategory>>(
     new Map(),
   );
@@ -78,35 +72,17 @@ export function ShiftDetailModal({
     setLoading(true);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPetty(null);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setShiftExpenses([]);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setShiftIncomes([]);
     async function load() {
-      const fromDate = toJakartaDateOnly(shift!.openedAt);
-      const toDate = toJakartaDateOnly(shift!.closedAt ?? new Date());
-      const [trxRes, pettyRes, expRes, incRes, catRes] = await Promise.all([
+      /* Sesi AE-236 — daftar petty diambil dari getShiftPettyBreakdown
+       * (filter yang sama dengan angka shift), bukan listExpenses per tanggal. */
+      const [trxRes, pettyRes, catRes] = await Promise.all([
         listTransactions({ shiftId: shift!.id, limit: 1000 }),
         getShiftPettyBreakdown(shift!.id),
-        listExpenses({
-          from: fromDate,
-          to: toDate,
-          paymentMethod: "cash",
-          limit: 200,
-        }),
-        listIncomes({
-          from: fromDate,
-          to: toDate,
-          paymentMethod: "cash",
-          limit: 200,
-        }),
         listExpenseCategories(),
       ]);
       if (cancelled) return;
       if (isOk(trxRes)) setTransactions(trxRes.data.items);
       if (isOk(pettyRes)) setPetty(pettyRes.data);
-      if (isCashOk(expRes)) setShiftExpenses(expRes.data.items);
-      if (isCashOk(incRes)) setShiftIncomes(incRes.data.items);
       if (isCashOk(catRes)) {
         const map = new Map<string, ExpenseCategory>();
         for (const c of catRes.data.items) map.set(c.id, c);
@@ -121,6 +97,9 @@ export function ShiftDetailModal({
   }, [shift]);
 
   if (!shift) return null;
+
+  const shiftExpenses = petty?.expenses ?? [];
+  const shiftIncomes = petty?.incomes ?? [];
 
   const paid = transactions.filter(
     (t) => t.status === "paid" || t.status === "partially_refunded",
@@ -506,8 +485,8 @@ export function ShiftDetailModal({
                   <span className="font-mono">
                     {toJakartaDateOnly(shift.closedAt ?? new Date())}
                   </span>
-                  . Kalau ada entry yang missing / kelebihan, di sinilah
-                  variance datang.
+                  . Entry bertanggal hari tutup hanya ikut kalau diinput
+                  sebelum shift ditutup; input dari dashboard tidak ikut.
                 </p>
                 {shiftExpenses.length > 0 ? (
                   <PettyTable

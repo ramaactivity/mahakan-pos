@@ -1,8 +1,7 @@
 import "server-only";
-import { and, desc, eq, getTableColumns, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { expenses, incomes, shifts, transactions, users } from "@/db/schema";
-import { toJakartaDateOnly } from "@/lib/date";
 import type {
   Paginated,
   Shift,
@@ -10,9 +9,10 @@ import type {
   ShiftWithOpener,
 } from "./types";
 import {
-  expenseAffectsDrawer,
-  incomeAffectsDrawer,
+  expenseInShiftDrawer,
+  incomeInShiftDrawer,
 } from "@/features/cash/drawer-origin";
+import type { Expense, Income } from "@/features/cash/types";
 
 /**
  * Sesi AE-63 phase10 — Active shift di-resolve OUTLET-SCOPED (bukan
@@ -128,63 +128,46 @@ export async function fetchShiftById(id: string): Promise<Shift | null> {
 
 /**
  * Sesi AE-64 — Petty cash breakdown per-shift untuk display formula
- * variance lengkap di UI. Mirror filter logic di `closeShift`:
- *   - outletId scope
- *   - paymentMethod='cash' (transfer/other tidak affect laci)
- *   - range = WIB date dari shift.openedAt sampai shift.closedAt (atau today
- *     kalau still open)
- *   - deletedAt IS NULL
+ * variance lengkap di UI. Filter-nya `expenseInShiftDrawer` /
+ * `incomeInShiftDrawer` — SAMA persis dengan `computeShiftCashState` dan
+ * rebalance, jadi daftar yang tampil selalu menjumlah ke angka shift.
  *
- * Hasil sum konsisten dengan computeExpectedCash di server, sehingga
- * UI display formula sama dengan variance yang sudah ke-persist di DB.
+ * Sesi AE-236 — ikut mengembalikan barisnya. Dulu modal detail shift
+ * mengambil daftar sendiri lewat `listExpenses` dengan rentang tanggal
+ * utuh, tanpa saringan laci — daftarnya bisa beda dari angkanya.
  */
 export interface ShiftPettyBreakdown {
   pettyExpenseCash: number;
   pettyExpenseCashCount: number;
   pettyIncomeCash: number;
   pettyIncomeCashCount: number;
+  expenses: Expense[];
+  incomes: Income[];
 }
 
 export async function fetchShiftPettyBreakdown(
   shift: Pick<Shift, "id" | "outletId" | "openedAt" | "closedAt">,
 ): Promise<ShiftPettyBreakdown> {
-  const fromDate = toJakartaDateOnly(shift.openedAt);
-  const toDate = toJakartaDateOnly(shift.closedAt ?? new Date());
-
-  const expenseRows = await db
-    .select({ amount: expenses.amount })
-    .from(expenses)
-    .where(
-      and(
-        eq(expenses.outletId, shift.outletId),
-        eq(expenses.paymentMethod, "cash"),
-        /* Sesi AE-227 — cermin filter closeShift; kalau beda, rincian yang
-         * ditampilkan tidak akan menjumlah ke variance yang ter-persist. */
-        expenseAffectsDrawer(),
-        gte(expenses.expenseDate, fromDate),
-        lte(expenses.expenseDate, toDate),
-        isNull(expenses.deletedAt),
-      ),
-    );
-  const incomeRows = await db
-    .select({ amount: incomes.amount })
-    .from(incomes)
-    .where(
-      and(
-        eq(incomes.outletId, shift.outletId),
-        eq(incomes.paymentMethod, "cash"),
-        incomeAffectsDrawer(),
-        gte(incomes.incomeDate, fromDate),
-        lte(incomes.incomeDate, toDate),
-        isNull(incomes.deletedAt),
-      ),
-    );
+  const [expenseRows, incomeRows] = await Promise.all([
+    db
+      .select()
+      .from(expenses)
+      .where(expenseInShiftDrawer(shift))
+      .orderBy(desc(expenses.expenseDate), desc(expenses.createdAt)),
+    db
+      .select()
+      .from(incomes)
+      .where(incomeInShiftDrawer(shift))
+      .orderBy(desc(incomes.incomeDate), desc(incomes.createdAt)),
+  ]);
 
   return {
     pettyExpenseCash: expenseRows.reduce((s, r) => s + Number(r.amount), 0),
     pettyExpenseCashCount: expenseRows.length,
     pettyIncomeCash: incomeRows.reduce((s, r) => s + Number(r.amount), 0),
     pettyIncomeCashCount: incomeRows.length,
+    expenses: expenseRows,
+    incomes: incomeRows,
   };
 }
 

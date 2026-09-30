@@ -58,8 +58,8 @@ import {
   type ShiftWithOpener,
 } from "./types";
 import {
-  expenseAffectsDrawer,
-  incomeAffectsDrawer,
+  expenseInShiftDrawer,
+  incomeInShiftDrawer,
 } from "@/features/cash/drawer-origin";
 
 const openShiftSchema = z.object({
@@ -379,35 +379,14 @@ async function computeShiftCashState(shift: {
    * diinput dari dashboard tidak ikut. Rentangnya dari tanggal WIB shift
    * dibuka sampai tanggal tutup (atau hari ini kalau masih terbuka), supaya
    * shift yang melewati tengah malam tetap terhitung utuh. */
-  const shiftStartDate = toJakartaDateOnly(shift.openedAt);
-  const endDate = toJakartaDateOnly(shift.closedAt ?? new Date());
-
   const pettyExpenseRows = await db
     .select({ amount: expenses.amount })
     .from(expenses)
-    .where(
-      and(
-        eq(expenses.outletId, shift.outletId),
-        eq(expenses.paymentMethod, "cash"),
-        expenseAffectsDrawer(),
-        gte(expenses.expenseDate, shiftStartDate),
-        lte(expenses.expenseDate, endDate),
-        isNull(expenses.deletedAt),
-      ),
-    );
+    .where(expenseInShiftDrawer(shift));
   const pettyIncomeRows = await db
     .select({ amount: incomes.amount })
     .from(incomes)
-    .where(
-      and(
-        eq(incomes.outletId, shift.outletId),
-        eq(incomes.paymentMethod, "cash"),
-        incomeAffectsDrawer(),
-        gte(incomes.incomeDate, shiftStartDate),
-        lte(incomes.incomeDate, endDate),
-        isNull(incomes.deletedAt),
-      ),
-    );
+    .where(incomeInShiftDrawer(shift));
 
   const summary = computeShiftCashSummary(txns, {
     expenseCash: pettyExpenseRows.reduce((s, r) => s + Number(r.amount), 0),

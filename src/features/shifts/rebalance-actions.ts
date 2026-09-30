@@ -39,12 +39,11 @@ import {
 } from "@/features/accounting/hooks";
 import { computeShiftCashSummary, computeExpectedCash } from "./close-pure";
 import { transactions, expenses, incomes } from "@/db/schema";
-import { toJakartaDateOnly } from "@/lib/date";
 import { approvalResendWaitSeconds } from "@/features/approval-codes/resend-cooldown-db";
 import { resendCooldownMessage } from "@/features/approval-codes/resend-cooldown";
 import {
-  expenseAffectsDrawer,
-  incomeAffectsDrawer,
+  expenseInShiftDrawer,
+  incomeInShiftDrawer,
 } from "@/features/cash/drawer-origin";
 
 const BCRYPT_COST = 10;
@@ -159,41 +158,16 @@ async function computeRebalancedVariance(
     splits: splitsByTrxId.get(t.id),
   }));
 
-  // Petty cash range from shift open date → close (or today kalau belum close).
-  const shiftStartDate = toJakartaDateOnly(shift.openedAt);
-  const closeDate = shift.closedAt
-    ? toJakartaDateOnly(shift.closedAt)
-    : toJakartaDateOnly(new Date());
-
   const pettyExpRows = await db
     .select({ amount: expenses.amount })
     .from(expenses)
-    .where(
-      and(
-        eq(expenses.outletId, shift.outletId),
-        eq(expenses.paymentMethod, "cash"),
-        /* Sesi AE-227 — sama dengan closeShift: cuma yang lewat laci kasir. */
-        expenseAffectsDrawer(),
-        sql`${expenses.expenseDate} >= ${shiftStartDate}`,
-        sql`${expenses.expenseDate} <= ${closeDate}`,
-        isNull(expenses.deletedAt),
-      ),
-    );
+    .where(expenseInShiftDrawer(shift));
   const pettyExpenseCash = pettyExpRows.reduce((s, r) => s + r.amount, 0);
 
   const pettyIncRows = await db
     .select({ amount: incomes.amount })
     .from(incomes)
-    .where(
-      and(
-        eq(incomes.outletId, shift.outletId),
-        eq(incomes.paymentMethod, "cash"),
-        incomeAffectsDrawer(),
-        sql`${incomes.incomeDate} >= ${shiftStartDate}`,
-        sql`${incomes.incomeDate} <= ${closeDate}`,
-        isNull(incomes.deletedAt),
-      ),
-    );
+    .where(incomeInShiftDrawer(shift));
   const pettyIncomeCash = pettyIncRows.reduce((s, r) => s + r.amount, 0);
 
   const cashSummary = computeShiftCashSummary(txns, {
