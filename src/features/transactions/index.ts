@@ -37,6 +37,7 @@ export {
   addSplitPayment,
   cancelOpenBill,
   closeOpenBill,
+  deferOpenBill,
   createTransaction,
   editOpenBill,
   getSplitBreakdown,

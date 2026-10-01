@@ -152,6 +152,33 @@ export const cancelOpenBillSchema = z.object({
   reason: z.string().optional(),
 });
 
+/** Sesi AE-241 — mark an open bill "bayar belakangan" (guest pays later). */
+export const deferOpenBillSchema = z.object({
+  crewId: z.uuid().nullish(),
+  transactionId: z.uuid(),
+  guarantor: z
+    .string()
+    .trim()
+    .min(3, "Penanggung jawab wajib diisi (siapa yang menjamin tamu ini bayar)")
+    .max(60),
+  contact: z.string().trim().max(30).nullish(),
+  dueDate: z.iso.date("Tanggal janji bayar tidak valid"),
+  note: z.string().trim().max(150).nullish(),
+  /* Owner: a last resort, never a tab. Only these two situations exist —
+   * there is deliberately no "guest asked to pay later" option. */
+  reasonCode: z.enum(["guest_left", "unreachable"], {
+    error: "Pilih alasan: tamu sudah pulang/lupa bayar, atau tidak bisa dihubungi.",
+  }),
+  /** What was tried before giving up (who called, how, when, result). */
+  effort: z
+    .string()
+    .trim()
+    .min(15, "Tulis usaha yang sudah dilakukan (minimal 15 huruf): siapa menghubungi, lewat apa, jam berapa, hasilnya.")
+    .max(200),
+  /** PIN token of an owner/manager who is NOT the requester. */
+  approverToken: z.string().min(1, "Butuh persetujuan PIN manager/owner"),
+});
+
 export const refundTransactionSchema = z.object({
   /** Sesi AE-235 — crew (employees.id) serving this action. */
   crewId: z.uuid().nullish(),

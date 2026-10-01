@@ -28,6 +28,7 @@ const EVENT_LABEL: Record<string, string> = {
   "transaction.open_bill.edit": "Edit bill",
   "transaction.open_bill.close": "Tutup bill (bayar)",
   "transaction.open_bill.cancel": "Batal bill",
+  "transaction.open_bill.defer": "Bayar belakangan",
   "transaction.cart.item_remove": "Hapus item (belum disimpan)",
   "transaction.cart.discard": "Keranjang dibatalkan",
   "transaction.cart.commit": "Keranjang jadi transaksi",
@@ -203,6 +204,7 @@ export function toAuditRecord(r: AuditLogRow): AuditExportRecord {
     r.eventType.startsWith("transaction.refund")
   ) tone = "danger";
   else if (
+    r.eventType === "transaction.open_bill.defer" ||
     r.eventType === "transaction.compliment.applied" ||
     r.eventType.startsWith("approval_code.") ||
     r.eventType === "auth.login.failed" ||

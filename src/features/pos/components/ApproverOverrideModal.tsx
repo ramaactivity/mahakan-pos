@@ -23,7 +23,9 @@ type ApproverActionType =
   | "shift.opening_cash.correct"
   /* Sesi AE-217 — tutup paksa shift dari layar POS (jalan darurat rem
    * anti-lupa-tutup-shift). Owner-only di server. */
-  | "shift.force_close";
+  | "shift.force_close"
+  /* Sesi AE-241 — bayar belakangan (owner/manager PIN). */
+  | "pos.bill.defer.approve";
 
 interface ApproverOverrideModalProps {
   open: boolean;

@@ -281,6 +281,7 @@ import {
 import {
   addSplitPaymentSchema,
   cancelOpenBillSchema,
+  deferOpenBillSchema,
   createTransactionSchema,
   editOpenBillSchema,
   refundTransactionPartialSchema,
@@ -312,6 +313,7 @@ import {
   type ApiResult,
   type AddSplitPaymentInput,
   type CancelOpenBillInput,
+  type DeferOpenBillInput,
   type CloseOpenBillInput,
   type CreateTransactionInput,
   type EditOpenBillInput,
@@ -327,6 +329,7 @@ import {
 import type { MenuItem } from "@/features/menu";
 import { POS_ORIGIN } from "@/features/cash/drawer-origin";
 import { crewMeta, crewSuffix, resolveCrew } from "@/features/crew/server";
+import { todayJakarta } from "@/lib/tz";
 import {
   cancelReasonProblem,
   cancelReasonSpec,
@@ -2363,6 +2366,12 @@ export async function editOpenBill(
       `Hanya open bill yang bisa di-edit (status saat ini: ${current.status})`,
     );
   }
+  if (current.deferredAt) {
+    return fail(
+      "BUSINESS_RULE_VIOLATION",
+      "Bill bayar belakangan tidak bisa diedit. Lunasi apa adanya; pesanan baru dibuat sebagai bill baru.",
+    );
+  }
   const shiftCheck = await assertShiftOpen(current.shiftId);
   if (!shiftCheck.ok) return fail(shiftCheck.code, shiftCheck.message);
 
@@ -3224,6 +3233,19 @@ export async function closeOpenBill(
         finalCashChange = null;
         finalStockDeductedAt = stockDeductedAtFinal;
       } else {
+        /* Sesi AE-241 — a "bayar belakangan" bill is paid in a LATER shift.
+         * Shift cash is summed by transactions.shift_id, so move the bill to
+         * the outlet's open shift — the drawer that actually got the money. */
+        let payingShiftId: string | null = null;
+        if (current.deferredAt) {
+          const [activeShift] = await tx
+            .select({ id: shifts.id })
+            .from(shifts)
+            .where(and(eq(shifts.outletId, session.user.outletId), eq(shifts.status, "open")))
+            .limit(1);
+          if (!activeShift) throw new Error("NO_ACTIVE_SHIFT");
+          payingShiftId = activeShift.id;
+        }
         await tx
           .update(transactions)
           .set({
@@ -3235,6 +3257,7 @@ export async function closeOpenBill(
               input.paymentMethod === "cash" ? freshCashChange : null,
             stockDeductedAt: stockDeductedAtFinal,
             paidCrewId: closeCrew?.id ?? null,
+            ...(payingShiftId ? { shiftId: payingShiftId } : {}),
             updatedAt: finalUpdatedAt,
           })
           .where(eq(transactions.id, input.transactionId));
@@ -3607,6 +3630,156 @@ export async function cancelOpenBill(
   return ok(updated);
 }
 
+// ---------- Bayar belakangan (Sesi AE-241) ----------
+
+/**
+ * Mark an open bill "bayar belakangan": the guest leaves without paying and
+ * will pay on a later day, with a named person answering for it.
+ *
+ * Before this, closeShift refused while any open bill existed, so cashiers
+ * made unpaid items disappear before closing — recycled into another bill
+ * (24 Sep: Suheng's Americano recorded on Kapras' bill), or moved to the
+ * next day's bill under another name (25 Sep "Wa adils"). A deferred bill
+ * stays open and visible, does not block shift close, and when finally paid
+ * moves to the shift whose drawer received the cash (closeOpenBill).
+ *
+ * Bills with split payments already taken are refused: those splits are
+ * counted in the bill's own shift, and moving the bill would move them too.
+ */
+export async function deferOpenBill(
+  input: DeferOpenBillInput,
+): Promise<ApiResult<Transaction>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "pos.transaction.create")) {
+    return fail("FORBIDDEN", "Tidak punya hak mengelola bill");
+  }
+  const parsed = deferOpenBillSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "Input tidak valid");
+  }
+  const v = parsed.data;
+  if (v.dueDate < todayJakarta()) {
+    return fail("VALIDATION_ERROR", "Tanggal janji bayar tidak boleh sebelum hari ini");
+  }
+  const crewCheck = await resolveCrew(session.user.outletId, v.crewId);
+  if (!crewCheck.ok) return fail(crewCheck.code, crewCheck.message);
+  const crew = crewCheck.crew;
+
+  /* One open debt per guarantor — stops a running tab under the same name. */
+  const [existingDebt] = await db
+    .select({ number: transactions.transactionNumber })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.outletId, session.user.outletId),
+        eq(transactions.status, "open"),
+        sql`${transactions.deferredAt} is not null`,
+        sql`lower(trim(${transactions.deferredGuarantor})) = lower(${v.guarantor})`,
+        sql`${transactions.id} <> ${v.transactionId}`,
+      ),
+    )
+    .limit(1);
+  if (existingDebt) {
+    return fail(
+      "BUSINESS_RULE_VIOLATION",
+      `${v.guarantor} masih punya bayar belakangan yang belum lunas (${existingDebt.number}). Lunasi dulu sebelum menambah yang baru.`,
+    );
+  }
+
+  const reasonLabel = v.reasonCode === "guest_left" ? "Tamu sudah pulang / lupa bayar" : "Tamu tidak bisa dihubungi";
+  let approverId: string | null = null;
+  let updated: Transaction;
+  try {
+    updated = await db.transaction(async (tx) => {
+      // Consumed inside the tx so a failed defer does not burn the PIN token.
+      try {
+        const consumed = await consumeApproverToken(
+          v.approverToken,
+          "pos.bill.defer.approve",
+          v.transactionId,
+          tx,
+        );
+        approverId = consumed.approverId;
+      } catch {
+        throw new Error("APPROVER_INVALID");
+      }
+      const [locked] = await tx
+        .select({ id: transactions.id, status: transactions.status, outletId: transactions.outletId })
+        .from(transactions)
+        .where(eq(transactions.id, v.transactionId))
+        .for("update")
+        .limit(1);
+      if (!locked || locked.outletId !== session.user.outletId) throw new Error("NOT_FOUND");
+      if (locked.status !== "open") throw new Error("TRX_NOT_OPEN");
+      const [split] = await tx
+        .select({ id: splitPayments.id })
+        .from(splitPayments)
+        .where(eq(splitPayments.transactionId, v.transactionId))
+        .limit(1);
+      if (split) throw new Error("HAS_SPLITS");
+      const [row] = await tx
+        .update(transactions)
+        .set({
+          deferredAt: new Date(),
+          deferredBy: session.user.id,
+          deferredCrewId: crew?.id ?? null,
+          deferredGuarantor: v.guarantor,
+          deferredContact: v.contact || null,
+          deferredDueDate: v.dueDate,
+          deferredNote: [`${reasonLabel}. Usaha: ${v.effort}`, v.note].filter(Boolean).join(" | "),
+          updatedAt: new Date(),
+        })
+        .where(eq(transactions.id, v.transactionId))
+        .returning();
+      return row!;
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg === "NOT_FOUND") return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+    if (msg === "APPROVER_INVALID") {
+      return fail("APPROVAL_INVALID", "Persetujuan PIN tidak valid atau kedaluwarsa — minta PIN manager/owner lagi.");
+    }
+    if (msg === "TRX_NOT_OPEN") {
+      return fail("BUSINESS_RULE_VIOLATION", "Bill sudah dibayar atau dibatalkan. Refresh daftar bill.");
+    }
+    if (msg === "HAS_SPLITS") {
+      return fail(
+        "BUSINESS_RULE_VIOLATION",
+        "Bill ini sudah dibayar sebagian (split). Selesaikan pembayarannya dulu — bill yang sudah dibayar sebagian tidak bisa dijadikan bayar belakangan.",
+      );
+    }
+    return fail("DB_ERROR", logAndSanitize(e, "transactions", "Operasi database gagal"));
+  }
+
+  await logAudit({
+    eventType: "transaction.open_bill.defer",
+    userId: session.user.id,
+    approverId,
+    entityType: "transaction",
+    entityId: updated.id,
+    payload: {
+      summary: `Bayar belakangan ${updated.transactionNumber} (${updated.customerName ?? "-"}, Rp${updated.total.toLocaleString("id-ID")}) — ${reasonLabel}; usaha: ${v.effort}; penanggung jawab ${v.guarantor}, janji bayar ${v.dueDate}${crewSuffix(crew)}`,
+      context: {
+        transactionNumber: updated.transactionNumber,
+        total: updated.total,
+        reasonCode: v.reasonCode,
+        effort: v.effort,
+        guarantor: v.guarantor,
+        contact: v.contact ?? null,
+        dueDate: v.dueDate,
+        note: v.note ?? null,
+      },
+    },
+    metadata: {
+      outletId: session.user.outletId,
+      actorRole: session.user.role,
+      ...crewMeta(crew),
+    },
+  });
+
+  return ok(updated);
+}
+
 // ---------- Split Payment (C-5 #13) ----------
 
 /**
@@ -3662,6 +3835,12 @@ export async function addSplitPayment(
     return fail(
       "TRX_NOT_OPEN",
       `Bill sudah tidak open (status ${current.status})`,
+    );
+  }
+  if (current.deferredAt) {
+    return fail(
+      "BUSINESS_RULE_VIOLATION",
+      "Bill bayar belakangan harus dilunasi penuh lewat tombol Bayar, tidak bisa split.",
     );
   }
 

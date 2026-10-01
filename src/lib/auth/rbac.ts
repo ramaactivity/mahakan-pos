@@ -24,6 +24,9 @@ export const permissions = {
   "pos.transaction.view": ["owner", "manager", "supervisor", "staff"],
   "pos.transaction.void": ["owner", "manager", "supervisor"],
   "pos.transaction.refund": ["owner", "manager", "supervisor"],
+  /** Sesi AE-241 — approve "bayar belakangan" with a PIN. Owner directive:
+   * must not become an easy way to run a tab, so supervisors cannot approve. */
+  "pos.bill.defer.approve": ["owner", "manager"],
   /** Apply a pre-configured promo at checkout. Staff allowed to PICK
    * promos (Owner standard sesi K — no manual %/nominal entry). Promos
    * with requires_approval=true also need separate Owner/Manager PIN. */

@@ -23,6 +23,8 @@ const APPROVER_ACTIONS: ReadonlyArray<Permission> = [
    * tanpa harus membuka Back Office. Hanya Owner yang punya izin ini, jadi
    * PIN Manager otomatis ditolak oleh cek hasPermission di bawah. */
   "shift.force_close",
+  /* Sesi AE-241 — bayar belakangan needs someone else's PIN (owner/manager). */
+  "pos.bill.defer.approve",
 ];
 
 const bodySchema = z.object({

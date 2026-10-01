@@ -360,6 +360,23 @@ export interface EditOpenBillInput {
 }
 
 /** Sesi AE-62k — cancel open bill (customer batal / no-show). */
+/** Sesi AE-241 — mark an open bill as "bayar belakangan". */
+export interface DeferOpenBillInput {
+  transactionId: string;
+  /** Who answers for the debt, e.g. "Adul (karyawan)". */
+  guarantor: string;
+  contact?: string | null;
+  /** YYYY-MM-DD (WIB) the guest promised to pay. */
+  dueDate: string;
+  note?: string | null;
+  crewId?: string | null;
+  reasonCode: "guest_left" | "unreachable";
+  /** What was tried before giving up (min 15 chars). */
+  effort: string;
+  /** Owner/manager PIN token (verify-approver, action pos.bill.defer.approve). */
+  approverToken: string;
+}
+
 export interface CancelOpenBillInput {
   /** Sesi AE-240 — structured reason; see cancel-reason.ts. */
   reasonCode: import("./cancel-reason").CancelReasonCode;

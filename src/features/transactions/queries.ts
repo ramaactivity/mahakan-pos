@@ -98,6 +98,9 @@ export type TransactionSummary = Pick<
   | "note"
   | "createdAt"
   | "servedAt"
+  | "deferredAt"
+  | "deferredGuarantor"
+  | "deferredDueDate"
 >;
 
 export async function fetchTransactionSummaries(
@@ -120,6 +123,9 @@ export async function fetchTransactionSummaries(
       note: transactions.note,
       createdAt: transactions.createdAt,
       servedAt: transactions.servedAt,
+      deferredAt: transactions.deferredAt,
+      deferredGuarantor: transactions.deferredGuarantor,
+      deferredDueDate: transactions.deferredDueDate,
     })
     .from(transactions)
     .where(conds.length ? and(...conds) : undefined)

@@ -5,6 +5,7 @@ import {
   text,
   timestamp,
   bigint,
+  date,
   integer,
   index,
   uniqueIndex,
@@ -136,6 +137,19 @@ export const transactions = pgTable(
      * offline-queue replay from an old client. */
     openedCrewId: uuid("opened_crew_id").references(() => employees.id),
     paidCrewId: uuid("paid_crew_id").references(() => employees.id),
+
+    /* Sesi AE-241 — "bayar belakangan": an open bill the guest will pay on a
+     * later day. Shift close no longer blocks on it (that block is what made
+     * cashiers recycle/move unpaid items into other bills). When paid, the
+     * bill moves to the shift whose drawer received the cash. */
+    deferredAt: timestamp("deferred_at", { withTimezone: true }),
+    deferredBy: uuid("deferred_by").references(() => users.id),
+    deferredCrewId: uuid("deferred_crew_id").references(() => employees.id),
+    /** Who answers for the debt, e.g. "Adul (karyawan)". */
+    deferredGuarantor: text("deferred_guarantor"),
+    deferredContact: text("deferred_contact"),
+    deferredDueDate: date("deferred_due_date", { mode: "string" }),
+    deferredNote: text("deferred_note"),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

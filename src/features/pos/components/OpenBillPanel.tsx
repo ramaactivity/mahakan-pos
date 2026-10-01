@@ -36,6 +36,7 @@ import {
 import type { ReceiptConfig } from "@/lib/printer/print-transaction";
 import { CloseOpenBillModal } from "./CloseOpenBillModal";
 import { CancelOpenBillDialog } from "./CancelOpenBillDialog";
+import { DeferBillDialog } from "./DeferBillDialog";
 import { formatRupiah } from "@/lib/format";
 import { formatDuration } from "@/lib/duration";
 import { formatIndonesianTime } from "@/lib/date";
@@ -94,6 +95,8 @@ export function OpenBillPanel({
   // Sesi AE-62l — cancel open bill (customer batal / no-show).
   const [cancellingBill, setCancellingBill] =
     useState<TransactionWithItems | null>(null);
+  // Sesi AE-241 — bayar belakangan (last resort, needs manager/owner PIN).
+  const [deferringBill, setDeferringBill] = useState<TransactionSummary | null>(null);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search.trim().toLowerCase(), 200);
   const [filter, setFilter] = useState<"all" | "stale" | "fresh">("all");
@@ -372,6 +375,7 @@ export function OpenBillPanel({
                     setCancellingBill(details[b.id]);
                   }
                 }}
+                onDefer={() => setDeferringBill(b)}
                 cashierName={cashierName}
                 receiptConfig={receiptConfig}
                 onOpenSettings={onOpenSettings}
@@ -401,6 +405,15 @@ export function OpenBillPanel({
         onOpenSettings={onOpenSettings}
       />
 
+      <DeferBillDialog
+        bill={deferringBill}
+        onClose={() => setDeferringBill(null)}
+        onDeferred={() => {
+          setDeferringBill(null);
+          setTick((t) => t + 1);
+        }}
+      />
+
       {/* Sesi AE-240 — cancel needs a checkable reason (target bill / out-of-stock items) + confirm. */}
       <CancelOpenBillDialog
         bill={cancellingBill}
@@ -424,6 +437,7 @@ interface BillCardProps {
   onSplit: () => void;
   onEdit: () => void;
   onCancel: () => void;
+  onDefer: () => void;
   cashierName: string;
   receiptConfig: ReceiptConfig | null;
   onOpenSettings: () => void;
@@ -437,10 +451,12 @@ function BillCard({
   onSplit,
   onEdit,
   onCancel,
+  onDefer,
   cashierName,
   receiptConfig,
   onOpenSettings,
 }: BillCardProps) {
+  const deferred = summary.deferredAt !== null;
   const [printOpen, setPrintOpen] = useState(false);
   const { ageMinutes, isStale } = useBillAge(summary.createdAt, nowTick);
   const ageHuman = formatDuration(ageMinutes * 60_000);
@@ -464,6 +480,12 @@ function BillCard({
                 <span className="font-mono text-sm font-semibold text-neutral-900">
                   {summary.transactionNumber}
                 </span>
+                {deferred ? (
+                  <Badge variant="warning">
+                    Bayar belakangan · PJ {summary.deferredGuarantor ?? "-"}
+                    {summary.deferredDueDate ? ` · janji ${summary.deferredDueDate.split("-").reverse().join("/")}` : ""}
+                  </Badge>
+                ) : null}
                 {isStale ? (
                   <Badge variant="warning">
                     <AlertTriangle className="size-3" aria-hidden /> Lama (
@@ -526,7 +548,7 @@ function BillCard({
               size="md"
               variant="outline"
               onClick={onSplit}
-              disabled={!detail}
+              disabled={!detail || deferred}
               className="!px-2"
             >
               <Split className="size-4" aria-hidden />
@@ -536,7 +558,7 @@ function BillCard({
               size="md"
               variant="outline"
               onClick={onEdit}
-              disabled={!detail}
+              disabled={!detail || deferred}
               className="!px-2"
             >
               <Pencil className="size-4" aria-hidden />
@@ -567,6 +589,16 @@ function BillCard({
             </Button>
           </div>
         </div>
+
+        {!deferred ? (
+          <button
+            type="button"
+            onClick={onDefer}
+            className="text-xs text-neutral-500 underline-offset-2 hover:underline"
+          >
+            Tamu sudah pergi & tidak bisa ditagih hari ini?
+          </button>
+        ) : null}
 
         {printOpen && detail ? (
           <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-3">

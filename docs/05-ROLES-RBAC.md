@@ -486,6 +486,7 @@ Staff triggers a 🔑 action. System requires Manager or Owner to provide their 
 |---|---|---|
 | Void transaction | `pos.transaction.void` | Owner, Manager |
 | Refund transaction | `pos.transaction.refund` | Owner, Manager |
+| Approve "bayar belakangan" (guest pays on a later day) | `pos.bill.defer.approve` | Owner, Manager (PIN of someone other than the requester) |
 | Apply order discount | `pos.discount.apply` | Owner, Manager |
 
 ### 6.3 Flow (Detailed)

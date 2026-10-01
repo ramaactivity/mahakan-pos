@@ -17,6 +17,7 @@ export const AUDIT_EVENT_TYPES = [
   "transaction.open_bill.close",
   "transaction.open_bill.edit",
   "transaction.open_bill.cancel",
+  "transaction.open_bill.defer",
   /* Sesi AE-237 — jejak keranjang POS sebelum disimpan/dibayar. */
   "transaction.cart.item_remove",
   "transaction.cart.discard",

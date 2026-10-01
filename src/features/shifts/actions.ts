@@ -481,6 +481,9 @@ export async function closeShift(
       and(
         eq(transactions.shiftId, current.id),
         eq(transactions.status, "open"),
+        // Sesi AE-241 — approved "bayar belakangan" bills carry over; only
+        // undecided open bills block closing.
+        isNull(transactions.deferredAt),
       ),
     );
   if (openBillRows.length > 0) {
@@ -493,7 +496,7 @@ export async function closeShift(
       .join(", ");
     return fail(
       "OPEN_BILLS_EXIST",
-      `Ada ${openBillRows.length} bill belum dibayar di shift ini: ${list}. Selesaikan atau batalkan dulu sebelum tutup shift.`,
+      `Ada ${openBillRows.length} bill belum dibayar di shift ini: ${list}. Selesaikan, batalkan, atau (kalau tamu benar-benar sudah pergi & tidak bisa dihubungi) jadikan Bayar Belakangan dengan persetujuan manager/owner.`,
     );
   }
 
@@ -1310,7 +1313,11 @@ export async function getShiftDayGate(): Promise<ApiResult<ShiftDayGateState>> {
       .select({ id: transactions.id })
       .from(transactions)
       .where(
-        and(eq(transactions.shiftId, shift.id), eq(transactions.status, "open")),
+        and(
+          eq(transactions.shiftId, shift.id),
+          eq(transactions.status, "open"),
+          isNull(transactions.deferredAt),
+        ),
       );
     openBillCount = rows.length;
   }

@@ -150,6 +150,17 @@ export async function postJournalForPosSale(args: {
   if (
     isDailyJournalDate(entryDateWib, await getDailyJournalSince(args.outletId))
   ) {
+    /* Sesi AE-241 — a bill paid on a LATER day (bayar belakangan, or any
+     * open bill that crossed midnight) still belongs to its order date, whose
+     * daily journal may already be posted. Recompute that day now; the
+     * hourly sweep only looks back 7 days and waits for open shifts. */
+    if (entryDateWib < jakartaDateOf(new Date())) {
+      await recomputeDailyBatchForTransaction({
+        outletId: args.outletId,
+        createdAt: trx.createdAt,
+        actorId: args.actorId,
+      });
+    }
     return;
   }
 

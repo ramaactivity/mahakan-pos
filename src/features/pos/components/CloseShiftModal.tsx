@@ -50,6 +50,7 @@ import { BelanjaSubmissionModal } from "./BelanjaSubmissionModal";
 import { CloseOpenBillModal } from "./CloseOpenBillModal";
 import { CorrectOpeningCashModal } from "./CorrectOpeningCashModal";
 import { useCrewPicker } from "@/features/crew/CrewPicker";
+import { DeferBillDialog, type DeferBillTarget } from "./DeferBillDialog";
 
 /* Sesi AE-62t — variance threshold default 10k kalau prop tidak di-pass
  * dari parent. Owner bisa override via Pengaturan → Threshold (path
@@ -161,6 +162,8 @@ export function CloseShiftModal({
     }>
   >([]);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [deferredCount, setDeferredCount] = useState(0);
+  const [deferringBill, setDeferringBill] = useState<DeferBillTarget | null>(null);
   const [loading, setLoading] = useState(true);
   /* Sesi AE-167 — koreksi kas awal in-place. Override lokal supaya preview
    * (Kas Harusnya + variance) langsung update tanpa refetch prop dari parent. */
@@ -280,8 +283,10 @@ export function CloseShiftModal({
         return;
       }
       const items = trxRes.data.items;
+      // Sesi AE-241 — approved "bayar belakangan" bills carry over; they don't block.
+      setDeferredCount(items.filter((t) => t.status === "open" && t.deferredAt).length);
       const open = items
-        .filter((t) => t.status === "open")
+        .filter((t) => t.status === "open" && !t.deferredAt)
         .map((t) => ({
           id: t.id,
           transactionNumber: t.transactionNumber,
@@ -799,6 +804,8 @@ export function CloseShiftModal({
             loadingPaymentForId={loadingPaymentForId}
             onPrint={handlePrintBill}
             onStartPayment={handleStartPayment}
+            onDefer={(b) => setDeferringBill(b)}
+            deferredCount={deferredCount}
           />
         ) : !summary ? (
           <p className="p-5 text-sm text-danger-500">Gagal load summary</p>
@@ -931,6 +938,16 @@ export function CloseShiftModal({
           </div>
         )}
       </Modal>
+
+      {/* Sesi AE-241 — stacked: bayar belakangan for an unpaid bill */}
+      <DeferBillDialog
+        bill={deferringBill}
+        onClose={() => setDeferringBill(null)}
+        onDeferred={() => {
+          setDeferringBill(null);
+          setRefreshKey((k) => k + 1);
+        }}
+      />
 
       {/* Stacked: payment for selected open bill */}
       <CloseOpenBillModal
@@ -1818,7 +1835,11 @@ function BlockedByOpenBillsView({
   loadingPaymentForId,
   onPrint,
   onStartPayment,
+  onDefer,
+  deferredCount,
 }: {
+  onDefer: (bill: DeferBillTarget) => void;
+  deferredCount: number;
   bills: Array<{
     id: string;
     transactionNumber: string;
@@ -1851,6 +1872,11 @@ function BlockedByOpenBillsView({
               <strong>Bayar</strong> untuk lanjut payment di sini, atau{" "}
               <strong>Cetak Struk</strong> untuk kasih reminder ke customer.
             </p>
+            {deferredCount > 0 ? (
+              <p className="text-xs text-neutral-600">
+                {deferredCount} bill bayar belakangan dibawa ke shift berikutnya (tidak menghalangi tutup shift).
+              </p>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1906,6 +1932,13 @@ function BlockedByOpenBillsView({
                   Bayar
                 </Button>
               </div>
+              <button
+                type="button"
+                onClick={() => onDefer(b)}
+                className="text-left text-[11px] text-neutral-500 underline-offset-2 hover:underline sm:basis-full"
+              >
+                Tamu sudah pergi & tidak bisa ditagih hari ini?
+              </button>
             </li>
           );
         })}
