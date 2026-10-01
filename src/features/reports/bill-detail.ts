@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   auditLogs,
@@ -121,7 +121,32 @@ export async function fetchBillDetail(
       : Promise.resolve([]),
   ]);
 
-  const trail: BillTrailStep[] = eventRows.map((e) => {
+  /* Sesi AE-237 — jejak keranjang: event "commit" menautkan draft → bill. */
+  const commit = eventRows.find((e) => e.eventType === "transaction.cart.commit");
+  const draftId = str(obj(obj(commit?.payload)?.context)?.draftId);
+  const cartActivity = draftId
+    ? (
+        await db
+          .select({ at: auditLogs.createdAt, payload: auditLogs.payload })
+          .from(auditLogs)
+          .where(
+            and(
+              eq(auditLogs.eventType, "transaction.cart.item_remove"),
+              gte(auditLogs.createdAt, new Date(t.createdAt.getTime() - 12 * 3600e3)),
+              lte(auditLogs.createdAt, new Date(commit!.at.getTime() + 60e3)),
+              sql`${auditLogs.payload}->'context'->>'draftId' = ${draftId}`,
+            ),
+          )
+          .orderBy(asc(auditLogs.createdAt))
+      ).map((r) => ({
+        at: str(obj(obj(r.payload)?.context)?.at) ?? r.at.toISOString(),
+        summary: str(obj(r.payload)?.summary) ?? "",
+      }))
+    : [];
+
+  const trail: BillTrailStep[] = eventRows
+    .filter((e) => e.eventType !== "transaction.cart.commit")
+    .map((e) => {
     const p = obj(e.payload);
     const ctx = obj(p?.context);
     const before = obj(p?.before);
@@ -212,6 +237,7 @@ export async function fetchBillDetail(
           variance: shiftRow[0].variance,
         }
       : null,
+    cartActivity,
   };
 }
 

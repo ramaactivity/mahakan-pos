@@ -161,6 +161,18 @@ function BillDetailBody({ d }: { d: BillDetail }) {
         <p className="text-xs text-neutral-500">Transaksi langsung (bukan open bill) — tidak ada riwayat edit.</p>
       )}
 
+      {d.cartActivity.length > 0 ? (
+        <Section title="Dihapus dari keranjang sebelum disimpan / dibayar">
+          <ul className="space-y-1 text-xs">
+            {d.cartActivity.map((c, i) => (
+              <li key={`${c.at}-${i}`} className="rounded bg-warning-100/50 px-2 py-1 text-neutral-800">
+                <span className="text-neutral-500">{fmt(c.at)}</span> — {c.summary}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
+
       {d.reductions.length > 0 ? (
         <Section title="Pemeriksaan pindah / split bill">
           <div className="space-y-3">

@@ -95,6 +95,8 @@ const EVENT_TONE: Record<
   "transaction.void": "danger",
   "transaction.refund": "danger",
   "transaction.discount.applied": "warning",
+  "transaction.cart.item_remove": "warning",
+  "transaction.cart.discard": "danger",
   "menu.item.delete": "danger",
   "menu.category.delete": "danger",
   "user.deactivate": "danger",

@@ -157,4 +157,7 @@ export interface BillDetail {
   reductions: BillReduction[];
   splitPayments: Array<{ paymentMethod: string; amount: number; at: string }>;
   shift: { openedAt: string; closedAt: string | null; variance: number | null } | null;
+  /** Sesi AE-237 — item dihapus dari keranjang SEBELUM bill disimpan/dibayar.
+   * Hanya ada untuk transaksi sejak fitur ini aktif. */
+  cartActivity: Array<{ at: string; summary: string }>;
 }

@@ -230,6 +230,12 @@ import {
 import { ShiftDayGateScreen } from "./components/ShiftDayGateScreen";
 import { useCrewPicker } from "@/features/crew/CrewPicker";
 import { useEditReasonPrompt } from "./components/EditReasonPrompt";
+import {
+  flushCartActivity,
+  logCartCommit,
+  logCartDiscard,
+  logCartReduce,
+} from "./cart-activity/client";
 import type { PosCrew } from "@/features/crew/types";
 import { EmergencyCloseShiftModal } from "./components/EmergencyCloseShiftModal";
 import { useOnlineStatus } from "@/lib/useOnlineStatus";
@@ -303,6 +309,10 @@ export function PosShell() {
   const pickCrew = useCrewPicker();
   const askCrew = (label: string) => (pickCrew ? pickCrew(label) : Promise.resolve(undefined));
   const [askEditReason, editReasonPrompt] = useEditReasonPrompt();
+  /* Sesi AE-237 — kirim jejak keranjang yang tertahan (offline/gagal). */
+  useEffect(() => {
+    void flushCartActivity();
+  }, []);
   const [closeAfterUpdateCrew, setCloseAfterUpdateCrew] = useState<PosCrew | null>(null);
   // Watch online status + pending offline queue; auto-sync when reconnected.
   usePendingSync();
@@ -1028,6 +1038,7 @@ export function PosShell() {
       return;
     }
     if (window.confirm("Batalkan order ini? Item-item akan hilang.")) {
+      logCartDiscard(activeDraft, total, shift?.id ?? null);
       removeDraft(activeDraftId);
       setRightPanel({ kind: "idle" });
     }
@@ -1213,6 +1224,7 @@ export function PosShell() {
       toast.success(
         `Open bill ${res.data.transactionNumber} disimpan. Customer bayar nanti via tab Bill Aktif.`,
       );
+      logCartCommit(activeDraft, shift.id, { transactionId: res.data.id });
       removeDraft(activeDraft.id);
       setRightPanel({ kind: "idle" });
       setHistoryRefreshKey((k) => k + 1);
@@ -1295,6 +1307,7 @@ export function PosShell() {
         setPaymentError(res.error.message);
         return;
       }
+      logCartCommit(activeDraft, shift.id, { transactionId: res.data.id });
       removeDraft(activeDraft.id);
       setHistoryRefreshKey((k) => k + 1);
       setSplitBuilderOpen(false);
@@ -1375,6 +1388,7 @@ export function PosShell() {
       if (typeof navigator !== "undefined" && !navigator.onLine) {
         try {
           await queuePendingTransaction(payload);
+          logCartCommit(activeDraft, shift.id, { clientRefId: payload.clientRefId });
           removeDraft(activeDraft.id);
           toast.info("Offline — transaksi tersimpan lokal, ter-sync nanti");
           setRightPanel({ kind: "idle" });
@@ -1392,6 +1406,7 @@ export function PosShell() {
           setPaymentError(res.error.message);
           return;
         }
+        logCartCommit(activeDraft, shift.id, { transactionId: res.data.id });
         removeDraft(activeDraft.id);
         // Sesi AE-28 — CRITICAL FIX: bump historyRefreshKey langsung
         // setelah createTransaction sukses. Tanpa bump, Pesanan +
@@ -1421,6 +1436,7 @@ export function PosShell() {
         // Network error mid-flight: queue and surface as offline-paid.
         try {
           await queuePendingTransaction(payload);
+          logCartCommit(activeDraft, shift.id, { clientRefId: payload.clientRefId });
           removeDraft(activeDraft.id);
           toast.info("Koneksi terputus — transaksi tersimpan, ter-sync nanti");
           setRightPanel({ kind: "idle" });
@@ -1780,10 +1796,14 @@ export function PosShell() {
               subtotal={subtotal}
               discountAmount={discountAmount}
               total={total}
-              onUpdateQty={(id, qty) =>
-                updateQuantity(activeDraft.id, id, qty)
-              }
-              onRemoveItem={(id) => removeItem(activeDraft.id, id)}
+              onUpdateQty={(id, qty) => {
+                logCartReduce(activeDraft, id, qty, total, shift?.id ?? null);
+                updateQuantity(activeDraft.id, id, qty);
+              }}
+              onRemoveItem={(id) => {
+                logCartReduce(activeDraft, id, 0, total, shift?.id ?? null);
+                removeItem(activeDraft.id, id);
+              }}
               onEditNote={(id) => setNoteEditingId(id)}
               onOpenDiscount={() => setPromoPickerOpen(true)}
               onOpenCompliment={() => setComplimentModalOpen(true)}

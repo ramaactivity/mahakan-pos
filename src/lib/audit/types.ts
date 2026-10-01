@@ -17,6 +17,10 @@ export const AUDIT_EVENT_TYPES = [
   "transaction.open_bill.close",
   "transaction.open_bill.edit",
   "transaction.open_bill.cancel",
+  /* Sesi AE-237 — jejak keranjang POS sebelum disimpan/dibayar. */
+  "transaction.cart.item_remove",
+  "transaction.cart.discard",
+  "transaction.cart.commit",
   /* Sesi AE-62o — shift rebalancing workflow events. */
   "shift.rebalance.request",
   "shift.rebalance.approve",
