@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CANCEL_REASON_CODES } from "./cancel-reason";
 
 const moneySchema = z.number().int().nonnegative();
 
@@ -137,7 +138,18 @@ export const cancelOpenBillSchema = z.object({
   /** Sesi AE-235 — crew (employees.id) serving this action. */
   crewId: z.uuid().nullish(),
   transactionId: z.uuid(),
-  reason: z.string().trim().min(3, "Alasan minimal 3 karakter").max(200),
+  /* Sesi AE-240 — structured reason (see cancel-reason.ts). Old clients that
+   * only send free text are refused with a reload hint. */
+  reasonCode: z.enum(CANCEL_REASON_CODES, {
+    error: "Pilih alasan pembatalan. Muat ulang aplikasi kalau pilihan alasan belum muncul.",
+  }),
+  detail: z.string().trim().max(150).nullish(),
+  itemIds: z.array(z.uuid()).max(50).optional(),
+  targetBill: z.string().trim().max(30).nullish(),
+  /** Out of stock: also mark the menu items sold out (default true). */
+  markSoldOut: z.boolean().optional(),
+  /** Legacy free text, ignored since AE-240. */
+  reason: z.string().optional(),
 });
 
 export const refundTransactionSchema = z.object({

@@ -361,8 +361,17 @@ export interface EditOpenBillInput {
 
 /** Sesi AE-62k — cancel open bill (customer batal / no-show). */
 export interface CancelOpenBillInput {
+  /** Sesi AE-240 — structured reason; see cancel-reason.ts. */
+  reasonCode: import("./cancel-reason").CancelReasonCode;
+  detail?: string | null;
+  /** transaction_items ids that ran out (reasonCode = out_of_stock). */
+  itemIds?: string[];
+  /** Target / correct bill: full number or trailing digits. */
+  targetBill?: string | null;
+  markSoldOut?: boolean;
   /** Sesi AE-235 — crew (employees.id) who is serving; chosen per action on the POS. */
   crewId?: string | null;
   transactionId: string;
-  reason: string;
+  /** Legacy free text — ignored since AE-240. */
+  reason?: string;
 }

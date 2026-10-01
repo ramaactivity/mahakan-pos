@@ -328,6 +328,12 @@ import type { MenuItem } from "@/features/menu";
 import { POS_ORIGIN } from "@/features/cash/drawer-origin";
 import { crewMeta, crewSuffix, resolveCrew } from "@/features/crew/server";
 import {
+  cancelReasonProblem,
+  cancelReasonSpec,
+  formatCancelReason,
+  normalizeBillRef,
+} from "./cancel-reason";
+import {
   diffAuditLines,
   formatChanges,
   toAuditLines,
@@ -3372,6 +3378,51 @@ export async function cancelOpenBill(
   if (!cancelCrewCheck.ok) return fail(cancelCrewCheck.code, cancelCrewCheck.message);
   const cancelCrew = cancelCrewCheck.crew;
 
+  /* Sesi AE-240 — the reason must be checkable: ticked items must be on the
+   * bill, and the target bill must really exist in the same shift. */
+  const reasonProblem = cancelReasonProblem(v);
+  if (reasonProblem) return fail("CANCEL_REASON_INCOMPLETE", reasonProblem);
+  const billToCancel = await fetchTransactionById(v.transactionId);
+  if (!billToCancel || billToCancel.outletId !== session.user.outletId) {
+    return fail("NOT_FOUND", "Transaksi tidak ditemukan");
+  }
+  const outOfStockItems = billToCancel.items.filter((i) => (v.itemIds ?? []).includes(i.id));
+  if (v.reasonCode === "out_of_stock" && outOfStockItems.length !== (v.itemIds ?? []).length) {
+    return fail("CANCEL_REASON_INCOMPLETE", "Item yang dicentang tidak ada di bill ini. Muat ulang lalu pilih lagi.");
+  }
+  let targetNumber: string | null = null;
+  if (cancelReasonSpec(v.reasonCode).needsTargetBill) {
+    const ref = normalizeBillRef(v.targetBill ?? "");
+    if (!ref.full && !ref.suffix) {
+      return fail("CANCEL_REASON_INCOMPLETE", "Nomor bill tidak dikenali. Ketik nomor lengkap (TRX-…) atau 4 digit terakhir.");
+    }
+    const candidates = await db
+      .select({ number: transactions.transactionNumber })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.shiftId, billToCancel.shiftId),
+          sql`${transactions.id} <> ${billToCancel.id}`,
+          inArray(transactions.status, ["open", "paid", "partially_refunded"]),
+          ref.full
+            ? eq(transactions.transactionNumber, ref.full)
+            : sql`${transactions.transactionNumber} like ${"%-" + ref.suffix}`,
+        ),
+      );
+    if (candidates.length === 0) {
+      return fail("CANCEL_TARGET_NOT_FOUND", "Bill tujuan tidak ditemukan di shift ini. Bill yang dibatalkan harus punya tujuan yang nyata.");
+    }
+    if (candidates.length > 1) {
+      return fail("CANCEL_TARGET_AMBIGUOUS", "Nomor itu cocok ke lebih dari satu bill. Ketik nomor lengkap (TRX-…).");
+    }
+    targetNumber = candidates[0]!.number;
+  }
+  const cancelReasonText = formatCancelReason(v.reasonCode, {
+    detail: v.detail,
+    itemNames: outOfStockItems.map((i) => `${i.quantity}× ${i.itemName}${i.variant ? ` (${i.variant})` : ""}`),
+    targetNumber,
+  });
+
   let updated: Transaction;
   let restoredIngredientIds: string[] = [];
   let stockWasDeducted = false;
@@ -3407,7 +3458,7 @@ export async function cancelOpenBill(
           status: "voided",
           voidedAt: new Date(),
           voidedBy: session.user.id,
-          voidReason: `Cancel open bill: ${v.reason}`,
+          voidReason: `Cancel open bill: ${cancelReasonText}`,
           updatedAt: new Date(),
         })
         .where(eq(transactions.id, v.transactionId))
@@ -3483,10 +3534,15 @@ export async function cancelOpenBill(
     entityType: "transaction",
     entityId: updated.id,
     payload: {
-      summary: `Cancel open bill ${updated.transactionNumber}: ${v.reason}${crewSuffix(cancelCrew)}`,
+      summary: `Cancel open bill ${updated.transactionNumber}: ${cancelReasonText}${crewSuffix(cancelCrew)}`,
       context: {
         transactionNumber: updated.transactionNumber,
-        reason: v.reason,
+        reason: cancelReasonText,
+        reasonCode: v.reasonCode,
+        targetBill: targetNumber,
+        items: toAuditLines(billToCancel.items),
+        outOfStock: toAuditLines(outOfStockItems),
+        total: billToCancel.total,
       },
     },
     metadata: {
@@ -3536,6 +3592,16 @@ export async function cancelOpenBill(
       },
       { label: "pos_void_cancel_open_bill", args: posVoidArgs },
     );
+  }
+
+  /* Sesi AE-240 — "stok habis" is confirmed by actually taking the menu off
+   * the POS; a false claim shows up immediately as an unsellable menu. */
+  if (v.reasonCode === "out_of_stock" && v.markSoldOut !== false) {
+    const { toggleSoldOut } = await import("@/features/menu/actions");
+    for (const menuId of new Set(outOfStockItems.map((i) => i.menuItemId))) {
+      const r = await toggleSoldOut(menuId, true);
+      if (!r.success) console.error("[cancel open bill] mark sold out failed", menuId, r.error);
+    }
   }
 
   return ok(updated);

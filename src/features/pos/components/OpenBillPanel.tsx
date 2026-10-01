@@ -22,14 +22,11 @@ import {
   Card,
   CardContent,
   Input,
-  Modal,
   Skeleton,
-  toast,
 } from "@/components/ui";
 import { PrintStationButtons } from "./PrintStationButtons";
 import { SplitPaymentModal } from "./SplitPaymentModal";
 import {
-  cancelOpenBill,
   getTransactionsByIds,
   isOk,
   listTransactionSummaries,
@@ -38,12 +35,12 @@ import {
 } from "@/features/transactions";
 import type { ReceiptConfig } from "@/lib/printer/print-transaction";
 import { CloseOpenBillModal } from "./CloseOpenBillModal";
+import { CancelOpenBillDialog } from "./CancelOpenBillDialog";
 import { formatRupiah } from "@/lib/format";
 import { formatDuration } from "@/lib/duration";
 import { formatIndonesianTime } from "@/lib/date";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
-import { useCrewPicker } from "@/features/crew/CrewPicker";
 
 interface OpenBillPanelProps {
   cashierName: string;
@@ -81,7 +78,6 @@ export function OpenBillPanel({
   onCountChange,
   onBillPaid,
 }: OpenBillPanelProps) {
-  const pickCrew = useCrewPicker();
   const [bills, setBills] = useState<TransactionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
@@ -98,8 +94,6 @@ export function OpenBillPanel({
   // Sesi AE-62l — cancel open bill (customer batal / no-show).
   const [cancellingBill, setCancellingBill] =
     useState<TransactionWithItems | null>(null);
-  const [cancelReason, setCancelReason] = useState("");
-  const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search.trim().toLowerCase(), 200);
   const [filter, setFilter] = useState<"all" | "stale" | "fresh">("all");
@@ -376,7 +370,6 @@ export function OpenBillPanel({
                 onCancel={() => {
                   if (details[b.id]) {
                     setCancellingBill(details[b.id]);
-                    setCancelReason("");
                   }
                 }}
                 cashierName={cashierName}
@@ -408,92 +401,16 @@ export function OpenBillPanel({
         onOpenSettings={onOpenSettings}
       />
 
-      {/* Sesi AE-62l — Cancel open bill modal. Reason required. Restore
-          stock + points + promo. Status flip ke voided. */}
-      <Modal
-        open={cancellingBill !== null}
-        onClose={() => {
-          if (cancelSubmitting) return;
+      {/* Sesi AE-240 — cancel needs a checkable reason (target bill / out-of-stock items) + confirm. */}
+      <CancelOpenBillDialog
+        bill={cancellingBill}
+        otherOpenBills={bills}
+        onClose={() => setCancellingBill(null)}
+        onCancelled={() => {
           setCancellingBill(null);
-          setCancelReason("");
+          setTick((t) => t + 1);
         }}
-        title="Cancel open bill?"
-        description={
-          cancellingBill
-            ? `Bill ${cancellingBill.transactionNumber} (${cancellingBill.customerName ?? "—"}) Rp ${cancellingBill.total.toLocaleString("id-ID")}`
-            : ""
-        }
-        size="sm"
-        footer={
-          <>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setCancellingBill(null);
-                setCancelReason("");
-              }}
-              disabled={cancelSubmitting}
-            >
-              Batal
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={async () => {
-                if (!cancellingBill) return;
-                if (cancelReason.trim().length < 3) {
-                  toast.error("Alasan minimal 3 karakter");
-                  return;
-                }
-                setCancelSubmitting(true);
-                const crew = pickCrew ? await pickCrew("Batalkan open bill") : undefined;
-                if (crew === null) {
-                  setCancelSubmitting(false);
-                  return;
-                }
-                const res = await cancelOpenBill({
-                  transactionId: cancellingBill.id,
-                  reason: cancelReason.trim(),
-                  crewId: crew?.id,
-                });
-                setCancelSubmitting(false);
-                if (!isOk(res)) {
-                  toast.error(res.error.message);
-                  return;
-                }
-                toast.success(
-                  `Bill ${cancellingBill.transactionNumber} di-cancel — stok dikembalikan`,
-                );
-                setCancellingBill(null);
-                setCancelReason("");
-                // Refresh bill list
-                setTick((t) => t + 1);
-              }}
-              loading={cancelSubmitting}
-            >
-              <Trash2 className="size-4" aria-hidden /> Ya, Cancel
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          <div className="rounded-md border border-warning-300 bg-warning-100 p-3 text-xs text-warning-700">
-            <p className="font-semibold">Yang akan terjadi:</p>
-            <ul className="ml-4 list-disc space-y-0.5">
-              <li>Stok bahan akan di-kembalikan ke inventory</li>
-              <li>Promo yang terpakai akan dikembalikan slot-nya</li>
-              <li>Bill status → voided (tidak bisa di-resume)</li>
-              <li>Alasan akan tercatat di audit log</li>
-            </ul>
-          </div>
-          <Input
-            label="Alasan cancel"
-            placeholder="mis. customer batal, no-show, salah order"
-            value={cancelReason}
-            onChange={(e) => setCancelReason(e.target.value)}
-            required
-          />
-        </div>
-      </Modal>
+      />
     </div>
   );
 }
