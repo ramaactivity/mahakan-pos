@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Lock, AlertCircle } from "lucide-react";
+import { Plus, Pencil, Lock, AlertCircle, FileText } from "lucide-react";
 import { Badge, Button, Skeleton, toast } from "@/components/ui";
 import { fetchAccounts } from "@/features/accounting/actions";
 import type {
@@ -13,15 +13,17 @@ import { hasPermission } from "@/lib/auth/rbac";
 import type { Role } from "@/lib/auth/rbac";
 import { cn } from "@/lib/utils";
 import { AccountFormModal } from "./AccountFormModal";
+import { ExportWorkbookButton } from "../ExportWorkbookButton";
+import { downloadCsvForExcel } from "../reports/report-export";
+import type { StyledSheet } from "@/lib/xlsx-styled";
+import {
+  buildCoaSheet,
+  COA_TYPE_LABEL as TYPE_LABEL,
+  coaCsvRows,
+  sortByCode,
+} from "./coa-export";
+import { todayJakarta } from "@/lib/tz";
 
-const TYPE_LABEL: Record<AccountType, string> = {
-  asset: "Aset",
-  liability: "Kewajiban",
-  equity: "Ekuitas",
-  revenue: "Pendapatan",
-  cogs: "HPP",
-  expense: "Beban",
-};
 
 const TYPE_FILTERS: Array<{ key: AccountType | "all"; label: string }> = [
   { key: "all", label: "Semua" },
@@ -80,6 +82,33 @@ export function CoaView({ viewerRole }: Props) {
     });
   }, [rows, search, showInactive]);
 
+  /* Sesi AE-238 — unduh Bagan Akun. Isinya = yang sedang tampil (filter
+   * tipe, pencarian, nonaktif), diurutkan per kode supaya rapi dibaca. */
+  const exportRows = useMemo(
+    () => sortByCode(filtered),
+    [filtered],
+  );
+  const filterLabel = [
+    TYPE_FILTERS.find((f) => f.key === filter)?.label ?? "Semua",
+    showInactive ? "termasuk nonaktif" : "aktif saja",
+    search.trim() ? `cari "${search.trim()}"` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const fileBase = `bagan-akun-${todayJakarta()}`;
+
+  async function downloadExcel() {
+    if (exportRows.length === 0) throw new Error("EMPTY");
+    const { downloadStyledXlsx } = await import("@/lib/xlsx-styled");
+    const sheet = buildCoaSheet(exportRows, filterLabel, todayJakarta());
+    await downloadStyledXlsx(fileBase, [sheet] as unknown as Array<StyledSheet<never>>);
+  }
+
+  function downloadCsv() {
+    downloadCsvForExcel(fileBase, coaCsvRows(exportRows));
+    toast.success("Berkas CSV diunduh");
+  }
+
   function onCreated() {
     setCreateOpen(false);
     void load();
@@ -128,6 +157,16 @@ export function CoaView({ viewerRole }: Props) {
           />
           Tampilkan nonaktif
         </label>
+
+        <ExportWorkbookButton build={downloadExcel} label="Excel" />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={downloadCsv}
+          disabled={loading || exportRows.length === 0}
+        >
+          <FileText className="size-4" /> CSV
+        </Button>
 
         {canManage ? (
           <Button size="sm" onClick={() => setCreateOpen(true)}>
