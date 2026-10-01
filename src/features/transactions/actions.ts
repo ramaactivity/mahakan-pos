@@ -2738,6 +2738,7 @@ export async function editOpenBill(
       `Edit open bill ${current.transactionNumber}: total ${rp(current.total)} → ${rp(validation.recomputedTotal)}${totalDelta < 0 ? ` (TURUN ${rp(-totalDelta)})` : totalDelta > 0 ? ` (naik ${rp(totalDelta)})` : ""}`,
       itemDiff.removed.length ? `hapus ${formatChanges(itemDiff.removed)}` : "",
       itemDiff.added.length ? `tambah ${formatChanges(itemDiff.added)}` : "",
+      `alasan: ${v.editReason}`,
     ].filter(Boolean);
 
     await logAudit({
@@ -2765,6 +2766,7 @@ export async function editOpenBill(
         },
         context: {
           transactionNumber: current.transactionNumber,
+          reason: v.editReason,
           totalDelta,
           removed: itemDiff.removed,
           added: itemDiff.added,

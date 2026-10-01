@@ -355,6 +355,8 @@ export interface EditOpenBillInput {
   complimentPin?: string;
   /** Sesi K — same semantics as CreateTransactionInput.promoId. */
   promoId?: string | null;
+  /** Sesi AE-237 — wajib; server menolak edit tanpa alasan. */
+  editReason: string;
 }
 
 /** Sesi AE-62k — cancel open bill (customer batal / no-show). */

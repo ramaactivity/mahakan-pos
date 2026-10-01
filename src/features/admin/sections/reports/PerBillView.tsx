@@ -28,6 +28,7 @@ import { ExportWorkbookButton } from "../ExportWorkbookButton";
 import { downloadCsvForExcel } from "./report-export";
 import type { StyledCol, StyledSheet } from "@/lib/xlsx-styled";
 import { todayJakarta } from "@/lib/tz";
+import { BillDetailModal } from "./BillDetailModal";
 
 function isoDaysAgo(days: number): string {
   const d = new Date();
@@ -271,6 +272,7 @@ function Body({
   onlyReduced: boolean;
 }) {
   const { stats, buckets, rows, truncated } = report;
+  const [detailId, setDetailId] = useState<string | null>(null);
   const sortedRows = useMemo(() => {
     return rows
       .filter((r) => !onlyReduced || r.reducedBy > 0)
@@ -393,7 +395,8 @@ function Body({
         <CardHeader>
           <CardTitle>Daftar Bill</CardTitle>
           <CardDescription>
-            Tabel transaksi terbaru, sort by waktu (terbaru dulu).
+            Tabel transaksi terbaru, sort by waktu (terbaru dulu). Klik nomor
+            bill untuk lihat isi, bill awal, dan riwayat edit.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -419,7 +422,11 @@ function Body({
                 </thead>
                 <tbody>
                   {sortedRows.map((r) => (
-                    <BillRowItem key={r.transactionId} row={r} />
+                    <BillRowItem
+                      key={r.transactionId}
+                      row={r}
+                      onOpen={() => setDetailId(r.transactionId)}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -427,6 +434,7 @@ function Body({
           )}
         </CardContent>
       </Card>
+      <BillDetailModal transactionId={detailId} onClose={() => setDetailId(null)} />
     </div>
   );
 }
@@ -440,7 +448,7 @@ const fmtTime = (iso: string) =>
     minute: "2-digit",
   });
 
-function BillRowItem({ row: r }: { row: BillRow }) {
+function BillRowItem({ row: r, onOpen }: { row: BillRow; onOpen: () => void }) {
   const minutesOpen = r.paidAt
     ? Math.round((Date.parse(r.paidAt) - Date.parse(r.closedAt)) / 60000)
     : null;
@@ -451,8 +459,14 @@ function BillRowItem({ row: r }: { row: BillRow }) {
         r.reducedBy > 0 && "bg-danger-100/40",
       )}
     >
-      <td className="px-3 py-2 font-mono text-xs text-neutral-700">
-        {r.transactionNumber}
+      <td className="px-3 py-2 font-mono text-xs">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="text-left text-mahakan-green-700 underline decoration-dotted underline-offset-2 hover:decoration-solid"
+        >
+          {r.transactionNumber}
+        </button>
       </td>
       <td className="px-3 py-2 text-xs text-neutral-700">
         <div>{fmtTime(r.closedAt)}</div>

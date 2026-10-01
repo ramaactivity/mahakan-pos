@@ -273,4 +273,11 @@ export const editOpenBillSchema = z.object({
   complimentPin: z.string().trim().min(4).max(6).optional(),
   /** Sesi K — FK to promos.id when discount sourced from a master promo. */
   promoId: z.uuid().nullish(),
+  /* Sesi AE-237 — alasan edit WAJIB (arahan owner, kecurigaan fraud open
+   * bill AE-234). Divalidasi di server supaya tidak bisa dilewati. */
+  editReason: z
+    .string({ error: "Alasan edit wajib diisi. Muat ulang aplikasi kalau kolom alasan belum muncul." })
+    .trim()
+    .min(3, "Alasan edit wajib diisi (minimal 3 huruf)")
+    .max(200, "Alasan edit maksimal 200 karakter"),
 });

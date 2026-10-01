@@ -229,6 +229,7 @@ import {
 } from "@/features/shifts";
 import { ShiftDayGateScreen } from "./components/ShiftDayGateScreen";
 import { useCrewPicker } from "@/features/crew/CrewPicker";
+import { useEditReasonPrompt } from "./components/EditReasonPrompt";
 import type { PosCrew } from "@/features/crew/types";
 import { EmergencyCloseShiftModal } from "./components/EmergencyCloseShiftModal";
 import { useOnlineStatus } from "@/lib/useOnlineStatus";
@@ -301,6 +302,7 @@ export function PosShell() {
    * action asks which crew is actually serving. null = cancelled. */
   const pickCrew = useCrewPicker();
   const askCrew = (label: string) => (pickCrew ? pickCrew(label) : Promise.resolve(undefined));
+  const [askEditReason, editReasonPrompt] = useEditReasonPrompt();
   const [closeAfterUpdateCrew, setCloseAfterUpdateCrew] = useState<PosCrew | null>(null);
   // Watch online status + pending offline queue; auto-sync when reconnected.
   usePendingSync();
@@ -1096,6 +1098,17 @@ export function PosShell() {
     }
     if (activeDraft.items.length === 0) return;
     paymentInFlightRef.current = true;
+    /* Sesi AE-237 — alasan edit wajib; Batal = edit tidak disimpan. */
+    let editReason: string | null = null;
+    if (activeDraft.editingBillId) {
+      editReason = await askEditReason(
+        opts?.proceedToPay ? "Update bill lalu bayar" : "Simpan perubahan bill",
+      );
+      if (editReason === null) {
+        paymentInFlightRef.current = false;
+        return;
+      }
+    }
     const crew = await askCrew(
       activeDraft.editingBillId ? "Simpan perubahan bill" : "Simpan open bill",
     );
@@ -1143,6 +1156,7 @@ export function PosShell() {
           complimentPin:
             activeDraft.complimentPin ?? undefined,
           promoId: activeDraft.promoId,
+          editReason: editReason ?? "",
         });
         if (!res.success) {
           setPaymentError(res.error.message);
@@ -2116,6 +2130,7 @@ export function PosShell() {
         />
       ) : null}
       </Suspense>
+      {editReasonPrompt}
     </div>
   );
 }

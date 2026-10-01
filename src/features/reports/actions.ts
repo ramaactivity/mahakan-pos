@@ -39,6 +39,9 @@ import {
   type SalesRangeReport,
 } from "./types";
 import type { PaymentMethod } from "@/features/transactions";
+import { z } from "zod";
+import { fetchBillDetail } from "./bill-detail";
+import type { BillDetail } from "./bill-detail-pure";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -262,6 +265,22 @@ export async function getBillPerformanceReport(
       paymentFilter,
     ),
   );
+}
+
+/* Sesi AE-237 — Detail Bill: isi, bill awal, riwayat edit, dan pemeriksaan
+ * "turunnya pindah ke bill mana" (lihat bill-detail-pure.ts). */
+export async function getBillDetail(
+  transactionId: string,
+): Promise<ApiResult<BillDetail>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "report.sales.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak lihat laporan penjualan");
+  }
+  if (!z.uuid().safeParse(transactionId).success) {
+    return fail("VALIDATION_ERROR", "ID transaksi tidak valid");
+  }
+  const detail = await fetchBillDetail(session.user.outletId, transactionId);
+  return detail ? ok(detail) : fail("NOT_FOUND", "Bill tidak ditemukan");
 }
 
 export async function getPurchaseRollupReport(

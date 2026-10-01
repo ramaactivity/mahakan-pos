@@ -35,6 +35,14 @@ export type {
   PurchaseRollupReport,
 } from "./types";
 export { isOk } from "./types";
+export type {
+  BillDetail,
+  BillReduction,
+  BillTrailStep,
+  MoveCandidate,
+  DetailItemLine,
+  DetailItemChange,
+} from "./bill-detail-pure";
 
 export {
   computeBillStats,
@@ -54,6 +62,7 @@ export {
 
 export {
   getBillPerformanceReport,
+  getBillDetail,
   getClosingShiftReport,
   getDailySalesReport,
   getItemPerformance,
