@@ -16,6 +16,7 @@ import {
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { logAudit } from "@/lib/audit/logger";
+import { isCashBankCode } from "./cash-book-pure";
 import { logAndSanitize } from "@/lib/server-error";
 import {
   createAccountSchema,
@@ -3152,9 +3153,9 @@ function prevDayIso(iso: string): string {
 function sumCashAccounts(
   balances: Array<{ code: string; debitTotal: number; creditTotal: number }>,
 ): number {
-  const cashCodes = ["1101", "1102", "1110", "1111", "1112"];
+  // Sesi AE-239 — satu definisi kas/bank (dulu 1113 BNI tertinggal).
   return balances
-    .filter((b) => cashCodes.includes(b.code))
+    .filter((b) => isCashBankCode(b.code))
     .reduce((s, b) => s + (b.debitTotal - b.creditTotal), 0);
 }
 

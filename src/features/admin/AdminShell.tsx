@@ -125,6 +125,11 @@ const SettingsSection = lazy(() =>
     default: m.SettingsSection,
   })),
 );
+const CashBookSection = lazy(() =>
+  import("@/features/admin/sections/cash-book/CashBookSection").then((m) => ({
+    default: m.CashBookSection,
+  })),
+);
 const SetoranTunaiSection = lazy(() =>
   import("@/features/admin/sections/SetoranTunaiSection").then((m) => ({
     default: m.SetoranTunaiSection,
@@ -178,6 +183,7 @@ const VALID_SECTIONS: ReadonlySet<AdminSection> = new Set([
   "shifts",
   "cash",
   "setoran_tunai",
+  "cash_book",
   "finance",
   "accounting",
   "balance_account",
@@ -398,6 +404,8 @@ export function AdminShell() {
               <ShiftsSection viewerRole={session.user.role} />
             ) : section === "cash" ? (
               <CashSection viewerUserId={session.user.id} />
+            ) : section === "cash_book" ? (
+              <CashBookSection onNavigate={setSection} />
             ) : section === "setoran_tunai" ? (
               <SetoranTunaiSection viewerRole={session.user.role} />
             ) : section === "finance" ? (

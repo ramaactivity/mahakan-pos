@@ -32,6 +32,7 @@ import type {
   CashFlowEntryAggregate,
 } from "./reports";
 import { clampFromDate, getCutoffDate } from "@/features/cutoff/cutoff";
+import { CASH_BANK_CODE_SQL_REGEX } from "./cash-book-pure";
 
 // ---------- Chart of Accounts ----------
 
@@ -573,9 +574,6 @@ export async function getAccountLedgerEntries(args: {
  *      operating (else)
  *   4. Aggregate per (bucket, label) → array sesuai CashFlowEntryAggregate
  */
-const CASH_BANK_CODES = ["1101", "1102", "1110", "1111", "1112"];
-const FIXED_ASSET_CODES = ["1201", "1202", "1203", "1204"];
-const EQUITY_CODES = ["3101", "3201", "3301"];
 
 export async function getCashFlowEntries(args: {
   outletId: string;
@@ -608,7 +606,9 @@ export async function getCashFlowEntries(args: {
         AND je.status = 'posted'
         AND je.entry_date >= ${fromDate}
         AND je.entry_date <= ${args.toDate}
-        AND coa.code IN ('1101','1102','1110','1111','1112')
+        /* Sesi AE-239 — semua akun kas/bank (1101–1119), termasuk 1113 BNI
+         * yang dulu tertinggal dari daftar kode tetap. */
+        AND coa.code ~ ${CASH_BANK_CODE_SQL_REGEX}
       GROUP BY je.id, je.source_type
       HAVING SUM(jl.debit - jl.credit) != 0
     )

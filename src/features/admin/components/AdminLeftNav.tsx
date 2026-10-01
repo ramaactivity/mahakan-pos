@@ -6,6 +6,7 @@ import {
   BarChart3,
   Bike,
   BookOpen,
+  BookText,
   Briefcase,
   CheckSquare,
   ShoppingCart,
@@ -50,6 +51,7 @@ export type AdminSection =
   | "shifts"
   | "cash"
   | "setoran_tunai"
+  | "cash_book"
   | "finance"
   | "accounting"
   | "balance_account"
@@ -141,6 +143,8 @@ const NAV_GROUPS: NavGroup[] = [
         Icon: Landmark,
         sub: "Kas & Setoran",
       },
+      /* Sesi AE-239 — Buku Kas: uang masuk/keluar per kas & rekening. */
+      { key: "cash_book", label: "Buku Kas", Icon: BookText },
       { key: "cash", label: "Kas", Icon: Wallet },
       /* Sesi AE-132 — Arsip foto nota staff (dokumentasi murni, tidak
        * terikat finance). Ikut Kas & Setoran karena overlap konseptual. */

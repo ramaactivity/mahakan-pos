@@ -26,7 +26,8 @@ export interface StyledCol<T> {
   fmt?: ColFormat;
   /**
    * Rumus hidup untuk KOLOM ini, dievaluasi per baris data.
-   * `r` = nomor baris Excel sebenarnya. Kalau diisi, `value` diabaikan.
+   * `r` = nomor baris Excel sebenarnya. Kalau diisi, `value` dipakai sebagai
+   * hasil tersimpan (cached result) rumus itu, bukan isi sel.
    */
   formula?: (r: number, ctx: SheetCtx) => string;
   /** Sertakan kolom ini di baris TOTAL (SUM). Default: true untuk money/int. */
@@ -163,7 +164,16 @@ export async function buildStyledWorkbook(
       const tone = rowTone?.(row) ?? null;
       cols.forEach((c, i) => {
         const cell = r.getCell(i + 1);
-        if (c.formula) cell.value = { formula: c.formula(r.number, ctx) };
+        /* Sesi AE-239 — `value` (kalau ada) jadi hasil tersimpan rumus, supaya
+         * penampil yang tidak menghitung ulang (pratinjau HP/Quick Look)
+         * tetap menampilkan angkanya. */
+        if (c.formula) {
+          const result = c.value?.(row as never);
+          cell.value =
+            result == null
+              ? { formula: c.formula(r.number, ctx) }
+              : { formula: c.formula(r.number, ctx), result: result as number | string | Date };
+        }
         cell.numFmt = NUM_FMT[c.fmt ?? "text"];
         cell.font = tone ? { size: 11, color: { argb: TONE_FONT[tone] } } : { size: 11 };
         cell.alignment = {
