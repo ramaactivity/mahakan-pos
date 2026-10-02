@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Input, Modal, Select, toast } from "@/components/ui";
+import { X } from "lucide-react";
+import { Button, Combobox, Input, Modal, Select, toast } from "@/components/ui";
 import {
   isOk,
   postDailyMarketSpend,
@@ -10,6 +11,8 @@ import {
 } from "@/features/daily-market";
 import { listBankAccounts } from "@/features/bank-accounts";
 import { listExpenseCategories, isOk as cashIsOk } from "@/features/cash";
+import { listRequestableIngredients } from "@/features/purchase-requests/actions";
+import { isOk as prIsOk } from "@/features/purchase-requests/types";
 import { parseRupiah } from "@/lib/format";
 import { todayJakarta } from "@/lib/tz";
 
@@ -36,6 +39,9 @@ export function DailyMarketEntryModal({
   const [entryDate, setEntryDate] = useState(todayJakarta());
   const [bankAccountId, setBankAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  /* Sesi AE-243 — bahan yang dibeli, dipilih dari master supaya tidak perlu
+   * mengetik dan ejaannya seragam dengan Inventory. */
+  const [picked, setPicked] = useState<Array<{ id: string; name: string }>>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,6 +50,7 @@ export function DailyMarketEntryModal({
     /* eslint-disable react-hooks/set-state-in-effect */
     setAmount("");
     setDescription("");
+    setPicked([]);
     setEntryDate(todayJakarta());
     setError(null);
     setSubmitting(false);
@@ -57,6 +64,15 @@ export function DailyMarketEntryModal({
       return r.ok ? r.data : [];
     },
     enabled: kind === "topup",
+  });
+  const ingQ = useQuery({
+    queryKey: ["daily-market", "ingredients"],
+    queryFn: async () => {
+      const r = await listRequestableIngredients();
+      return prIsOk(r) ? r.data : [];
+    },
+    enabled: kind === "spend",
+    staleTime: 5 * 60 * 1000,
   });
   const catsQ = useQuery({
     queryKey: ["daily-market", "categories"],
@@ -96,6 +112,7 @@ export function DailyMarketEntryModal({
           courierName,
           description: description.trim(),
           entryDate,
+          ingredientIds: picked.map((p) => p.id),
         });
     setSubmitting(false);
     if (!isOk(res)) {
@@ -166,6 +183,54 @@ export function DailyMarketEntryModal({
             placeholder="Pilih kategori"
           />
         )}
+        {!isTopup ? (
+          <div>
+            <Combobox
+              label="Bahan yang dibeli (opsional)"
+              value={null}
+              onChange={(id) => {
+                if (!id) return;
+                const found = (ingQ.data ?? []).find((i) => i.id === id);
+                if (!found) return;
+                setPicked((prev) =>
+                  prev.some((p) => p.id === id)
+                    ? prev
+                    : [...prev, { id, name: found.name }],
+                );
+              }}
+              options={(ingQ.data ?? [])
+                .filter((i) => !picked.some((p) => p.id === i.id))
+                .map((i) => ({ value: i.id, label: `${i.name} (${i.unit})` }))}
+              placeholder="Cari bahan…"
+              searchPlaceholder="Ketik nama bahan…"
+              emptyText="Bahan tidak ditemukan — tulis saja di keterangan."
+              loading={ingQ.isLoading}
+              hint="Boleh dikosongkan. Stok TIDAK ikut bertambah dari sini — penerimaan barang tetap lewat Purchasing."
+            />
+            {picked.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {picked.map((p) => (
+                  <span
+                    key={p.id}
+                    className="inline-flex items-center gap-1 rounded-full bg-mahakan-green-100 py-1 pl-2.5 pr-1 text-xs font-medium text-mahakan-green-900"
+                  >
+                    {p.name}
+                    <button
+                      type="button"
+                      aria-label={`Hapus ${p.name}`}
+                      onClick={() =>
+                        setPicked((prev) => prev.filter((x) => x.id !== p.id))
+                      }
+                      className="rounded-full p-0.5 hover:bg-mahakan-green-200"
+                    >
+                      <X className="size-3" aria-hidden />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <Input
           label={isTopup ? "Keterangan (opsional)" : "Keterangan belanja"}
           value={description}

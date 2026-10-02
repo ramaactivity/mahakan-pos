@@ -19,6 +19,10 @@ export const topupSchema = z.object({
 export const spendSchema = z.object({
   amount: money,
   categoryId: z.uuid("Kategori belanja tidak valid"),
+  /* Sesi AE-243 — bahan yang dibeli, dipilih dari master. Boleh kosong:
+   * belanja pasar kadang isinya hal yang memang tidak ada di master
+   * (parkir, plastik, kuli angkut). */
+  ingredientIds: z.array(z.uuid()).max(50, "Maksimal 50 bahan per catatan").optional(),
   courierName: z.string().trim().min(2, "Nama kurir minimal 2 huruf").max(80),
   description: z.string().trim().min(3, "Keterangan minimal 3 huruf").max(200),
   entryDate: z.string().regex(ISO_DATE, "Tanggal harus YYYY-MM-DD").optional(),

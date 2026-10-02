@@ -1,11 +1,12 @@
 "use server";
 
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   bankAccounts,
   dailyMarketEntries,
   expenseCategories,
+  ingredients,
   users,
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
@@ -102,9 +103,31 @@ export async function listDailyMarketEntries(opts?: {
     .orderBy(desc(dailyMarketEntries.entryDate), desc(dailyMarketEntries.createdAt))
     .limit(Math.min(opts?.limit ?? 200, 1000));
 
+  /* Nama bahan di-resolve sekali untuk SEMUA baris, bukan per baris:
+   * daftar ini bisa ratusan baris dan tiap barisnya punya beberapa bahan. */
+  const allIds = [
+    ...new Set(
+      rows.flatMap((r) =>
+        Array.isArray(r.e.ingredientIds) ? (r.e.ingredientIds as string[]) : [],
+      ),
+    ),
+  ];
+  const nameById = new Map<string, string>();
+  if (allIds.length > 0) {
+    const ings = await db
+      .select({ id: ingredients.id, name: ingredients.name })
+      .from(ingredients)
+      .where(inArray(ingredients.id, allIds));
+    for (const i of ings) nameById.set(i.id, i.name);
+  }
+
   return ok(
     rows.map((r) => ({
       ...r.e,
+      ingredientNames: (Array.isArray(r.e.ingredientIds)
+        ? (r.e.ingredientIds as string[])
+        : []
+      ).map((id) => nameById.get(id) ?? "(bahan dihapus)"),
       bankLabel: r.bankName
         ? bankLabelOf({
             bankName: r.bankName,
@@ -309,6 +332,7 @@ export async function postDailyMarketSpend(
           description: v.description,
           courierName: v.courierName,
           categoryId: v.categoryId,
+          ingredientIds: v.ingredientIds?.length ? v.ingredientIds : null,
           receiptImageUrl: normalizeReceiptUrl(v.receiptImageUrl ?? null),
           createdBy: session.user.id,
         })
@@ -333,6 +357,7 @@ export async function postDailyMarketSpend(
           courierName: v.courierName,
           categoryId: v.categoryId,
           expenseAccountCode,
+          ingredientIds: v.ingredientIds ?? [],
         },
       });
 

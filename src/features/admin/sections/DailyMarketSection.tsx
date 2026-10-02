@@ -174,6 +174,11 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
                   <td className="px-3 py-2">{r.courierName ?? "—"}</td>
                   <td className="px-3 py-2">
                     {r.description}
+                    {r.ingredientNames.length > 0 ? (
+                      <span className="ml-1 text-xs text-neutral-500">
+                        · {r.ingredientNames.join(", ")}
+                      </span>
+                    ) : null}
                     {r.status === "reversed" ? (
                       <span className="ml-2 text-xs italic">
                         (dibatalkan: {r.reversalReason})

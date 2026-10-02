@@ -6,6 +6,7 @@ import {
   timestamp,
   date,
   bigint,
+  jsonb,
   index,
   check,
 } from "drizzle-orm/pg-core";
@@ -59,6 +60,17 @@ export const dailyMarketEntries = pgTable(
     bankAccountId: uuid("bank_account_id").references(() => bankAccounts.id),
     /** Kategori biaya — hanya untuk kind='spend', menentukan akun bebannya. */
     categoryId: uuid("category_id").references(() => expenseCategories.id),
+
+    /**
+     * Sesi AE-243 — bahan baku yang dibelanjakan (daftar id dari master),
+     * hanya untuk kind='spend'.
+     *
+     * SENGAJA tanpa qty, harga satuan, maupun pergerakan stok: jalur resmi
+     * barang masuk tetap Purchasing (PR→PO→GR). Kalau modul ini ikut
+     * menambah stok, satu nota pasar bisa terhitung dua kali. Daftar ini
+     * untuk menjawab "bulan ini belanja pasar isinya apa saja".
+     */
+    ingredientIds: jsonb("ingredient_ids"),
 
     receiptImageUrl: text("receipt_image_url"),
 

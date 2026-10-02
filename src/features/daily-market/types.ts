@@ -24,6 +24,8 @@ export interface DailyMarketEntryRow extends DailyMarketEntry {
   bankLabel: string | null;
   categoryName: string | null;
   createdByName: string | null;
+  /** Sesi AE-243 — nama bahan hasil resolusi `ingredientIds`. */
+  ingredientNames: string[];
 }
 
 export interface DailyMarketSummary {
