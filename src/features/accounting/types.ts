@@ -85,6 +85,11 @@ export type JournalSourceType =
   | "internal_debt_loan"
   | "internal_debt_entry_reversal"
   | "internal_debt_repayment"
+  /* Sesi AE-242 — Belanja Daily Market (uang muka kurir). */
+  | "daily_market_topup"
+  | "daily_market_topup_reversal"
+  | "daily_market_spend"
+  | "daily_market_spend_reversal"
   | "internal_debt_repayment_reversal"
   /* Sesi AE-209b — Kasbon Karyawan sebagai piutang (akun 1155). */
   | "employee_advance_issue"

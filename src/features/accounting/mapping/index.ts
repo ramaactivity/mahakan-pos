@@ -105,3 +105,10 @@ export type {
   DepreciationLineInput,
   MonthlyDepreciationInput,
 } from "./fixedAsset";
+/* Sesi AE-242 — Belanja Daily Market (uang muka kurir). */
+export {
+  ACCOUNT_SALDO_KURIR,
+  mapDailyMarketSpend,
+  mapDailyMarketTopup,
+  reverseDailyMarketLines,
+} from "./dailyMarket";

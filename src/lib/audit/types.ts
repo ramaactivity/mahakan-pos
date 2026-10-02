@@ -243,6 +243,10 @@ export const AUDIT_EVENT_TYPES = [
   "internal_debt_party.create",
   "internal_debt_party.update",
   "internal_debt_party.delete",
+  /* Sesi AE-242 — Belanja Daily Market (uang muka kurir). */
+  "daily_market.topup",
+  "daily_market.spend",
+  "daily_market.reverse",
   "internal_debt_entry.post",
   "internal_debt_entry.reverse",
   "internal_debt_repayment.post",
@@ -458,6 +462,8 @@ export type AuditEntityType =
   | "internal_debt_party"
   | "internal_debt_entry"
   | "internal_debt_repayment"
+  /* Sesi AE-242 — Belanja Daily Market. */
+  | "daily_market_entry"
   | "share_transaction"
   | "promo"
   | "employee_career_history"

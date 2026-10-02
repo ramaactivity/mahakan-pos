@@ -196,6 +196,14 @@ export const journalEntries = pgTable(
         "payroll_paid_reversal",
         "expense_create",
         "expense_void",
+        /* Sesi AE-242 — Belanja Daily Market (uang muka kurir).
+         * daily_market_topup: Dr 1103 Saldo Kurir / Cr <bank asal>.
+         * daily_market_spend: Dr <akun beban kategori> / Cr 1103.
+         * *_reversal: pembalik, sourceId = entry yang sama. */
+        "daily_market_topup",
+        "daily_market_topup_reversal",
+        "daily_market_spend",
+        "daily_market_spend_reversal",
         "income_create",
         "income_void",
         "cash_deposit_verified",

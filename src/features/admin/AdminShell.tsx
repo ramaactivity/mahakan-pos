@@ -125,6 +125,11 @@ const SettingsSection = lazy(() =>
     default: m.SettingsSection,
   })),
 );
+const DailyMarketSection = lazy(() =>
+  import("@/features/admin/sections/DailyMarketSection").then((m) => ({
+    default: m.DailyMarketSection,
+  })),
+);
 const CashBookSection = lazy(() =>
   import("@/features/admin/sections/cash-book/CashBookSection").then((m) => ({
     default: m.CashBookSection,
@@ -184,6 +189,7 @@ const VALID_SECTIONS: ReadonlySet<AdminSection> = new Set([
   "cash",
   "setoran_tunai",
   "cash_book",
+  "daily_market",
   "finance",
   "accounting",
   "balance_account",
@@ -406,6 +412,8 @@ export function AdminShell() {
               <CashSection viewerUserId={session.user.id} />
             ) : section === "cash_book" ? (
               <CashBookSection onNavigate={setSection} />
+            ) : section === "daily_market" ? (
+              <DailyMarketSection viewerRole={session.user.role} />
             ) : section === "setoran_tunai" ? (
               <SetoranTunaiSection viewerRole={session.user.role} />
             ) : section === "finance" ? (

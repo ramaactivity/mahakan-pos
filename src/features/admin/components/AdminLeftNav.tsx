@@ -52,6 +52,7 @@ export type AdminSection =
   | "cash"
   | "setoran_tunai"
   | "cash_book"
+  | "daily_market"
   | "finance"
   | "accounting"
   | "balance_account"
@@ -146,6 +147,9 @@ const NAV_GROUPS: NavGroup[] = [
       /* Sesi AE-239 — Buku Kas: uang masuk/keluar per kas & rekening. */
       { key: "cash_book", label: "Buku Kas", Icon: BookText },
       { key: "cash", label: "Kas", Icon: Wallet },
+      /* Sesi AE-242 — uang muka kurir belanja pasar. Ikut Kas & Setoran
+       * karena ini soal uang keluar-masuk, bukan pembukuannya. */
+      { key: "daily_market", label: "Daily Market", Icon: Bike },
       /* Sesi AE-132 — Arsip foto nota staff (dokumentasi murni, tidak
        * terikat finance). Ikut Kas & Setoran karena overlap konseptual. */
       { key: "nota_archive", label: "Arsip Nota", Icon: FileText },

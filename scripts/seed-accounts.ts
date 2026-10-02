@@ -44,6 +44,11 @@ const DEFAULTS: DefaultAccount[] = [
   // ============ 1xxx ASET — Aset Lancar ============
   { code: "1101", name: "Kas Tunai (Drawer POS)", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 1, notes: "Cash drawer aktif POS — open shift cash + verified deposit reconcile" },
   { code: "1102", name: "Kas Tunai (Brankas)", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 2, notes: "Cash on hand di luar drawer (idle, pending setor)" },
+  /* Sesi AE-242 — uang muka kurir belanja pasar. Kodenya sengaja di rentang
+   * kas & bank (11[01][0-9]) supaya Buku Kas memperlakukannya sebagai buku
+   * tersendiri: saldonya = total top up − total belanja, tanpa mesin saldo
+   * kedua yang harus dijaga agar tidak melenceng. */
+  { code: "1103", name: "Saldo Kurir Daily Market", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 3, notes: "Sesi AE-242. Uang yang sudah ditransfer ke kurir tapi belum dibelanjakan." },
   { code: "1110", name: "Bank BCA", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 3, notes: "Rekening operasional utama" },
   { code: "1111", name: "Bank BRI", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: true, displayOrder: 4, notes: "Rekening cadangan" },
   { code: "1112", name: "Bank Lain-lain", type: "asset", normalBalance: "debit", parentCode: "1100", isSystem: false, displayOrder: 5, notes: "Owner bisa tambah bank lain via UI" },

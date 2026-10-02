@@ -6,6 +6,7 @@ export * from "./shift_rebalances";
 export * from "./transactions";
 export * from "./transaction_corrections";
 export * from "./expenses";
+export * from "./daily_market";
 export * from "./audit";
 export * from "./approver-tokens";
 export * from "./inventory";
