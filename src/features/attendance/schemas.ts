@@ -78,6 +78,15 @@ export const createManualAttendanceSchema = z.object({
   isLate: z.enum(["yes", "no", "unknown"]).default("no"),
   lateMinutes: z.number().int().min(0).max(720).nullable().default(0),
   overtimeMinutes: z.number().int().min(0).max(720).nullable().default(0),
+  /* Sesi AE-244 — jam masuk & pulang SEBENARNYA ("HH:mm").
+   *
+   * Kalau diisi, server menghitung sendiri telat + lemburnya memakai helper
+   * yang sama dengan clock-in dan recompute jadwal. Sebelumnya HR mengetik
+   * menitnya tangan, dan karena jamnya diturunkan dari jadwal, angkanya
+   * praktis selalu 0 — hari yang diinput manual tidak pernah terbaca telat
+   * maupun lembur. Dibiarkan opsional supaya backfill lama tetap jalan. */
+  clockInTime: z.string().regex(/^\d{2}:\d{2}$/, "Jam harus HH:MM").nullish(),
+  clockOutTime: z.string().regex(/^\d{2}:\d{2}$/, "Jam harus HH:MM").nullish(),
   reason: z.string().trim().min(3).max(500),
 });
 export type CreateManualAttendanceInput = z.infer<

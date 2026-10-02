@@ -220,9 +220,13 @@ export type OutletSettings = {
    * line via UpdatePayrollLine. Both null/0 = no auto-fill (Owner
    * computes manually). Rupiah-per-minute for granularity. */
   payroll?: {
-    /** Rp per minute deducted for lateness. Example: Rp 200/m × 30m
-     * late = Rp 6,000 deduction. */
+    /** @deprecated Sesi AE-244 — dibaca sebagai cadangan saja (×60).
+     * Tarif baru per JAM ada di `latePerHour`. */
     latePerMinute?: number;
+    /** Sesi AE-244 — potongan telat, rupiah per JAM. */
+    latePerHour?: number;
+    /** Sesi AE-244 — upah lembur, rupiah per JAM. */
+    overtimePerHour?: number;
     /** Rp per minute paid for overtime. Example: Rp 300/m × 60m OT
      * = Rp 18,000 OT pay. */
     overtimePerMinute?: number;

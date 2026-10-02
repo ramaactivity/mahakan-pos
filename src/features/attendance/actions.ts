@@ -546,10 +546,59 @@ export async function createManualAttendance(
     v.employeeId,
     v.shiftDate,
   );
-  const { clockInAt, clockOutAt, workMinutes } = deriveManualShiftTimes(
-    v.shiftDate,
-    schedule,
-  );
+  const derived = deriveManualShiftTimes(v.shiftDate, schedule);
+
+  /* Sesi AE-244 — kalau HR mengisi jam SEBENARNYA, pakai itu dan biarkan
+   * sistem menghitung telat + lemburnya. Tanpa jam nyata, jam diturunkan
+   * dari jadwal (perilaku lama) dan angka telat/lembur memang mustahil
+   * berbeda dari nol — jadi yang dipakai nilai ketikan HR. */
+  let clockInAt = derived.clockInAt;
+  let clockOutAt = derived.clockOutAt;
+  let workMinutes = derived.workMinutes;
+  let isLate = v.isLate;
+  let lateMinutes = v.lateMinutes;
+  let overtimeMinutes = v.overtimeMinutes;
+
+  if (v.clockInTime) {
+    clockInAt = buildWibInstant(v.shiftDate, `${v.clockInTime}:00`);
+    if (v.clockOutTime) {
+      /* Pulang lebih pagi dari masuk = shift melewati tengah malam. */
+      const crossMidnight = v.clockOutTime <= v.clockInTime;
+      clockOutAt = buildWibInstant(
+        crossMidnight ? nextDateStr(v.shiftDate) : v.shiftDate,
+        `${v.clockOutTime}:00`,
+      );
+      workMinutes = Math.max(
+        0,
+        Math.round((clockOutAt.getTime() - clockInAt.getTime()) / 60_000),
+      );
+    } else {
+      clockOutAt = null;
+      workMinutes = null;
+    }
+
+    const { deriveAttendanceMetrics } = await import("./recompute-pure");
+    const { computeLateMinutes } = await import("./late-compute");
+    const { computeOvertimeMinutes } = await import("./overtime-compute");
+    const metrics = deriveAttendanceMetrics({
+      shiftDate: v.shiftDate,
+      newSchedule: schedule
+        ? {
+            dayOff: schedule.dayOff,
+            startTime: schedule.startTime,
+            endTime: schedule.endTime,
+          }
+        : null,
+      clockInAt,
+      clockOutAt,
+      graceMinutes: await resolveLateGraceMinutes(session.user.outletId),
+      computeLate: computeLateMinutes,
+      computeOvertime: computeOvertimeMinutes,
+    });
+    isLate = metrics.isLate;
+    lateMinutes = metrics.lateMinutes;
+    overtimeMinutes = metrics.overtimeMinutes;
+  }
 
   const now = new Date();
   try {
@@ -564,9 +613,9 @@ export async function createManualAttendance(
         clockedInBy: session.user.id,
         clockedOutBy: clockOutAt ? session.user.id : null,
         workMinutes,
-        isLate: v.isLate,
-        lateMinutes: v.lateMinutes,
-        overtimeMinutes: v.overtimeMinutes,
+        isLate,
+        lateMinutes,
+        overtimeMinutes,
         isManualEntry: true,
         manualEditAt: now,
         manualEditBy: session.user.id,
@@ -583,10 +632,14 @@ export async function createManualAttendance(
         summary: `Input absen manual (Hadir): ${emp.fullName} ${v.shiftDate}`,
         after: {
           shiftDate: v.shiftDate,
-          isLate: v.isLate,
-          lateMinutes: v.lateMinutes,
-          overtimeMinutes: v.overtimeMinutes,
+          isLate,
+          lateMinutes,
+          overtimeMinutes,
           workMinutes,
+          /* Jejak: angka ini dihitung sistem atau diketik HR? */
+          autoComputed: Boolean(v.clockInTime),
+          clockInTime: v.clockInTime ?? null,
+          clockOutTime: v.clockOutTime ?? null,
         },
         context: { reason: v.reason, employeeId: emp.id },
       },

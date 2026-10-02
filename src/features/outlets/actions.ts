@@ -275,8 +275,13 @@ const attendanceSettingsSchema = z.object({
 });
 
 const payrollSettingsSchema = z.object({
+  /** @deprecated Sesi AE-244 — diganti tarif per JAM, dibiarkan supaya
+   * pemanggil lama tidak pecah. */
   latePerMinute: z.number().int().min(0).max(99_999).optional(),
   overtimePerMinute: z.number().int().min(0).max(99_999).optional(),
+  /* Sesi AE-244 — tarif per JAM. */
+  latePerHour: z.number().int().min(0).max(9_999_999).optional(),
+  overtimePerHour: z.number().int().min(0).max(9_999_999).optional(),
   /** Sesi AE-62ac — bonus untuk karyawan double-shift / full-shift.
    * Optional — kalau owner unset, fitur off (bonus=0).
    * minMinutes default 600 (10 jam). bonusType "fixed"|"multiplier". */

@@ -968,6 +968,10 @@ function AttendanceDetailModal({
   const [editLate, setEditLate] = useState("");
   const [editOT, setEditOT] = useState("");
   const [editReason, setEditReason] = useState("");
+  /* Sesi AE-244 — jam masuk/pulang SEBENARNYA. Kalau diisi, telat & lembur
+   * dihitung sistem dan dua kotak menit di bawah tidak dipakai. */
+  const [editInTime, setEditInTime] = useState("");
+  const [editOutTime, setEditOutTime] = useState("");
   const [submitting, setSubmitting] = useState(false);
   /* Sesi AE-162 — konfirmasi hapus entri manual. */
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -1069,11 +1073,17 @@ function AttendanceDetailModal({
       isLate: editIsLate,
       lateMinutes: lateN,
       overtimeMinutes: otN,
+      clockInTime: editInTime || null,
+      clockOutTime: editOutTime || null,
       reason: editReason.trim(),
     });
     setSubmitting(false);
     if (res.success) {
-      toast.success("Absen ditandai Hadir (manual)");
+      toast.success(
+        editInTime
+          ? "Absen ditandai Hadir — telat & lembur dihitung otomatis"
+          : "Absen ditandai Hadir (manual)",
+      );
       setFormMode(null);
       onSaved?.();
       onClose();
@@ -1315,6 +1325,30 @@ function AttendanceDetailModal({
                 ))}
               </div>
             </div>
+            {/* Sesi AE-244 — isi jam sebenarnya, sistem yang menghitung.
+              * Dulu HR mengetik menit telat/lembur tangan, dan karena jamnya
+              * diturunkan dari jadwal, angkanya praktis selalu 0. */}
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                label="Jam masuk sebenarnya"
+                type="time"
+                value={editInTime}
+                onChange={(e) => setEditInTime(e.target.value)}
+              />
+              <Input
+                label="Jam pulang sebenarnya"
+                type="time"
+                value={editOutTime}
+                onChange={(e) => setEditOutTime(e.target.value)}
+              />
+            </div>
+            {editInTime ? (
+              <p className="rounded-md bg-mahakan-green-50 p-2 text-[11px] text-mahakan-green-900">
+                Telat &amp; lembur dihitung otomatis dari jam ini dibanding
+                jadwalnya (termasuk masa toleransi). Dua kotak menit di bawah
+                diabaikan.
+              </p>
+            ) : null}
             <div className="grid grid-cols-2 gap-2">
               <Input
                 label="Telat (menit)"
@@ -1322,6 +1356,7 @@ function AttendanceDetailModal({
                 inputMode="numeric"
                 value={editLate}
                 onChange={(e) => setEditLate(e.target.value)}
+                disabled={Boolean(editInTime)}
               />
               <Input
                 label="Overtime (menit)"
@@ -1329,6 +1364,7 @@ function AttendanceDetailModal({
                 inputMode="numeric"
                 value={editOT}
                 onChange={(e) => setEditOT(e.target.value)}
+                disabled={Boolean(editInTime)}
               />
             </div>
             <Input

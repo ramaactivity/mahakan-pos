@@ -58,6 +58,10 @@ import {
   parseIndonesianNumber,
   parseRupiah,
 } from "@/lib/format";
+import {
+  amountFromMinutes,
+  resolveHourlyRates,
+} from "@/features/payroll/hourly-rate-pure";
 import { formatIndonesianDateTime } from "@/lib/date";
 import { jakartaDateOf, monthEndJakarta, monthStartJakarta } from "@/lib/tz";
 import { cn } from "@/lib/utils";
@@ -140,10 +144,11 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
       if (cancelled) return;
       if (outletIsOk(res)) {
         const p = res.data.settings?.payroll ?? {};
-        setLatePerMin(p.latePerMinute != null ? String(p.latePerMinute) : "");
-        setOtPerMin(
-          p.overtimePerMinute != null ? String(p.overtimePerMinute) : "",
-        );
+        /* Sesi AE-244 — tarif kini per JAM; tarif lama per menit ikut
+         * dinaikkan ×60 supaya kotaknya tidak tampil kosong. */
+        const rates = resolveHourlyRates(p);
+        setLatePerMin(rates.latePerHour ? String(rates.latePerHour) : "");
+        setOtPerMin(rates.overtimePerHour ? String(rates.overtimePerHour) : "");
         /* Sesi AE-62ac — load doubleShift config. */
         const ds = p.doubleShift;
         if (ds) {
@@ -209,8 +214,8 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
 
     setSavingSettings(true);
     const res = await updatePayrollSettings({
-      latePerMinute: lateNum,
-      overtimePerMinute: otNum,
+      latePerHour: lateNum,
+      overtimePerHour: otNum,
       doubleShift: doubleShiftPayload,
     });
     setSavingSettings(false);
@@ -374,7 +379,7 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
         open={settingsOpen}
         onClose={() => (savingSettings ? null : setSettingsOpen(false))}
         title="Formula Payroll"
-        description="Rate per menit untuk auto-fill saat Recompute. Kosongkan / 0 = tidak auto-fill (Owner input manual)."
+        description="Tarif per JAM untuk auto-isi saat Recompute. Kosongkan / 0 = tidak auto-isi (Owner input manual)."
         size="md"
         footer={
           <>
@@ -397,7 +402,7 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
       >
         <div className="space-y-3">
           <Input
-            label="Late Deduction (Rp/menit)"
+            label="Potongan Telat (Rp/jam)"
             type="text"
             inputMode="numeric"
             value={latePerMin}
@@ -407,13 +412,13 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
             placeholder="0"
             hint={
               latePerMin && parseInt(latePerMin, 10) > 0
-                ? `Contoh: 30 menit telat → ${formatRupiah(parseInt(latePerMin, 10) * 30)}`
-                : "Default 0 = tidak auto-fill late_deduction"
+                ? `Contoh: telat 30 menit → ${formatRupiah(amountFromMinutes(30, parseInt(latePerMin, 10)))}`
+                : "Default 0 = tidak auto-isi potongan telat"
             }
             disabled={savingSettings}
           />
           <Input
-            label="Overtime Pay (Rp/menit)"
+            label="Upah Lembur (Rp/jam)"
             type="text"
             inputMode="numeric"
             value={otPerMin}
@@ -423,8 +428,8 @@ export function PayrollSection({ viewerRole }: PayrollSectionProps) {
             placeholder="0"
             hint={
               otPerMin && parseInt(otPerMin, 10) > 0
-                ? `Contoh: 60 menit OT → ${formatRupiah(parseInt(otPerMin, 10) * 60)}`
-                : "Default 0 = tidak auto-fill overtime_pay"
+                ? `Contoh: lembur 2 jam → ${formatRupiah(amountFromMinutes(120, parseInt(otPerMin, 10)))}`
+                : "Default 0 = tidak auto-isi upah lembur"
             }
             disabled={savingSettings}
           />

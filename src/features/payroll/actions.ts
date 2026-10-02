@@ -3,6 +3,10 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  amountFromMinutes,
+  resolveHourlyRates,
+} from "./hourly-rate-pure";
+import {
   attendanceRecords,
   bankAccounts,
   chartOfAccounts,
@@ -306,9 +310,11 @@ export async function computePayrollLines(
     .from(outlets)
     .where(eq(outlets.id, session.user.outletId))
     .limit(1);
-  const latePerMinute = outletRow?.settings?.payroll?.latePerMinute ?? 0;
-  const overtimePerMinute =
-    outletRow?.settings?.payroll?.overtimePerMinute ?? 0;
+  /* Sesi AE-244 — tarif dihitung per JAM. Outlet yang dulu mengisi tarif
+   * per menit tetap terbaca (×60), jadi uangnya tidak berubah diam-diam. */
+  const { overtimePerHour, latePerHour } = resolveHourlyRates(
+    outletRow?.settings?.payroll,
+  );
   /* Sesi AE-62ac — double-shift bonus config. Null = feature off. */
   const doubleShiftConfig =
     outletRow?.settings?.payroll?.doubleShift ?? null;
@@ -419,8 +425,8 @@ export async function computePayrollLines(
         warnings.push({ employeeName: emp.fullName, message: baseRes.warning });
       }
 
-      const overtimePay = totalOvertimeMinutes * overtimePerMinute;
-      const lateDeduction = totalLateMinutes * latePerMinute;
+      const overtimePay = amountFromMinutes(totalOvertimeMinutes, overtimePerHour);
+      const lateDeduction = amountFromMinutes(totalLateMinutes, latePerHour);
       const advanceDeduction = advanceSumByEmployee.get(emp.id) ?? 0;
       totalAdvancesLinked += advanceDeduction;
 
