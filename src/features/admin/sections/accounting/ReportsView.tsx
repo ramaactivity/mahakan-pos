@@ -14,6 +14,7 @@ import {
   ArrowUpDown,
   ChevronRight,
   History,
+  RefreshCw,
   XCircle,
 } from "lucide-react";
 import {
@@ -1061,6 +1062,19 @@ function GeneralLedgerTab({
   );
   const [summaryLoading, setSummaryLoading] = useState(false);
 
+  const [refreshing, setRefreshing] = useState(false);
+
+  /* Sesi AE-246 — daftar akun dulu HANYA dimuat sekali saat mount. Kalau
+   * panggilan itu gagal (sesi kedaluwarsa, jaringan putus sebentar), dropdown
+   * akun tinggal "Tidak ada hasil" selamanya dan satu-satunya jalan pulih
+   * adalah me-reload seluruh tab. Sekarang pemuatannya bisa dipanggil lagi. */
+  async function loadAccounts(): Promise<boolean> {
+    const res = await fetchAccounts({ isActive: true });
+    if (!res.ok) return false;
+    setAccounts(res.data);
+    return true;
+  }
+
   useEffect(() => {
     fetchAccounts({ isActive: true }).then((res) => {
       if (res.ok) {
@@ -1079,6 +1093,27 @@ function GeneralLedgerTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* Muat ulang SEMUA yang ditampilkan tab ini: daftar akun + isi layar yang
+   * sedang dibuka (detail akun atau ringkasan). */
+  async function refreshAll() {
+    if (refreshing) return;
+    setRefreshing(true);
+    const okAccounts = await loadAccounts();
+    if (accountId) {
+      await load();
+    } else {
+      const res = await fetchLedgerAccountSummary({
+        fromDate: range.from,
+        toDate: range.to,
+      });
+      if (res.ok) setSummary(res.data);
+      else toast.error(res.error.message);
+    }
+    setRefreshing(false);
+    if (okAccounts) toast.success("Data dimuat ulang");
+    else toast.error("Daftar akun gagal dimuat — coba lagi");
+  }
+
   async function load() {
     if (!accountId) return;
     setLoading(true);
@@ -1095,7 +1130,6 @@ function GeneralLedgerTab({
 
   useEffect(() => {
     if (!accountId) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [accountId, range.from, range.to, sinceBeginning]);
 
@@ -1177,6 +1211,19 @@ function GeneralLedgerTab({
           <span />
         )}
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refreshAll()}
+            disabled={refreshing}
+            title="Muat ulang daftar akun dan isi laporan tanpa me-reload tab"
+          >
+            <RefreshCw
+              className={cn("size-4", refreshing && "animate-spin")}
+              aria-hidden
+            />
+            {refreshing ? "Memuat…" : "Muat ulang"}
+          </Button>
           {/* Sesi AE-226 — lepas batas buku. Untuk akun yang transaksinya
               melintasi 1 Juli 2026 (Hutang Dagang paling kentara), tanpa ini
               pelunasan nota lama terlihat sementara nota yang dilunasi tidak

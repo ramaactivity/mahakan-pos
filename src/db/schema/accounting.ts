@@ -337,6 +337,9 @@ export const journalEntries = pgTable(
          * jadi tidak ada satu baris sumber yang bisa ditunjuk. Tautannya di
          * metadata.settlement_reclass. */
         "settlement_reclass",
+        /* Sesi AE-246 — revisi settlement per hari. */
+        "settlement_revision",
+        "settlement_revision_reversal",
       ],
     }).notNull(),
 

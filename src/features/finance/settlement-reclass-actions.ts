@@ -21,6 +21,7 @@ import {
   type AggregatorChannel,
 } from "@/features/accounting/mapping/aggregatorSettlement";
 import { fail, ok, type ApiResult } from "@/features/accounting/types";
+import { subtractAlreadyMoved } from "./settlement-reclass-pure";
 
 /**
  * Sesi AE-219 — PINDAH REKENING jurnal settlement yang terlanjur salah.
@@ -201,8 +202,49 @@ async function collectReclassRows(
     ]),
   );
 
-  return rows
-    .filter((r) => r.code !== toCode) // yang sudah benar tidak perlu dipindah
+  /* Sesi AE-246 — REM ANTI-DOBEL. Reklasifikasi yang sudah pernah diposting
+   * tidak terbaca oleh query di atas: jurnalnya ber-sourceType
+   * 'settlement_reclass', sedangkan yang dihitung cuma 'aggregator_settlement'
+   * — dan jurnal settlement aslinya memang sengaja tidak pernah diubah. Tanpa
+   * pengurangan ini, menjalankan rentang yang memuat bulan yang sudah pindah
+   * akan memindahkannya SEKALI LAGI: saldonya bergeser dua kali lipat tanpa
+   * satu pun jurnal yang timpang, jadi tidak ada yang kelihatan rusak.
+   * (Nyaris terjadi: Mei–Juli sudah dipindah, Agustus belum.) */
+  const alreadyMoved = await db
+    .select({
+      month: sql<string>`${journalEntries.metadata} -> 'settlement_reclass' ->> 'month'`,
+      fromCode: sql<string>`${journalEntries.metadata} -> 'settlement_reclass' ->> 'fromCode'`,
+      amount: sql<number>`SUM(${journalLines.debit})::bigint`,
+    })
+    .from(journalEntries)
+    .innerJoin(journalLines, eq(journalLines.entryId, journalEntries.id))
+    .innerJoin(chartOfAccounts, eq(chartOfAccounts.id, journalLines.accountId))
+    .where(
+      and(
+        eq(journalEntries.outletId, outletId),
+        eq(journalEntries.sourceType, "settlement_reclass"),
+        eq(journalEntries.status, "posted"),
+        eq(chartOfAccounts.code, toCode),
+        sql`${journalLines.debit} > 0`,
+        sql`${journalEntries.metadata} -> 'settlement_reclass' ->> 'channel' = ${channel}`,
+      ),
+    )
+    .groupBy(
+      sql`${journalEntries.metadata} -> 'settlement_reclass' ->> 'month'`,
+      sql`${journalEntries.metadata} -> 'settlement_reclass' ->> 'fromCode'`,
+    );
+  const movedByKey = new Map(
+    alreadyMoved
+      .filter((m) => m.month && m.fromCode)
+      .map((m) => [`${m.month}|${m.fromCode}`, Number(m.amount)]),
+  );
+
+  return subtractAlreadyMoved(
+    rows
+      .filter((r) => r.code !== toCode) // yang sudah benar tidak perlu dipindah
+      .map((r) => ({ ...r, amount: Number(r.amount) })),
+    movedByKey,
+  )
     .map((r) => {
       const postingDate = lastDayOfMonth(r.month);
       const status = periodByYm.get(r.month) ?? null;

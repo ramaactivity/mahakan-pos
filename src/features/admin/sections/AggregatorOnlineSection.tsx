@@ -64,6 +64,14 @@ import {
 } from "@/features/finance/actions";
 import { formatRupiah } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { parseRupiah } from "@/lib/format";
+import {
+  getSettlementRevisionContext,
+  listSettlementRevisions,
+  postSettlementRevision,
+  type SettlementRevisionContext,
+} from "@/features/finance/settlement-revision-actions";
+import type { AccountListRow } from "@/features/accounting/types";
 
 /** Sesi AE-77 — Short rupiah format for axis ticks & compact KPI subtitle. */
 function formatRupiahShort(n: number): string {
@@ -163,6 +171,8 @@ export function AggregatorOnlineSection() {
     defaultRange(),
   );
   const [detailId, setDetailId] = useState<string | null>(null);
+  /* Sesi AE-246 — revisi settlement per hari. */
+  const [reviseId, setReviseId] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   /* Sesi AE-165 — auto-generate QRIS/EDC dari POS + config MDR. */
   const [generating, setGenerating] = useState(false);
@@ -214,6 +224,29 @@ export function AggregatorOnlineSection() {
     if (tab === "summary") return allRows;
     return allRows.filter((r) => r.channel === tab);
   }, [allRows, tab]);
+
+  /* Sesi AE-246 — revisi yang masih berlaku untuk baris yang sedang tampil,
+   * ditarik SEKALI untuk seluruh daftar (bukan per baris). */
+  const visibleIds = useMemo(
+    () => channelRows.map((r) => r.id),
+    [channelRows],
+  );
+  const revisionsQ = useQuery({
+    queryKey: ["settlement-revisions", visibleIds],
+    queryFn: async () => {
+      const res = await listSettlementRevisions(visibleIds);
+      return res.ok ? res.data : [];
+    },
+    enabled: visibleIds.length > 0,
+    staleTime: 60 * 1000,
+  });
+  const revisionBySettlement = useMemo(() => {
+    const m = new Map<string, true>();
+    for (const r of revisionsQ.data ?? []) {
+      if (r.status === "posted") m.set(r.settlementId, true);
+    }
+    return m;
+  }, [revisionsQ.data]);
 
   const totals = useMemo(() => {
     let gross = 0;
@@ -657,16 +690,33 @@ export function AggregatorOnlineSection() {
                           </div>
                         </td>
                         <td className="px-3 py-2 text-right">
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-1 text-xs font-medium text-mahakan-green-700 hover:underline"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDetailId(r.id);
-                            }}
-                          >
-                            Detail <ArrowRight className="size-3" aria-hidden />
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            {revisionBySettlement.get(r.id) ? (
+                              <Badge variant="warning" title="Sudah direvisi">
+                                Direvisi
+                              </Badge>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 text-xs font-medium text-neutral-600 hover:underline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setReviseId(r.id);
+                              }}
+                            >
+                              Revisi
+                            </button>
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 text-xs font-medium text-mahakan-green-700 hover:underline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDetailId(r.id);
+                              }}
+                            >
+                              Detail <ArrowRight className="size-3" aria-hidden />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -692,6 +742,12 @@ export function AggregatorOnlineSection() {
       <SettlementReclassModal
         open={reclassOpen}
         onClose={() => setReclassOpen(false)}
+      />
+      <SettlementRevisionModal
+        settlementId={reviseId}
+        open={!!reviseId}
+        onClose={() => setReviseId(null)}
+        onSaved={() => void revisionsQ.refetch()}
       />
     </div>
   );
@@ -1229,3 +1285,227 @@ function SettlementReclassModal({
     </Modal>
   );
 }
+
+/**
+ * Sesi AE-246 — REVISI SETTLEMENT satu hari.
+ *
+ * Owner mengetik apa yang benar-benar masuk ke rekening menurut rekening
+ * koran; jurnal penyeimbangnya dibuat otomatis. Rekening tujuan ditanyakan
+ * karena dalam satu bulan uangnya bisa mendarat di bank yang berbeda-beda.
+ */
+function SettlementRevisionModal({
+  settlementId,
+  open,
+  onClose,
+  onSaved,
+}: {
+  settlementId: string | null;
+  open: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [ctx, setCtx] = useState<SettlementRevisionContext | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [accountCode, setAccountCode] = useState("");
+  const [reason, setReason] = useState("");
+  const [accounts, setAccounts] = useState<AccountListRow[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || !settlementId) return;
+    let cancelled = false;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setLoading(true);
+    setCtx(null);
+    setAmount("");
+    setAccountCode("");
+    setReason("");
+    setError(null);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    void (async () => {
+      const [c, accs] = await Promise.all([
+        getSettlementRevisionContext({ settlementId }),
+        fetchAccounts({ isActive: true }),
+      ]);
+      if (cancelled) return;
+      setLoading(false);
+      if (accs.ok) {
+        setAccounts(accs.data.filter((a) => /^11\d{2}$/.test(a.code)));
+      }
+      if (!c.ok) {
+        setError(c.error.message);
+        return;
+      }
+      setCtx(c.data);
+      /* Pra-isi dengan yang tercatat sekarang: yang paling sering berubah cuma
+       * salah satunya — rekeningnya saja, atau nominalnya saja. */
+      setAmount(String(c.data.recordedAmount));
+      setAccountCode(c.data.recordedAccountCode);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, settlementId]);
+
+  const actual = (() => {
+    try {
+      return parseRupiah(amount);
+    } catch {
+      return NaN;
+    }
+  })();
+  const diff =
+    ctx && Number.isFinite(actual) ? actual - ctx.recordedAmount : null;
+  const changed =
+    ctx !== null &&
+    Number.isFinite(actual) &&
+    (actual !== ctx.recordedAmount || accountCode !== ctx.recordedAccountCode);
+
+  async function submit() {
+    if (!ctx || submitting) return;
+    setError(null);
+    if (!Number.isFinite(actual) || actual < 0) {
+      setError("Nominal tidak valid");
+      return;
+    }
+    if (!accountCode) {
+      setError("Pilih dulu rekening yang menerima uangnya");
+      return;
+    }
+    if (!changed) {
+      setError("Nominal dan rekeningnya sama dengan yang sudah tercatat");
+      return;
+    }
+    setSubmitting(true);
+    const res = await postSettlementRevision({
+      settlementId: ctx.settlementId,
+      actualAmount: Math.round(actual),
+      actualAccountCode: accountCode,
+      reason,
+    });
+    setSubmitting(false);
+    if (!res.ok) {
+      setError(res.error.message);
+      return;
+    }
+    toast.success("Revisi settlement tercatat");
+    onSaved();
+    onClose();
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Revisi Settlement"
+      description="Catat uang yang benar-benar masuk ke rekening. Jurnal penyeimbangnya dibuat otomatis."
+      size="md"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+            Batal
+          </Button>
+          <Button onClick={submit} disabled={submitting || !ctx}>
+            {submitting ? "Menyimpan…" : "Simpan Revisi"}
+          </Button>
+        </>
+      }
+    >
+      {loading ? (
+        <Skeleton className="h-48 w-full" />
+      ) : !ctx ? (
+        <p className="rounded-md bg-danger-100 p-2 text-sm text-danger-500">
+          {error ?? "Settlement tidak bisa dimuat"}
+        </p>
+      ) : (
+        <div className="space-y-3">
+          <div className="rounded-lg bg-neutral-50 p-3 text-xs">
+            <p className="font-medium text-neutral-900">
+              {ctx.channelLabel} · {ctx.entryDate}
+            </p>
+            <div className="mt-1.5 flex justify-between">
+              <span className="text-neutral-600">Tercatat di sistem</span>
+              <span className="font-mono">
+                {formatRupiah(ctx.recordedAmount)}
+              </span>
+            </div>
+            <div className="mt-1 flex justify-between">
+              <span className="text-neutral-600">Masuk ke rekening</span>
+              <span className="font-mono">
+                {ctx.recordedAccountCode} · {ctx.recordedAccountName}
+              </span>
+            </div>
+          </div>
+
+          {ctx.alreadyRevised ? (
+            <p className="rounded-md border border-warning-500/40 bg-warning-100/40 p-2 text-xs text-neutral-700">
+              Settlement ini sudah punya revisi yang berlaku. Batalkan dulu
+              revisi lamanya kalau mau diperbaiki lagi.
+            </p>
+          ) : null}
+
+          <Input
+            label="Uang yang benar-benar masuk (Rp)"
+            inputMode="numeric"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            hint="Lihat rekening koran. Isi 0 kalau uangnya tidak pernah masuk."
+          />
+          <Select
+            label="Masuk rekening apa"
+            value={accountCode}
+            onValueChange={setAccountCode}
+            options={accounts.map((a) => ({
+              value: a.code,
+              label: `${a.code} · ${a.name}`,
+            }))}
+            placeholder="Pilih rekening penerima"
+          />
+          <Input
+            label="Alasan revisi"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Misal: potongan MDR beda, cair ke Mandiri"
+            hint="Minimal 10 huruf — ini yang dibaca saat rekening koran dicocokkan nanti."
+          />
+
+          {/* Pratinjau dampaknya sebelum disimpan: selisih yang tidak
+              diperlihatkan di muka biasanya baru ketahuan saat laba rugi
+              dibaca sebulan kemudian. */}
+          {diff !== null && changed ? (
+            <div className="rounded-lg border border-neutral-200 p-2.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-neutral-600">Selisih</span>
+                <span
+                  className={cn(
+                    "font-mono font-medium",
+                    diff < 0 ? "text-danger-600" : diff > 0 ? "text-mahakan-green-700" : "",
+                  )}
+                >
+                  {diff > 0 ? "+" : ""}
+                  {formatRupiah(diff)}
+                </span>
+              </div>
+              <p className="mt-1.5 leading-relaxed text-neutral-500">
+                {diff === 0
+                  ? `Nominalnya sama, hanya rekeningnya yang pindah ke ${accountCode}.`
+                  : diff < 0
+                    ? `Uang yang masuk lebih kecil. Selisihnya masuk Biaya MDR (6402) — potongannya ternyata lebih besar dari perkiraan.`
+                    : `Uang yang masuk lebih besar. Biaya MDR (6402) dikurangi sebesar selisihnya — bukan dicatat sebagai penjualan baru.`}
+              </p>
+            </div>
+          ) : null}
+
+          {error ? (
+            <p className="rounded-md bg-danger-100 p-2 text-sm text-danger-500">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      )}
+    </Modal>
+  );
+}
+

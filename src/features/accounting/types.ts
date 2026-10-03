@@ -110,7 +110,10 @@ export type JournalSourceType =
   /* Sesi AE-219 — pindah rekening tujuan settlement yang terlanjur salah.
    * Satu entry per (channel, bulan): Dr rekening benar / Cr rekening salah.
    * Lihat features/finance/settlement-reclass-actions.ts. */
-  | "settlement_reclass";
+  | "settlement_reclass"
+  /* Sesi AE-246 — revisi settlement per hari (nominal & rekening aktual). */
+  | "settlement_revision"
+  | "settlement_revision_reversal";
 
 export type JournalEntryStatus = "draft" | "posted" | "reversed";
 

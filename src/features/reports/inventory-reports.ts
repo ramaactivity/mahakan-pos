@@ -233,8 +233,12 @@ export async function fetchHppReport(
       fetchPurchasesByIngredient(outletId, dateFrom, dateTo),
     ]);
 
-  /** Mode periodic penuh: `current_stock` hanya bergerak lewat opname. */
-  const periodicMode = !stockMode.deductOnSale && !stockMode.addOnPurchase;
+  /** Sesi AE-246 — `current_stock` hanya boleh dipakai sebagai stok akhir
+   * kalau KEDUA sisinya hidup: pembelian menambah DAN penjualan mengurangi.
+   * Menyalakan pembelian saja membuat angkanya cuma pernah NAIK — itu lebih
+   * menyesatkan daripada beku, karena terlihat hidup. Saat dua-duanya mati
+   * (keadaan sekarang) hasilnya sama persis dengan rumus lama. */
+  const periodicMode = !(stockMode.deductOnSale && stockMode.addOnPurchase);
 
   const rows: HppReportRow[] = [];
   let totalStockAwalCost = 0;
