@@ -174,9 +174,21 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
                   <td className="px-3 py-2">{r.courierName ?? "—"}</td>
                   <td className="px-3 py-2">
                     {r.description}
-                    {r.ingredientNames.length > 0 ? (
+                    {r.items.length > 0 ? (
                       <span className="ml-1 text-xs text-neutral-500">
-                        · {r.ingredientNames.join(", ")}
+                        ·{" "}
+                        {r.items
+                          .map(
+                            (i) =>
+                              `${i.name} ${i.qty.toLocaleString("id-ID")} ${i.unit}`,
+                          )
+                          .join(", ")}
+                        {/* Di mode periodic stok memang tidak digerakkan —
+                            dikatakan terang-terangan supaya tidak ada yang
+                            mengira angkanya sudah masuk stok. */}
+                        {r.items.some((i) => i.stockSkipped) ? (
+                          <span className="italic"> (stok dari opname)</span>
+                        ) : null}
                       </span>
                     ) : null}
                     {r.status === "reversed" ? (

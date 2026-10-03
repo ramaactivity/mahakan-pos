@@ -88,8 +88,20 @@ const PERSEDIAAN_BY_SECTION: Record<NonNullable<IngredientSection> | "null", str
   null: "1142",
 };
 
-function persediaanCode(section: IngredientSection): string {
+/**
+ * Akun persediaan untuk satu seksi bahan.
+ *
+ * Sesi AE-245 — diekspor supaya Belanja Daily Market memakai peta yang SAMA.
+ * Peta ini wajib sejalan dengan `mapping/opname.ts`; kalau keduanya berbeda,
+ * pembelian dan opname akan mengisi akun yang berlainan untuk bahan yang sama
+ * dan selisihnya muncul sebagai drift persediaan tanpa jejak.
+ */
+export function persediaanCodeForSection(section: IngredientSection): string {
   return PERSEDIAAN_BY_SECTION[(section ?? "null") as keyof typeof PERSEDIAAN_BY_SECTION];
+}
+
+function persediaanCode(section: IngredientSection): string {
+  return persediaanCodeForSection(section);
 }
 
 const CASH_BANK_BY_METHOD: Record<

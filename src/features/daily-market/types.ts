@@ -1,10 +1,16 @@
 import type { InferSelectModel } from "drizzle-orm";
-import type { dailyMarketEntries } from "@/db/schema";
+import type { dailyMarketEntries, dailyMarketItems } from "@/db/schema";
 
 export type DailyMarketEntry = InferSelectModel<typeof dailyMarketEntries>;
+export type DailyMarketItem = InferSelectModel<typeof dailyMarketItems>;
 export type DailyMarketKind = "topup" | "spend";
 
-export type { ReverseInput, SpendInput, TopupInput } from "./schemas";
+export type {
+  MarketItemInput,
+  ReverseInput,
+  SpendInput,
+  TopupInput,
+} from "./schemas";
 
 export type ApiResult<T> =
   | { success: true; data: T }
@@ -24,8 +30,26 @@ export interface DailyMarketEntryRow extends DailyMarketEntry {
   bankLabel: string | null;
   categoryName: string | null;
   createdByName: string | null;
-  /** Sesi AE-243 — nama bahan hasil resolusi `ingredientIds`. */
-  ingredientNames: string[];
+  /** Sesi AE-245 — baris bahan beserta qty & rupiahnya. */
+  items: DailyMarketItemRow[];
+  /** Rupiah nota yang masuk persediaan (jumlah subtotal baris bahan). */
+  inventoryTotal: number;
+  /** Sisa nota yang dibebankan langsung (parkir, plastik, kuli angkut). */
+  expenseTotal: number;
+}
+
+export interface DailyMarketItemRow {
+  id: string;
+  ingredientId: string;
+  name: string;
+  qty: number;
+  unit: string;
+  qtyMaster: number;
+  masterUnit: string;
+  unitCost: number;
+  subtotal: number;
+  /** false = stok benar-benar bertambah dari baris ini. */
+  stockSkipped: boolean;
 }
 
 export interface DailyMarketSummary {

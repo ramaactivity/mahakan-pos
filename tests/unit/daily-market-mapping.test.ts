@@ -119,3 +119,91 @@ describe("akun saldo kurir masuk pola kas & bank Buku Kas", () => {
     expect(new RegExp("^11[01][0-9]$").test(ACCOUNT_SALDO_KURIR)).toBe(true);
   });
 });
+
+/* Sesi AE-245 — belanja pasar kini bisa berisi bahan baku. Yang gampang salah
+ * di sini: rupiah bahan ikut dibebankan JUGA (selain masuk persediaan), yang
+ * membuat satu nota terhitung dua kali tanpa jurnal yang tidak seimbang —
+ * jadi tidak ada yang kelihatan rusak sampai laba rugi dibaca. */
+describe("mapDailyMarketSpend dengan baris bahan (AE-245)", () => {
+  const lines = mapDailyMarketSpend({
+    amount: 500_000,
+    expenseAccountCode: "6201",
+    description: "Pasar Cisarua",
+    courierName: "Pak Dedi",
+    inventoryLines: [
+      { section: "kitchen", amount: 300_000 },
+      { section: "bar", amount: 150_000 },
+      { section: "cleaning", amount: 20_000 },
+    ],
+  });
+
+  it("bahan masuk PERSEDIAAN, bukan beban", () => {
+    expect(lines.find((l) => l.accountCode === "1140")!.debit).toBe(300_000);
+    expect(lines.find((l) => l.accountCode === "1141")!.debit).toBe(150_000);
+    // cleaning dan supporting berbagi 1142 — harus dijumlahkan, bukan 2 baris.
+    expect(lines.filter((l) => l.accountCode === "1142")).toHaveLength(1);
+    expect(lines.find((l) => l.accountCode === "1142")!.debit).toBe(20_000);
+  });
+
+  it("sisanya saja yang jadi beban — bukan seluruh nota", () => {
+    const beban = lines.find((l) => l.accountCode === "6201")!;
+    expect(beban.debit).toBe(30_000); // 500rb − 470rb
+  });
+
+  it("saldo kurir berkurang sebesar NOTA, bukan sebesar bahannya", () => {
+    const kurir = lines.find((l) => l.accountCode === ACCOUNT_SALDO_KURIR)!;
+    expect(kurir.credit).toBe(500_000);
+  });
+
+  it("seimbang", () => {
+    const t = sum(lines);
+    expect(t.debit).toBe(t.credit);
+    expect(t.debit).toBe(500_000);
+  });
+
+  it("nota yang seluruhnya bahan tidak membuat baris beban Rp 0", () => {
+    const all = mapDailyMarketSpend({
+      amount: 100_000,
+      expenseAccountCode: "6201",
+      description: "Sayur",
+      courierName: "Pak Dedi",
+      inventoryLines: [{ section: "kitchen", amount: 100_000 }],
+    });
+    expect(all.find((l) => l.accountCode === "6201")).toBeUndefined();
+    expect(sum(all).debit).toBe(sum(all).credit);
+  });
+
+  it("tanpa baris bahan tetap seperti dulu: seluruh nota jadi beban", () => {
+    const plain = mapDailyMarketSpend({
+      amount: 75_000,
+      expenseAccountCode: "6201",
+      description: "Parkir + kuli angkut",
+      courierName: "Pak Dedi",
+    });
+    expect(plain.find((l) => l.accountCode === "6201")!.debit).toBe(75_000);
+    expect(plain.some((l) => l.accountCode?.startsWith("114"))).toBe(false);
+  });
+
+  it("nilai bahan melebihi nota DITOLAK, bukan bikin beban minus", () => {
+    expect(() =>
+      mapDailyMarketSpend({
+        amount: 100_000,
+        expenseAccountCode: "6201",
+        description: "Salah ketik",
+        courierName: "Pak Dedi",
+        inventoryLines: [{ section: "kitchen", amount: 150_000 }],
+      }),
+    ).toThrow(/INVENTORY_EXCEEDS/);
+  });
+
+  it("pembalik mengembalikan persediaan, bukan mengkredit beban", () => {
+    const rev = reverseDailyMarketLines(lines);
+    expect(rev.find((l) => l.accountCode === "1140")!.credit).toBe(300_000);
+    expect(rev.find((l) => l.accountCode === "1140")!.debit).toBe(0);
+    expect(rev.find((l) => l.accountCode === ACCOUNT_SALDO_KURIR)!.debit).toBe(
+      500_000,
+    );
+    const t = sum(rev);
+    expect(t.debit).toBe(t.credit);
+  });
+});

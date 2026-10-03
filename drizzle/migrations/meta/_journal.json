@@ -743,6 +743,13 @@
       "when": 1790939244649,
       "tag": "0105_brief_siren",
       "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1791001100818,
+      "tag": "0106_daily_market_items",
+      "breakpoints": true
     }
   ]
 }
