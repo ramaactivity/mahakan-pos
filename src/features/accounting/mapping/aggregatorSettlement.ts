@@ -3,7 +3,7 @@
  *
  * 5 channels, 2 patterns:
  *
- * (A) qris / edc_bca / edc_bni / edc_bri / edc_other — POS sale dah create
+ * (A) qris / edc_bca / edc_bni / edc_bri / edc_mandiri / edc_other — POS dah create
  *     piutang (1120/1121/1125/1127/1128). Settlement =
  *     piutang clearing event. Per design doc §4.10:
  *       Dr <bank account>                  net
@@ -28,6 +28,7 @@ export type AggregatorChannel =
   | "edc_bca"
   | "edc_bni"
   | "edc_bri"
+  | "edc_mandiri"
   | "edc_other"
   | "gofood"
   | "grabfood"
@@ -67,6 +68,12 @@ export function defaultBankCodeForChannel(channel: AggregatorChannel): string {
       return "1113"; // Bank BNI
     case "edc_bri":
       return "1111"; // Bank BRI
+    case "edc_mandiri":
+      /* Sesi AE-254 — Mahakan belum punya rekening Mandiri di bagan akun;
+       * uangnya mendarat di rekening lain. Tebakan ini sengaja "Bank
+       * Lain-lain", bukan BCA, supaya salahnya kelihatan kalau owner belum
+       * mengatur tujuan channel ini. */
+      return "1112"; // Bank Lain-lain
     default:
       return "1110"; // Bank BCA
   }
@@ -112,6 +119,7 @@ export const SETTLEMENT_CHANNELS: AggregatorChannel[] = [
   "edc_bca",
   "edc_bni",
   "edc_bri",
+  "edc_mandiri",
   "edc_other",
   "gofood",
   "grabfood",
@@ -123,6 +131,7 @@ export const SETTLEMENT_CHANNEL_LABEL: Record<AggregatorChannel, string> = {
   edc_bca: "EDC BCA",
   edc_bni: "EDC BNI",
   edc_bri: "EDC BRI",
+  edc_mandiri: "EDC Mandiri",
   edc_other: "EDC Lainnya",
   gofood: "GoFood",
   grabfood: "GrabFood",
@@ -147,6 +156,8 @@ export function piutangCodeForChannel(
       return "1125";
     case "edc_bri":
       return "1127";
+    case "edc_mandiri":
+      return "1126";
     case "edc_other":
       return "1128";
     default:

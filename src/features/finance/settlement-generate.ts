@@ -197,7 +197,13 @@ export async function generateCashlessForOutlet(params: {
   /* Sesi AE-182 — semua mesin EDC ikut di-settle otomatis, bukan cuma BCA.
    * Sebelumnya piutang EDC BNI/BRI/Lainnya menumpuk tanpa pernah di-clear. */
   const channels: Array<{
-    channel: "qris" | "edc_bca" | "edc_bni" | "edc_bri" | "edc_other";
+    channel:
+      | "qris"
+      | "edc_bca"
+      | "edc_bni"
+      | "edc_bri"
+      | "edc_mandiri"
+      | "edc_other";
     pct: number;
     pick: (g: PosCashlessGross) => number;
   }> = [
@@ -205,6 +211,16 @@ export async function generateCashlessForOutlet(params: {
     { channel: "edc_bca", pct: mdr.mdrEdcBcaPct, pick: (g) => g.cardBca },
     { channel: "edc_bni", pct: mdr.mdrEdcBniPct, pick: (g) => g.cardBni },
     { channel: "edc_bri", pct: mdr.mdrEdcBriPct, pick: (g) => g.cardBri },
+    /* Sesi AE-254 — Mandiri punya channel sendiri supaya settlement-nya
+     * membersihkan 1126, akun yang memang dipakai POS. Tarif MDR-nya ikut
+     * "EDC Lainnya": sejak AE-248 potongan otomatis dimatikan, jadi
+     * menambah satu pengaturan tarif lagi hanya menambah isian yang tak
+     * pernah dipakai. */
+    {
+      channel: "edc_mandiri",
+      pct: mdr.mdrEdcOtherPct,
+      pick: (g) => g.cardMandiri,
+    },
     {
       channel: "edc_other",
       pct: mdr.mdrEdcOtherPct,

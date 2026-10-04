@@ -148,7 +148,13 @@ export type CashlessMdrConfig = {
 /** Sesi AE-165 — hasil generate settlement QRIS/EDC dari POS. */
 export type GenerateCashlessResult = {
   created: Array<{
-    channel: "qris" | "edc_bca" | "edc_bni" | "edc_bri" | "edc_other";
+    channel:
+      | "qris"
+      | "edc_bca"
+      | "edc_bni"
+      | "edc_bri"
+      | "edc_mandiri"
+      | "edc_other";
     date: string;
     gross: number;
     fee: number;

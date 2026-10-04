@@ -1971,7 +1971,9 @@ export type PosCashlessGross = {
   cardBca: number;
   cardBni: number;
   cardBri: number;
-  /** card_mandiri + card_other → piutang "EDC Lainnya" (1128). */
+  /** Sesi AE-254 — piutangnya 1126, bukan 1128. Lihat BUCKET di bawah. */
+  cardMandiri: number;
+  /** card_other → piutang "EDC Lainnya" (1128). */
   cardOther: number;
 };
 
@@ -2020,16 +2022,23 @@ export async function getPosCashlessGrossByDay(
     cardBca: 0,
     cardBni: 0,
     cardBri: 0,
+    cardMandiri: 0,
     cardOther: 0,
   };
-  /* card_mandiri digabung ke "Lainnya" karena piutangnya memang satu akun
-   * (1128) — Mahakan tidak punya rekening Mandiri. */
+  /* Sesi AE-254 — card_mandiri DIPISAH dari "Lainnya".
+   *
+   * Dulu digabung, dengan alasan "piutangnya memang satu akun (1128)".
+   * Alasan itu keliru: `mapping/posSale.ts` membukukan card_mandiri ke
+   * 1126 Piutang EDC Mandiri. Jadi penjualannya mendarat di 1126 sementara
+   * settlement-nya membersihkan 1128 — 1126 menumpuk tak pernah lunas dan
+   * 1128 jadi MINUS, dua-duanya sebesar nilai yang sama, tanpa ada jurnal
+   * yang timpang. Di produksi terkumpul Rp 742.000 sebelum ketahuan. */
   const BUCKET: Record<string, keyof PosCashlessGross> = {
     qris: "qris",
     card_bca: "cardBca",
     card_bni: "cardBni",
     card_bri: "cardBri",
-    card_mandiri: "cardOther",
+    card_mandiri: "cardMandiri",
     card_other: "cardOther",
   };
   for (const r of [...trxAgg, ...splitAgg]) {
@@ -2047,7 +2056,13 @@ export async function getPosCashlessGrossByDay(
  */
 export async function hasSettlementForDay(
   outletId: string,
-  channel: "qris" | "edc_bca" | "edc_bni" | "edc_bri" | "edc_other",
+  channel:
+    | "qris"
+    | "edc_bca"
+    | "edc_bni"
+    | "edc_bri"
+    | "edc_mandiri"
+    | "edc_other",
   dateIso: string,
 ): Promise<boolean> {
   const [row] = await db

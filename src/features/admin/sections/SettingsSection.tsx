@@ -358,14 +358,14 @@ export function SettingsSection() {
         <CardHeader>
           <div className="flex items-start justify-between">
             <CardTitle className="flex items-center gap-2">
-              <ScrollText className="size-5" aria-hidden /> Threshold &amp; Features
+              <ScrollText className="size-5" aria-hidden /> Threshold, Features &amp; Mode Stok
             </CardTitle>
             {isOwner && (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setEdit("tunables")}
-                aria-label="Edit threshold &amp; features"
+                aria-label="Edit threshold, features &amp; mode stok"
               >
                 <Pencil className="size-4" /> Edit
               </Button>
@@ -397,6 +397,28 @@ export function SettingsSection() {
             <Field
               label="Multi-outlet (Phase 4)"
               value={outlet.settings?.features?.multiOutletEnabled ? "Aktif" : "Off"}
+            />
+            {/* Sesi AE-254 — kedua saklar stok sebelumnya TIDAK ditampilkan di
+                kartu ini sama sekali, hanya ada di dalam modal Edit. Owner
+                mencarinya di halaman Pengaturan dan menyimpulkan fiturnya
+                tidak ada. Aturan bacanya disamakan persis dengan
+                `getStockMode` (undefined = perpetual), supaya yang tertulis
+                di sini tidak mungkin berbeda dari perilaku sistemnya. */}
+            <Field
+              label="Penjualan Mengurangi Stok"
+              value={
+                outlet.settings?.features?.perpetualStockSales !== false
+                  ? "Aktif"
+                  : "Mati — stok hanya dari Opname"
+              }
+            />
+            <Field
+              label="Pembelian Menambah Stok"
+              value={
+                outlet.settings?.features?.perpetualStockPurchases !== false
+                  ? "Aktif"
+                  : "Mati — stok hanya dari Opname"
+              }
             />
             <Field
               label="Auto-Journal Akuntansi (Phase 2)"

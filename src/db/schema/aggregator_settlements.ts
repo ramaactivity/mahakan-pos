@@ -41,6 +41,11 @@ export const aggregatorSettlements = pgTable(
         "edc_bca",
         "edc_bni",
         "edc_bri",
+        /* Sesi AE-254 — EDC Mandiri punya channel sendiri. Sebelumnya ikut
+         * "edc_other", padahal POS membukukan penjualannya ke 1126 Piutang
+         * EDC Mandiri sementara settlement-nya membersihkan 1128 Lainnya —
+         * dua akun sama-sama meleset tanpa ada jurnal yang timpang. */
+        "edc_mandiri",
         "edc_other",
         "gofood",
         "grabfood",

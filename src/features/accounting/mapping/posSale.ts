@@ -68,7 +68,13 @@ export type PosSaleInput = {
   splits?: SplitPaymentRow[];
 };
 
-const PAYMENT_METHOD_TO_ACCOUNT: Record<
+/**
+ * Sesi AE-254 — diekspor supaya pasangannya dengan `piutangCodeForChannel`
+ * bisa dikunci tes. Akun yang dipakai POS saat menjual WAJIB sama dengan
+ * akun yang dibersihkan settlement; kalau beda, piutangnya menumpuk di satu
+ * akun dan minus di akun lain, sama besar, tanpa jurnal yang timpang.
+ */
+export const PAYMENT_METHOD_TO_ACCOUNT: Record<
   | "cash"
   | "qris"
   | "card_bca"
