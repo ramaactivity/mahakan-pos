@@ -337,26 +337,31 @@ export function AggregatorOnlineSection() {
       {(driftQ.data ?? []).length > 0 ? (
         <div className="rounded-lg border border-warning-500/50 bg-warning-100/40 p-3 text-xs">
           <p className="font-medium text-neutral-900">
-            Pengaturan rekening sepertinya sudah tidak sesuai
+            Ada patokan rekening yang sudah tidak cocok dengan kenyataan
           </p>
           <ul className="mt-1.5 space-y-1.5">
             {(driftQ.data ?? []).map((d) => (
               <li key={d.channel} className="leading-relaxed text-neutral-700">
-                <b>{d.channelLabel}</b> — {d.streak} revisi terakhir
-                berturut-turut mendarat di <b>{d.actualCode}</b> (sejak{" "}
-                {d.since}), tapi settlement baru masih dijurnal ke{" "}
-                <b>{d.currentCode}</b>. Selama ini belum diubah, tiap
-                settlement baru akan salah rekening dan harus direvisi lagi.
+                <b>{d.channelLabel}</b> dipatok ke <b>{d.currentCode}</b>,
+                tapi {d.streak} revisi terakhir berturut-turut mendarat di{" "}
+                <b>{d.actualCode}</b> (sejak {d.since}). Selama patokannya
+                belum dilepas atau diubah, tiap settlement baru akan mendarat
+                di rekening yang salah dan harus direvisi lagi.
               </li>
             ))}
           </ul>
+          <p className="mt-1.5 leading-relaxed text-neutral-600">
+            Kalau channel ini memang cair ke rekening berbeda-beda (mesin EDC
+            lebih dari satu), kosongkan saja patokannya — settlement akan
+            memakai bawaan dan tinggal direvisi per hari seperti biasa.
+          </p>
           <Button
             variant="outline"
             size="sm"
             className="mt-2"
             onClick={() => setMdrOpen(true)}
           >
-            <Settings2 className="size-4" aria-hidden /> Perbarui di MDR &amp;
+            <Settings2 className="size-4" aria-hidden /> Atur di MDR &amp;
             Rekening
           </Button>
         </div>

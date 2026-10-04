@@ -7,6 +7,7 @@ import {
   chartOfAccounts,
   journalEntries,
   journalLines,
+  outlets,
   settlementRevisions,
   users,
 } from "@/db/schema";
@@ -680,28 +681,33 @@ export async function repostSettlementJournal(input: {
 }
 
 /**
- * Sesi AE-255 — PENGATURAN REKENING YANG SUDAH BASI.
+ * Sesi AE-255/256 — PATOKAN REKENING YANG SUDAH BASI.
  *
- * Rekening tujuan settlement diambil dari pengaturan per channel. Pengaturan
- * itu tidak ikut berubah saat bank akuisisinya berganti, dan tidak ada yang
- * memberitahu: jurnalnya tetap terbentuk, tetap seimbang, cuma mendarat di
- * rekening yang salah. Satu-satunya tanda adalah owner merevisi settlement
+ * Hanya channel yang rekeningnya SENGAJA DIPATOK di pengaturan yang diperiksa.
+ *
+ * Mahakan punya beberapa mesin EDC (BCA, BNI, Mandiri) di kasir, jadi satu
+ * channel memang bisa cair ke rekening berbeda-beda dan owner sengaja
+ * membiarkannya kosong lalu merevisi sendiri per hari. Memperingatkan channel
+ * yang memang tidak dipatok berarti menyuruhnya mematok sesuatu yang justru
+ * dia hindari — peringatan yang selalu menyala dan akhirnya diabaikan.
+ *
+ * Yang benar-benar berbahaya adalah patokan yang pernah dibuat lalu basi:
+ * jurnalnya tetap terbentuk, tetap seimbang, cuma mendarat di rekening yang
+ * salah terus-menerus, dan satu-satunya tanda adalah owner merevisi channel
  * yang sama berulang-ulang ke rekening yang itu-itu juga.
  *
- * Kejadian nyata: QRIS pindah ke 1112 sejak 8 September 2026 — owner
- * merevisinya 22 kali berturut-turut — sementara pengaturannya masih 1113,
- * jadi settlement baru terus mendarat salah dan terus harus direvisi.
+ * Kejadian nyata: QRIS dipatok ke 1113, padahal sejak 8 September 2026 uangnya
+ * masuk 1112 — owner merevisinya 22 kali berturut-turut tanpa pernah diberi
+ * tahu bahwa patokannya yang perlu dilepas.
  *
- * Fungsi ini membandingkan ke mana revisi TERAKHIR sebuah channel mendarat
- * dengan rekening yang dipakai jurnalnya sekarang, lalu melapor kalau
- * keduanya berbeda. Melapor saja: mengubah pengaturan rekening sendiri
- * berarti menebak ke mana uang berikutnya akan masuk, dan tebakan semacam
- * itu yang dulu menyembunyikan QRIS Rp 60,5 juta di rekening yang salah.
+ * Melapor saja, tidak mengubah patokannya sendiri: menentukan ke mana uang
+ * BERIKUTNYA masuk adalah keputusan owner, dan menebaknya yang dulu
+ * menyembunyikan QRIS Rp 60,5 juta di rekening yang salah.
  */
 export interface ChannelRoutingDrift {
   channel: string;
   channelLabel: string;
-  /** Rekening yang dipakai jurnal settlement terbaru channel ini. */
+  /** Rekening yang DIPATOK di pengaturan untuk channel ini. */
   currentCode: string;
   /** Rekening tujuan revisi terakhir — ke mana uangnya benar-benar masuk. */
   actualCode: string;
@@ -739,45 +745,17 @@ export async function detectChannelRoutingDrift(): Promise<
     )
     .orderBy(desc(settlementRevisions.entryDate));
 
-  /* Rekening yang dipakai jurnal settlement TERBARU tiap channel — itulah
-   * yang akan dipakai settlement berikutnya. Dibaca dari jurnalnya, bukan
-   * dari pengaturan, supaya yang dibandingkan adalah akibat nyatanya. */
-  const latest = await db
-    .select({
-      channel: aggregatorSettlements.channel,
-      code: chartOfAccounts.code,
-      periodFrom: aggregatorSettlements.periodFrom,
-    })
-    .from(aggregatorSettlements)
-    .innerJoin(
-      journalEntries,
-      and(
-        eq(journalEntries.sourceId, aggregatorSettlements.id),
-        eq(journalEntries.sourceType, "aggregator_settlement"),
-        eq(journalEntries.status, "posted"),
-      ),
-    )
-    .innerJoin(journalLines, eq(journalLines.entryId, journalEntries.id))
-    .innerJoin(
-      chartOfAccounts,
-      and(
-        eq(chartOfAccounts.id, journalLines.accountId),
-        eq(chartOfAccounts.type, "asset"),
-      ),
-    )
-    .where(
-      and(
-        eq(aggregatorSettlements.outletId, session.user.outletId),
-        sql`${journalLines.debit} > 0`,
-        sql`${chartOfAccounts.code} LIKE '11%'`,
-      ),
-    )
-    .orderBy(desc(aggregatorSettlements.periodFrom));
+  /* HANYA channel yang dipatok owner. Yang dibiarkan kosong memang sengaja
+   * direvisi manual per hari — diam saja. */
+  const [outletRow] = await db
+    .select({ settings: outlets.settings })
+    .from(outlets)
+    .where(eq(outlets.id, session.user.outletId))
+    .limit(1);
+  const pinned = (outletRow?.settings?.cashless?.bankAccountByChannel ??
+    {}) as Record<string, string | undefined>;
+  if (Object.keys(pinned).length === 0) return ok([]);
 
-  const currentByChannel = new Map<string, string>();
-  for (const r of latest) {
-    if (!currentByChannel.has(r.channel)) currentByChannel.set(r.channel, r.code);
-  }
 
   const out: ChannelRoutingDrift[] = [];
   const seen = new Set<string>();
@@ -785,7 +763,7 @@ export async function detectChannelRoutingDrift(): Promise<
     if (seen.has(rev.channel)) continue;
     seen.add(rev.channel);
 
-    const current = currentByChannel.get(rev.channel);
+    const current = pinned[rev.channel]?.trim();
     if (!current || current === rev.actualCode) continue;
 
     /* Hitung berapa revisi BERUNTUN (dari yang terbaru) yang mendarat di
