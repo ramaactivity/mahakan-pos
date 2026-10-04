@@ -1502,11 +1502,21 @@ function SettlementRevisionModal({
               </span>
             </div>
             <div className="mt-1 flex justify-between">
-              <span className="text-neutral-600">Masuk ke rekening</span>
+              <span className="text-neutral-600">Tercatat di rekening</span>
               <span className="font-mono">
                 {ctx.recordedAccountCode} · {ctx.recordedAccountName}
               </span>
             </div>
+            {/* Sesi AE-249 — kalau saldonya sudah dipindah, katakan. Tanpa ini
+                owner melihat rekening yang berbeda dari jurnal settlement-nya
+                dan mengira layarnya salah. */}
+            {ctx.movedFromCode ? (
+              <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+                Saldonya sudah dipindah dari {ctx.movedFromCode} lewat Pindah
+                Rekening, jadi titik berangkat revisi ini adalah{" "}
+                {ctx.recordedAccountCode} — bukan rekening di jurnal aslinya.
+              </p>
+            ) : null}
           </div>
 
           {ctx.journalReversed ? (

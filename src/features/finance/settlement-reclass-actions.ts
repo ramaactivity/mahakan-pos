@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, notExists, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   accountingPeriods,
@@ -9,6 +9,7 @@ import {
   journalEntries,
   journalLines,
   outlets,
+  settlementRevisions,
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
@@ -135,7 +136,14 @@ async function collectReclassRows(
   to: string,
   toCode: string,
 ): Promise<SettlementReclassRow[]> {
-  /* Jurnal settlement channel ini: sourceId = id baris settlement. */
+  /* Jurnal settlement channel ini: sourceId = id baris settlement.
+   *
+   * Sesi AE-249 — settlement yang sudah punya REVISI berlaku dikeluarkan.
+   * Revisi sudah menentukan sendiri rekening tujuan settlement itu, per hari,
+   * dari mutasi m-banking. Kalau pemindahan per BULAN ikut menggeretnya lagi,
+   * uang yang sama berpindah dua kali — jurnalnya tetap seimbang, jadi tidak
+   * ada yang terlihat rusak sampai saldo banknya dibandingkan dengan bank.
+   * (Terjadi di September 2026: 23 settlement, Bank BCA jadi minus.) */
   const settlementIds = await db
     .select({ id: aggregatorSettlements.id })
     .from(aggregatorSettlements)
@@ -143,6 +151,17 @@ async function collectReclassRows(
       and(
         eq(aggregatorSettlements.outletId, outletId),
         eq(aggregatorSettlements.channel, channel),
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(settlementRevisions)
+            .where(
+              and(
+                eq(settlementRevisions.settlementId, aggregatorSettlements.id),
+                eq(settlementRevisions.status, "posted"),
+              ),
+            ),
+        ),
       ),
     );
   if (settlementIds.length === 0) return [];

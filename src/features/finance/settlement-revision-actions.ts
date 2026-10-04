@@ -67,10 +67,17 @@ export interface SettlementRevisionRow {
 async function readPostedBankLine(
   outletId: string,
   settlementId: string,
-): Promise<{ code: string; amount: number } | null> {
+  channel: string,
+): Promise<{
+  code: string;
+  amount: number;
+  /** Kode di jurnal ASLI, kalau saldonya sudah dipindah lewat Pindah Rekening. */
+  movedFromCode: string | null;
+} | null> {
   const rows = await db
     .select({
       code: chartOfAccounts.code,
+      month: sql<string>`to_char(${journalEntries.entryDate}, 'YYYY-MM')`,
       amount: sql<number>`SUM(${journalLines.debit})::bigint`,
     })
     .from(journalEntries)
@@ -87,14 +94,59 @@ async function readPostedBankLine(
         sql`${chartOfAccounts.code} LIKE '11%'`,
       ),
     )
-    .groupBy(chartOfAccounts.code);
+    .groupBy(
+      chartOfAccounts.code,
+      sql`to_char(${journalEntries.entryDate}, 'YYYY-MM')`,
+    );
 
   if (rows.length === 0) return null;
   /* Lebih dari satu rekening pada satu settlement tidak pernah dibuat oleh
    * jalur mana pun; kalau toh terjadi, menebak salah satunya akan mengarang
    * angka. Ditolak supaya ditangani manual. */
   if (rows.length > 1) return null;
-  return { code: rows[0]!.code, amount: Number(rows[0]!.amount) };
+  const original = rows[0]!;
+
+  /**
+   * Sesi AE-249 — ikuti Pindah Rekening.
+   *
+   * Pindah Rekening SENGAJA tidak mengubah jurnal settlement aslinya, jadi
+   * jurnal itu selamanya menunjuk rekening lama. Kalau revisi berangkat dari
+   * sana, ia akan memindahkan uang yang SUDAH dipindah — bergeser dua kali,
+   * dan karena jurnalnya tetap seimbang tidak ada yang terlihat rusak.
+   * (Terjadi di September 2026: Bank BCA jadi minus Rp 150.230 dari aktivitas
+   * settlement saja, padahal settlement cuma menambah.)
+   *
+   * Yang benar: titik berangkat revisi adalah rekening tempat saldonya
+   * SEKARANG, yaitu tujuan pemindahan terakhir untuk bulan + channel ini.
+   */
+  let code = original.code;
+  let movedFromCode: string | null = null;
+  for (let hop = 0; hop < 5; hop += 1) {
+    const [moved] = await db
+      .select({
+        toCode: sql<string>`${journalEntries.metadata} -> 'settlement_reclass' ->> 'toCode'`,
+      })
+      .from(journalEntries)
+      .where(
+        and(
+          eq(journalEntries.outletId, outletId),
+          eq(journalEntries.sourceType, "settlement_reclass"),
+          eq(journalEntries.status, "posted"),
+          sql`${journalEntries.metadata} -> 'settlement_reclass' ->> 'channel' = ${channel}`,
+          sql`${journalEntries.metadata} -> 'settlement_reclass' ->> 'month' = ${original.month}`,
+          sql`${journalEntries.metadata} -> 'settlement_reclass' ->> 'fromCode' = ${code}`,
+        ),
+      )
+      .limit(1);
+    if (!moved?.toCode || moved.toCode === code) break;
+    movedFromCode = movedFromCode ?? original.code;
+    code = moved.toCode;
+    /* Dirantai: bulan yang sama bisa dipindah lebih dari sekali (1110 → 1113
+     * → 1112, persis yang terjadi untuk QRIS September). Dibatasi 5 lompatan
+     * supaya data yang melingkar tidak menggantung permintaannya. */
+  }
+
+  return { code, amount: Number(original.amount), movedFromCode };
 }
 
 /** Revisi yang masih berlaku untuk sekumpulan settlement (untuk badge list). */
@@ -144,6 +196,12 @@ export interface SettlementRevisionContext {
   recordedAmount: number;
   recordedAccountCode: string;
   recordedAccountName: string;
+  /**
+   * Sesi AE-249 — kode di jurnal ASLI, kalau saldonya sudah dipindah lewat
+   * Pindah Rekening. Layar menyebutnya supaya owner tidak bingung melihat
+   * rekening yang berbeda dari jurnal settlement-nya.
+   */
+  movedFromCode: string | null;
   netAmount: number;
   /** Ada jurnal kas/bank berstatus posted yang bisa direvisi. */
   hasPostedJournal: boolean;
@@ -185,7 +243,7 @@ export async function getSettlementRevisionContext(input: {
     return fail("FORBIDDEN", "Settlement dari outlet lain");
   }
 
-  const posted = await readPostedBankLine(session.user.outletId, s.id);
+  const posted = await readPostedBankLine(session.user.outletId, s.id, s.channel);
 
   /* Jurnalnya ada tapi sudah dibatalkan? Itu keadaan yang berbeda dari belum
    * pernah ada, dan layar perlu mengatakannya dengan jujur. */
@@ -241,6 +299,7 @@ export async function getSettlementRevisionContext(input: {
     recordedAmount: posted?.amount ?? 0,
     recordedAccountCode: posted?.code ?? "",
     recordedAccountName: account?.name ?? posted?.code ?? "",
+    movedFromCode: posted?.movedFromCode ?? null,
     netAmount: s.netAmount,
     hasPostedJournal: posted !== null,
     journalReversed: posted === null && Boolean(reversedLine),

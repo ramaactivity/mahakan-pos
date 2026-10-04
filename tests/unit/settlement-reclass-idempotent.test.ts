@@ -50,3 +50,48 @@ describe("subtractAlreadyMoved (AE-246)", () => {
     expect(out.find((r) => r.month === "2026-08")!.amount).toBe(14_864_217);
   });
 });
+
+/* Sesi AE-249 — rantai pemindahan. QRIS September benar-benar dipindah dua
+ * kali: 1110 → 1113 (Agustus, aturan channel) lalu 1113 → 1112. Titik
+ * berangkat revisi harus mengikuti rantai itu sampai ujung; kalau berhenti di
+ * lompatan pertama, revisi akan memindahkan uang yang sudah pindah. */
+function followReclassChain(
+  startCode: string,
+  hops: Map<string, string>,
+  maxHops = 5,
+): string {
+  let code = startCode;
+  for (let i = 0; i < maxHops; i += 1) {
+    const next = hops.get(code);
+    if (!next || next === code) break;
+    code = next;
+  }
+  return code;
+}
+
+describe("rantai Pindah Rekening (AE-249)", () => {
+  it("satu lompatan", () => {
+    expect(followReclassChain("1110", new Map([["1110", "1113"]]))).toBe("1113");
+  });
+
+  it("dua lompatan — kasus QRIS September", () => {
+    const hops = new Map([
+      ["1110", "1113"],
+      ["1113", "1112"],
+    ]);
+    expect(followReclassChain("1110", hops)).toBe("1112");
+  });
+
+  it("tanpa pemindahan, tetap di rekening aslinya", () => {
+    expect(followReclassChain("1113", new Map())).toBe("1113");
+  });
+
+  it("data melingkar tidak menggantung", () => {
+    const hops = new Map([
+      ["1110", "1113"],
+      ["1113", "1110"],
+    ]);
+    // berhenti di batas lompatan, bukan berputar selamanya
+    expect(["1110", "1113"]).toContain(followReclassChain("1110", hops));
+  });
+});
