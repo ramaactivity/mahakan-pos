@@ -69,8 +69,10 @@ import {
   getSettlementRevisionContext,
   listSettlementRevisions,
   postSettlementRevision,
+  detectChannelRoutingDrift,
   repostSettlementJournal,
   reverseSettlementRevision,
+  type ChannelRoutingDrift,
   type SettlementRevisionContext,
 } from "@/features/finance/settlement-revision-actions";
 import type { AccountListRow } from "@/features/accounting/types";
@@ -242,6 +244,19 @@ export function AggregatorOnlineSection() {
     enabled: visibleIds.length > 0,
     staleTime: 60 * 1000,
   });
+  /* Sesi AE-255 — pengaturan rekening yang sudah basi. Ditaruh di layar ini
+   * karena di sinilah owner merevisi settlement satu per satu; tanpa
+   * peringatannya, dia akan terus merevisi tanpa pernah tahu pengaturannya
+   * yang perlu diubah. */
+  const driftQ = useQuery({
+    queryKey: ["settlement-routing-drift"],
+    queryFn: async () => {
+      const res = await detectChannelRoutingDrift();
+      return res.ok ? res.data : ([] as ChannelRoutingDrift[]);
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
   const revisionBySettlement = useMemo(() => {
     const m = new Map<string, true>();
     for (const r of revisionsQ.data ?? []) {
@@ -319,6 +334,34 @@ export function AggregatorOnlineSection() {
 
   return (
     <div className="space-y-4 p-6">
+      {(driftQ.data ?? []).length > 0 ? (
+        <div className="rounded-lg border border-warning-500/50 bg-warning-100/40 p-3 text-xs">
+          <p className="font-medium text-neutral-900">
+            Pengaturan rekening sepertinya sudah tidak sesuai
+          </p>
+          <ul className="mt-1.5 space-y-1.5">
+            {(driftQ.data ?? []).map((d) => (
+              <li key={d.channel} className="leading-relaxed text-neutral-700">
+                <b>{d.channelLabel}</b> — {d.streak} revisi terakhir
+                berturut-turut mendarat di <b>{d.actualCode}</b> (sejak{" "}
+                {d.since}), tapi settlement baru masih dijurnal ke{" "}
+                <b>{d.currentCode}</b>. Selama ini belum diubah, tiap
+                settlement baru akan salah rekening dan harus direvisi lagi.
+              </li>
+            ))}
+          </ul>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2"
+            onClick={() => setMdrOpen(true)}
+          >
+            <Settings2 className="size-4" aria-hidden /> Perbarui di MDR &amp;
+            Rekening
+          </Button>
+        </div>
+      ) : null}
+
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">

@@ -678,3 +678,139 @@ export async function repostSettlementJournal(input: {
     );
   }
 }
+
+/**
+ * Sesi AE-255 — PENGATURAN REKENING YANG SUDAH BASI.
+ *
+ * Rekening tujuan settlement diambil dari pengaturan per channel. Pengaturan
+ * itu tidak ikut berubah saat bank akuisisinya berganti, dan tidak ada yang
+ * memberitahu: jurnalnya tetap terbentuk, tetap seimbang, cuma mendarat di
+ * rekening yang salah. Satu-satunya tanda adalah owner merevisi settlement
+ * yang sama berulang-ulang ke rekening yang itu-itu juga.
+ *
+ * Kejadian nyata: QRIS pindah ke 1112 sejak 8 September 2026 — owner
+ * merevisinya 22 kali berturut-turut — sementara pengaturannya masih 1113,
+ * jadi settlement baru terus mendarat salah dan terus harus direvisi.
+ *
+ * Fungsi ini membandingkan ke mana revisi TERAKHIR sebuah channel mendarat
+ * dengan rekening yang dipakai jurnalnya sekarang, lalu melapor kalau
+ * keduanya berbeda. Melapor saja: mengubah pengaturan rekening sendiri
+ * berarti menebak ke mana uang berikutnya akan masuk, dan tebakan semacam
+ * itu yang dulu menyembunyikan QRIS Rp 60,5 juta di rekening yang salah.
+ */
+export interface ChannelRoutingDrift {
+  channel: string;
+  channelLabel: string;
+  /** Rekening yang dipakai jurnal settlement terbaru channel ini. */
+  currentCode: string;
+  /** Rekening tujuan revisi terakhir — ke mana uangnya benar-benar masuk. */
+  actualCode: string;
+  /** Berapa revisi berturut-turut yang mendarat di `actualCode`. */
+  streak: number;
+  /** Sejak kapan beruntun ke sana (YYYY-MM-DD). */
+  since: string;
+}
+
+export async function detectChannelRoutingDrift(): Promise<
+  ApiResult<ChannelRoutingDrift[]>
+> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, "aggregator_settlement.view")) {
+    return fail("FORBIDDEN", "Tidak punya hak akses");
+  }
+
+  const revisions = await db
+    .select({
+      channel: aggregatorSettlements.channel,
+      entryDate: settlementRevisions.entryDate,
+      actualCode: settlementRevisions.actualAccountCode,
+    })
+    .from(settlementRevisions)
+    .innerJoin(
+      aggregatorSettlements,
+      eq(aggregatorSettlements.id, settlementRevisions.settlementId),
+    )
+    .where(
+      and(
+        eq(settlementRevisions.outletId, session.user.outletId),
+        eq(settlementRevisions.status, "posted"),
+        sql`${settlementRevisions.actualAmount} > 0`,
+      ),
+    )
+    .orderBy(desc(settlementRevisions.entryDate));
+
+  /* Rekening yang dipakai jurnal settlement TERBARU tiap channel — itulah
+   * yang akan dipakai settlement berikutnya. Dibaca dari jurnalnya, bukan
+   * dari pengaturan, supaya yang dibandingkan adalah akibat nyatanya. */
+  const latest = await db
+    .select({
+      channel: aggregatorSettlements.channel,
+      code: chartOfAccounts.code,
+      periodFrom: aggregatorSettlements.periodFrom,
+    })
+    .from(aggregatorSettlements)
+    .innerJoin(
+      journalEntries,
+      and(
+        eq(journalEntries.sourceId, aggregatorSettlements.id),
+        eq(journalEntries.sourceType, "aggregator_settlement"),
+        eq(journalEntries.status, "posted"),
+      ),
+    )
+    .innerJoin(journalLines, eq(journalLines.entryId, journalEntries.id))
+    .innerJoin(
+      chartOfAccounts,
+      and(
+        eq(chartOfAccounts.id, journalLines.accountId),
+        eq(chartOfAccounts.type, "asset"),
+      ),
+    )
+    .where(
+      and(
+        eq(aggregatorSettlements.outletId, session.user.outletId),
+        sql`${journalLines.debit} > 0`,
+        sql`${chartOfAccounts.code} LIKE '11%'`,
+      ),
+    )
+    .orderBy(desc(aggregatorSettlements.periodFrom));
+
+  const currentByChannel = new Map<string, string>();
+  for (const r of latest) {
+    if (!currentByChannel.has(r.channel)) currentByChannel.set(r.channel, r.code);
+  }
+
+  const out: ChannelRoutingDrift[] = [];
+  const seen = new Set<string>();
+  for (const rev of revisions) {
+    if (seen.has(rev.channel)) continue;
+    seen.add(rev.channel);
+
+    const current = currentByChannel.get(rev.channel);
+    if (!current || current === rev.actualCode) continue;
+
+    /* Hitung berapa revisi BERUNTUN (dari yang terbaru) yang mendarat di
+     * rekening itu. Satu revisi bisa sekadar kasus khusus; beruntun berarti
+     * banknya memang sudah pindah. */
+    let streak = 0;
+    let since = rev.entryDate;
+    for (const r of revisions) {
+      if (r.channel !== rev.channel) continue;
+      if (r.actualCode !== rev.actualCode) break;
+      streak += 1;
+      since = r.entryDate;
+    }
+    if (streak < 3) continue; // terlalu sedikit untuk disebut pola
+
+    out.push({
+      channel: rev.channel,
+      channelLabel:
+        SETTLEMENT_CHANNEL_LABEL[rev.channel as AggregatorChannel] ??
+        rev.channel,
+      currentCode: current,
+      actualCode: rev.actualCode,
+      streak,
+      since: String(since),
+    });
+  }
+  return ok(out);
+}
