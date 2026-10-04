@@ -549,3 +549,132 @@ export async function reverseSettlementRevision(input: {
     return fail("DB_ERROR", logAndSanitize(e, "finance", "Pembatalan gagal"));
   }
 }
+
+/**
+ * Sesi AE-250 — POSTING ULANG jurnal settlement yang terlanjur dibatalkan.
+ *
+ * Latar: sebelum tombol "Batalkan Revisi" ada (AE-248), owner yang salah
+ * merevisi membatalkan jurnal SETTLEMENT-nya. Settlement-nya sendiri masih
+ * ada dan uangnya memang masuk, tapi jurnalnya hilang — piutangnya tidak
+ * pernah dibersihkan dan saldo bank kurang sebesar itu. Tanpa jalan ini,
+ * satu-satunya perbaikan adalah menghapus lalu membuat ulang settlement-nya,
+ * yang membuang jejaknya.
+ *
+ * Jurnalnya disusun lewat `resolveSettlementJournalArgs` — jalur yang sama
+ * dengan pembuatan otomatis, jadi rekening tujuan dan entry_date-nya tunduk
+ * pada aturan yang sama persis.
+ *
+ * Catatan untuk yang membaca nanti: kalau settlement ini punya revisi yang
+ * masih berlaku, jurnal revisinya SENGAJA dibiarkan. Revisi itu menggeser
+ * saldo relatif terhadap jurnal settlement; begitu jurnalnya kembali,
+ * pasangannya lengkap lagi dan hasil akhirnya persis seperti sebelum
+ * pembatalan.
+ */
+export async function repostSettlementJournal(input: {
+  settlementId: string;
+  reason: string;
+}): Promise<ApiResult<{ entryId: string; entryNumber: string }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, CAN_REVISE)) {
+    return fail("FORBIDDEN", "Hanya Owner yang dapat memposting ulang jurnal");
+  }
+  const reason = input.reason?.trim() ?? "";
+  if (reason.length < 10) {
+    return fail(
+      "VALIDATION",
+      "Alasan posting ulang minimal 10 karakter — ini yang dibaca saat jurnalnya ditelusuri nanti.",
+    );
+  }
+
+  const [s] = await db
+    .select()
+    .from(aggregatorSettlements)
+    .where(eq(aggregatorSettlements.id, input.settlementId))
+    .limit(1);
+  if (!s) return fail("NOT_FOUND", "Settlement tidak ditemukan");
+  if (s.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Settlement dari outlet lain");
+  }
+
+  /* Sudah punya jurnal yang hidup? Jangan buat yang kedua — piutangnya akan
+   * dibersihkan dua kali dan saldo banknya naik dua kali lipat. */
+  const existing = await readPostedBankLine(
+    session.user.outletId,
+    s.id,
+    s.channel,
+  );
+  if (existing) {
+    return fail(
+      "ALREADY_POSTED",
+      "Settlement ini sudah punya jurnal yang berlaku. Tidak perlu diposting ulang.",
+    );
+  }
+
+  const { resolveSettlementJournalArgs } = await import("./settlement-generate");
+  const { postJournalForAggregatorSettlement } = await import(
+    "@/features/accounting/hooks"
+  );
+
+  try {
+    /* Diposting SINKRON, bukan lewat fireJournalHook: ini tombol yang ditekan
+     * owner dan menunggu jawabannya. Fire-and-forget akan menjawab "berhasil"
+     * walau jurnalnya gagal dibuat — persis kegagalan yang pernah membuat 682
+     * jurnal hilang diam-diam. */
+    const args = await resolveSettlementJournalArgs(
+      s,
+      session.user.id,
+      session.user.outletId,
+    );
+    await postJournalForAggregatorSettlement(args);
+
+    const posted = await readPostedBankLine(
+      session.user.outletId,
+      s.id,
+      s.channel,
+    );
+    if (!posted) {
+      return fail(
+        "NOT_POSTED",
+        "Jurnal tidak terbentuk. Kemungkinan auto-jurnal sedang mati atau periodenya terkunci — cek Akuntansi → Periode.",
+      );
+    }
+
+    const [entry] = await db
+      .select({
+        id: journalEntries.id,
+        entryNumber: journalEntries.entryNumber,
+      })
+      .from(journalEntries)
+      .where(
+        and(
+          eq(journalEntries.outletId, session.user.outletId),
+          eq(journalEntries.sourceType, "aggregator_settlement"),
+          eq(journalEntries.sourceId, s.id),
+          eq(journalEntries.status, "posted"),
+        ),
+      )
+      .limit(1);
+
+    logAudit({
+      eventType: "aggregator_settlement.journal_repost",
+      userId: session.user.id,
+      entityType: "aggregator_settlement",
+      entityId: s.id,
+      payload: {
+        summary: `Posting ulang jurnal settlement ${s.channel} ${s.periodFrom}: Rp ${Number(s.netAmount).toLocaleString("id-ID")}`,
+        after: { reason, entryNumber: entry?.entryNumber ?? null },
+      },
+      metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+    }).catch((e) => console.error("[audit settlement.journal_repost]", e));
+
+    return ok({
+      entryId: entry?.id ?? "",
+      entryNumber: entry?.entryNumber ?? "",
+    });
+  } catch (e) {
+    return fail(
+      "DB_ERROR",
+      logAndSanitize(e, "finance", "Jurnal gagal diposting ulang"),
+    );
+  }
+}

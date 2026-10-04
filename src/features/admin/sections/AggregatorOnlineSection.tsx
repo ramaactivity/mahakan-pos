@@ -69,6 +69,7 @@ import {
   getSettlementRevisionContext,
   listSettlementRevisions,
   postSettlementRevision,
+  repostSettlementJournal,
   reverseSettlementRevision,
   type SettlementRevisionContext,
 } from "@/features/finance/settlement-revision-actions";
@@ -1352,6 +1353,12 @@ function SettlementRevisionModal({
    * bank untuk settlement yang sudah tidak ada. */
   const [reversing, setReversing] = useState(false);
   const [reverseReason, setReverseReason] = useState("");
+  /* Sesi AE-250 — jurnal settlement yang terlanjur dibatalkan bisa diposting
+   * ulang dari sini. Tanpa ini settlement-nya masih ada tapi piutangnya tidak
+   * pernah dibersihkan, dan satu-satunya perbaikan adalah menghapus lalu
+   * membuat ulang settlement-nya — jejaknya ikut hilang. */
+  const [reposting, setReposting] = useState(false);
+  const [repostReason, setRepostReason] = useState("");
 
   useEffect(() => {
     if (!open || !settlementId) return;
@@ -1363,6 +1370,7 @@ function SettlementRevisionModal({
     setAccountCode("");
     setReason("");
     setReverseReason("");
+    setRepostReason("");
     setError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
     void (async () => {
@@ -1403,6 +1411,24 @@ function SettlementRevisionModal({
     ctx !== null &&
     Number.isFinite(actual) &&
     (actual !== ctx.recordedAmount || accountCode !== ctx.recordedAccountCode);
+
+  async function doRepost() {
+    if (!ctx || reposting) return;
+    setError(null);
+    setReposting(true);
+    const res = await repostSettlementJournal({
+      settlementId: ctx.settlementId,
+      reason: repostReason.trim(),
+    });
+    setReposting(false);
+    if (!res.ok) {
+      setError(res.error.message);
+      return;
+    }
+    toast.success(`Jurnal diposting ulang — ${res.data.entryNumber}`);
+    onSaved();
+    onClose();
+  }
 
   async function doReverse() {
     if (!ctx?.activeRevision || reversing) return;
@@ -1520,11 +1546,33 @@ function SettlementRevisionModal({
           </div>
 
           {ctx.journalReversed ? (
-            <p className="rounded-md border border-warning-500/40 bg-warning-100/40 p-2 text-xs leading-relaxed text-neutral-700">
-              <strong>Jurnal settlement ini sudah dibatalkan.</strong> Jadi
-              tidak ada lagi yang bisa direvisi. Kalau uangnya memang masuk,
-              buat ulang settlement-nya dulu.
-            </p>
+            <div className="rounded-lg border border-warning-500/40 bg-warning-100/30 p-2.5 text-xs">
+              <p className="font-medium text-neutral-900">
+                Jurnal settlement ini sudah dibatalkan
+              </p>
+              <p className="mt-1 leading-relaxed text-neutral-600">
+                Settlement-nya sendiri masih ada. Selama jurnalnya belum
+                kembali, piutangnya tidak pernah dibersihkan dan saldo bank
+                kurang sebesar nilai ini. Kalau uangnya memang masuk, posting
+                ulang jurnalnya — nilainya diambil dari settlement yang sama,
+                jadi tidak ada yang diketik ulang.
+              </p>
+              <div className="mt-2 flex items-end gap-2">
+                <Input
+                  label="Alasan posting ulang"
+                  value={repostReason}
+                  onChange={(e) => setRepostReason(e.target.value)}
+                  placeholder="Misal: jurnal kebatalan saat memperbaiki revisi"
+                />
+                <Button
+                  size="sm"
+                  onClick={() => void doRepost()}
+                  disabled={reposting || repostReason.trim().length < 10}
+                >
+                  {reposting ? "Memposting…" : "Posting Ulang Jurnal"}
+                </Button>
+              </div>
+            </div>
           ) : null}
 
           {/* Sesi AE-248 — salah revisi dibereskan DI SINI, bukan dengan

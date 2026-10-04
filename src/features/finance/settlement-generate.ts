@@ -90,14 +90,20 @@ export function enumerateDatesIso(from: string, to: string): string[] {
  * mapping ada di postJournalForAggregatorSettlement: QRIS/EDC clear piutang,
  * aggregator recognize revenue. No-op kalau auto-journal outlet OFF.
  */
-export async function fireSettlementJournalHook(
+/**
+ * Sesi AE-250 — argumen jurnal settlement, dipisah dari cara memanggilnya.
+ *
+ * Aturan di dalam sini mahal didapat (rekening mengikuti pengaturan outlet,
+ * entry_date dari bankCreditedAt via jakartaDateOf, bukan hari ini), jadi
+ * jalur apa pun yang membuat jurnal settlement WAJIB lewat sini — termasuk
+ * tombol posting ulang. Menyalinnya ke pemanggil kedua adalah cara tercepat
+ * membuat dua jalur yang diam-diam berbeda.
+ */
+export async function resolveSettlementJournalArgs(
   row: AggregatorSettlement,
   actorId: string,
   outletId: string,
-): Promise<void> {
-  const { fireJournalHook, postJournalForAggregatorSettlement } = await import(
-    "@/features/accounting/hooks"
-  );
+) {
   let explicitCode: string | null = null;
   if (row.bankAccountId) {
     const [bankAcc] = await db
@@ -132,22 +138,33 @@ export async function fireSettlementJournalHook(
   const entryDate = row.bankCreditedAt
     ? jakartaDateOf(new Date(row.bankCreditedAt))
     : String(row.periodTo);
+  return {
+    outletId,
+    settlementId: row.id,
+    channel: row.channel as AggregatorChannel,
+    grossAmount: Number(row.grossAmount),
+    feeAmount: Number(row.feeAmount),
+    netAmount: Number(row.netAmount),
+    bankAccountCode,
+    periodFrom: String(row.periodFrom),
+    periodTo: String(row.periodTo),
+    entryDate,
+    referenceNo: row.referenceNo,
+    actorId,
+  };
+}
+
+export async function fireSettlementJournalHook(
+  row: AggregatorSettlement,
+  actorId: string,
+  outletId: string,
+): Promise<void> {
+  const { fireJournalHook, postJournalForAggregatorSettlement } = await import(
+    "@/features/accounting/hooks"
+  );
+  const args = await resolveSettlementJournalArgs(row, actorId, outletId);
   fireJournalHook(
-    () =>
-      postJournalForAggregatorSettlement({
-        outletId,
-        settlementId: row.id,
-        channel: row.channel,
-        grossAmount: Number(row.grossAmount),
-        feeAmount: Number(row.feeAmount),
-        netAmount: Number(row.netAmount),
-        bankAccountCode,
-        periodFrom: String(row.periodFrom),
-        periodTo: String(row.periodTo),
-        entryDate,
-        referenceNo: row.referenceNo,
-        actorId,
-      }),
+    () => postJournalForAggregatorSettlement(args),
     "aggregator_settlement",
   );
 }
