@@ -24,7 +24,8 @@ name: notifications-cron
 #
 # Jam UTC yang dipilih = union dari SEMUA slot job (getJobForCurrentHour,
 # WIB = UTC+7) + cakupan sapuan jurnal max selang 3 jam:
-#   18 UTC = 01 WIB cashless-settlement (lookback 3 hari, slot terlewat aman)
+#   cashless-settlement jalan di SETIAP run (AE-250, lookback 14 hari)
+#   18 UTC = 01 WIB run tengah malam (dulu slot settlement; kini sapuan saja)
 #   23 UTC = 06 WIB attendance-morning
 #   01 UTC = 08 WIB low-stock-scan
 #   03 UTC = 10 WIB operasional-monthly-day28 (tgl 28)

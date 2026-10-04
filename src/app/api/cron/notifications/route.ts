@@ -93,6 +93,20 @@ export async function GET(request: NextRequest) {
    *
    * Dilewati kalau job yang diminta memang journal-sweep (biar tidak dobel)
    * dan tidak boleh menjatuhkan job utama kalau gagal. */
+  /* Sesi AE-250 — settlement QRIS/EDC juga jalan SETIAP kali cron menyapa.
+   * Dulu terikat slot jam 01 WIB persis; run Actions yang molor sejam saja
+   * membuat hari itu tidak pernah di-settle. Idempoten (hari yang sudah ada
+   * di-skip). Dijalankan sebelum sapuan supaya jurnal yang gagal ikut
+   * tersapu di run yang sama. */
+  let settlement: Awaited<ReturnType<typeof runJob>> | null = null;
+  if (jobParam !== "cashless-settlement") {
+    try {
+      settlement = await runJob("cashless-settlement");
+    } catch (e) {
+      console.error("[cron cashless-settlement]", e);
+    }
+  }
+
   let sweep: Awaited<ReturnType<typeof runJob>> | null = null;
   if (jobParam !== "journal-sweep") {
     try {
@@ -105,10 +119,10 @@ export async function GET(request: NextRequest) {
   if (!job) {
     return NextResponse.json({
       ok: true,
-      data: { skipped: true, reason: "no job for current hour", sweep },
+      data: { skipped: true, reason: "no job for current hour", settlement, sweep },
     });
   }
 
   const result = await runJob(job);
-  return NextResponse.json({ ok: true, data: { ...result, sweep } });
+  return NextResponse.json({ ok: true, data: { ...result, settlement, sweep } });
 }

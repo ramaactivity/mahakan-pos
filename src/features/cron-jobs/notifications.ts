@@ -299,8 +299,14 @@ export async function runCashlessSettlementJob(): Promise<CronJobResult> {
      * hour-exact) → tanpa lookback, settlement hari itu TIDAK PERNAH dibuat
      * dan piutang cashless menumpuk diam-diam. Idempoten: hari yang sudah
      * punya settlement di-skip (hasSettlementForDay + unique index). */
+    /* Sesi AE-250 — lookback dilebarkan ke 14 hari & job ini kini jalan di
+     * SETIAP run cron (route.ts), bukan cuma slot 01 WIB. Run GitHub Actions
+     * sering molor 1-3 jam (01:05 → 02:02/03:35/00:08) sehingga slot jam
+     * persis terlewat berhari-hari: 28 Sep–3 Okt 2026 tidak ada settlement
+     * sama sekali. Hari yang sudah punya baris (termasuk yang dihapus soft)
+     * tetap di-skip oleh hasSettlementForDay. */
     const fDate = new Date(`${yesterday}T00:00:00Z`);
-    fDate.setUTCDate(fDate.getUTCDate() - 2);
+    fDate.setUTCDate(fDate.getUTCDate() - 13);
     const fromDate = fDate.toISOString().slice(0, 10);
 
     const outletList = await db
@@ -549,7 +555,6 @@ export function getJobForCurrentHour(): CronJob | null {
   const wibHour = wibDate.getUTCHours();
   const wibDay = wibDate.getUTCDate(); // 1..31
   const wibDow = wibDate.getUTCDay(); // 0=Sun ... 6=Sat
-  if (wibHour === 1) return "cashless-settlement";
   if (wibHour === 6) return "attendance-morning";
   if (wibHour === 8) return "low-stock-scan";
   if (wibHour === 10 && wibDay === 28) return "operasional-monthly-day28";
