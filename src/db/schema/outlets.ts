@@ -136,6 +136,20 @@ export type OutletSettings = {
    * transaksi POS. Persen dari gross (mis. 0.7 = 0,7%). Net = gross −
    * round(gross × pct/100). Default kalau unset: QRIS 0.7%, EDC BCA 0%. */
   cashless?: {
+    /**
+     * Sesi AE-248 — saklar pengurangan MDR OTOMATIS. `undefined` = MATI.
+     *
+     * Dimatikan atas permintaan owner: setelah dicocokkan dengan mutasi
+     * m-banking, potongan yang ditebak dari persentase terlalu sering
+     * meleset dari yang benar-benar dipotong bank. Menebak lalu salah lebih
+     * merepotkan daripada tidak menebak sama sekali — net dibiarkan sama
+     * dengan gross, lalu potongan yang NYATA dicatat per tanggal lewat
+     * Revisi Settlement.
+     *
+     * Persentase di bawah TIDAK dihapus: kalau suatu saat potongannya
+     * konsisten lagi, saklar ini tinggal dinyalakan.
+     */
+    autoMdrEnabled?: boolean;
     mdrQrisPct?: number;
     mdrEdcBcaPct?: number;
     /* Sesi AE-182 — MDR mesin EDC selain BCA. Default 0 kalau unset. */

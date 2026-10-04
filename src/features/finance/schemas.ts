@@ -155,6 +155,9 @@ export const generateCashlessSettlementSchema = z
 
 /** Sesi AE-165 — rate MDR per channel cashless langsung. Persen 0..10. */
 export const updateCashlessMdrSchema = z.object({
+  /* Sesi AE-248 — saklar potong MDR otomatis. Opsional supaya form lama
+   * tetap valid; kalau tidak dikirim, nilai lama dipertahankan. */
+  autoMdrEnabled: z.boolean().optional(),
   mdrQrisPct: z.number().min(0).max(10),
   mdrEdcBcaPct: z.number().min(0).max(10),
   /* Sesi AE-182 — opsional supaya form lama (2 field) tetap valid; kalau

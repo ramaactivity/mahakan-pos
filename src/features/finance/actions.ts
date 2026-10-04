@@ -2,6 +2,7 @@
 
 import { and, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { db } from "@/db";
+import { isAutoMdrEnabled } from "./mdr-pure";
 import {
   aggregatorSettlements,
   cashDeposits,
@@ -931,6 +932,8 @@ export async function getCashlessMdrConfig(): Promise<
     .limit(1);
   const c = row?.settings?.cashless;
   return ok({
+    /* Sesi AE-248 — belum pernah diset = MATI (lihat outlets.ts). */
+    autoMdrEnabled: isAutoMdrEnabled(c),
     mdrQrisPct: c?.mdrQrisPct ?? DEFAULT_MDR_QRIS_PCT,
     mdrEdcBcaPct: c?.mdrEdcBcaPct ?? DEFAULT_MDR_EDC_BCA_PCT,
     mdrEdcBniPct: c?.mdrEdcBniPct ?? DEFAULT_MDR_EDC_BNI_PCT,
@@ -942,6 +945,8 @@ export async function getCashlessMdrConfig(): Promise<
 
 /** Update rate MDR per channel (owner/manager). */
 export async function updateCashlessMdrConfig(input: {
+  /** Sesi AE-248 — saklar potong MDR otomatis. */
+  autoMdrEnabled?: boolean;
   mdrQrisPct: number;
   mdrEdcBcaPct: number;
   /** Sesi AE-219 — rekening tujuan per channel (kode akun). "" = pakai bawaan. */
@@ -1034,6 +1039,9 @@ export async function updateCashlessMdrConfig(input: {
       mdrQrisPct: parsed.data.mdrQrisPct,
       mdrEdcBcaPct: parsed.data.mdrEdcBcaPct,
       bankAccountByChannel: bankMapping,
+      ...(parsed.data.autoMdrEnabled !== undefined
+        ? { autoMdrEnabled: parsed.data.autoMdrEnabled }
+        : {}),
       /* Field EDC lain opsional — kalau form tidak mengirim, nilai lama
        * dipertahankan lewat spread di atas. */
       ...(parsed.data.mdrEdcBniPct !== undefined
@@ -1064,6 +1072,7 @@ export async function updateCashlessMdrConfig(input: {
   }).catch((e) => console.error("[audit cashless_mdr.update]", e));
   const merged = next.cashless ?? {};
   return ok({
+    autoMdrEnabled: isAutoMdrEnabled(merged),
     mdrQrisPct: merged.mdrQrisPct ?? DEFAULT_MDR_QRIS_PCT,
     mdrEdcBcaPct: merged.mdrEdcBcaPct ?? DEFAULT_MDR_EDC_BCA_PCT,
     mdrEdcBniPct: merged.mdrEdcBniPct ?? DEFAULT_MDR_EDC_BNI_PCT,

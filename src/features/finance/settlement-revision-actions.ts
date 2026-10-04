@@ -145,7 +145,26 @@ export interface SettlementRevisionContext {
   recordedAccountCode: string;
   recordedAccountName: string;
   netAmount: number;
+  /** Ada jurnal kas/bank berstatus posted yang bisa direvisi. */
+  hasPostedJournal: boolean;
+  /**
+   * Sesi AE-248 — jurnal settlement-nya sendiri sudah DIBATALKAN. Beda dari
+   * "belum pernah punya jurnal", dan bedanya penting: kalau revisinya masih
+   * berlaku, jurnal revisi itu jadi yatim — menggeser saldo bank untuk
+   * settlement yang sudah tidak ada. Owner harus bisa membatalkannya dari
+   * sini, jadi konteksnya tetap dikembalikan, bukan ditolak mentah.
+   */
+  journalReversed: boolean;
   alreadyRevised: boolean;
+  /** Revisi yang masih berlaku — supaya layar bisa menawarkan pembatalan. */
+  activeRevision: {
+    id: string;
+    actualAmount: number;
+    actualAccountCode: string;
+    recordedAmount: number;
+    recordedAccountCode: string;
+    reason: string;
+  } | null;
 }
 
 export async function getSettlementRevisionContext(input: {
@@ -167,26 +186,44 @@ export async function getSettlementRevisionContext(input: {
   }
 
   const posted = await readPostedBankLine(session.user.outletId, s.id);
-  if (!posted) {
-    return fail(
-      "NO_JOURNAL",
-      "Settlement ini belum punya jurnal kas/bank yang bisa direvisi. Cek dulu di Antrian Jurnal.",
-    );
-  }
 
-  const [account] = await db
-    .select({ name: chartOfAccounts.name })
-    .from(chartOfAccounts)
+  /* Jurnalnya ada tapi sudah dibatalkan? Itu keadaan yang berbeda dari belum
+   * pernah ada, dan layar perlu mengatakannya dengan jujur. */
+  const [reversedLine] = await db
+    .select({ id: journalEntries.id })
+    .from(journalEntries)
     .where(
       and(
-        eq(chartOfAccounts.outletId, session.user.outletId),
-        eq(chartOfAccounts.code, posted.code),
+        eq(journalEntries.outletId, session.user.outletId),
+        eq(journalEntries.sourceType, "aggregator_settlement"),
+        eq(journalEntries.sourceId, s.id),
+        eq(journalEntries.status, "reversed"),
       ),
     )
     .limit(1);
 
+  const [account] = posted
+    ? await db
+        .select({ name: chartOfAccounts.name })
+        .from(chartOfAccounts)
+        .where(
+          and(
+            eq(chartOfAccounts.outletId, session.user.outletId),
+            eq(chartOfAccounts.code, posted.code),
+          ),
+        )
+        .limit(1)
+    : [undefined];
+
   const [active] = await db
-    .select({ id: settlementRevisions.id })
+    .select({
+      id: settlementRevisions.id,
+      actualAmount: settlementRevisions.actualAmount,
+      actualAccountCode: settlementRevisions.actualAccountCode,
+      recordedAmount: settlementRevisions.recordedAmount,
+      recordedAccountCode: settlementRevisions.recordedAccountCode,
+      reason: settlementRevisions.reason,
+    })
     .from(settlementRevisions)
     .where(
       and(
@@ -201,11 +238,14 @@ export async function getSettlementRevisionContext(input: {
     channelLabel:
       SETTLEMENT_CHANNEL_LABEL[s.channel as AggregatorChannel] ?? s.channel,
     entryDate: s.periodFrom,
-    recordedAmount: posted.amount,
-    recordedAccountCode: posted.code,
-    recordedAccountName: account?.name ?? posted.code,
+    recordedAmount: posted?.amount ?? 0,
+    recordedAccountCode: posted?.code ?? "",
+    recordedAccountName: account?.name ?? posted?.code ?? "",
     netAmount: s.netAmount,
+    hasPostedJournal: posted !== null,
+    journalReversed: posted === null && Boolean(reversedLine),
     alreadyRevised: Boolean(active),
+    activeRevision: active ?? null,
   });
 }
 
@@ -236,6 +276,14 @@ export async function postSettlementRevision(input: {
   });
   if (!ctx.ok) return ctx as ApiResult<never>;
   const ctxData = ctx.data;
+  if (!ctxData.hasPostedJournal) {
+    return fail(
+      "NO_JOURNAL",
+      ctxData.journalReversed
+        ? "Jurnal settlement ini sudah dibatalkan, jadi tidak ada yang bisa direvisi. Buat ulang settlement-nya dulu kalau uangnya memang masuk."
+        : "Settlement ini belum punya jurnal kas/bank yang bisa direvisi. Cek dulu di Antrian Jurnal.",
+    );
+  }
   if (ctxData.alreadyRevised) {
     return fail(
       "ALREADY_REVISED",

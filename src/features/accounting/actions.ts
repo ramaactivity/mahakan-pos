@@ -11,6 +11,7 @@ import {
   ingredients,
   journalEntries,
   journalLines,
+  settlementRevisions,
   purchases,
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
@@ -2066,6 +2067,31 @@ export async function reverseJournalEntry(
       "PERIOD_LOCKED",
       `Periode ${origPeriod.year}-${String(origPeriod.month).padStart(2, "0")} sudah tutup buku — buka kembali (reopen) dulu di Akuntansi → Periode sebelum reverse.`,
     );
+  }
+
+  /* Sesi AE-248 — jurnal settlement TIDAK boleh dibatalkan selagi revisinya
+   * masih berlaku. Revisi menggeser saldo bank RELATIF terhadap jurnal ini;
+   * kalau jurnalnya dibatalkan duluan, jurnal revisinya tertinggal sendirian
+   * dan saldo bank bergeser untuk settlement yang sudah tidak ada — tanpa
+   * satu pun jurnal yang timpang, jadi tak ada yang terlihat rusak.
+   * (Terjadi 4 Okt 2026: BCA kurang Rp 1.230 + beban MDR hantu Rp 1.230.) */
+  if (original.sourceType === "aggregator_settlement" && original.sourceId) {
+    const [activeRevision] = await db
+      .select({ id: settlementRevisions.id })
+      .from(settlementRevisions)
+      .where(
+        and(
+          eq(settlementRevisions.settlementId, original.sourceId),
+          eq(settlementRevisions.status, "posted"),
+        ),
+      )
+      .limit(1);
+    if (activeRevision) {
+      return fail(
+        "REVISION_ACTIVE",
+        "Settlement ini punya revisi yang masih berlaku. Batalkan dulu revisinya lewat tombol Revisi di Online & Cashless, baru jurnalnya boleh dibatalkan.",
+      );
+    }
   }
 
   const counterLines = original.lines.map((l) => ({

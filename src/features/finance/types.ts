@@ -127,6 +127,8 @@ export type CreateAggregatorSettlementInput = {
 
 /** Sesi AE-165 — rate MDR per channel cashless langsung. */
 export type CashlessMdrConfig = {
+  /** Sesi AE-248 — false (dan undefined di settings) = MDR tidak dipotong. */
+  autoMdrEnabled: boolean;
   mdrQrisPct: number;
   mdrEdcBcaPct: number;
   /* Sesi AE-182 — MDR per mesin EDC. Default 0 sama seperti BCA; owner bisa

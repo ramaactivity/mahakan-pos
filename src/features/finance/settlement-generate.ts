@@ -16,6 +16,7 @@ import "server-only";
 
 import { and, eq, gte, lte } from "drizzle-orm";
 import { db } from "@/db";
+import { isAutoMdrEnabled, settlementFee } from "./mdr-pure";
 import { aggregatorSettlements, chartOfAccounts, outlets } from "@/db/schema";
 import { logAudit } from "@/lib/audit/logger";
 import { jakartaDateOf } from "@/lib/tz";
@@ -58,6 +59,9 @@ export async function resolveMdrConfig(
     .limit(1);
   const c = row?.settings?.cashless;
   return {
+    /* Sesi AE-248 — belum pernah diset = MATI. Sengaja, bukan kelalaian:
+     * potongan tebakan lebih sering meleset daripada tepat. */
+    autoMdrEnabled: isAutoMdrEnabled(c),
     mdrQrisPct: c?.mdrQrisPct ?? DEFAULT_MDR_QRIS_PCT,
     mdrEdcBcaPct: c?.mdrEdcBcaPct ?? DEFAULT_MDR_EDC_BCA_PCT,
     mdrEdcBniPct: c?.mdrEdcBniPct ?? DEFAULT_MDR_EDC_BNI_PCT,
@@ -206,7 +210,14 @@ export async function generateCashlessForOutlet(params: {
         result.skipped += 1;
         continue; // sudah ada settlement (CSV/auto) → jangan dobel
       }
-      const fee = Math.round((grossAmt * ch.pct) / 100);
+      /* Sesi AE-248 — saat saklar MDR otomatis mati, net = gross apa adanya.
+       * Potongan yang BENAR-BENAR terjadi dicatat belakangan per tanggal
+       * lewat Revisi Settlement, dari mutasi m-banking. */
+      const fee = settlementFee({
+        autoMdrEnabled: mdr.autoMdrEnabled,
+        pct: ch.pct,
+        gross: grossAmt,
+      });
       const net = grossAmt - fee;
       /* Audit AE-186 — onConflictDoNothing pada unique
        * (outlet, channel, periodFrom, periodTo): kalau cron & klik manual

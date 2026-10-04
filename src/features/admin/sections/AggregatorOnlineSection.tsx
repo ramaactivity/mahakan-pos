@@ -69,6 +69,7 @@ import {
   getSettlementRevisionContext,
   listSettlementRevisions,
   postSettlementRevision,
+  reverseSettlementRevision,
   type SettlementRevisionContext,
 } from "@/features/finance/settlement-revision-actions";
 import type { AccountListRow } from "@/features/accounting/types";
@@ -766,6 +767,9 @@ function CashlessMdrModal({
 }) {
   const [qris, setQris] = useState("");
   const [edc, setEdc] = useState("");
+  /* Sesi AE-248 — potong MDR otomatis. Dimatikan atas permintaan owner:
+   * potongan tebakan terlalu sering meleset dari mutasi m-banking. */
+  const [autoMdr, setAutoMdr] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   /* Sesi AE-219 — rekening tujuan pencairan per channel. Kosong = pakai
@@ -789,7 +793,13 @@ function CashlessMdrModal({
       if (cancelled) return;
       const cfg = res.ok
         ? res.data
-        : { mdrQrisPct: 0.7, mdrEdcBcaPct: 0, bankAccountByChannel: {} };
+        : {
+            autoMdrEnabled: false,
+            mdrQrisPct: 0.7,
+            mdrEdcBcaPct: 0,
+            bankAccountByChannel: {},
+          };
+      setAutoMdr(cfg.autoMdrEnabled === true);
       setQris(String(cfg.mdrQrisPct));
       setEdc(String(cfg.mdrEdcBcaPct));
       setBankMap(cfg.bankAccountByChannel ?? {});
@@ -825,6 +835,7 @@ function CashlessMdrModal({
     }
     setSaving(true);
     const res = await updateCashlessMdrConfig({
+      autoMdrEnabled: autoMdr,
       mdrQrisPct: q,
       mdrEdcBcaPct: e,
       bankAccountByChannel: bankMap,
@@ -862,6 +873,28 @@ function CashlessMdrModal({
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3">
+          {/* Sesi AE-248 — saklar di ATAS angka-angkanya: selama mati, rate di
+              bawah tidak dipakai sama sekali, dan itu harus terbaca sebelum
+              owner sempat bingung kenapa mengubah angkanya tidak berefek. */}
+          <label className="col-span-2 flex items-start gap-2.5 rounded-lg border border-neutral-200 p-2.5">
+            <input
+              type="checkbox"
+              checked={autoMdr}
+              onChange={(ev) => setAutoMdr(ev.target.checked)}
+              className="mt-0.5 size-4 accent-mahakan-green-700"
+            />
+            <span className="text-xs leading-relaxed">
+              <span className="font-medium text-neutral-900">
+                Potong MDR otomatis saat settlement dibuat
+              </span>
+              <span className="mt-0.5 block text-neutral-500">
+                Mati = net settlement ditulis sama dengan gross, dan potongan
+                yang benar-benar terjadi dicatat per tanggal lewat tombol
+                Revisi, mengikuti mutasi m-banking. Nyalakan hanya kalau
+                potongan banknya sudah konsisten dengan persentase di bawah.
+              </span>
+            </span>
+          </label>
           <Input
             label="MDR QRIS (%)"
             type="text"
@@ -879,6 +912,7 @@ function CashlessMdrModal({
             placeholder="0"
           />
           <p className="col-span-2 text-[11px] text-neutral-500">
+            {autoMdr ? "" : "Saat ini MATI — angka di bawah tersimpan tapi belum dipakai. "}
             Default kalau belum diatur: QRIS 0,7% · EDC BCA 0%. Contoh: gross
             Rp 1.000.000, MDR QRIS 0,7% → fee Rp 7.000, net Rp 993.000.
           </p>
@@ -1312,6 +1346,12 @@ function SettlementRevisionModal({
   const [accounts, setAccounts] = useState<AccountListRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /* Sesi AE-248 — membatalkan revisi yang sudah berlaku. Tanpa jalan ini,
+   * owner yang salah merevisi akan membatalkan jurnal SETTLEMENT-nya (itu
+   * yang terjadi 4 Okt) — jurnal revisinya jadi yatim dan menggeser saldo
+   * bank untuk settlement yang sudah tidak ada. */
+  const [reversing, setReversing] = useState(false);
+  const [reverseReason, setReverseReason] = useState("");
 
   useEffect(() => {
     if (!open || !settlementId) return;
@@ -1322,6 +1362,7 @@ function SettlementRevisionModal({
     setAmount("");
     setAccountCode("");
     setReason("");
+    setReverseReason("");
     setError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
     void (async () => {
@@ -1362,6 +1403,27 @@ function SettlementRevisionModal({
     ctx !== null &&
     Number.isFinite(actual) &&
     (actual !== ctx.recordedAmount || accountCode !== ctx.recordedAccountCode);
+
+  async function doReverse() {
+    if (!ctx?.activeRevision || reversing) return;
+    setError(null);
+    const res = await (async () => {
+      setReversing(true);
+      const r = await reverseSettlementRevision({
+        id: ctx.activeRevision!.id,
+        reason: reverseReason.trim(),
+      });
+      setReversing(false);
+      return r;
+    })();
+    if (!res.ok) {
+      setError(res.error.message);
+      return;
+    }
+    toast.success("Revisi dibatalkan");
+    onSaved();
+    onClose();
+  }
 
   async function submit() {
     if (!ctx || submitting) return;
@@ -1407,7 +1469,15 @@ function SettlementRevisionModal({
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
             Batal
           </Button>
-          <Button onClick={submit} disabled={submitting || !ctx}>
+          <Button
+            onClick={submit}
+            disabled={
+              submitting ||
+              !ctx ||
+              !ctx.hasPostedJournal ||
+              ctx.alreadyRevised
+            }
+          >
             {submitting ? "Menyimpan…" : "Simpan Revisi"}
           </Button>
         </>
@@ -1439,11 +1509,53 @@ function SettlementRevisionModal({
             </div>
           </div>
 
-          {ctx.alreadyRevised ? (
-            <p className="rounded-md border border-warning-500/40 bg-warning-100/40 p-2 text-xs text-neutral-700">
-              Settlement ini sudah punya revisi yang berlaku. Batalkan dulu
-              revisi lamanya kalau mau diperbaiki lagi.
+          {ctx.journalReversed ? (
+            <p className="rounded-md border border-warning-500/40 bg-warning-100/40 p-2 text-xs leading-relaxed text-neutral-700">
+              <strong>Jurnal settlement ini sudah dibatalkan.</strong> Jadi
+              tidak ada lagi yang bisa direvisi. Kalau uangnya memang masuk,
+              buat ulang settlement-nya dulu.
             </p>
+          ) : null}
+
+          {/* Sesi AE-248 — salah revisi dibereskan DI SINI, bukan dengan
+              membatalkan jurnal settlement-nya. Membatalkan jurnalnya akan
+              meninggalkan jurnal revisi yang yatim: saldo bank tergeser untuk
+              settlement yang sudah tidak ada, tanpa jurnal yang timpang. */}
+          {ctx.activeRevision ? (
+            <div className="rounded-lg border border-warning-500/40 bg-warning-100/30 p-2.5 text-xs">
+              <p className="font-medium text-neutral-900">
+                Sudah pernah direvisi
+              </p>
+              <p className="mt-1 leading-relaxed text-neutral-600">
+                {formatRupiah(ctx.activeRevision.recordedAmount)} di{" "}
+                {ctx.activeRevision.recordedAccountCode} →{" "}
+                {formatRupiah(ctx.activeRevision.actualAmount)} di{" "}
+                {ctx.activeRevision.actualAccountCode}
+                {ctx.activeRevision.reason
+                  ? ` · ${ctx.activeRevision.reason}`
+                  : ""}
+              </p>
+              <p className="mt-1.5 leading-relaxed text-neutral-600">
+                Mau memperbaiki? Batalkan revisi ini dulu, baru simpan yang
+                baru. Jangan membatalkan jurnal settlement-nya.
+              </p>
+              <div className="mt-2 flex items-end gap-2">
+                <Input
+                  label="Alasan pembatalan"
+                  value={reverseReason}
+                  onChange={(e) => setReverseReason(e.target.value)}
+                  placeholder="Misal: salah ketik nominal"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void doReverse()}
+                  disabled={reversing || reverseReason.trim().length < 5}
+                >
+                  {reversing ? "Membatalkan…" : "Batalkan Revisi"}
+                </Button>
+              </div>
+            </div>
           ) : null}
 
           <Input
