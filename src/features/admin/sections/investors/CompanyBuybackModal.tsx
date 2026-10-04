@@ -12,6 +12,7 @@ import {
 import {
   Button,
   Combobox,
+  DatePicker,
   Input,
   Modal,
   Select,
@@ -65,6 +66,12 @@ export function CompanyBuybackModal({
   const [amountIdr, setAmountIdr] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
   const [description, setDescription] = useState("");
+  /* Sesi AE-247 — tanggal buyback. Tanpa bidang ini transaksinya selalu
+   * memakai tanggal hari ini, padahal uangnya sering keluar beberapa hari
+   * sebelum dicatat — jurnal dan mutasi sahamnya jadi mendarat di tanggal
+   * (dan kadang BULAN) yang salah tanpa ada yang menolak. Server sudah lama
+   * menerima `occurredAt`; yang belum ada cuma isiannya. */
+  const [occurredAt, setOccurredAt] = useState(todayJakarta());
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -79,6 +86,7 @@ export function CompanyBuybackModal({
     setAmountIdr("");
     setBankAccountId("");
     setDescription("");
+    setOccurredAt(todayJakarta());
     setReceiptUrl(null);
     setUploadError(null);
     setUploadingReceipt(false);
@@ -177,6 +185,7 @@ export function CompanyBuybackModal({
       amountIdr: parsedAmount,
       bankAccountId,
       description: description.trim() || null,
+      occurredAt,
       receiptImageUrl: receiptUrl,
     });
     setSubmitting(false);
@@ -286,6 +295,18 @@ export function CompanyBuybackModal({
                 }))}
               value={bankAccountId || undefined}
               onValueChange={setBankAccountId}
+            />
+
+            {/* Tanggal depan ditutup lewat maxDate: yang masuk akal cuma hari
+                ini atau sebelumnya, dan salah ketik tahun akan memposting
+                jurnal ke periode yang belum ada. */}
+            <DatePicker
+              label="Tanggal Buyback"
+              value={occurredAt}
+              onChange={(v) => setOccurredAt(v ?? todayJakarta())}
+              clearable={false}
+              maxDate={todayJakarta()}
+              hint="Tanggal uangnya benar-benar keluar — ini yang dipakai jurnalnya."
             />
 
             <Input

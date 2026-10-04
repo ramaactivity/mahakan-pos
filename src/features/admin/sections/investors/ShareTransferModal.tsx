@@ -5,12 +5,14 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 import {
   Button,
   Combobox,
+  DatePicker,
   Input,
   Modal,
   NumericInput,
   toast,
 } from "@/components/ui";
 import { formatRupiah } from "@/lib/format";
+import { todayJakarta } from "@/lib/tz";
 import { cn } from "@/lib/utils";
 import {
   isOk,
@@ -52,6 +54,10 @@ export function ShareTransferModal({
   const [nominalIdrInput, setNominalIdrInput] = useState("");
   const [sharePctInput, setSharePctInput] = useState("");
   const [description, setDescription] = useState("");
+  /* Sesi AE-247 — lubang yang sama dengan buyback: tanpa bidang ini mutasinya
+   * selalu bertanggal hari ini, padahal pemindahan sahamnya bisa disepakati
+   * jauh sebelum dicatat. */
+  const [occurredAt, setOccurredAt] = useState(todayJakarta());
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -63,6 +69,7 @@ export function ShareTransferModal({
     setNominalIdrInput("");
     setSharePctInput("");
     setDescription("");
+    setOccurredAt(todayJakarta());
     setSubmitting(false);
     setLoadingList(true);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -167,6 +174,7 @@ export function ShareTransferModal({
       toInvestorId: toId,
       sharePctDelta: delta,
       description: description.trim() || null,
+      occurredAt,
     });
     setSubmitting(false);
     if (!shareIsOk(res)) {
@@ -468,6 +476,18 @@ export function ShareTransferModal({
                 </div>
               </div>
             ) : null}
+
+            {/* Tanggal depan ditutup lewat maxDate: yang masuk akal cuma hari
+                ini atau sebelumnya, dan salah ketik tahun akan memposting
+                jurnal ke periode yang belum ada. */}
+            <DatePicker
+              label="Tanggal Pemindahan"
+              value={occurredAt}
+              onChange={(v) => setOccurredAt(v ?? todayJakarta())}
+              clearable={false}
+              maxDate={todayJakarta()}
+              hint="Tanggal sahamnya benar-benar berpindah, bukan tanggal dicatat."
+            />
 
             <Input
               label="Catatan (opsional)"
