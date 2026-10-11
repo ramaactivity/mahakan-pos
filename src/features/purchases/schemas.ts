@@ -15,6 +15,7 @@ const paymentMethodEnum = z.enum([
   "transfer_bri",
   "transfer_other",
   "top",
+  "courier",
 ]);
 
 const purchaseItemSchema = z.object({
@@ -123,7 +124,16 @@ export const createPurchaseSchema = z
         "TOP wajib paymentTermDays > 0; non-TOP harus 0",
       path: ["paymentTermDays"],
     },
-  );
+  )
+  /* Sesi AE-257 — belanja yang dibayar dari saldo kurir dicatat di menu
+   * Daily Market, satu-satunya pintu yang punya rem saldo kurir (belanja >
+   * saldo ditolak). Dua pintu = nota bisa tercatat dua kali. Metode ini di
+   * Purchasing hanya untuk nota lama yang dipindahkan sumber bayarnya. */
+  .refine((v) => v.paymentMethod !== "courier", {
+    message:
+      "Belanja yang dibayar dari saldo kurir dicatat di menu Daily Market, bukan di Pembelian.",
+    path: ["paymentMethod"],
+  });
 
 /**
  * Sesi AE-188 — Edit PO (owner request).
@@ -190,8 +200,8 @@ export const cancelPurchaseSchema = z.object({
 export const updatePaymentMethodSchema = z.object({
   id: z.uuid(),
   paymentMethod: paymentMethodEnum.refine(
-    (m) => m !== "top",
-    "Metode pembayaran tidak boleh TOP",
+    (m) => m !== "top" && m !== "courier",
+    "Metode pembayaran tidak boleh TOP atau Saldo Kurir",
   ),
   reason: z.string().trim().min(5, "Alasan koreksi minimal 5 karakter").max(200),
 });
@@ -199,8 +209,8 @@ export const updatePaymentMethodSchema = z.object({
 export const markPaidSchema = z.object({
   id: z.uuid(),
   paymentMethod: paymentMethodEnum.refine(
-    (m) => m !== "top",
-    "Payment method untuk lunas tidak boleh TOP",
+    (m) => m !== "top" && m !== "courier",
+    "Pelunasan tidak boleh TOP atau Saldo Kurir",
   ),
   /** Sesi AE-188 — tanggal pembayaran (owner request). Dipakai untuk
    * `paid_at`, tanggal expense kas, DAN `entry_date` jurnal umum supaya

@@ -20,7 +20,8 @@ export type PurchasePaymentMethodLike =
   | "transfer_bca"
   | "transfer_bri"
   | "transfer_other"
-  | "top";
+  | "top"
+  | "courier";
 
 const BULAN_SINGKAT = [
   "Jan",
@@ -63,6 +64,8 @@ export function labelMetodeBayar(m: PurchasePaymentMethodLike): string {
       return "Transfer bank lain";
     case "top":
       return "Tempo (bayar nanti)";
+    case "courier":
+      return "Saldo Kurir (Daily Market)";
   }
 }
 

@@ -44,6 +44,18 @@ describe("mapPurchaseCreate", () => {
     expect(lines.find((l) => l.accountCode === "1101")?.credit).toBe(500000);
   });
 
+  it("courier purchase → Cr 1103 Saldo Kurir, bukan rekening (AE-257)", () => {
+    const lines = mapPurchaseCreate({
+      ...base,
+      paymentMethod: "courier",
+      total: 250_000,
+      lines: [{ section: "bar", amount: 250_000 }],
+    });
+    expect(isBalanced(lines)).toBe(true);
+    expect(lines.find((l) => l.accountCode === "1103")?.credit).toBe(250000);
+    expect(lines.some((l) => l.accountCode === "1110")).toBe(false);
+  });
+
   it("transfer_bca purchase mixed sections", () => {
     const lines = mapPurchaseCreate({
       ...base,

@@ -18,6 +18,7 @@
  *   transfer_bri     → 1111 Bank BRI
  *   transfer_other   → 1112 Bank Lain-lain
  *   top              → 2101 Hutang Dagang (until mark paid)
+ *   courier          → 1103 Saldo Kurir Daily Market (sesi AE-257)
  */
 
 import { labelMetodeBayar } from "@/features/purchases/journal-label";
@@ -28,7 +29,11 @@ export type PurchasePaymentMethod =
   | "transfer_bca"
   | "transfer_bri"
   | "transfer_other"
-  | "top";
+  | "top"
+  /* Sesi AE-257 — nota dibayar dari uang muka kurir (saldo 1103), bukan
+   * langsung dari rekening. Kurirnya ditransfer sekaligus lewat Top Up di
+   * menu Daily Market; tiap nota cuma mengurangi saldo kurir. */
+  | "courier";
 
 export type IngredientSection =
   | "kitchen"
@@ -112,6 +117,9 @@ const CASH_BANK_BY_METHOD: Record<
   transfer_bca: "1110",
   transfer_bri: "1111",
   transfer_other: "1112",
+  /* Literal, bukan impor ACCOUNT_SALDO_KURIR: mapping/dailyMarket.ts sudah
+   * mengimpor file ini, impor balik membuat siklus. */
+  courier: "1103",
 };
 
 function cashBankCode(

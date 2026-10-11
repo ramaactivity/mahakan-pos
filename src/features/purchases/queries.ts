@@ -14,6 +14,7 @@ import {
   type IngredientPackConversion,
 } from "@/lib/unit-conversion";
 import { clampFromDate, getCutoffDate } from "@/features/cutoff/cutoff";
+import { fetchDailyMarketItemsByIngredient } from "@/features/daily-market/queries";
 import type {
   ListPurchasesOptions,
   PaymentMethod,
@@ -403,6 +404,20 @@ export async function fetchPurchasesByIngredient(
     }
 
     map.set(line.ingredientId, entry);
+  }
+
+  /* Sesi AE-257 — bahan dari belanja Daily Market juga "pembelian". Tanpa ini
+   * stok akhir opname memuatnya tapi kolom beli tidak → pemakaian kurang. */
+  const market = await fetchDailyMarketItemsByIngredient(outletId, dateFrom, dateTo);
+  for (const [ingredientId, m] of market) {
+    const entry = map.get(ingredientId) ?? {
+      qty: 0,
+      cost: 0,
+      hasUnconvertedLines: false,
+    };
+    entry.qty += m.qty;
+    entry.cost += m.cost;
+    map.set(ingredientId, entry);
   }
   return map;
 }

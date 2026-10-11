@@ -25,6 +25,7 @@ import {
 } from "@/db/schema";
 import { getStockMode } from "@/features/inventory/flag";
 import { getCutoffDate } from "@/features/cutoff/cutoff";
+import { fetchDailyMarketItemsByIngredient } from "@/features/daily-market/queries";
 import {
   fetchLatestOpnameBefore,
   fetchLatestOpnameWithin,
@@ -340,6 +341,19 @@ export async function getCogsReport(args: {
     cur.qty += qty;
     cur.total += r.totalCost;
     pembelianByIng.set(r.ingredientId, cur);
+  }
+
+  // (c) Sesi AE-257 — bahan dari belanja Daily Market, by tanggal nota.
+  const marketRows = await fetchDailyMarketItemsByIngredient(
+    args.outletId,
+    period.fromDate,
+    period.toDate,
+  );
+  for (const [ingredientId, m] of marketRows) {
+    const cur = pembelianByIng.get(ingredientId) ?? { qty: 0, total: 0 };
+    cur.qty += m.qty;
+    cur.total += m.cost;
+    pembelianByIng.set(ingredientId, cur);
   }
 
   // ──────────────────────────────────────────────────────────────

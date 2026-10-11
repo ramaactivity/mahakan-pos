@@ -10,6 +10,9 @@ import {
   ingredientCostHistory,
   ingredients,
   inventoryMovements,
+  purchaseItems,
+  purchases,
+  suppliers,
   users,
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
@@ -38,12 +41,14 @@ import {
   type IngredientPackConversion,
 } from "@/lib/unit-conversion";
 import { reverseSchema, spendSchema, topupSchema } from "./schemas";
+import { bankLabelOf, insertDailyMarketTopup } from "./topup-core";
 import {
   fail,
   ok,
   type ApiResult,
   type DailyMarketEntryRow,
   type DailyMarketItemRow,
+  type DailyMarketPurchaseRow,
   type DailyMarketSummary,
   type ReverseInput,
   type SpendInput,
@@ -73,18 +78,6 @@ async function requireSession() {
  * pengeluaran kas; membatalkan jurnal = owner saja. */
 const CAN_WRITE = "expense.create" as const;
 const CAN_REVERSE = "expense.delete" as const;
-
-function bankLabelOf(b: {
-  bankName: string;
-  accountName: string;
-  accountNumber: string | null;
-}): string {
-  const tail =
-    b.accountNumber && b.accountNumber.length > 4
-      ? `...${b.accountNumber.slice(-4)}`
-      : (b.accountNumber ?? "");
-  return [b.bankName, b.accountName, tail].filter(Boolean).join(" — ");
-}
 
 // ============================================================ reads =========
 
@@ -201,14 +194,83 @@ export async function getDailyMarketSummary(): Promise<
       ),
     );
 
+  /* Sesi AE-257 — nota Purchasing yang sumber bayarnya Saldo Kurir juga
+   * mengkredit 1103 (lewat jurnal pembeliannya sendiri). Tanpa baris ini
+   * saldo di layar lebih besar dari saldo 1103 di Buku Kas, dan rem
+   * "belanja > saldo" menghitung uang yang sebenarnya sudah habis. */
+  const [pRow] = await db
+    .select({
+      total: sql<number>`coalesce(sum(${purchases.totalAmount}), 0)::bigint`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(purchases)
+    .where(
+      and(
+        eq(purchases.outletId, session.user.outletId),
+        eq(purchases.paymentMethod, "courier"),
+        sql`${purchases.status} <> 'cancelled'`,
+      ),
+    );
+
   const totalTopup = Number(row?.totalTopup ?? 0);
-  const totalSpend = Number(row?.totalSpend ?? 0);
+  const purchaseSpend = Number(pRow?.total ?? 0);
+  const totalSpend = Number(row?.totalSpend ?? 0) + purchaseSpend;
   return ok({
     totalTopup,
     totalSpend,
+    purchaseSpend,
     balance: totalTopup - totalSpend,
-    entryCount: Number(row?.entryCount ?? 0),
+    entryCount: Number(row?.entryCount ?? 0) + Number(pRow?.count ?? 0),
   });
+}
+
+/**
+ * Sesi AE-257 — nota Purchasing yang dibayar dari saldo kurir. Ditampilkan
+ * di Daily Market supaya buku kurir terbaca utuh, tapi notanya TETAP milik
+ * Purchasing (stok, HPP, Rekap Belanja, PR ikut di sana) — edit/batal juga
+ * dari sana.
+ */
+export async function listDailyMarketCourierPurchases(): Promise<
+  ApiResult<DailyMarketPurchaseRow[]>
+> {
+  const session = await auth();
+  if (!session) return fail("UNAUTHORIZED", "Sesi berakhir, silakan login ulang");
+
+  const rows = await db
+    .select({
+      id: purchases.id,
+      purchaseDate: purchases.purchaseDate,
+      invoiceNo: purchases.invoiceNo,
+      totalAmount: purchases.totalAmount,
+      supplierName: suppliers.name,
+      items: sql<string | null>`(
+        SELECT string_agg(pi.ingredient_name_snapshot, ', ' ORDER BY pi.created_at)
+        FROM ${purchaseItems} pi WHERE pi.purchase_id = "purchases"."id"
+      )`,
+    })
+    .from(purchases)
+    .leftJoin(suppliers, eq(suppliers.id, purchases.supplierId))
+    .where(
+      and(
+        eq(purchases.outletId, session.user.outletId),
+        eq(purchases.paymentMethod, "courier"),
+        sql`${purchases.status} <> 'cancelled'`,
+      ),
+    )
+    .orderBy(desc(purchases.purchaseDate))
+    .limit(1000);
+
+  return ok(
+    rows.map((r) => ({
+      id: r.id,
+      purchaseDate: String(r.purchaseDate),
+      label: [r.supplierName ?? "Tanpa supplier", r.invoiceNo]
+        .filter(Boolean)
+        .join(" · "),
+      totalAmount: Number(r.totalAmount),
+      itemsPreview: r.items ?? "",
+    })),
+  );
 }
 
 // =========================================================== writes =========
@@ -252,47 +314,15 @@ export async function postDailyMarketTopup(
     v.description?.trim() || `Top up belanja daily market — ${v.courierName}`;
 
   try {
-    const result = await db.transaction(async (tx) => {
-      const [row] = await tx
-        .insert(dailyMarketEntries)
-        .values({
-          outletId: session.user.outletId,
-          kind: "topup",
-          entryDate,
-          occurredAt: startOfWibDateUtc(entryDate),
-          amount: v.amount,
-          description,
-          courierName: v.courierName,
-          bankAccountId: bank.id,
-          receiptImageUrl: normalizeReceiptUrl(v.receiptImageUrl ?? null),
-          createdBy: session.user.id,
-        })
-        .returning();
-
-      const journal = await recordJournal({
-        outletId: session.user.outletId,
-        entryDate,
-        description: `${description} (${bankLabel})`,
-        sourceType: "daily_market_topup",
-        sourceId: row.id,
-        lines: mapDailyMarketTopup({
-          amount: v.amount,
-          bankAccountCode: resolveBankCodeFromBankName(bank.bankName),
-          bankLabel,
-          courierName: v.courierName,
-        }),
-        status: "posted",
-        actorId: session.user.id,
-        receiptImageUrl: normalizeReceiptUrl(v.receiptImageUrl ?? null),
-        metadata: { courierName: v.courierName, bankAccountId: bank.id },
-      });
-
-      await tx
-        .update(dailyMarketEntries)
-        .set({ journalEntryId: journal.entryId })
-        .where(eq(dailyMarketEntries.id, row.id));
-
-      return { id: row.id, journalEntryId: journal.entryId };
+    const result = await insertDailyMarketTopup({
+      outletId: session.user.outletId,
+      actorId: session.user.id,
+      bank,
+      amount: v.amount,
+      courierName: v.courierName,
+      entryDate,
+      description,
+      receiptImageUrl: v.receiptImageUrl ?? null,
     });
 
     logAudit({

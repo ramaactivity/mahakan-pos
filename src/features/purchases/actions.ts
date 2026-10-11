@@ -105,6 +105,7 @@ function expensePaymentMethod(m: PaymentMethod): "cash" | "transfer" | "other" {
     case "transfer_other":
       return "transfer";
     case "top":
+    case "courier":
       return "other";
   }
 }
@@ -2622,6 +2623,11 @@ export async function updatePurchaseOrder(
       if (po.paymentMethod === "top" && po.status === "paid") {
         throw new Error("ALREADY_SETTLED");
       }
+      /* Sesi AE-257 — pindah KE saldo kurir lewat Edit melewati rem saldo
+       * Daily Market. Nota yang sudah Saldo Kurir boleh tetap Saldo Kurir. */
+      if (v.paymentMethod === "courier" && po.paymentMethod !== "courier") {
+        throw new Error("COURIER_VIA_DAILY_MARKET");
+      }
       oldTotalAmount = Number(po.totalAmount);
 
       const grRows = await tx
@@ -3429,6 +3435,11 @@ export async function updatePurchaseOrder(
       return fail(
         "BAD_STATE",
         "Ini pembelian langsung (bukan PO), bukan lewat alur Terima Barang. Batalkan lalu catat ulang kalau ada yang salah.",
+      );
+    if (msg === "COURIER_VIA_DAILY_MARKET")
+      return fail(
+        "BAD_STATE",
+        "Metode Saldo Kurir tidak bisa dipilih lewat Edit. Belanja yang dibayar kurir dicatat di menu Daily Market.",
       );
     /* Sesi AE-200 — METHOD_LOCKED / SUPPLIER_LOCKED / LINES_LOCKED /
      * QTY_LOCKED / UNIT_LOCKED sudah tidak dilempar lagi: perubahannya kini

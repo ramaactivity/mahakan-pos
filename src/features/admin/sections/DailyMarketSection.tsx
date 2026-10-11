@@ -6,18 +6,21 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Bike,
+  FileText,
   Plus,
   ShoppingBasket,
   Undo2,
   Wallet,
 } from "lucide-react";
-import { Badge, Button, Skeleton, toast } from "@/components/ui";
+import { Badge, Button, Input, Modal, Skeleton, toast } from "@/components/ui";
 import {
   getDailyMarketSummary,
   isOk,
+  listDailyMarketCourierPurchases,
   listDailyMarketEntries,
   reverseDailyMarketEntry,
   type DailyMarketEntryRow,
+  type DailyMarketPurchaseRow,
 } from "@/features/daily-market";
 import { hasPermission, type Role } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
@@ -36,6 +39,9 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
   const canWrite = hasPermission(viewerRole, "expense.create");
   const canReverse = hasPermission(viewerRole, "expense.delete");
   const [modal, setModal] = useState<"topup" | "spend" | null>(null);
+  const [reversing, setReversing] = useState<DailyMarketEntryRow | null>(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const summaryQ = useQuery({
     queryKey: ["daily-market", "summary"],
@@ -54,27 +60,55 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
     },
   });
 
+  /* Sesi AE-257 — nota Purchasing yang dibayar dari saldo kurir. */
+  const purchasesQ = useQuery({
+    queryKey: ["daily-market", "courier-purchases"],
+    queryFn: async () => {
+      const r = await listDailyMarketCourierPurchases();
+      if (!isOk(r)) throw new Error(r.error.message);
+      return r.data;
+    },
+  });
+
   function refresh() {
     void qc.invalidateQueries({ queryKey: ["daily-market"] });
     void qc.invalidateQueries({ queryKey: ["cash-book"] });
   }
 
-  async function onReverse(row: DailyMarketEntryRow) {
-    const reason = window.prompt(
-      `Batalkan ${row.kind === "topup" ? "top up" : "belanja"} ${formatRupiah(row.amount)}?\nTulis alasannya:`,
-    );
-    if (!reason) return;
-    const r = await reverseDailyMarketEntry({ id: row.id, reason });
+  async function onReverse() {
+    if (!reversing) return;
+    setBusy(true);
+    const r = await reverseDailyMarketEntry({ id: reversing.id, reason });
+    setBusy(false);
     if (!isOk(r)) {
       toast.error(r.error.message);
       return;
     }
     toast.success("Catatan dibatalkan, jurnalnya ikut dibalik");
+    setReversing(null);
+    setReason("");
     refresh();
   }
 
   const s = summaryQ.data;
-  const rows = entriesQ.data ?? [];
+  /* Satu daftar urut tanggal: catatan modul ini + nota Purchasing ber-Saldo
+   * Kurir. Tanpa nota itu buku kurir terbaca bolong — saldo turun tanpa ada
+   * baris yang menjelaskannya. */
+  const rows: Array<
+    | { type: "entry"; date: string; e: DailyMarketEntryRow }
+    | { type: "purchase"; date: string; p: DailyMarketPurchaseRow }
+  > = [
+    ...(entriesQ.data ?? []).map((e) => ({
+      type: "entry" as const,
+      date: e.entryDate,
+      e,
+    })),
+    ...(purchasesQ.data ?? []).map((p) => ({
+      type: "purchase" as const,
+      date: p.purchaseDate,
+      p,
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
 
   return (
     <div className="space-y-4 p-6">
@@ -120,12 +154,18 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
           icon={<ShoppingBasket className="size-5" aria-hidden />}
           label="Total Belanja"
           value={s ? formatRupiah(s.totalSpend) : null}
-          hint={s ? `${s.entryCount} catatan` : undefined}
+          hint={
+            s
+              ? s.purchaseSpend > 0
+                ? `${s.entryCount} catatan · termasuk nota Pembelian ${formatRupiah(s.purchaseSpend)}`
+                : `${s.entryCount} catatan`
+              : undefined
+          }
         />
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
-        {entriesQ.isLoading ? (
+      <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white">
+        {entriesQ.isLoading || purchasesQ.isLoading ? (
           <div className="space-y-2 p-4">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
@@ -151,17 +191,43 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {rows.map((row) =>
+                row.type === "purchase" ? (
+                  <tr key={`p-${row.p.id}`} className="border-t border-neutral-100">
+                    <td className="whitespace-nowrap px-3 py-2">{row.p.purchaseDate}</td>
+                    <td className="px-3 py-2">
+                      <Badge variant="neutral">
+                        <FileText className="size-3" aria-hidden /> Nota Pembelian
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2">—</td>
+                    <td className="px-3 py-2">
+                      {row.p.label}
+                      {row.p.itemsPreview ? (
+                        <span className="ml-1 text-xs text-neutral-500">
+                          · {row.p.itemsPreview}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-danger-500">
+                      − {formatRupiah(row.p.totalAmount)}
+                    </td>
+                    <td className="px-3 py-2 text-neutral-600">
+                      Dicatat di Pembelian
+                    </td>
+                    <td className="px-3 py-2" />
+                  </tr>
+                ) : (
                 <tr
-                  key={r.id}
+                  key={row.e.id}
                   className={cn(
                     "border-t border-neutral-100",
-                    r.status === "reversed" && "bg-neutral-50 text-neutral-400",
+                    row.e.status === "reversed" && "bg-neutral-50 text-neutral-400",
                   )}
                 >
-                  <td className="whitespace-nowrap px-3 py-2">{r.entryDate}</td>
+                  <td className="whitespace-nowrap px-3 py-2">{row.e.entryDate}</td>
                   <td className="px-3 py-2">
-                    {r.kind === "topup" ? (
+                    {row.e.kind === "topup" ? (
                       <Badge variant="info">
                         <ArrowUpRight className="size-3" aria-hidden /> Top Up
                       </Badge>
@@ -171,13 +237,13 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
                       </Badge>
                     )}
                   </td>
-                  <td className="px-3 py-2">{r.courierName ?? "—"}</td>
+                  <td className="px-3 py-2">{row.e.courierName ?? "—"}</td>
                   <td className="px-3 py-2">
-                    {r.description}
-                    {r.items.length > 0 ? (
+                    {row.e.description}
+                    {row.e.items.length > 0 ? (
                       <span className="ml-1 text-xs text-neutral-500">
                         ·{" "}
-                        {r.items
+                        {row.e.items
                           .map(
                             (i) =>
                               `${i.name} ${i.qty.toLocaleString("id-ID")} ${i.unit}`,
@@ -186,36 +252,36 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
                         {/* Di mode periodic stok memang tidak digerakkan —
                             dikatakan terang-terangan supaya tidak ada yang
                             mengira angkanya sudah masuk stok. */}
-                        {r.items.some((i) => i.stockSkipped) ? (
+                        {row.e.items.some((i) => i.stockSkipped) ? (
                           <span className="italic"> (stok dari opname)</span>
                         ) : null}
                       </span>
                     ) : null}
-                    {r.status === "reversed" ? (
+                    {row.e.status === "reversed" ? (
                       <span className="ml-2 text-xs italic">
-                        (dibatalkan: {r.reversalReason})
+                        (dibatalkan: {row.e.reversalReason})
                       </span>
                     ) : null}
                   </td>
                   <td
                     className={cn(
                       "whitespace-nowrap px-3 py-2 text-right font-mono",
-                      r.status === "posted" &&
-                        (r.kind === "topup"
+                      row.e.status === "posted" &&
+                        (row.e.kind === "topup"
                           ? "text-mahakan-green-900"
                           : "text-danger-500"),
                     )}
                   >
-                    {r.kind === "topup" ? "+" : "−"} {formatRupiah(r.amount)}
+                    {row.e.kind === "topup" ? "+" : "−"} {formatRupiah(row.e.amount)}
                   </td>
                   <td className="px-3 py-2 text-neutral-600">
-                    {r.bankLabel ?? r.categoryName ?? "—"}
+                    {row.e.bankLabel ?? row.e.categoryName ?? "—"}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    {canReverse && r.status === "posted" ? (
+                    {canReverse && row.e.status === "posted" ? (
                       <button
                         type="button"
-                        onClick={() => void onReverse(r)}
+                        onClick={() => setReversing(row.e)}
                         className="inline-flex items-center gap-1 text-xs font-medium text-danger-500 hover:underline"
                       >
                         <Undo2 className="size-3.5" aria-hidden /> Batalkan
@@ -223,11 +289,56 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
                     ) : null}
                   </td>
                 </tr>
-              ))}
+                ),
+              )}
             </tbody>
           </table>
         )}
       </div>
+
+      <Modal
+        open={reversing !== null}
+        onClose={() => {
+          setReversing(null);
+          setReason("");
+        }}
+        size="sm"
+        title={
+          reversing
+            ? `Batalkan ${reversing.kind === "topup" ? "top up" : "belanja"} ${formatRupiah(reversing.amount)}?`
+            : undefined
+        }
+        description="Jurnalnya dibalik dan saldo kurir ikut menyesuaikan."
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setReversing(null);
+                setReason("");
+              }}
+            >
+              Batal
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={busy || reason.trim().length < 3}
+              onClick={() => void onReverse()}
+            >
+              Batalkan Catatan
+            </Button>
+          </div>
+        }
+      >
+        <Input
+          label="Alasan"
+          required
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="mis. salah nominal"
+          autoFocus
+        />
+      </Modal>
 
       <DailyMarketEntryModal
         kind={modal}

@@ -76,6 +76,7 @@ const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   transfer_bri: "BRI",
   transfer_other: "Transfer",
   top: "TOP",
+  courier: "Kurir",
 };
 
 const PAYMENT_FILTER: Array<{ value: PaymentMethod | "all"; label: string }> = [
@@ -85,6 +86,7 @@ const PAYMENT_FILTER: Array<{ value: PaymentMethod | "all"; label: string }> = [
   { value: "transfer_bri", label: "BRI" },
   { value: "transfer_other", label: "Transfer lain" },
   { value: "top", label: "TOP (kredit)" },
+  { value: "courier", label: "Saldo kurir" },
 ];
 
 const STATUS_FILTER: Array<{ value: PurchaseStatus | "all"; label: string }> = [

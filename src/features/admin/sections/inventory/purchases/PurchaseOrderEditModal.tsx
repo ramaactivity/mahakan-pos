@@ -190,6 +190,7 @@ export function PurchaseOrderEditModal({
   const [supplierId, setSupplierId] = useState<string | null>(null);
   const [purchaseDate, setPurchaseDate] = useState(todayJakartaIso());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [loadedMethod, setLoadedMethod] = useState<PaymentMethod | null>(null);
   const [paymentTerm, setPaymentTerm] = useState("0");
   /* Metode render sebelumnya — pembeda "metode berpindah" vs "tempo diketik". */
   const prevPaymentMethodRef = useRef<PaymentMethod>("cash");
@@ -230,6 +231,7 @@ export function PurchaseOrderEditModal({
       setSupplierId(detail.supplierId);
       setPurchaseDate(detail.purchaseDate);
       setPaymentMethod(detail.paymentMethod);
+      setLoadedMethod(detail.paymentMethod);
       /* Sinkronkan ref supaya effect di bawah tidak menganggap load PO
        * sebagai "user memindah metode" lalu menimpa tempo tersimpan. */
       prevPaymentMethodRef.current = detail.paymentMethod;
@@ -498,7 +500,14 @@ export function PurchaseOrderEditModal({
           <div className="grid gap-3 md:grid-cols-3">
             <Select
               label="Metode Pembayaran"
-              options={PAYMENT_OPTIONS.map((p) => ({
+              options={[
+                ...PAYMENT_OPTIONS,
+                /* Sesi AE-257 — hanya muncul untuk nota yang memang sudah
+                 * Saldo Kurir; server menolak memindahkan nota lain ke sini. */
+                ...(loadedMethod === "courier"
+                  ? [{ value: "courier" as const, label: "Saldo Kurir (Daily Market)" }]
+                  : []),
+              ].map((p) => ({
                 value: p.value,
                 label: p.label,
               }))}

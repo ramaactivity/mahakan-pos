@@ -37,6 +37,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   transfer_bri: "BRI",
   transfer_other: "Transfer lain",
   top: "TOP",
+  courier: "Kurir",
 };
 
 function todayJakartaIso(): string {
@@ -125,6 +126,7 @@ export function PurchaseRollupView() {
         "transfer_bri",
         "transfer_other",
         "top",
+        "courier",
       ];
       const seen = new Set<string>();
       for (const c of report.cells) {

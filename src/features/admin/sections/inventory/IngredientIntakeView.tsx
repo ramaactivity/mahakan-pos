@@ -75,6 +75,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   transfer_bri: "Transfer BRI",
   transfer_other: "Transfer lain",
   top: "TOP (hutang)",
+  courier: "Saldo kurir",
 };
 
 function formatQty(n: number): string {

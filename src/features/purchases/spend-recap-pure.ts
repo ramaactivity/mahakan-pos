@@ -46,7 +46,8 @@ export type SpendPaymentMethod =
   | "transfer_bca"
   | "transfer_bri"
   | "transfer_other"
-  | "top";
+  | "top"
+  | "courier";
 
 export const SPEND_PAYMENT_LABELS: Record<SpendPaymentMethod, string> = {
   cash: "Tunai",
@@ -54,6 +55,7 @@ export const SPEND_PAYMENT_LABELS: Record<SpendPaymentMethod, string> = {
   transfer_bri: "Transfer BRI",
   transfer_other: "Transfer lain",
   top: "TOP (tempo)",
+  courier: "Saldo kurir",
 };
 
 export type SpendPaymentStatus = "pending_payment" | "paid";
@@ -277,6 +279,7 @@ export function normalizeSpendPaymentMethod(
     case "transfer_bri":
     case "transfer_other":
     case "top":
+    case "courier":
       return value;
     default:
       return "cash";

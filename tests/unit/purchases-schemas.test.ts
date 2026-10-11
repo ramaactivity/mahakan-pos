@@ -23,6 +23,16 @@ describe("purchase zod schemas", () => {
       expect(r.success).toBe(true);
     });
 
+    it("rejects courier — belanja kurir lewat Daily Market (AE-257)", () => {
+      const r = createPurchaseSchema.safeParse({
+        supplierId: null,
+        purchaseDate: "2026-04-30",
+        paymentMethod: "courier",
+        items: [{ ingredientId: validUuid, qty: 5, unitCost: 1000 }],
+      });
+      expect(r.success).toBe(false);
+    });
+
     it("rejects empty items", () => {
       const r = createPurchaseSchema.safeParse({
         supplierId: null,

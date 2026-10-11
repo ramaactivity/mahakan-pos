@@ -55,7 +55,7 @@ export const purchases = pgTable(
     purchaseDate: date("purchase_date").notNull(),
 
     paymentMethod: text("payment_method", {
-      enum: ["cash", "transfer_bca", "transfer_bri", "transfer_other", "top"],
+      enum: ["cash", "transfer_bca", "transfer_bri", "transfer_other", "top", "courier"],
     }).notNull(),
     /** TOP days — 0 untuk non-TOP. */
     paymentTermDays: integer("payment_term_days").notNull().default(0),

@@ -38,6 +38,15 @@ export interface DailyMarketEntryRow extends DailyMarketEntry {
   expenseTotal: number;
 }
 
+/** Sesi AE-257 — nota Purchasing yang dibayar dari saldo kurir. */
+export interface DailyMarketPurchaseRow {
+  id: string;
+  purchaseDate: string;
+  label: string;
+  totalAmount: number;
+  itemsPreview: string;
+}
+
 export interface DailyMarketItemRow {
   id: string;
   ingredientId: string;
@@ -55,8 +64,10 @@ export interface DailyMarketItemRow {
 export interface DailyMarketSummary {
   /** Total top up yang masih berlaku (status posted). */
   totalTopup: number;
-  /** Total belanja yang masih berlaku. */
+  /** Total belanja yang masih berlaku — termasuk `purchaseSpend`. */
   totalSpend: number;
+  /** Sesi AE-257 — bagian belanja yang berupa nota Purchasing ber-Saldo Kurir. */
+  purchaseSpend: number;
   /** Sisa saldo kurir = top up − belanja. */
   balance: number;
   entryCount: number;
