@@ -4,6 +4,7 @@ export type {
   DailyMarketEntryRow,
   DailyMarketKind,
   DailyMarketPurchaseRow,
+  KurirJournalRow,
   DailyMarketSummary,
   ReverseInput,
   SpendInput,
@@ -13,6 +14,7 @@ export { isOk } from "./types";
 export {
   getDailyMarketSummary,
   listDailyMarketCourierPurchases,
+  listDailyMarketJournals,
   listDailyMarketEntries,
   postDailyMarketSpend,
   postDailyMarketTopup,

@@ -47,6 +47,7 @@ import {
   spendSchema,
   topupSchema,
 } from "./schemas";
+import { fetchOtherKurirJournals, type KurirJournalRow } from "./queries";
 import {
   bankLabelOf,
   insertDailyMarketTopup,
@@ -223,16 +224,33 @@ export async function getDailyMarketSummary(): Promise<
       ),
     );
 
-  const totalTopup = Number(row?.totalTopup ?? 0);
+  /* Sesi AE-258 — jurnal umum yang menyentuh 1103 ikut dihitung, supaya
+   * saldo di sini selalu sama dengan buku "Saldo Kurir" di Buku Kas. */
+  const others = await fetchOtherKurirJournals(session.user.outletId);
+  const otherIn = others.reduce((s, o) => s + Math.max(0, o.delta), 0);
+  const otherOut = others.reduce((s, o) => s + Math.max(0, -o.delta), 0);
+
+  const totalTopup = Number(row?.totalTopup ?? 0) + otherIn;
   const purchaseSpend = Number(pRow?.total ?? 0);
-  const totalSpend = Number(row?.totalSpend ?? 0) + purchaseSpend;
+  const totalSpend = Number(row?.totalSpend ?? 0) + purchaseSpend + otherOut;
   return ok({
     totalTopup,
     totalSpend,
     purchaseSpend,
+    journalNet: otherIn - otherOut,
     balance: totalTopup - totalSpend,
-    entryCount: Number(row?.entryCount ?? 0) + Number(pRow?.count ?? 0),
+    entryCount:
+      Number(row?.entryCount ?? 0) + Number(pRow?.count ?? 0) + others.length,
   });
+}
+
+/** Sesi AE-258 — jurnal umum yang menyentuh saldo kurir (dibaca saja). */
+export async function listDailyMarketJournals(): Promise<
+  ApiResult<KurirJournalRow[]>
+> {
+  const session = await auth();
+  if (!session) return fail("UNAUTHORIZED", "Sesi berakhir, silakan login ulang");
+  return ok(await fetchOtherKurirJournals(session.user.outletId));
 }
 
 /**

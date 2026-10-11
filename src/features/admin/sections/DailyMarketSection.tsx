@@ -6,6 +6,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Bike,
+  BookOpen,
   ChevronDown,
   FileText,
   Paperclip,
@@ -20,10 +21,12 @@ import {
   isOk,
   listDailyMarketCourierPurchases,
   listDailyMarketEntries,
+  listDailyMarketJournals,
   reverseDailyMarketEntry,
   updateDailyMarketReceipts,
   type DailyMarketEntryRow,
   type DailyMarketPurchaseRow,
+  type KurirJournalRow,
 } from "@/features/daily-market";
 import { hasPermission, type Role } from "@/lib/auth/rbac";
 import { formatRupiah } from "@/lib/format";
@@ -48,7 +51,8 @@ import { DailyMarketEntryModal } from "./daily-market/DailyMarketEntryModal";
 
 type Row =
   | { type: "entry"; date: string; at: string; e: DailyMarketEntryRow }
-  | { type: "purchase"; date: string; at: string; p: DailyMarketPurchaseRow };
+  | { type: "purchase"; date: string; at: string; p: DailyMarketPurchaseRow }
+  | { type: "journal"; date: string; at: string; j: KurirJournalRow };
 
 type Filter = "all" | "topup" | "spend" | "purchase";
 
@@ -71,21 +75,25 @@ function formatDay(iso: string): string {
 }
 
 function rowKey(r: Row): string {
-  return r.type === "entry" ? r.e.id : `p-${r.p.id}`;
+  if (r.type === "purchase") return `p-${r.p.id}`;
+  if (r.type === "journal") return `j-${r.j.id}`;
+  return r.e.id;
 }
 
 function isPosted(r: Row): boolean {
-  return r.type === "purchase" || r.e.status === "posted";
+  return r.type !== "entry" || r.e.status === "posted";
 }
 
 /** + masuk ke saldo kurir, − keluar. */
 function deltaOf(r: Row): number {
   if (r.type === "purchase") return -r.p.totalAmount;
+  if (r.type === "journal") return r.j.delta;
   return r.e.kind === "topup" ? r.e.amount : -r.e.amount;
 }
 
 function receiptsOf(r: Row): string[] {
   if (r.type === "purchase") return r.p.receiptUrls;
+  if (r.type === "journal") return r.j.receiptImageUrl ? [r.j.receiptImageUrl] : [];
   return r.e.receiptImageUrls?.length
     ? r.e.receiptImageUrls
     : r.e.receiptImageUrl
@@ -132,6 +140,16 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
     },
   });
 
+  /* Sesi AE-258 — pengeluaran kurir yang dicatat lewat Jurnal Umum. */
+  const journalsQ = useQuery({
+    queryKey: ["daily-market", "journals"],
+    queryFn: async () => {
+      const r = await listDailyMarketJournals();
+      if (!isOk(r)) throw new Error(r.error.message);
+      return r.data;
+    },
+  });
+
   function refresh() {
     void qc.invalidateQueries({ queryKey: ["daily-market"] });
     void qc.invalidateQueries({ queryKey: ["cash-book"] });
@@ -171,6 +189,12 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
         at: p.createdAt,
         p,
       })),
+      ...(journalsQ.data ?? []).map((j) => ({
+        type: "journal" as const,
+        date: j.entryDate,
+        at: j.createdAt,
+        j,
+      })),
     ].sort((a, b) => b.date.localeCompare(a.date) || b.at.localeCompare(a.at));
 
     const saldo = new Map<string, number>();
@@ -185,6 +209,7 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
       if (!showReversed && !isPosted(r)) return false;
       if (filter === "all") return true;
       if (filter === "purchase") return r.type === "purchase";
+      if (r.type === "journal") return (r.j.delta > 0 ? "topup" : "spend") === filter;
       return r.type === "entry" && r.e.kind === filter;
     });
     const byDate = new Map<string, Row[]>();
@@ -194,14 +219,14 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
       byDate.set(r.date, list);
     }
     return { groups: [...byDate.entries()], saldoAfter: saldo };
-  }, [entriesQ.data, purchasesQ.data, s?.balance, filter, showReversed]);
+  }, [entriesQ.data, purchasesQ.data, journalsQ.data, s?.balance, filter, showReversed]);
 
   const reversedCount = (entriesQ.data ?? []).filter(
     (e) => e.status === "reversed",
   ).length;
   const lastCourier =
     (entriesQ.data ?? []).find((e) => e.courierName)?.courierName ?? null;
-  const loading = entriesQ.isLoading || purchasesQ.isLoading;
+  const loading = entriesQ.isLoading || purchasesQ.isLoading || journalsQ.isLoading;
 
   function toggle(key: string) {
     setExpanded((prev) => {
@@ -427,7 +452,11 @@ function LedgerRow({
   let meta: string;
   let kindLabel: string;
   let items: Array<{ name: string; detail: string; subtotal: number }> = [];
-  if (row.type === "purchase") {
+  if (row.type === "journal") {
+    title = row.j.description || "Jurnal umum";
+    kindLabel = "Jurnal Umum";
+    meta = [row.j.entryNumber, row.j.counterAccounts].filter(Boolean).join(" · ");
+  } else if (row.type === "purchase") {
     title = row.p.label;
     kindLabel = "Nota Pembelian";
     meta = "Dicatat di menu Pembelian";
@@ -454,7 +483,9 @@ function LedgerRow({
         <span
           className={cn(
             "mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full",
-            row.type === "purchase"
+            row.type === "journal"
+              ? "bg-neutral-100 text-neutral-600"
+              : row.type === "purchase"
               ? "bg-info-100 text-info-500"
               : isIn
                 ? "bg-mahakan-green-100 text-mahakan-green-700"
@@ -462,7 +493,9 @@ function LedgerRow({
           )}
           aria-hidden
         >
-          {row.type === "purchase" ? (
+          {row.type === "journal" ? (
+            <BookOpen className="size-4" />
+          ) : row.type === "purchase" ? (
             <FileText className="size-4" />
           ) : isIn ? (
             <ArrowUpRight className="size-4" />
@@ -626,6 +659,8 @@ function NotaModal({
       description={
         row?.type === "purchase"
           ? "Nota ini milik menu Pembelian — ubah dari sana."
+          : row?.type === "journal"
+            ? "Bukti ini milik Jurnal Umum — ubah dari menu Jurnal."
           : "Foto nota pasar atau bukti transfer. Tersimpan di Google Drive."
       }
       footer={

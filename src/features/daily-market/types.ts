@@ -27,6 +27,8 @@ export function isOk<T>(r: ApiResult<T>): r is { success: true; data: T } {
   return r.success === true;
 }
 
+export type { KurirJournalRow } from "./queries";
+
 export interface DailyMarketEntryRow extends DailyMarketEntry {
   bankLabel: string | null;
   categoryName: string | null;
@@ -72,6 +74,8 @@ export interface DailyMarketSummary {
   totalSpend: number;
   /** Sesi AE-257 — bagian belanja yang berupa nota Purchasing ber-Saldo Kurir. */
   purchaseSpend: number;
+  /** Sesi AE-258 — net jurnal umum yang menyentuh 1103 (+ masuk, − keluar). */
+  journalNet: number;
   /** Sisa saldo kurir = top up − belanja. */
   balance: number;
   entryCount: number;

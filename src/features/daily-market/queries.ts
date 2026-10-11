@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { dailyMarketEntries, dailyMarketItems } from "@/db/schema";
 
@@ -51,4 +51,71 @@ export async function fetchDailyMarketItemsByIngredient(
     map.set(r.ingredientId, cur);
   }
   return map;
+}
+
+export interface KurirJournalRow {
+  id: string;
+  entryNumber: string;
+  entryDate: string;
+  description: string;
+  /** + masuk ke saldo kurir, − keluar. */
+  delta: number;
+  /** Akun lawan, mis. "6305 ATK & Cetak". */
+  counterAccounts: string;
+  receiptImageUrl: string | null;
+  createdAt: string;
+}
+
+/**
+ * Sesi AE-258 — jurnal lain yang menyentuh 1103 Saldo Kurir, di luar catatan
+ * Daily Market & nota Pembelian (mis. pengeluaran kurir yang dicatat lewat
+ * Jurnal Umum / Buku Kas). Tanpa ini layar Daily Market dan Buku Kas bisa
+ * menunjukkan saldo berbeda untuk akun yang sama (kejadian 12 Okt: Rp 102rb
+ * vs Rp 73,5rb setelah owner mencatat Nota/Kamper/Print lewat Jurnal Umum).
+ *
+ * Jurnal Daily Market (`daily_market%`) dan pembelian (`purchase%`) sengaja
+ * dikecualikan: keduanya sudah diwakili baris catatan / nota Pembelian.
+ * Status 'reversed' tidak dihitung — pasangan pair-void netnya nol.
+ */
+export async function fetchOtherKurirJournals(
+  outletId: string,
+): Promise<KurirJournalRow[]> {
+  const res = await db.execute<{
+    id: string;
+    entry_number: string;
+    entry_date: string;
+    description: string;
+    delta: string;
+    counter_accounts: string | null;
+    receipt_image_url: string | null;
+    created_at: string;
+  }>(sql`
+    SELECT j.id, j.entry_number, j.entry_date::text AS entry_date, j.description,
+           sum(l.debit - l.credit)::bigint AS delta,
+           (SELECT string_agg(DISTINCT a2.code || ' ' || a2.name, ', ')
+              FROM journal_lines l2 JOIN chart_of_accounts a2 ON a2.id = l2.account_id
+             WHERE l2.entry_id = j.id AND a2.code <> '1103') AS counter_accounts,
+           j.receipt_image_url, j.created_at::text AS created_at
+      FROM journal_entries j
+      JOIN journal_lines l ON l.entry_id = j.id
+      JOIN chart_of_accounts a ON a.id = l.account_id
+     WHERE j.outlet_id = ${outletId}
+       AND j.status = 'posted'
+       AND a.code = '1103'
+       AND j.source_type NOT LIKE 'daily_market%'
+       AND j.source_type NOT LIKE 'purchase%'
+     GROUP BY j.id
+    HAVING sum(l.debit - l.credit) <> 0
+  `);
+  const rows = (res as unknown as { rows: Array<Record<string, string | null>> }).rows;
+  return rows.map((r) => ({
+    id: r.id!,
+    entryNumber: r.entry_number!,
+    entryDate: r.entry_date!,
+    description: r.description ?? "",
+    delta: Number(r.delta),
+    counterAccounts: r.counter_accounts ?? "",
+    receiptImageUrl: r.receipt_image_url ?? null,
+    createdAt: new Date(r.created_at!).toISOString(),
+  }));
 }
