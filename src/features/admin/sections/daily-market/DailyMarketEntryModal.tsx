@@ -137,7 +137,7 @@ function MarketItemRow({
   const smart = (r: SmartMathRow) => onChange(r);
 
   return (
-    <div className="rounded-xl bg-neutral-50 p-2">
+    <div className="rounded-md bg-neutral-50 p-2">
       <div className={cn("grid gap-2", ROW_GRID)}>
         <Combobox
           ariaLabel={`Bahan ${idx + 1}`}
@@ -467,7 +467,7 @@ export function DailyMarketEntryModal({
           {error ? (
             <p
               role="alert"
-              className="mr-auto rounded-full bg-danger-100 px-3 py-1.5 text-sm text-danger-600"
+              className="mr-auto rounded-md bg-danger-100 px-3 py-1.5 text-sm text-danger-600"
             >
               {error}
             </p>
@@ -547,7 +547,7 @@ export function DailyMarketEntryModal({
               </Button>
             </div>
             {rows.length > 0 ? (
-              <div className="space-y-2 rounded-2xl border border-neutral-200 p-2">
+              <div className="space-y-2 rounded-md border border-neutral-200 p-2">
                 <div
                   className={cn(
                     "hidden gap-2 px-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 md:grid",
@@ -616,7 +616,7 @@ export function DailyMarketEntryModal({
                 yang menentukan berapa yang jadi persediaan dan berapa yang
                 langsung jadi beban. */}
             {filled.length > 0 || amountValue > 0 ? (
-              <dl className="grid grid-cols-2 gap-2 rounded-2xl bg-neutral-50 p-3 text-xs sm:grid-cols-3">
+              <dl className="grid grid-cols-2 gap-2 rounded-lg bg-neutral-50 p-3 text-xs sm:grid-cols-3">
                 <div>
                   <dt className="text-neutral-600">Masuk persediaan</dt>
                   <dd className="font-semibold tabular-nums text-neutral-900">

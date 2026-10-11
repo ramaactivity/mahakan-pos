@@ -213,64 +213,38 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
+    <div className="space-y-4 p-4 sm:p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
+        <div className="max-w-2xl">
           <h1 className="flex items-center gap-2 text-2xl font-bold text-mahakan-green-900">
             <Bike className="size-6" aria-hidden /> Belanja Daily Market
           </h1>
-          <p className="mt-1 max-w-2xl text-sm text-neutral-600">
+          <p className="mt-1 text-sm text-neutral-600">
             Buku uang muka kurir. Top up = transfer dari rekening outlet ke
             kurir; belanja = uang kurir yang dipakai ke pasar.
           </p>
         </div>
         {canWrite ? (
-          <div className="flex w-full gap-2 sm:w-auto">
-            <Button
-              variant="outline"
-              className="flex-1 rounded-full sm:flex-none"
-              onClick={() => setModal("topup")}
-            >
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={() => setModal("topup")}>
               <ArrowUpRight className="size-4" aria-hidden /> Top Up
             </Button>
-            <Button
-              className="flex-1 rounded-full sm:flex-none"
-              onClick={() => setModal("spend")}
-            >
+            <Button onClick={() => setModal("spend")}>
               <Plus className="size-4" aria-hidden /> Catat Belanja
             </Button>
           </div>
         ) : null}
       </header>
 
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-[1.4fr_1fr_1fr]">
-        <div
-          className={cn(
-            "col-span-2 rounded-2xl p-5 shadow-sm md:col-span-1",
-            s && s.balance < 0
-              ? "bg-danger-100"
-              : "bg-mahakan-green-50 ring-1 ring-mahakan-green-100",
-          )}
-        >
-          <p className="flex items-center gap-2 text-sm font-medium text-neutral-700">
-            <Wallet className="size-4" aria-hidden /> Sisa saldo di kurir
-          </p>
-          {s ? (
-            <p
-              className={cn(
-                "mt-1 text-3xl font-bold tabular-nums",
-                s.balance < 0 ? "text-danger-600" : "text-mahakan-green-900",
-              )}
-            >
-              {formatRupiah(s.balance)}
-            </p>
-          ) : (
-            <Skeleton className="mt-2 h-9 w-40" />
-          )}
-          <p className="mt-1 text-xs text-neutral-600">
-            Harus sama dengan uang yang sedang dipegang kurir.
-          </p>
-        </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <StatCard
+          icon={<Wallet className="size-4" aria-hidden />}
+          label="Sisa saldo di kurir"
+          value={s ? formatRupiah(s.balance) : null}
+          hint="Harus sama dengan uang yang dipegang kurir"
+          strong
+          warn={s ? s.balance < 0 : false}
+        />
         <StatCard
           icon={<ArrowUpRight className="size-4" aria-hidden />}
           label="Total top up"
@@ -287,9 +261,9 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
               : "Dibayar dari saldo kurir"
           }
         />
-      </section>
+      </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
         {FILTERS.map((f) => (
           <button
             key={f.value}
@@ -297,10 +271,10 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
             onClick={() => setFilter(f.value)}
             aria-pressed={filter === f.value}
             className={cn(
-              "min-h-9 rounded-full px-4 text-sm font-medium transition-colors",
+              "min-h-9 rounded-full px-3.5 text-sm font-medium transition-colors",
               filter === f.value
                 ? "bg-mahakan-green-700 text-white"
-                : "bg-white text-neutral-700 ring-1 ring-neutral-200 hover:bg-neutral-50",
+                : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200",
             )}
           >
             {f.label}
@@ -321,11 +295,11 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
 
       {loading ? (
         <div className="space-y-3">
-          <Skeleton className="h-24 w-full rounded-2xl" />
-          <Skeleton className="h-24 w-full rounded-2xl" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
         </div>
       ) : groups.length === 0 ? (
-        <div className="rounded-2xl bg-white p-10 text-center shadow-sm ring-1 ring-neutral-200">
+        <div className="rounded-xl border border-neutral-200 bg-white p-10 text-center">
           <ShoppingBasket className="mx-auto size-8 text-neutral-400" aria-hidden />
           <p className="mt-2 text-sm text-neutral-600">
             {filter === "all"
@@ -334,13 +308,13 @@ export function DailyMarketSection({ viewerRole }: { viewerRole: Role }) {
           </p>
         </div>
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-4">
           {groups.map(([date, rows]) => (
             <section key={date} aria-label={formatDay(date)}>
-              <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              <h2 className="mb-1.5 px-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">
                 {formatDay(date)}
               </h2>
-              <ul className="divide-y divide-neutral-100 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-neutral-200">
+              <ul className="divide-y divide-neutral-100 overflow-hidden rounded-xl border border-neutral-200 bg-white">
                 {rows.map((r) => (
                   <LedgerRow
                     key={rowKey(r)}
@@ -509,7 +483,7 @@ function LedgerRow({
             <div className="shrink-0 text-right">
               <p
                 className={cn(
-                  "font-semibold tabular-nums",
+                  "font-mono font-semibold",
                   !posted
                     ? "text-neutral-400 line-through"
                     : isIn
@@ -520,7 +494,7 @@ function LedgerRow({
                 {isIn ? "+" : "−"} {formatRupiah(Math.abs(delta))}
               </p>
               {saldo !== null ? (
-                <p className="text-xs tabular-nums text-neutral-500">
+                <p className="font-mono text-xs text-neutral-500">
                   Saldo {formatRupiah(saldo)}
                 </p>
               ) : null}
@@ -545,7 +519,7 @@ function LedgerRow({
             </button>
           ) : null}
           {expanded && items.length > 0 ? (
-            <ul className="mt-2 space-y-1 rounded-xl bg-neutral-50 p-2 text-xs">
+            <ul className="mt-2 space-y-1 rounded-lg bg-neutral-50 p-2 text-xs">
               {items.map((i, idx) => (
                 <li key={idx} className="flex justify-between gap-3">
                   <span className="text-neutral-800">
@@ -553,7 +527,7 @@ function LedgerRow({
                     {i.detail ? <span className="text-neutral-500"> · {i.detail}</span> : null}
                   </span>
                   {i.subtotal > 0 ? (
-                    <span className="tabular-nums text-neutral-700">
+                    <span className="font-mono text-neutral-700">
                       {formatRupiah(i.subtotal)}
                     </span>
                   ) : null}
@@ -700,21 +674,43 @@ function StatCard({
   label,
   value,
   hint,
+  strong,
+  warn,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string | null;
   hint?: string;
+  strong?: boolean;
+  warn?: boolean;
 }) {
+  /* Gaya kartu disamakan dengan ringkasan Buku Kas. */
   return (
-    <div className="min-w-0 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-neutral-200 sm:p-5">
-      <p className="flex items-center gap-2 text-sm font-medium text-neutral-600">
-        {icon} {label}
+    <div
+      className={cn(
+        "rounded-xl border bg-white p-4",
+        warn
+          ? "border-danger-500/40"
+          : strong
+            ? "border-mahakan-green-700/40"
+            : "border-neutral-200",
+      )}
+    >
+      <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+        {icon}
+        {label}
       </p>
       {value == null ? (
         <Skeleton className="mt-2 h-7 w-32" />
       ) : (
-        <p className="mt-1 text-lg font-bold tabular-nums text-neutral-900 sm:text-xl">{value}</p>
+        <p
+          className={cn(
+            "mt-1 break-words font-mono text-xl font-bold",
+            warn ? "text-danger-500" : strong ? "text-mahakan-green-900" : "text-neutral-900",
+          )}
+        >
+          {value}
+        </p>
       )}
       {hint ? <p className="mt-0.5 text-xs text-neutral-500">{hint}</p> : null}
     </div>
