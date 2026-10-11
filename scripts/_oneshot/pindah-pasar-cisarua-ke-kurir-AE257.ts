@@ -228,10 +228,11 @@ async function main() {
   if (reverseRow) {
     const [row] = await q<{ amount: string; courier_name: string | null }>(
       `SELECT amount, courier_name FROM daily_market_entries WHERE id=$1`, [reverseRow.id]);
-    const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
+    /* Bertanggal sama dengan top up aslinya: itu bukan transfer nyata, jadi
+     * dihapus seolah tak pernah ada — saldo BCA bulan itu ikut benar. */
     const j = await recordJournal({
-      outletId: outlet!.id, entryDate: today,
-      description: `Pembalik top up daily market — sudah terwakili top up migrasi AE-257`,
+      outletId: outlet!.id, entryDate: reverseRow.d,
+      description: `Pembalik top up daily market — bukan transfer, hanya catatan sisa saldo kurir (AE-257)`,
       sourceType: "daily_market_topup_reversal", sourceId: reverseRow.id,
       lines: reverseDailyMarketLines(mapDailyMarketTopup({
         amount: Number(row!.amount), bankAccountCode: "1110",
@@ -241,7 +242,7 @@ async function main() {
     });
     await pool.query(
       `UPDATE daily_market_entries SET status='reversed', reversed_at=now(), reversed_by=$2, reversal_reason=$3, updated_at=now() WHERE id=$1`,
-      [reverseRow.id, actor.id, "Sudah terwakili top up migrasi AE-257"]);
+      [reverseRow.id, actor.id, "Bukan transfer, hanya catatan sisa saldo kurir (AE-257)"]);
     console.log(`top up lama dibatalkan → ${j.entryId}`);
   }
 
