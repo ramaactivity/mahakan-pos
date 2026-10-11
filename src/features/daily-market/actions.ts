@@ -3,6 +3,7 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  accountingPeriods,
   bankAccounts,
   dailyMarketEntries,
   dailyMarketItems,
@@ -820,11 +821,33 @@ export async function reverseDailyMarketEntry(
     );
   }
 
+  /* Sesi AE-258 — pembalik bertanggal SAMA dengan catatan aslinya: catatan
+   * yang dibatalkan dianggap tak pernah terjadi, jadi saldo kurir & rekening
+   * per bulan ikut benar (dulu "Gaji Vikra" 8 Agu dibatalkan 11 Okt membuat
+   * Agustus kurang Rp 60rb dan Oktober lebih Rp 60rb). Kalau bulan aslinya
+   * sudah ditutup/dikunci, pembalik jatuh ke hari ini supaya laporan yang
+   * sudah final tidak bergeser. */
+  const [origPeriod] = await db
+    .select({ status: accountingPeriods.status })
+    .from(accountingPeriods)
+    .where(
+      and(
+        eq(accountingPeriods.outletId, session.user.outletId),
+        eq(accountingPeriods.periodYear, Number(row.entryDate.slice(0, 4))),
+        eq(accountingPeriods.periodMonth, Number(row.entryDate.slice(5, 7))),
+      ),
+    )
+    .limit(1);
+  const reversalDate =
+    origPeriod?.status === "closed" || origPeriod?.status === "locked"
+      ? todayWibIso()
+      : row.entryDate;
+
   try {
     const reversalEntryId = await db.transaction(async (tx) => {
       const journal = await recordJournal({
         outletId: session.user.outletId,
-        entryDate: todayWibIso(),
+        entryDate: reversalDate,
         description: `Pembalik ${row.kind === "topup" ? "top up" : "belanja"} daily market — ${v.reason}`,
         sourceType:
           row.kind === "topup"
