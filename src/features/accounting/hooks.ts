@@ -9,6 +9,7 @@ import {
   chartOfAccounts,
   expenseCategories,
   expenses,
+  goodsReceipts,
   incomes,
   journalEntries,
   journalLines,
@@ -1802,6 +1803,43 @@ export async function resyncJournalForIncomeUpdate(args: {
  *
  * Total 0 → cukup dibalik, tidak ada entry baru (mapper menolak total ≤ 0).
  */
+/**
+ * Sesi AE-257 — jurnal penerimaan tidak selalu ber-sourceId GR.
+ * `confirmGoodsReceipt` (terima sekaligus) memposting dengan sourceId =
+ * purchaseId; hanya `receiveGoods` (bertahap) yang memakai id GR. Dulu resync
+ * cuma membatalkan yang ber-id GR, jadi untuk PO "terima sekaligus" jurnal
+ * lamanya tetap hidup dan jurnal baru ikut diposting → kas/bank/hutang
+ * terpotong DUA KALI tanpa error (8 pembelian di prod, ditemukan 11 Okt 2026).
+ *
+ * Jurnal ber-id pembelian hanya dipakai kalau PO-nya punya tepat SATU GR —
+ * dengan beberapa GR tidak jelas jurnal itu milik penerimaan yang mana.
+ */
+async function resolveGoodsReceiptJournalSourceId(args: {
+  outletId: string;
+  purchaseId: string;
+  goodsReceiptId: string;
+}): Promise<string> {
+  const [byGr] = await db
+    .select({ id: journalEntries.id })
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.outletId, args.outletId),
+        eq(journalEntries.sourceType, "purchase_create"),
+        eq(journalEntries.sourceId, args.goodsReceiptId),
+        eq(journalEntries.status, "posted"),
+      ),
+    )
+    .limit(1);
+  if (byGr) return args.goodsReceiptId;
+
+  const [gr] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(goodsReceipts)
+    .where(eq(goodsReceipts.purchaseId, args.purchaseId));
+  return Number(gr?.n ?? 0) <= 1 ? args.purchaseId : args.goodsReceiptId;
+}
+
 export async function resyncJournalForGoodsReceipt(args: {
   outletId: string;
   purchaseId: string;
@@ -1819,7 +1857,7 @@ export async function resyncJournalForGoodsReceipt(args: {
     outletId: args.outletId,
     sourceType: "purchase_create",
     voidSourceType: "purchase_create_void",
-    sourceId: args.goodsReceiptId,
+    sourceId: await resolveGoodsReceiptJournalSourceId(args),
     actorId: args.actorId,
     reason: "PO diedit — jurnal penerimaan diposting ulang",
   });
