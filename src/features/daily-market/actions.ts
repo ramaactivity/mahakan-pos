@@ -10,6 +10,7 @@ import {
   ingredientCostHistory,
   ingredients,
   inventoryMovements,
+  journalEntries,
   purchaseItems,
   purchases,
   suppliers,
@@ -28,7 +29,6 @@ import {
   type DailyMarketInventoryLine,
 } from "@/features/accounting/mapping/dailyMarket";
 import type { IngredientSection } from "@/features/accounting/mapping/purchase";
-import { normalizeReceiptUrl } from "@/features/accounting/receipt-url";
 import { startOfWibDateUtc, todayWibIso } from "@/features/cash/helpers";
 import { getStockMode } from "@/features/inventory/flag";
 import { fetchLastFinalizedOpname } from "@/features/stock-opname/queries";
@@ -40,8 +40,17 @@ import {
   shouldSkipStockUpdate,
   type IngredientPackConversion,
 } from "@/lib/unit-conversion";
-import { reverseSchema, spendSchema, topupSchema } from "./schemas";
-import { bankLabelOf, insertDailyMarketTopup } from "./topup-core";
+import {
+  receiptsSchema,
+  reverseSchema,
+  spendSchema,
+  topupSchema,
+} from "./schemas";
+import {
+  bankLabelOf,
+  insertDailyMarketTopup,
+  receiptColumns,
+} from "./topup-core";
 import {
   fail,
   ok,
@@ -50,6 +59,7 @@ import {
   type DailyMarketItemRow,
   type DailyMarketPurchaseRow,
   type DailyMarketSummary,
+  type ReceiptsInput,
   type ReverseInput,
   type SpendInput,
   type TopupInput,
@@ -242,6 +252,9 @@ export async function listDailyMarketCourierPurchases(): Promise<
       purchaseDate: purchases.purchaseDate,
       invoiceNo: purchases.invoiceNo,
       totalAmount: purchases.totalAmount,
+      createdAt: purchases.createdAt,
+      receiptImageUrl: purchases.receiptImageUrl,
+      receiptImageUrls: purchases.receiptImageUrls,
       supplierName: suppliers.name,
       items: sql<string | null>`(
         SELECT string_agg(pi.ingredient_name_snapshot, ', ' ORDER BY pi.created_at)
@@ -269,6 +282,13 @@ export async function listDailyMarketCourierPurchases(): Promise<
         .join(" · "),
       totalAmount: Number(r.totalAmount),
       itemsPreview: r.items ?? "",
+      createdAt: r.createdAt.toISOString(),
+      receiptUrls:
+        r.receiptImageUrls && r.receiptImageUrls.length > 0
+          ? r.receiptImageUrls
+          : r.receiptImageUrl
+            ? [r.receiptImageUrl]
+            : [],
     })),
   );
 }
@@ -322,7 +342,7 @@ export async function postDailyMarketTopup(
       courierName: v.courierName,
       entryDate,
       description,
-      receiptImageUrl: v.receiptImageUrl ?? null,
+      receiptImageUrls: v.receiptImageUrls ?? (v.receiptImageUrl ? [v.receiptImageUrl] : null),
     });
 
     logAudit({
@@ -518,6 +538,10 @@ export async function postDailyMarketSpend(
   );
   const skipStockEffect = backdated || !addOnPurchase;
 
+  const receipts = receiptColumns(
+    v.receiptImageUrls ?? (v.receiptImageUrl ? [v.receiptImageUrl] : null),
+  );
+
   const inventoryLines: DailyMarketInventoryLine[] = resolved.rows.map((r) => ({
     section: r.section,
     amount: r.subtotal,
@@ -536,7 +560,7 @@ export async function postDailyMarketSpend(
           description: v.description,
           courierName: v.courierName,
           categoryId: v.categoryId,
-          receiptImageUrl: normalizeReceiptUrl(v.receiptImageUrl ?? null),
+          ...receipts,
           createdBy: session.user.id,
         })
         .returning();
@@ -657,7 +681,7 @@ export async function postDailyMarketSpend(
         }),
         status: "posted",
         actorId: session.user.id,
-        receiptImageUrl: normalizeReceiptUrl(v.receiptImageUrl ?? null),
+        receiptImageUrl: receipts.receiptImageUrl,
         metadata: {
           courierName: v.courierName,
           categoryId: v.categoryId,
@@ -910,4 +934,68 @@ export async function reverseDailyMarketEntry(
   } catch (e) {
     return fail("DB_ERROR", e instanceof Error ? e.message : "Gagal membatalkan");
   }
+}
+
+/**
+ * Sesi AE-258 — lampirkan/ganti foto nota pada catatan yang sudah ada.
+ * Hanya kolom nota yang berubah (plus bukti di jurnalnya) — nominal, akun,
+ * dan stok tidak disentuh, jadi tidak perlu membalik jurnal.
+ */
+export async function updateDailyMarketReceipts(
+  input: ReceiptsInput,
+): Promise<ApiResult<{ id: string; count: number }>> {
+  const session = await requireSession();
+  if (!hasPermission(session.user.role, CAN_WRITE)) {
+    return fail("FORBIDDEN", "Tidak punya hak mengubah nota");
+  }
+  const parsed = receiptsSchema.safeParse(input);
+  if (!parsed.success) {
+    const i = parsed.error.issues[0];
+    return fail("VALIDATION", i?.message ?? "Input tidak valid");
+  }
+  const v = parsed.data;
+
+  const [row] = await db
+    .select({
+      id: dailyMarketEntries.id,
+      outletId: dailyMarketEntries.outletId,
+      journalEntryId: dailyMarketEntries.journalEntryId,
+      before: dailyMarketEntries.receiptImageUrls,
+    })
+    .from(dailyMarketEntries)
+    .where(eq(dailyMarketEntries.id, v.id))
+    .limit(1);
+  if (!row) return fail("NOT_FOUND", "Catatan tidak ditemukan");
+  if (row.outletId !== session.user.outletId) {
+    return fail("FORBIDDEN", "Catatan dari outlet lain");
+  }
+
+  const receipts = receiptColumns(v.receiptImageUrls);
+  await db.transaction(async (tx) => {
+    await tx
+      .update(dailyMarketEntries)
+      .set({ ...receipts, updatedAt: new Date() })
+      .where(eq(dailyMarketEntries.id, row.id));
+    if (row.journalEntryId) {
+      await tx
+        .update(journalEntries)
+        .set({ receiptImageUrl: receipts.receiptImageUrl, updatedAt: new Date() })
+        .where(eq(journalEntries.id, row.journalEntryId));
+    }
+  });
+
+  logAudit({
+    eventType: "daily_market.receipts",
+    userId: session.user.id,
+    entityType: "daily_market_entry",
+    entityId: row.id,
+    payload: {
+      summary: `Nota daily market diperbarui (${receipts.receiptImageUrls?.length ?? 0} file)`,
+      before: { receiptImageUrls: row.before ?? [] },
+      after: { receiptImageUrls: receipts.receiptImageUrls ?? [] },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  }).catch((e) => console.error("[audit daily_market.receipts]", e));
+
+  return ok({ id: row.id, count: receipts.receiptImageUrls?.length ?? 0 });
 }

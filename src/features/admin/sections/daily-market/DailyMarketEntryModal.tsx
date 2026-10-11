@@ -3,7 +3,16 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
-import { Button, Combobox, Input, Modal, Select, toast } from "@/components/ui";
+import {
+  Button,
+  Combobox,
+  DatePicker,
+  Input,
+  Modal,
+  NumericInput,
+  Select,
+  toast,
+} from "@/components/ui";
 import {
   isOk,
   postDailyMarketSpend,
@@ -13,7 +22,11 @@ import { listBankAccounts } from "@/features/bank-accounts";
 import { listExpenseCategories, isOk as cashIsOk } from "@/features/cash";
 import { listRequestableIngredients } from "@/features/purchase-requests/actions";
 import { isOk as prIsOk } from "@/features/purchase-requests/types";
-import { formatRupiah, parseRupiah } from "@/lib/format";
+import { formatRupiah } from "@/lib/format";
+import {
+  PurchaseReceiptsField,
+  type PurchaseReceipt,
+} from "@/features/admin/sections/inventory/purchases/PurchaseReceiptsField";
 import { cn } from "@/lib/utils";
 import {
   applyQtyChange,
@@ -124,7 +137,7 @@ function MarketItemRow({
   const smart = (r: SmartMathRow) => onChange(r);
 
   return (
-    <div className="rounded-md bg-neutral-50 p-2">
+    <div className="rounded-xl bg-neutral-50 p-2">
       <div className={cn("grid gap-2", ROW_GRID)}>
         <Combobox
           ariaLabel={`Bahan ${idx + 1}`}
@@ -226,22 +239,49 @@ function MarketItemRow({
   );
 }
 
+/* Pilihan terakhir diingat per perangkat — kurir, rekening, dan kategori
+ * hampir selalu sama tiap hari. Penyimpanan bisa tidak tersedia (mode
+ * privat), jadi semua akses dibungkus try/catch dan form tetap jalan. */
+const PREF_KEY = "mahakan.daily-market.prefs";
+type Prefs = { courierName?: string; bankAccountId?: string; categoryId?: string };
+function readPrefs(): Prefs {
+  try {
+    return JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}") as Prefs;
+  } catch {
+    return {};
+  }
+}
+function writePrefs(patch: Prefs) {
+  try {
+    localStorage.setItem(PREF_KEY, JSON.stringify({ ...readPrefs(), ...patch }));
+  } catch {
+    /* tidak apa-apa — hanya kenyamanan */
+  }
+}
+
 export function DailyMarketEntryModal({
   kind,
+  defaultCourier,
   onClose,
   onSaved,
 }: {
   kind: "topup" | "spend" | null;
+  /** Kurir dari catatan terakhir — dipakai kalau perangkat ini belum ingat. */
+  defaultCourier?: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const isTopup = kind === "topup";
   const [amount, setAmount] = useState("");
+  /* Nominal nota mengikuti total bahan sampai diketik sendiri — kebanyakan
+   * nota pasar memang isinya bahan semua. */
+  const [amountTouched, setAmountTouched] = useState(false);
   const [courierName, setCourierName] = useState("");
   const [description, setDescription] = useState("");
   const [entryDate, setEntryDate] = useState(todayJakarta());
   const [bankAccountId, setBankAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   /* Sesi AE-245 — bahan yang dibeli berikut jumlah & harganya, dipilih dari
    * master supaya ejaannya seragam dengan Inventory. */
   const [rows, setRows] = useState<ItemRow[]>([newRow()]);
@@ -250,14 +290,23 @@ export function DailyMarketEntryModal({
 
   useEffect(() => {
     if (!kind) return;
+    const prefs = readPrefs();
     /* eslint-disable react-hooks/set-state-in-effect */
     setAmount("");
+    setAmountTouched(false);
     setDescription("");
     setRows([newRow()]);
+    setReceipts([]);
     setEntryDate(todayJakarta());
+    setCourierName(prefs.courierName ?? defaultCourier ?? "");
+    setBankAccountId(prefs.bankAccountId ?? "");
+    setCategoryId(prefs.categoryId ?? "");
     setError(null);
     setSubmitting(false);
     /* eslint-enable react-hooks/set-state-in-effect */
+    /* Sengaja hanya saat modal dibuka: daftar catatan yang ter-refresh di
+     * belakang tidak boleh menimpa isian yang sedang diketik. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
 
   const banksQ = useQuery({
@@ -304,27 +353,35 @@ export function DailyMarketEntryModal({
         return next;
       }),
     );
-  const amountValue = (() => {
-    try {
-      return parseRupiah(amount);
-    } catch {
-      return 0;
-    }
-  })();
+  /* Rekening cuma satu → langsung terpilih, tidak perlu dipilih tiap kali. */
+  const banks = banksQ.data ?? [];
+  const effectiveBankId =
+    bankAccountId && banks.some((b) => b.id === bankAccountId)
+      ? bankAccountId
+      : banks.length === 1
+        ? banks[0]!.id
+        : bankAccountId;
+  const typedAmount = parseRupiahSafe(amount);
+  const amountValue = !isTopup && !amountTouched ? itemsTotal : typedAmount;
   const remainder = amountValue - itemsTotal;
 
   async function submit() {
     if (submitting) return;
     setError(null);
-    let parsed = 0;
-    try {
-      parsed = parseRupiah(amount);
-    } catch {
-      setError("Nominal tidak valid");
+    if (amountValue <= 0) {
+      setError(isTopup ? "Isi nominal top up" : "Isi bahan yang dibeli atau nominal nota");
       return;
     }
-    if (parsed <= 0) {
-      setError("Nominal harus lebih dari 0");
+    if (courierName.trim().length < 2) {
+      setError("Isi nama kurir");
+      return;
+    }
+    if (isTopup && !effectiveBankId) {
+      setError("Pilih rekening asal transfer");
+      return;
+    }
+    if (!isTopup && !categoryId) {
+      setError("Pilih kategori belanja");
       return;
     }
     /* Baris bahan yang belum lengkap ditolak di sini, bukan dibiarkan lolos
@@ -337,27 +394,40 @@ export function DailyMarketEntryModal({
       setError(`Jumlah dan harga/total "${name}" belum diisi`);
       return;
     }
-    if (!isTopup && itemsTotal > parsed) {
+    if (!isTopup && itemsTotal > amountValue) {
       setError(
-        `Nilai bahan ${formatRupiah(itemsTotal)} melebihi nominal nota ${formatRupiah(parsed)}`,
+        `Nilai bahan ${formatRupiah(itemsTotal)} melebihi nominal nota ${formatRupiah(amountValue)}`,
       );
       return;
     }
+    /* Keterangan belanja wajib di server; kalau dikosongkan, dirangkum dari
+     * nama bahan supaya tidak ada catatan tanpa judul. */
+    const spendDescription =
+      description.trim() ||
+      filled
+        .map((r) => ingById.get(r.ingredientId)?.name)
+        .filter(Boolean)
+        .slice(0, 4)
+        .join(", ") ||
+      "Belanja pasar";
+    const receiptImageUrls = receipts.map((r) => r.url);
     setSubmitting(true);
     const res = isTopup
       ? await postDailyMarketTopup({
-          amount: parsed,
-          bankAccountId,
-          courierName,
+          amount: amountValue,
+          bankAccountId: effectiveBankId,
+          courierName: courierName.trim(),
           entryDate,
           description: description.trim() || undefined,
+          receiptImageUrls,
         })
       : await postDailyMarketSpend({
-          amount: parsed,
+          amount: amountValue,
           categoryId,
-          courierName,
-          description: description.trim(),
+          courierName: courierName.trim(),
+          description: spendDescription.slice(0, 200),
           entryDate,
+          receiptImageUrls,
           items: filled.map((r) => ({
             ingredientId: r.ingredientId,
             qty: parsePurchaseQty(r.qty),
@@ -372,6 +442,11 @@ export function DailyMarketEntryModal({
       setError(res.error.message);
       return;
     }
+    writePrefs(
+      isTopup
+        ? { courierName: courierName.trim(), bankAccountId: effectiveBankId }
+        : { courierName: courierName.trim(), categoryId },
+    );
     toast.success(isTopup ? "Top up tercatat" : "Belanja tercatat");
     onSaved();
   }
@@ -380,75 +455,87 @@ export function DailyMarketEntryModal({
     <Modal
       open={kind !== null}
       onClose={onClose}
-      title={isTopup ? "Top Up Kurir" : "Catat Belanja Daily Market"}
+      title={isTopup ? "Top Up Saldo Kurir" : "Catat Belanja Pasar"}
       description={
         isTopup
-          ? "Uang keluar dari rekening dan masuk ke saldo kurir."
-          : "Belanja memakai saldo kurir, bukan kas outlet."
+          ? "Uang ditransfer dari rekening outlet ke kurir. Saldo rekening berkurang, saldo kurir bertambah."
+          : "Belanja dibayar dari saldo kurir, bukan dari kas outlet."
       }
       size={isTopup ? "md" : "full"}
       footer={
-        <>
+        <div className="flex w-full flex-wrap items-center justify-end gap-2">
+          {error ? (
+            <p
+              role="alert"
+              className="mr-auto rounded-full bg-danger-100 px-3 py-1.5 text-sm text-danger-600"
+            >
+              {error}
+            </p>
+          ) : null}
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
             Batal
           </Button>
           <Button onClick={submit} disabled={submitting}>
-            {submitting ? "Menyimpan…" : "Simpan"}
+            {submitting
+              ? "Menyimpan…"
+              : amountValue > 0
+                ? `Simpan ${formatRupiah(amountValue)}`
+                : "Simpan"}
           </Button>
-        </>
+        </div>
       }
     >
-      <div className="space-y-3">
-        <Input
-          label="Nominal (Rp)"
-          inputMode="numeric"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder="0"
-          autoFocus
-        />
-        <Input
-          label="Nama kurir / driver"
-          value={courierName}
-          onChange={(e) => setCourierName(e.target.value)}
-          placeholder="Misal: Pak Dedi"
-        />
+      <div className="space-y-5">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <DatePicker
+            label="Tanggal"
+            value={entryDate}
+            onChange={(v) => setEntryDate(v ?? todayJakarta())}
+            maxDate={todayJakarta()}
+            clearable={false}
+            required
+          />
+          <Input
+            label="Kurir"
+            value={courierName}
+            onChange={(e) => setCourierName(e.target.value)}
+            placeholder="Nama kurir"
+            required
+          />
+        </div>
+
         {isTopup ? (
-          <Select
-            label="Transfer dari rekening"
-            value={bankAccountId}
-            onValueChange={setBankAccountId}
-            options={(banksQ.data ?? []).map((b) => ({
-              value: b.id,
-              label: `${b.bankName} — ${b.accountName}`,
-            }))}
-            placeholder="Pilih rekening asal"
-          />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <NumericInput
+              label="Nominal transfer"
+              prefix="Rp"
+              value={amount}
+              onChange={setAmount}
+              placeholder="0"
+              required
+            />
+            <Select
+              label="Dari rekening"
+              value={effectiveBankId}
+              onValueChange={setBankAccountId}
+              options={banks.map((b) => ({
+                value: b.id,
+                label: `${b.bankName} — ${b.accountName}`,
+              }))}
+              placeholder="Pilih rekening asal"
+            />
+          </div>
         ) : (
-          <Select
-            label="Kategori belanja"
-            value={categoryId}
-            onValueChange={setCategoryId}
-            options={(catsQ.data ?? []).map((c) => ({
-              value: c.id,
-              label: c.name,
-            }))}
-            placeholder="Pilih kategori"
-          />
-        )}
-        {!isTopup ? (
-          <div className="space-y-2">
-            <div className="flex items-end justify-between gap-2">
+          <section className="space-y-2">
+            <div className="flex flex-wrap items-end justify-between gap-2">
               <div>
-                <h3 className="text-sm font-medium text-neutral-900">
-                  Bahan yang dibeli (opsional)
+                <h3 className="text-sm font-semibold text-neutral-900">
+                  Bahan yang dibeli
                 </h3>
                 <p className="text-xs text-neutral-600">
-                  Sama seperti Purchasing: isi QTY + satuan, lalu isi{" "}
-                  <strong>Harga per satuan</strong> <em>atau</em>{" "}
-                  <strong>Total Bayar</strong> — yang lain auto-hitung. Bahan
-                  di sini masuk persediaan; biaya non-barang (parkir, plastik,
-                  kuli angkut) cukup ditulis di keterangan.
+                  Isi QTY + satuan, lalu <strong>harga per satuan</strong>{" "}
+                  <em>atau</em> <strong>total bayar</strong> — yang satunya
+                  dihitung otomatis.
                 </p>
               </div>
               <Button
@@ -460,7 +547,7 @@ export function DailyMarketEntryModal({
               </Button>
             </div>
             {rows.length > 0 ? (
-              <div className="space-y-2 rounded-md border border-neutral-200 p-2">
+              <div className="space-y-2 rounded-2xl border border-neutral-200 p-2">
                 <div
                   className={cn(
                     "hidden gap-2 px-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 md:grid",
@@ -495,56 +582,88 @@ export function DailyMarketEntryModal({
                 ))}
               </div>
             ) : null}
-            {filled.length > 0 ? (
-              <div>
-                {/* Pembagian nota diperlihatkan sebelum disimpan: angka inilah
-                    yang menentukan berapa yang jadi persediaan dan berapa yang
-                    langsung jadi beban. */}
-                <div className="rounded-lg bg-neutral-50 p-2.5 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-neutral-600">Nilai bahan (persediaan)</span>
-                    <span className="font-medium">{formatRupiah(itemsTotal)}</span>
-                  </div>
-                  <div className="mt-1 flex justify-between">
-                    <span className="text-neutral-600">Sisa nota (beban langsung)</span>
-                    <span
-                      className={
-                        remainder < 0 ? "font-medium text-danger-500" : "font-medium"
-                      }
-                    >
-                      {formatRupiah(remainder)}
-                    </span>
-                  </div>
-                  {remainder < 0 ? (
-                    <p className="mt-1.5 text-danger-500">
-                      Nilai bahan melebihi nominal nota. Perbaiki jumlah/harga,
-                      atau naikkan nominalnya.
-                    </p>
-                  ) : null}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <NumericInput
+                label="Total nota"
+                prefix="Rp"
+                value={amountTouched ? amount : itemsTotal > 0 ? String(itemsTotal) : ""}
+                onChange={(v) => {
+                  setAmountTouched(true);
+                  setAmount(v);
+                }}
+                placeholder="0"
+                hint={
+                  amountTouched
+                    ? "Lebih besar dari total bahan kalau ada parkir, plastik, kuli angkut."
+                    : "Otomatis = total bahan. Ubah kalau ada biaya lain di nota."
+                }
+                required
+              />
+              <Select
+                label="Kategori biaya"
+                value={categoryId}
+                onValueChange={setCategoryId}
+                options={(catsQ.data ?? []).map((c) => ({
+                  value: c.id,
+                  label: c.name,
+                }))}
+                placeholder="Pilih kategori"
+              />
+            </div>
+
+            {/* Pembagian nota diperlihatkan sebelum disimpan: angka inilah
+                yang menentukan berapa yang jadi persediaan dan berapa yang
+                langsung jadi beban. */}
+            {filled.length > 0 || amountValue > 0 ? (
+              <dl className="grid grid-cols-2 gap-2 rounded-2xl bg-neutral-50 p-3 text-xs sm:grid-cols-3">
+                <div>
+                  <dt className="text-neutral-600">Masuk persediaan</dt>
+                  <dd className="font-semibold tabular-nums text-neutral-900">
+                    {formatRupiah(itemsTotal)}
+                  </dd>
                 </div>
-              </div>
+                <div>
+                  <dt className="text-neutral-600">Biaya lain di nota</dt>
+                  <dd
+                    className={cn(
+                      "font-semibold tabular-nums",
+                      remainder < 0 ? "text-danger-600" : "text-neutral-900",
+                    )}
+                  >
+                    {formatRupiah(remainder)}
+                  </dd>
+                </div>
+                <div className="col-span-2 sm:col-span-1">
+                  <dt className="text-neutral-600">Saldo kurir terpotong</dt>
+                  <dd className="font-semibold tabular-nums text-danger-600">
+                    − {formatRupiah(amountValue)}
+                  </dd>
+                </div>
+              </dl>
             ) : null}
-          </div>
-        ) : null}
+          </section>
+        )}
+
         <Input
-          label={isTopup ? "Keterangan (opsional)" : "Keterangan belanja"}
+          label={isTopup ? "Keterangan (opsional)" : "Keterangan (opsional)"}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder={
-            isTopup ? "Misal: top up belanja minggu ini" : "Misal: sayur + ayam"
+            isTopup
+              ? "Misal: saldo belanja minggu ini"
+              : "Kosongkan → otomatis dari nama bahan"
           }
         />
-        <Input
-          label="Tanggal"
-          type="date"
-          value={entryDate}
-          onChange={(e) => setEntryDate(e.target.value)}
+
+        <PurchaseReceiptsField
+          value={receipts}
+          onChange={setReceipts}
+          purchaseDate={entryDate}
+          disabled={submitting}
+          label={isTopup ? "Bukti transfer (opsional)" : "Foto nota (opsional)"}
+          onError={setError}
         />
-        {error ? (
-          <p className="rounded-md bg-danger-100 p-2 text-sm text-danger-500">
-            {error}
-          </p>
-        ) : null}
       </div>
     </Modal>
   );

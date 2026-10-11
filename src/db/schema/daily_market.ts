@@ -9,6 +9,7 @@ import {
   numeric,
   index,
   check,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { outlets } from "./outlets";
 import { users } from "./users";
@@ -62,6 +63,10 @@ export const dailyMarketEntries = pgTable(
     categoryId: uuid("category_id").references(() => expenseCategories.id),
 
     receiptImageUrl: text("receipt_image_url"),
+    /** Sesi AE-258 — foto nota/bukti transfer, bisa lebih dari satu (belanja
+     * pasar dari beberapa pedagang). `receiptImageUrl` tetap diisi item
+     * pertama supaya pembaca lama tidak berubah — pola sama dgn purchases. */
+    receiptImageUrls: jsonb("receipt_image_urls").$type<string[]>(),
 
     status: text("status", { enum: ["posted", "reversed"] })
       .notNull()

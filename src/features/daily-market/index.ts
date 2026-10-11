@@ -17,4 +17,5 @@ export {
   postDailyMarketSpend,
   postDailyMarketTopup,
   reverseDailyMarketEntry,
+  updateDailyMarketReceipts,
 } from "./actions";

@@ -175,7 +175,7 @@ async function main() {
       outletId: outlet!.id, actorId: actor.id,
       bank: { id: bca.id, bankName: bca.bank_name, accountName: bca.account_name, accountNumber: bca.account_number },
       amount: t.amount, courierName: COURIER, entryDate: t.date,
-      description: t.note || `Top up belanja pasar ${t.date} (migrasi AE-257)`, receiptImageUrl: null,
+      description: t.note || `Top up belanja pasar ${t.date} (migrasi AE-257)`, receiptImageUrls: null,
     });
     console.log(`top up ${t.date} ${rp(t.amount)} → ${r.journalEntryId}`);
   }

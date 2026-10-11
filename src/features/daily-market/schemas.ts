@@ -43,6 +43,7 @@ export const topupSchema = z.object({
   entryDate: z.string().regex(ISO_DATE, "Tanggal harus YYYY-MM-DD").optional(),
   description: z.string().trim().max(200).optional(),
   receiptImageUrl: z.string().trim().max(500).nullish(),
+  receiptImageUrls: z.array(z.url().max(500)).max(5).nullish(),
 });
 
 export const spendSchema = z.object({
@@ -56,6 +57,14 @@ export const spendSchema = z.object({
   description: z.string().trim().min(3, "Keterangan minimal 3 huruf").max(200),
   entryDate: z.string().regex(ISO_DATE, "Tanggal harus YYYY-MM-DD").optional(),
   receiptImageUrl: z.string().trim().max(500).nullish(),
+  /** Sesi AE-258 — beberapa nota (pasar = beberapa pedagang). */
+  receiptImageUrls: z.array(z.url().max(500)).max(5, "Maksimal 5 nota").nullish(),
+});
+
+/** Sesi AE-258 — lampirkan/ganti nota pada catatan yang sudah ada. */
+export const receiptsSchema = z.object({
+  id: z.uuid(),
+  receiptImageUrls: z.array(z.url().max(500)).max(5, "Maksimal 5 nota"),
 });
 
 export const reverseSchema = z.object({
@@ -67,3 +76,4 @@ export type TopupInput = z.input<typeof topupSchema>;
 export type SpendInput = z.input<typeof spendSchema>;
 export type MarketItemInput = z.input<typeof marketItemSchema>;
 export type ReverseInput = z.input<typeof reverseSchema>;
+export type ReceiptsInput = z.input<typeof receiptsSchema>;

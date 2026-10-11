@@ -1,0 +1,1 @@
+ALTER TABLE "daily_market_entries" ADD COLUMN "receipt_image_urls" jsonb;

@@ -247,6 +247,7 @@ export const AUDIT_EVENT_TYPES = [
   "daily_market.topup",
   "daily_market.spend",
   "daily_market.reverse",
+  "daily_market.receipts",
   "internal_debt_entry.post",
   "internal_debt_entry.reverse",
   "internal_debt_repayment.post",

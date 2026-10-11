@@ -25,6 +25,23 @@ export function bankLabelOf(b: {
   return [b.bankName, b.accountName, tail].filter(Boolean).join(" — ");
 }
 
+/**
+ * Sesi AE-258 — satu aturan untuk kolom nota: daftar URL yang lolos sanitasi,
+ * dan `receiptImageUrl` = item pertama (dibaca jurnal & layar lama).
+ */
+export function receiptColumns(
+  urls: ReadonlyArray<string | null | undefined> | null | undefined,
+): { receiptImageUrl: string | null; receiptImageUrls: string[] | null } {
+  const clean = (urls ?? [])
+    .map((u) => normalizeReceiptUrl(u))
+    .filter((u): u is string => u !== null)
+    .slice(0, 5);
+  return {
+    receiptImageUrl: clean[0] ?? null,
+    receiptImageUrls: clean.length > 0 ? clean : null,
+  };
+}
+
 export async function insertDailyMarketTopup(args: {
   outletId: string;
   actorId: string;
@@ -38,10 +55,10 @@ export async function insertDailyMarketTopup(args: {
   courierName: string;
   entryDate: string;
   description: string;
-  receiptImageUrl: string | null;
+  receiptImageUrls: ReadonlyArray<string> | null;
 }): Promise<{ id: string; journalEntryId: string }> {
   const bankLabel = bankLabelOf(args.bank);
-  const receiptImageUrl = normalizeReceiptUrl(args.receiptImageUrl);
+  const { receiptImageUrl, receiptImageUrls } = receiptColumns(args.receiptImageUrls);
   return db.transaction(async (tx) => {
     const [row] = await tx
       .insert(dailyMarketEntries)
@@ -55,6 +72,7 @@ export async function insertDailyMarketTopup(args: {
         courierName: args.courierName,
         bankAccountId: args.bank.id,
         receiptImageUrl,
+        receiptImageUrls,
         createdBy: args.actorId,
       })
       .returning();

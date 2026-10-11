@@ -757,6 +757,13 @@
       "when": 1791040922566,
       "tag": "0107_settlement_revisions",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1791735380624,
+      "tag": "0108_daily_market_receipts",
+      "breakpoints": true
     }
   ]
 }

@@ -7,6 +7,7 @@ export type DailyMarketKind = "topup" | "spend";
 
 export type {
   MarketItemInput,
+  ReceiptsInput,
   ReverseInput,
   SpendInput,
   TopupInput,
@@ -45,6 +46,9 @@ export interface DailyMarketPurchaseRow {
   label: string;
   totalAmount: number;
   itemsPreview: string;
+  createdAt: string;
+  /** Foto nota dari Purchasing (dilihat saja; diubah dari menu Pembelian). */
+  receiptUrls: string[];
 }
 
 export interface DailyMarketItemRow {

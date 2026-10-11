@@ -48,7 +48,12 @@ export async function POST(request: Request): Promise<NextResponse> {
         { status: 401 },
       );
     }
-    if (!hasPermission(session.user.role, "purchase.create")) {
+    /* Sesi AE-258 — nota belanja pasar di Daily Market juga disimpan di
+     * folder NOTA MAHAKAN; pencatatnya cukup punya hak catat Daily Market. */
+    if (
+      !hasPermission(session.user.role, "purchase.create") &&
+      !hasPermission(session.user.role, "expense.create")
+    ) {
       return NextResponse.json(
         {
           success: false,
