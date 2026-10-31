@@ -7,6 +7,7 @@
  */
 
 import { computeDiscountAmount } from "@/lib/money";
+import { jakartaDateOf, jakartaMinutesOf } from "@/lib/tz";
 import type { Promo, PromoEligibility } from "./types";
 
 export interface CartContext {
@@ -209,4 +210,34 @@ export function evaluateAll(
   }
   eligible.sort((a, b) => b.computedDiscount - a.computedDiscount);
   return { eligible, ineligible };
+}
+
+/**
+ * Sesi AE-259 — evaluatePromo reads the day and clock through local getters
+ * (getDay/getHours). On Vercel the machine zone is UTC, so the server would
+ * judge "Hanya 14:00–17:00" seven hours off. This builds a Date whose LOCAL
+ * fields equal the WIB wall clock, whatever zone the machine runs in.
+ */
+export function wibWallClock(d: Date): Date {
+  const [y, m, day] = jakartaDateOf(d).split("-").map(Number);
+  const minutes = jakartaMinutesOf(d);
+  return new Date(y, m - 1, day, Math.floor(minutes / 60), minutes % 60);
+}
+
+/**
+ * Sesi AE-259 — may staff apply this promo without a PIN approver?
+ *
+ * Only when the owner left "Butuh persetujuan" off AND the server, evaluating
+ * the promo against the cart itself, lands on exactly the rupiah the cart
+ * carries. Otherwise a staff could attach any no-approval promo id to an
+ * arbitrary discount and skip the gate.
+ */
+export function promoWaivesPinApprover(
+  promo: Promo | null,
+  ctx: CartContext,
+  discountAmount: number,
+): boolean {
+  if (!promo || promo.requiresApproval) return false;
+  const r = evaluatePromo(promo, ctx);
+  return r.eligible && r.computedDiscount === discountAmount;
 }

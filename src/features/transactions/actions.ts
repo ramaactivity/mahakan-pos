@@ -16,6 +16,7 @@ import {
   transactions,
 } from "@/db/schema";
 import { requiresPinApprover } from "@/features/approval-codes/compliment-guard";
+import { promoWaivesApprovalForCart } from "@/features/promos/approval-waiver";
 import { verifyComplimentPinForOutlet } from "@/features/approval-codes/compliment-pin";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
@@ -471,6 +472,14 @@ export async function getTransactionsByIds(
 
 // ---------- createTransaction ----------
 
+/** Sesi AE-259 — a promo that fails the server check should not read as
+ * "staff needs an approver" with no hint why: say what to re-check. */
+function approverRequiredMessage(promoId: string | null | undefined): string {
+  return promoId
+    ? "Promo tidak memenuhi syarat untuk bill ini (jam, hari, metode bayar, atau isi bill berubah). Pilih ulang promonya, atau minta PIN approver."
+    : "Staff butuh approver untuk apply discount";
+}
+
 export async function createTransaction(
   input: CreateTransactionInput,
   opts: {
@@ -578,19 +587,28 @@ export async function createTransaction(
    * diselesaikan, persis kejadian yang ditambal di AE-208. */
   const isComplimentTrx = (v.discountReason ?? "").startsWith("Compliment:");
 
-  const needsPinApprover = requiresPinApprover({
-    discountAmount: v.discountAmount,
-    role: session.user.role,
-    isCompliment: isComplimentTrx,
-  });
+  /* Sesi AE-259 — promo with "Butuh persetujuan" unticked needs no PIN,
+   * provided the server re-evaluates it to the same rupiah. */
+  const needsPinApprover =
+    requiresPinApprover({
+      discountAmount: v.discountAmount,
+      role: session.user.role,
+      isCompliment: isComplimentTrx,
+    }) &&
+    !(await promoWaivesApprovalForCart({
+      outletId: session.user.outletId,
+      promoId: v.promoId,
+      items: v.items,
+      subtotal: v.subtotal,
+      discountAmount: v.discountAmount,
+      orderType: v.orderType,
+      paymentMethod: v.paymentMethod,
+    }));
 
   let discountApproverId: string | null = null;
   if (needsPinApprover) {
     if (!v.discountApproverToken) {
-      return fail(
-        "APPROVER_REQUIRED",
-        "Staff butuh approver untuk apply discount",
-      );
+      return fail("APPROVER_REQUIRED", approverRequiredMessage(v.promoId));
     }
   }
 
@@ -2402,17 +2420,25 @@ export async function editOpenBill(
   // AE-208/AE-221 — compliment punya gerbang PIN-nya sendiri, bukan PIN
   // approver (lihat catatan di createTransaction). Tanpa pengecualian ini
   // kasir tidak pernah bisa menutup/menyimpan open bill yang di-compliment.
-  const editNeedsPinApprover = requiresPinApprover({
-    discountAmount: v.discountAmount,
-    role: session.user.role,
-    isCompliment: editIsCompliment,
-  });
+  const editNeedsPinApprover =
+    requiresPinApprover({
+      discountAmount: v.discountAmount,
+      role: session.user.role,
+      isCompliment: editIsCompliment,
+    }) &&
+    !(await promoWaivesApprovalForCart({
+      outletId: session.user.outletId,
+      promoId: v.promoId,
+      items: v.items,
+      subtotal: v.subtotal,
+      discountAmount: v.discountAmount,
+      orderType: current.orderType,
+      // Open bill has no payment method yet.
+      paymentMethod: null,
+    }));
   if (editNeedsPinApprover) {
     if (!v.discountApproverToken) {
-      return fail(
-        "APPROVER_REQUIRED",
-        "Staff butuh approver untuk apply discount",
-      );
+      return fail("APPROVER_REQUIRED", approverRequiredMessage(v.promoId));
     }
   }
   if (
