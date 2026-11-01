@@ -38,6 +38,7 @@ import {
   listMenuItems,
   listCategories,
   toggleSoldOut as toggleSoldOutAction,
+  setMenuItemActive,
   deleteMenuItem,
   type Category,
   type MenuItem,
@@ -196,6 +197,20 @@ export function ItemsList() {
         item.isSoldOut ? "Item ditandai available" : "Item ditandai sold-out",
       );
     }
+  }
+
+  async function handleActive(item: MenuItem) {
+    const res = await setMenuItemActive(item.id, !item.isActive);
+    if (!isOk(res)) {
+      toast.error(res.error.message);
+      return;
+    }
+    setRefreshKey((k) => k + 1);
+    toast.success(
+      item.isActive
+        ? `${item.name} disembunyikan dari kasir`
+        : `${item.name} tampil lagi di kasir`,
+    );
   }
 
   async function handleDelete(id: string) {
@@ -493,7 +508,7 @@ export function ItemsList() {
                         key={item.id}
                         className={cn(
                           "hover:bg-neutral-50",
-                          item.isSoldOut && "opacity-60",
+                          (item.isSoldOut || !item.isActive) && "opacity-60",
                           selectedIds.has(item.id) && "bg-mahakan-green-50",
                         )}
                       >
@@ -571,7 +586,9 @@ export function ItemsList() {
                           })()}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          {item.isSoldOut ? (
+                          {!item.isActive ? (
+                            <Badge variant="neutral">Disembunyikan</Badge>
+                          ) : item.isSoldOut ? (
                             <Badge variant="sold-out">Habis</Badge>
                           ) : (
                             <Badge variant="success">Tersedia</Badge>
@@ -585,6 +602,13 @@ export function ItemsList() {
                               onClick={() => handleSoldOut(item)}
                             >
                               {item.isSoldOut ? "Aktifkan" : "Sold Out"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleActive(item)}
+                            >
+                              {item.isActive ? "Sembunyikan" : "Tampilkan"}
                             </Button>
                             <Button
                               size="sm"

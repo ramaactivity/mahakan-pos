@@ -300,6 +300,36 @@ export async function toggleSoldOut(
   return ok(row);
 }
 
+/**
+ * Sesi AE-262 — sembunyikan menu dari kasir tanpa menghapusnya (is_active),
+ * supaya suatu hari bisa ditampilkan lagi. Hapus (deleted_at) tidak bisa
+ * dibatalkan dari layar.
+ */
+export async function setMenuItemActive(
+  id: string,
+  isActive: boolean,
+): Promise<ApiResult<MenuItem>> {
+  const session = await requireOwnerOrManager("menu.item.update");
+  const [row] = await db
+    .update(menuItems)
+    .set({ isActive, updatedAt: new Date(), updatedBy: session.user.id })
+    .where(and(eq(menuItems.id, id), isNull(menuItems.deletedAt)))
+    .returning();
+  if (!row) return fail("NOT_FOUND", "Menu item tidak ditemukan");
+  await logAudit({
+    eventType: "menu.item.update",
+    userId: session.user.id,
+    entityType: "menu_item",
+    entityId: row.id,
+    payload: {
+      summary: `${isActive ? "Tampilkan" : "Sembunyikan"} menu ${row.name}`,
+      after: { isActive },
+    },
+    metadata: { outletId: session.user.outletId, actorRole: session.user.role },
+  });
+  return ok(row);
+}
+
 // ---------- Mutations: categories ----------
 
 export async function createCategory(

@@ -23,6 +23,7 @@ export {
   listModifiersForCategory,
   reorderCategory,
   toggleSoldOut,
+  setMenuItemActive,
   updateCategory,
   updateMenuItem,
   updateModifierPrice,
