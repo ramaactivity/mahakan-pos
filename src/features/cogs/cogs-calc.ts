@@ -404,3 +404,61 @@ export function summarizeCogs(rows: IngredientCogsRow[]): CogsSummary {
     ingredientsWithVariance,
   };
 }
+
+// ---------- Sesi AE-260 — Tutup Periode metode periodik ----------
+
+export type PersediaanCode = "1140" | "1141" | "1142";
+
+const HPP_FOR_PERSEDIAAN: Record<PersediaanCode, string> = {
+  "1140": "5101",
+  "1141": "5102",
+  "1142": "5103",
+};
+
+const PERSEDIAAN_LABEL: Record<PersediaanCode, string> = {
+  "1140": "kitchen",
+  "1141": "bar",
+  "1142": "pendukung",
+};
+
+/** Same section → account mapping as the opname journal (accounting/mapping/opname.ts). */
+export function persediaanCodeForSection(section: string | null): PersediaanCode {
+  if (section === "kitchen") return "1140";
+  if (section === "bar") return "1141";
+  return "1142";
+}
+
+/**
+ * HPP periode = saldo buku Persediaan per akhir periode − nilai fisik opname.
+ *
+ * Saldo buku = stok awal + pembelian (dikurangi HPP resep harian yang masih
+ * tercatat dari era sebelum metode periodik). Jadi total HPP periode selalu
+ * stok awal + pembelian − stok akhir, dan sesudah ditutup saldo Persediaan
+ * sama dengan hitungan fisik — selisih lama tidak terbawa ke bulan berikutnya.
+ */
+export function buildPeriodicCloseLines(input: {
+  bookBalance: Record<PersediaanCode, number>;
+  physical: Record<PersediaanCode, number>;
+  periodLabel: string;
+}): {
+  lines: Array<{ accountCode: string; debit?: number; credit?: number; description: string }>;
+  adjustmentTotal: number;
+} {
+  const lines: Array<{ accountCode: string; debit?: number; credit?: number; description: string }> = [];
+  let adjustmentTotal = 0;
+  for (const code of ["1140", "1141", "1142"] as const) {
+    const diff = Math.round(input.bookBalance[code] - input.physical[code]);
+    if (diff === 0) continue;
+    const hpp = HPP_FOR_PERSEDIAAN[code];
+    const label = PERSEDIAAN_LABEL[code];
+    if (diff > 0) {
+      lines.push({ accountCode: hpp, debit: diff, description: `HPP ${label} ${input.periodLabel} (stok awal + pembelian − stok akhir)` });
+      lines.push({ accountCode: code, credit: diff, description: `Pemakaian persediaan ${label} ${input.periodLabel}` });
+    } else {
+      lines.push({ accountCode: code, debit: -diff, description: `Persediaan ${label} ${input.periodLabel} — fisik lebih besar dari buku` });
+      lines.push({ accountCode: hpp, credit: -diff, description: `Koreksi HPP ${label} ${input.periodLabel}` });
+    }
+    adjustmentTotal += diff;
+  }
+  return { lines, adjustmentTotal };
+}

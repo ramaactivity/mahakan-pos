@@ -968,7 +968,14 @@ export async function finalizeOpname(
   //
   // Sebelumnya pakai snapshot_diff yang akan over/under-report kalau ada
   // sales/purchase antara snapshot dan finalize.
-  if (result.movementsCreated > 0) {
+  /* Sesi AE-260 — mode periodic: opname TIDAK memposting jurnal. Nilai fisiknya
+   * dipakai Tutup Periode sebagai stok akhir (HPP = stok awal + pembelian −
+   * stok akhir); jurnal 6903 di sini akan menghitung selisih yang sama dua kali. */
+  const { isPeriodicStockOutlet } = await import("@/features/inventory/flag");
+  if (
+    result.movementsCreated > 0 &&
+    !(await isPeriodicStockOutlet(session.user.outletId))
+  ) {
     const ingSections = await db
       .select({
         section: ingredients.section,

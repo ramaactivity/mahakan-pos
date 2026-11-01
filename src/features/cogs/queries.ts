@@ -23,7 +23,7 @@ import {
   purchaseItems,
   purchases,
 } from "@/db/schema";
-import { getStockMode } from "@/features/inventory/flag";
+import { getStockMode, isPeriodicStock } from "@/features/inventory/flag";
 import { getCutoffDate } from "@/features/cutoff/cutoff";
 import { fetchDailyMarketItemsByIngredient } from "@/features/daily-market/queries";
 import {
@@ -121,7 +121,7 @@ export async function getCogsReport(args: {
    * Menyalakan pembelian saja membuat angkanya cuma pernah NAIK — itu lebih
    * menyesatkan daripada beku, karena terlihat hidup. Saat dua-duanya mati
    * (keadaan sekarang) hasilnya sama persis dengan rumus lama. */
-  const periodicMode = !(stockMode.deductOnSale && stockMode.addOnPurchase);
+  const periodicMode = isPeriodicStock(stockMode);
 
   // ──────────────────────────────────────────────────────────────
   // 1. Outlet info

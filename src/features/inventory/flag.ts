@@ -25,6 +25,19 @@ export type StockMode = {
   addOnPurchase: boolean;
 };
 
+/**
+ * Sesi AE-246/AE-260 — periodic = stok tidak hidup di KEDUA sisi (penjualan
+ * mengurangi DAN pembelian menambah). Satu sumber untuk laporan HPP, jurnal
+ * penjualan, dan jurnal opname.
+ */
+export function isPeriodicStock(mode: StockMode): boolean {
+  return !(mode.deductOnSale && mode.addOnPurchase);
+}
+
+export async function isPeriodicStockOutlet(outletId: string): Promise<boolean> {
+  return isPeriodicStock(await getStockMode(outletId));
+}
+
 export async function getStockMode(
   outletId: string,
   tx?: DbOrTx,

@@ -125,8 +125,8 @@ export function CogsVarianceSection() {
       const adj = res.data.adjustmentTotal;
       toast.success(
         adj === 0
-          ? `Periode ${ym} ditutup. Tidak ada adjustment (recognized = actual).`
-          : `Periode ${ym} ditutup. Adjustment: ${formatRupiah(adj)} ${adj > 0 ? "(post Dr HPP)" : "(reverse HPP)"}`,
+          ? `Periode ${ym} ditutup. Saldo persediaan sudah sama dengan hasil opname.`
+          : `Periode ${ym} ditutup. HPP diposting ${formatRupiah(adj)}; saldo persediaan kini sama dengan hasil opname.`,
       );
     }
     setCloseOpen(false);
@@ -207,7 +207,7 @@ export function CogsVarianceSection() {
         open={closeOpen}
         onClose={() => !closing && setCloseOpen(false)}
         title={`Tutup Periode COGS — ${report?.period.label ?? ym}`}
-        description="Adjustment journal akan post selisih antara recognized HPP (running pos_sale) vs actual COGS (WAC × consumed). Action ini IDEMPOTENT — bisa close cuma 1× per bulan."
+        description="HPP bulan ini diposting sekali: saldo buku persediaan (stok awal + pembelian) dikurangi nilai stok akhir hasil opname. Sesudahnya saldo persediaan sama dengan hitungan fisik. Hanya bisa sekali per bulan."
         size="md"
         footer={
           <>
@@ -272,10 +272,10 @@ export function CogsVarianceSection() {
                 </div>
               ) : null}
               <div className="rounded-md border border-info-300 bg-info-50 p-2 text-xs text-info-700">
-                <strong>Ekspektasi:</strong> Adjustment journal akan post Dr/Cr
-                HPP+Persediaan per section sebesar selisih actual vs recognized.
-                Kalau pos_sale sudah recognized accurate (recipe + WAC tepat),
-                adjustment ~ Rp 0.
+                <strong>Yang terjadi:</strong> jurnal Dr HPP / Cr Persediaan per
+                akun (kitchen, bar, pendukung) sebesar saldo buku dikurangi nilai
+                stok akhir. Penjualan harian tidak mengurangi persediaan, jadi
+                inilah satu-satunya jurnal pemakaian bahan bulan ini.
               </div>
             </>
           ) : (

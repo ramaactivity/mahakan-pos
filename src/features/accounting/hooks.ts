@@ -21,6 +21,8 @@ import { getDailyJournalSince, isAutoJournalEnabled } from "./flag";
 import { isDailyJournalDate } from "./daily-sales-pure";
 import { recordJournal } from "./posting";
 import { pairVoidJournalForSource } from "./journal-void";
+import { stripPerpetualCogsLines } from "./periodic-cogs";
+import { isPeriodicStockOutlet } from "@/features/inventory/flag";
 import {
   findInvalidSplitMethods,
   formatInvalidSplitMethodsError,
@@ -183,7 +185,12 @@ export async function postJournalForPosSale(args: {
   const isCompliment = (trx.discountReason ?? "").startsWith("Compliment:");
   const entryDate = entryDateWib;
 
+  /* Sesi AE-260 — periodic: penjualan & compliment tidak menyentuh Persediaan;
+   * HPP diakui sekali sebulan lewat Tutup Periode. */
+  const periodicCogs = await isPeriodicStockOutlet(trx.outletId);
+
   if (isCompliment) {
+    if (periodicCogs) return;
     const lines = mapPosCompliment({
       transactionId: trx.id,
       transactionNumber: trx.transactionNumber,
@@ -249,7 +256,7 @@ export async function postJournalForPosSale(args: {
     }));
   }
 
-  const lines = mapPosSale({
+  const saleLines = mapPosSale({
     transactionId: trx.id,
     transactionNumber: trx.transactionNumber,
     outletId: trx.outletId,
@@ -261,6 +268,7 @@ export async function postJournalForPosSale(args: {
     items: aggItems,
     splits: splitsInput,
   });
+  const lines = periodicCogs ? stripPerpetualCogsLines(saleLines) : saleLines;
 
   await recordJournal({
     outletId: trx.outletId,
@@ -381,7 +389,8 @@ export async function postJournalForPosRefund(args: {
     refundedAmount: args.refundedAmount,
     splits: splitsInput,
     items: args.items,
-    reverseCogs: args.reverseCogs ?? false,
+    reverseCogs:
+      (args.reverseCogs ?? false) && !(await isPeriodicStockOutlet(trx.outletId)),
   });
 
   await recordJournal({
@@ -499,7 +508,7 @@ export async function postJournalForPosVoid(args: {
     refundedAmount: trx.total,
     splits: splitsInput,
     items: args.items,
-    reverseCogs: true,
+    reverseCogs: !(await isPeriodicStockOutlet(trx.outletId)),
   });
 
   await recordJournal({

@@ -19,20 +19,23 @@
  * Idempotent: unique(outletId, periodYm). Already closed → return existing.
  */
 
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import {
-  cogsPeriodCloses,
-  journalEntries,
-  journalLines,
-  chartOfAccounts,
-} from "@/db/schema";
+import { cogsPeriodCloses } from "@/db/schema";
 import { auth, hasPermission } from "@/lib/auth";
 import { todayJakarta } from "@/lib/tz";
 import { logAudit } from "@/lib/audit/logger";
 import { recordJournal } from "@/features/accounting/posting";
 import { getCogsReport } from "./queries";
-import { isOk, type ApiResult, type ApiOk, type ApiFail } from "./cogs-calc";
+import {
+  buildPeriodicCloseLines,
+  isOk,
+  persediaanCodeForSection,
+  type ApiResult,
+  type ApiOk,
+  type ApiFail,
+  type PersediaanCode,
+} from "./cogs-calc";
 
 function ok<T>(data: T): ApiOk<T> {
   return { ok: true, data };
@@ -98,24 +101,6 @@ export async function fetchCogsPeriodCloseStatus(
   });
 }
 
-/**
- * Section → (HPP code, Persediaan code). Unassigned + cleaning → 5103/1142.
- */
-function accountCodesForSection(
-  section: "kitchen" | "bar" | "supporting" | "cleaning" | "unassigned",
-): { hpp: string; persediaan: string } {
-  switch (section) {
-    case "kitchen":
-      return { hpp: "5101", persediaan: "1140" };
-    case "bar":
-      return { hpp: "5102", persediaan: "1141" };
-    case "supporting":
-    case "cleaning":
-    case "unassigned":
-      return { hpp: "5103", persediaan: "1142" };
-  }
-}
-
 export async function closeCogsPeriod(
   ym: string,
 ): Promise<ApiResult<CogsPeriodCloseResult>> {
@@ -164,88 +149,36 @@ export async function closeCogsPeriod(
     );
   }
 
-  /* Compute recognized HPP per section from journal entries (pos_sale +
-   * pos_refund + shift_variance — any source yang post ke 5101/5102/5103).
-   *
-   * Join journal_lines × chart_of_accounts → filter cost accounts → sum
-   * (debit - credit) per code (debit-normal HPP, positive recognized cost).
-   */
-  const fromDate = report.period.fromDate;
+  /* Sesi AE-260 — metode periodik: HPP = saldo buku Persediaan per akhir
+   * periode − nilai fisik opname akhir, per akun 1140/1141/1142. Dulu yang
+   * diposting hanya selisih "laporan − HPP resep 51xx", sehingga selisih saldo
+   * buku lama (mis. saldo awal yang salah) tidak pernah ikut terkoreksi. */
   const toDate = report.period.toDate;
-  const recRows = await db.execute<{
-    code: string;
-    net: string;
-  }>(sql`
-    SELECT
-      coa.code AS code,
-      SUM(jl.debit - jl.credit)::text AS net
+  const balRows = await db.execute<{ code: string; bal: string }>(sql`
+    SELECT coa.code AS code, SUM(jl.debit - jl.credit)::text AS bal
     FROM journal_entries je
     INNER JOIN journal_lines jl ON jl.entry_id = je.id
     INNER JOIN chart_of_accounts coa ON coa.id = jl.account_id
     WHERE je.outlet_id = ${session.user.outletId}
       AND je.status = 'posted'
-      AND je.entry_date >= ${fromDate}
       AND je.entry_date <= ${toDate}
-      AND coa.code IN ('5101','5102','5103')
+      AND coa.code IN ('1140','1141','1142')
     GROUP BY coa.code
   `);
-  const recArr = ((recRows as unknown as { rows?: unknown[] }).rows ?? []) as Array<{ code: string; net: string }>;
-  const recognized: Record<string, number> = { "5101": 0, "5102": 0, "5103": 0 };
-  for (const r of recArr) recognized[r.code] = Number(r.net);
+  const balArr = ((balRows as unknown as { rows?: unknown[] }).rows ?? []) as Array<{ code: string; bal: string }>;
+  const bookBalance: Record<PersediaanCode, number> = { "1140": 0, "1141": 0, "1142": 0 };
+  for (const r of balArr) bookBalance[r.code as PersediaanCode] = Number(r.bal);
 
-  /* Actual COGS per section (dari WAC report). Map ke account codes. */
-  const actual = report.summary.bySection;
-  const actualByHppCode: Record<string, number> = {
-    "5101": actual.kitchen,
-    "5102": actual.bar,
-    "5103": actual.supporting + actual.cleaning + actual.unassigned,
-  };
-
-  /* Adjustment lines = actual - recognized per HPP code. Build journal. */
-  const journalLineInputs: Array<{
-    accountCode: string;
-    debit?: number;
-    credit?: number;
-    description?: string;
-  }> = [];
-  let adjustmentTotal = 0;
-
-  for (const hppCode of ["5101", "5102", "5103"] as const) {
-    const diff = actualByHppCode[hppCode] - recognized[hppCode];
-    if (diff === 0) continue;
-    const persediaanCode =
-      hppCode === "5101" ? "1140" : hppCode === "5102" ? "1141" : "1142";
-    const label =
-      hppCode === "5101" ? "kitchen" : hppCode === "5102" ? "bar" : "supporting/cleaning";
-
-    if (diff > 0) {
-      // Actual > recognized: post additional HPP (extra cost realized).
-      journalLineInputs.push({
-        accountCode: hppCode,
-        debit: diff,
-        description: `Adjust HPP ${label} (period close ${ym})`,
-      });
-      journalLineInputs.push({
-        accountCode: persediaanCode,
-        credit: diff,
-        description: `Adjust Persediaan ${label} (period close ${ym})`,
-      });
-    } else {
-      // Actual < recognized: reverse over-recognized HPP.
-      const abs = Math.abs(diff);
-      journalLineInputs.push({
-        accountCode: hppCode,
-        credit: abs,
-        description: `Reverse HPP ${label} (period close ${ym}, over-recognized)`,
-      });
-      journalLineInputs.push({
-        accountCode: persediaanCode,
-        debit: abs,
-        description: `Reverse Persediaan ${label} (period close ${ym})`,
-      });
-    }
-    adjustmentTotal += diff;
+  const physical: Record<PersediaanCode, number> = { "1140": 0, "1141": 0, "1142": 0 };
+  for (const row of report.rows) {
+    physical[persediaanCodeForSection(row.section)] += row.stockAkhirTotal;
   }
+
+  const { lines: journalLineInputs, adjustmentTotal } = buildPeriodicCloseLines({
+    bookBalance,
+    physical,
+    periodLabel: report.period.label,
+  });
 
   // Insert period close row first (to get id for sourceId)
   let inserted: typeof cogsPeriodCloses.$inferSelect;

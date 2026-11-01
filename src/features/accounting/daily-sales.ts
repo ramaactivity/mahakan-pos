@@ -25,6 +25,8 @@ import { getDailyJournalSince, isAutoJournalEnabled } from "./flag";
 import { pairVoidJournalForSource } from "./journal-void";
 import { mapPosSale } from "./mapping/posSale";
 import { mapPosCompliment } from "./mapping/posCompliment";
+import { stripPerpetualCogsLines } from "./periodic-cogs";
+import { isPeriodicStockOutlet } from "@/features/inventory/flag";
 import {
   describeDailyCompliment,
   describeDailySales,
@@ -203,7 +205,10 @@ async function postSales(
   batchId: string,
   agg: DailySalesAggregate,
 ): Promise<void> {
-  const lines = mapPosSale(toDailySaleInput(agg, batchId));
+  const saleLines = mapPosSale(toDailySaleInput(agg, batchId));
+  const lines = (await isPeriodicStockOutlet(args.outletId))
+    ? stripPerpetualCogsLines(saleLines)
+    : saleLines;
   await recordJournal({
     outletId: args.outletId,
     entryDate: agg.entryDate,
@@ -225,6 +230,9 @@ async function postCompliment(
   batchId: string,
   agg: DailyComplimentAggregate,
 ): Promise<void> {
+  /* Sesi AE-260 — periodic: bahan compliment ikut terhitung lewat opname,
+   * jadi tidak ada jurnal Persediaan → Marketing per hari. */
+  if (await isPeriodicStockOutlet(args.outletId)) return;
   const lines = mapPosCompliment(toDailyComplimentInput(agg, batchId));
   if (lines.length === 0) return;
   await recordJournal({
