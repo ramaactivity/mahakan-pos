@@ -12,6 +12,7 @@
  */
 
 import type { JournalLineInput } from "../posting";
+import { resolveBankCodeFromDestination } from "./cashDeposit";
 
 export interface DividendWithdrawalMappingInput {
   /** Amount withdrawal (Rupiah). */
@@ -75,13 +76,9 @@ export function mapDividendWithdrawalReversal(
 
 /**
  * Pure helper: resolve bank code dari bank.bankName text string.
- * Pattern sama dengan cashDeposit.resolveBankCodeFromDestination tapi
- * eksplisit untuk dividend flow. Fallback 1112 Bank Lain-lain.
+ * Sesi AE-261 — satu aturan dengan cashDeposit.resolveBankCodeFromDestination
+ * (dulu disalin dan keduanya salah memetakan BNI ke 1112).
  */
 export function resolveBankCodeFromBankName(bankName: string): string {
-  const lower = bankName.toLowerCase();
-  if (lower.includes("bca")) return "1110";
-  if (lower.includes("bri")) return "1111";
-  if (lower.includes("bni")) return "1112"; // fallback
-  return "1112";
+  return resolveBankCodeFromDestination(bankName);
 }

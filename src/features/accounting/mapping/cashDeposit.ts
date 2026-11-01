@@ -33,11 +33,16 @@ export type CashDepositVerifiedInput = {
 /**
  * Pure helper: derive bank account code from free-text bank destination string.
  * Used as fallback kalau bankAccountId not set.
+ *
+ * Sesi AE-261 — BNI punya akun sendiri (1113 BANK BNI). Dulu BNI jatuh ke
+ * 1112 Bank Lain-lain, jadi cicilan/kasbon/setoran lewat rekening BNI
+ * tercatat di rekening lain tanpa error. 1112 tetap untuk bank lainnya.
  */
 export function resolveBankCodeFromDestination(destination: string): string {
   const lower = destination.toLowerCase();
   if (lower.includes("bca")) return "1110";
   if (lower.includes("bri")) return "1111";
+  if (lower.includes("bni")) return "1113";
   return "1112";
 }
 

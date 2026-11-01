@@ -421,6 +421,8 @@ describe("resolveBankCodeFromDestination heuristic", () => {
   });
   it("else falls back ke 1112", () => {
     expect(resolveBankCodeFromDestination("Mandiri")).toBe("1112");
+    // AE-261 — BNI punya akun sendiri, bukan Bank Lain-lain
+    expect(resolveBankCodeFromDestination("BNI")).toBe("1113");
     expect(resolveBankCodeFromDestination("")).toBe("1112");
   });
 });
